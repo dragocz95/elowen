@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import type { AuthInteraction } from '@earendil-works/pi-ai';
+import type { BrainCredentialAccess } from './providerUsage.js';
 
 /** What the settings UI needs to drive a login: where to send the user, what to show, and whether we
  *  are waiting for a pasted code (Anthropic-style) or just polling (device-code style). */
@@ -19,15 +21,15 @@ interface Flow extends OAuthFlowState { resolveInput?: (value: string) => void }
 
 /** Drives pi-ai OAuth logins (Anthropic / GitHub Copilot / OpenAI Codex) from the web UI: `start`
  *  kicks the provider's login in the background and the UI polls `get` + posts `submitInput` when the
- *  flow asks for a pasted code. Credentials land in the brain's persistent AuthStorage (auto-refresh
- *  handled by pi). One flow at a time per provider is plenty for an admin action. */
+ *  flow asks for a pasted code. Credentials land in the runtime's persistent store (auto-refresh handled
+ *  by pi). One flow at a time per provider is plenty for an admin action. */
 export class BrainOAuthManager {
   private flows = new Map<string, Flow>();
-  constructor(private auth: AuthStorage) {}
+  constructor(private runtime: ModelRuntime, private creds: BrainCredentialAccess) {}
 
   /** Whether a credential exists for a built-in oauth provider id (e.g. 'anthropic'). */
   connected(provider: string): boolean {
-    return !!this.auth.get(provider);
+    return !!this.creds.get(provider);
   }
 
   /** `method` picks a login sub-flow when the provider offers a choice — openai-codex exposes
@@ -41,20 +43,41 @@ export class BrainOAuthManager {
       if (f.status === 'success' || f.status === 'error') this.flows.delete(id);
     }
     this.flows.set(flow.id, flow);
-    const waitForInput = (): Promise<string> => new Promise<string>((resolve) => {
+    const waitForInput = (signal?: AbortSignal): Promise<string> => new Promise<string>((resolve) => {
+      if (signal?.aborted) { resolve(''); return; }
       flow.needsInput = true;
       flow.status = 'action-required';
-      flow.resolveInput = (v) => { flow.needsInput = false; flow.resolveInput = undefined; resolve(v); };
+      const settle = (v: string) => { flow.needsInput = false; flow.resolveInput = undefined; resolve(v); };
+      flow.resolveInput = settle;
+      // An out-of-band completion (the openai-codex loopback callback winning the race) aborts the pending
+      // prompt — clear the waiting state so a login that already resolved doesn't keep reporting needsInput.
+      signal?.addEventListener('abort', () => settle(''), { once: true });
     });
-    void this.auth.login(provider, {
-      onAuth: (info) => { flow.authUrl = info.url; flow.instructions = info.instructions; flow.status = 'action-required'; },
-      onDeviceCode: (info) => { flow.authUrl = info.verificationUri; flow.userCode = info.userCode; flow.status = 'action-required'; },
-      // Empty-allowed prompts (e.g. an enterprise domain) auto-answer with the default; anything
-      // required (the pasted authorization code) waits for the UI.
-      onPrompt: (prompt) => (prompt.allowEmpty ? Promise.resolve('') : waitForInput()),
-      onManualCodeInput: () => waitForInput(),
-      onSelect: async (prompt) => (opts.method ? prompt.options.find((o) => o.id === opts.method)?.id : undefined) ?? prompt.options[0]?.id,
-    }).then(
+    // PI 0.80.8 unified the login callbacks into one `AuthInteraction`: `notify` streams status events
+    // (the browser URL / device code), `prompt` asks for a value (a select option or the pasted code).
+    const interaction: AuthInteraction = {
+      notify: (event) => {
+        if (event.type === 'auth_url') { flow.authUrl = event.url; flow.instructions = event.instructions; flow.status = 'action-required'; }
+        else if (event.type === 'device_code') { flow.authUrl = event.verificationUri; flow.userCode = event.userCode; flow.status = 'action-required'; }
+        // 'info' / 'progress' carry status text only — nothing the picker renders.
+      },
+      prompt: (prompt) => {
+        // A method select (openai-codex browser vs device_code): honour the caller's choice, else the first.
+        if (prompt.type === 'select') {
+          const chosen = (opts.method ? prompt.options.find((o) => o.id === opts.method)?.id : undefined) ?? prompt.options[0]?.id;
+          return Promise.resolve(chosen ?? '');
+        }
+        // `manual_code` is the pasted authorization code (Anthropic/Codex) — surface it and wait for the UI.
+        if (prompt.type === 'manual_code') return waitForInput(prompt.signal);
+        // `text`/`secret`: among the supported providers the only such prompt is GitHub Copilot's OPTIONAL
+        // enterprise-domain field, emitted BEFORE its device code. The old callbacks auto-answered an
+        // empty-allowed prompt (`allowEmpty ? '' : wait`); the unified API dropped that flag, so blocking
+        // here would strand the Copilot flow on a contextless input the code-submit endpoint then rejects
+        // (it 400s an empty value). Auto-answer empty to let the flow reach the device code, as before.
+        return Promise.resolve('');
+      },
+    };
+    void this.runtime.login(provider, 'oauth', interaction).then(
       () => { flow.status = 'success'; },
       (e: unknown) => { flow.status = 'error'; flow.error = e instanceof Error ? e.message : String(e); },
     );
@@ -75,8 +98,8 @@ export class BrainOAuthManager {
   }
 
   /** Drop a stored credential (disconnect the account). */
-  disconnect(provider: string): void {
-    this.auth.remove(provider);
+  async disconnect(provider: string): Promise<void> {
+    await this.runtime.logout(provider);
   }
 
   private snapshot(f: Flow): OAuthFlowState {

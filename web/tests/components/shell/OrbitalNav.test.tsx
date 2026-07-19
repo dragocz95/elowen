@@ -78,6 +78,7 @@ describe('OrbitalNav rail stability', () => {
       .sort((a, b) => a[1] - b[1])
       .map(([label]) => label);
     expect(order[0]).toBe('Home');
+    expect(order[1]).toBe('Chat'); // Chat is parked right after Home
     expect(order.slice(-3)).toEqual(['Account', 'Settings', 'Users']);
   });
 });
@@ -90,6 +91,7 @@ describe('OrbitalNav', () => {
     expect(screen.getByTestId('future-navigation').querySelector('canvas')).toBeNull();
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat');
     expect(screen.getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/tasks');
     expect(screen.getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/kanban');
     expect(screen.getByRole('link', { name: 'Sessions' })).toHaveAttribute('href', '/sessions');

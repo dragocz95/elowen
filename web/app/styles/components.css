@@ -26,6 +26,32 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .section-hero-summary__label { display: block; color: var(--color-text); font-size: clamp(1.45rem, 1.2rem + 0.5vw, 1.9rem); font-weight: 610; letter-spacing: -0.035em; }
 .section-hero-summary p { max-width: 38rem; margin-top: 0.45rem; color: var(--color-text-muted); font-size: 0.8rem; line-height: 1.55; }
 
+/* /chat identity hero: the section icon + title with a row of live conversation stats. Compact so the
+   native conversation below owns the viewport. */
+.chat-hero { display: flex; align-items: center; gap: 1rem; padding: 1rem var(--shell-gutter) 0.9rem; }
+.chat-hero__icon { display: grid; width: 2.7rem; height: 2.7rem; flex: none; place-items: center; border: 1px solid rgb(255 82 54 / 0.2); border-radius: 50%; color: var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
+.chat-hero__body { display: flex; min-width: 0; flex-direction: column; gap: 0.4rem; }
+.chat-hero__title { color: var(--color-text); font-size: clamp(1.25rem, 1.1rem + 0.4vw, 1.55rem); font-weight: 610; letter-spacing: -0.035em; line-height: 1; }
+.chat-hero__stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 1.1rem; }
+.chat-hero__stat { display: inline-flex; align-items: baseline; gap: 0.35rem; min-width: 0; }
+.chat-hero__stat-value { max-width: 18rem; overflow: hidden; color: var(--color-text); font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.chat-hero__stat-label { color: var(--color-text-muted); font-size: 0.6rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* /chat full-page surface gutter: one shared horizontal inset for the control bar, transcript and
+   composer, matching the hero's --shell-gutter so every register sits on the same left edge. */
+.chat-gutter { padding-inline: var(--shell-gutter); }
+
+/* The full /chat composer is ONE bordered field with an invisible textarea inside it — the global
+   focus ring on that textarea would draw a rectangle inside the box, so the box carries the focus
+   state instead (its focus-within border shift). */
+.chat-composer textarea:focus-visible { box-shadow: none; }
+
+/* Collapsible tool row (native <details>): hide the default marker, rotate the chevron when open. */
+.chat-tool > summary { list-style: none; }
+.chat-tool > summary::-webkit-details-marker { display: none; }
+.chat-tool__chev { transition: transform 0.15s ease; }
+.chat-tool[open] > summary .chat-tool__chev { transform: rotate(90deg); }
+
 /* Shared responsive data-register grammar. Individual tables only define their column templates. */
 .data-table-grid {
   display: grid;
@@ -130,19 +156,19 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .spatial-inline-action:disabled { cursor: not-allowed; opacity: 0.4; }
 
 .spatial-mascot { position: relative; width: 100%; height: 100%; }
-.spatial-mascot__webgl { position: absolute; inset: -20%; z-index: 2; opacity: 0; pointer-events: none; transition: opacity 420ms var(--ease-out); }
-.spatial-mascot-fallback { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; opacity: 1; transition: opacity 420ms var(--ease-out); }
-.spatial-mascot--ready .spatial-mascot__webgl { opacity: 1; }
+.spatial-mascot__webgl { position: absolute; inset: -20%; z-index: 2; opacity: 0; transform: scale(0.985); pointer-events: none; transition: opacity 520ms var(--ease-out), transform 520ms var(--ease-out); }
+.spatial-mascot-fallback { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; opacity: 1; transition: opacity 520ms var(--ease-out); }
+.spatial-mascot--ready .spatial-mascot__webgl { opacity: 1; transform: scale(1); }
 .spatial-mascot--ready .spatial-mascot-fallback { opacity: 0; }
 .spatial-mascot-fallback::before {
   content: '';
   position: absolute;
   inset: 8%;
   border-radius: 50%;
-  background: radial-gradient(circle, rgb(255 82 54 / 0.2), rgb(255 82 54 / 0.045) 44%, transparent 72%);
+  background: radial-gradient(circle, rgb(255 82 54 / 0.1), rgb(255 82 54 / 0.03) 44%, transparent 72%);
   filter: blur(10px);
 }
-.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem rgb(255 65 35 / 0.2)); }
+.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem rgb(255 65 35 / 0.1)); }
 .spatial-mascot-fallback__ring { position: absolute; border: 1px solid rgb(255 82 54 / 0.18); border-radius: 50%; }
 .spatial-mascot-fallback__ring--outer { inset: 3% 0; transform: rotate(-12deg); }
 .spatial-mascot-fallback__ring--inner { inset: 19% 13%; transform: rotate(17deg); }

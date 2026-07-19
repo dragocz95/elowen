@@ -163,7 +163,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     mid.close();
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools).toBe('run_command');
-    expect(db.pragma('user_version', { simple: true })).toBe(5); // every one-shot migration is done
+    expect(db.pragma('user_version', { simple: true })).toBe(6); // every one-shot migration is done
   });
 
   it("rewrites a platform role's tool allow-list, keeping the unrestricted markers intact", () => {
@@ -204,7 +204,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp__chrome_devtools__click,mcp__chrome_devtools__performance_analyze_insight,mcp_ghost_thing,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
   });
 
   it('prefers the longest matching server, so one name cannot be split by another\'s prefix', () => {
@@ -228,7 +228,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp_chrome_devtools_click');
-    expect(db.pragma('user_version', { simple: true })).toBe(5); // still marked done — there was nothing to do
+    expect(db.pragma('user_version', { simple: true })).toBe(6); // still marked done — there was nothing to do
   });
 
   it('leaves a corrupt permissions blob exactly as found', () => {
@@ -313,7 +313,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('Bash,todo_write');
-    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
   });
 
   it('names the image tools verb-first, the way a one-tool plugin is named', () => {
@@ -337,7 +337,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('GenerateImage,EditImage,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
   });
 });
 
@@ -371,7 +371,7 @@ describe('openDb — session-event kinds (v5)', () => {
   it('accepts a cwd marker on a database that predates the kind, carrying the old markers across', () => {
     const path = seedPre5();
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
 
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT event_id, kind, detail, created_at FROM brain_session_events ORDER BY event_id').all())
@@ -391,8 +391,45 @@ describe('openDb — session-event kinds (v5)', () => {
     const path = seedPre5();
     openDb(path).close();     // v5 runs here
     const db = openDb(path);  // ...and must not rebuild the table a second time
-    expect(db.pragma('user_version', { simple: true })).toBe(5);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT COUNT(*) AS n FROM brain_session_events').get()).toEqual({ n: 2 });
+  });
+});
+
+describe('openDb — drop personality tables (v6)', () => {
+  const hasTable = (db: Database.Database, name: string): boolean =>
+    !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+
+  /** A DB as it stood before the personality collapse: the schema still up to v5, plus the two retired
+   *  personality tables hand-recreated (schema.sql no longer makes them), user_version parked at 5 so
+   *  only v6 is armed. */
+  function seedPre6(): string {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'pre6.db');
+    const db = openDb(path);
+    db.exec(`CREATE TABLE personality_profiles (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, platform TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL);
+             CREATE INDEX idx_personality_profiles_user_platform ON personality_profiles(user_id, platform);
+             CREATE TABLE personality_active_profiles (user_id INTEGER NOT NULL, platform TEXT NOT NULL, profile_id INTEGER NOT NULL, PRIMARY KEY (user_id, platform));`);
+    db.pragma('user_version = 5');
+    db.close();
+    return path;
+  }
+
+  it('drops both personality tables (and their indexes) on a database that predates the collapse', () => {
+    const path = seedPre6();
+    const db = openDb(path);
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
+    expect(hasTable(db, 'personality_profiles')).toBe(false);
+    expect(hasTable(db, 'personality_active_profiles')).toBe(false);
+    // The index went with its table — no orphan left behind.
+    expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name = 'idx_personality_profiles_user_platform'").get()).toBeUndefined();
+  });
+
+  it('is a no-op on a fresh database that never had the tables (idempotent)', () => {
+    const db = openDb(':memory:');
+    expect(db.pragma('user_version', { simple: true })).toBe(6);
+    expect(hasTable(db, 'personality_profiles')).toBe(false);
+    expect(hasTable(db, 'personality_active_profiles')).toBe(false);
   });
 });

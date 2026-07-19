@@ -422,6 +422,21 @@ describe('discord display settings', () => {
   });
 });
 
+// The daemon's single source of truth for the Discord surface (ctx.chatCommands('discord')). The adapter
+// derives its registered slash-command LIST from this, so registration tests must pass it in.
+const DISCORD_CHAT_COMMANDS = [
+  { name: 'new', description: 'Start a fresh conversation' },
+  { name: 'stop', description: 'Stop the running agent' },
+  { name: 'status', description: 'Session info — model, context and usage' },
+  { name: 'compact', description: 'Summarize the conversation to free up context (add text to steer what to keep)' },
+  { name: 'model', description: 'Switch the AI model' },
+  { name: 'context', description: 'Continue this channel in one of your conversations' },
+  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing' },
+  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows' },
+  { name: 'restart', description: 'Restart the Elowen daemon' },
+  { name: 'help', description: 'Show the available commands' },
+];
+
 describe('discord reasoning picker', () => {
   const makeAdapter = async (models: unknown[], initial: Record<string, unknown> = {}, language = 'en') => {
     const { DiscordAdapter } = await import(join(repoRoot, 'plugins/discord/lib/adapter.mjs')) as { DiscordAdapter: new (...args: unknown[]) => any };
@@ -432,7 +447,7 @@ describe('discord reasoning picker', () => {
     };
     const adapter = new DiscordAdapter(
       { language, rolePolicies: [{ roleId: 'ADMIN', admin: true }] },
-      log, state, async () => models,
+      log, state, async () => models, [], () => null, () => false, DISCORD_CHAT_COMMANDS,
     );
     const replies: unknown[] = [];
     adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
@@ -445,7 +460,7 @@ describe('discord reasoning picker', () => {
     await adapter.registerCommands();
     const commands = replies[0] as Array<{ name: string; options?: unknown[] }>;
     expect(commands.find((command) => command.name === 'reasoning')).toEqual({
-      name: 'reasoning', description: 'Set reasoning effort for this channel', type: 1,
+      name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', type: 1,
     });
   });
 
@@ -573,7 +588,7 @@ describe('discord /fast capability gate', () => {
     };
     const adapter = new DiscordAdapter(
       { language: 'en', rolePolicies: [{ roleId: 'ADMIN', admin: true }] },
-      log, state, async () => models,
+      log, state, async () => models, [], () => null, () => false, DISCORD_CHAT_COMMANDS,
     );
     const replies: unknown[] = [];
     adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
@@ -1327,5 +1342,104 @@ describe('files plugin tool icons are emoji glyphs (Discord toolLine renders man
     expect(manifest.icons).toMatchObject({
       Read: '📄', ListDir: '📂', Write: '✏️', Edit: '✏️', Search: '🔎', FileInfo: '📄', GitStatus: '🌿',
     });
+  });
+});
+
+describe('discord paged pickers + /context', () => {
+  const makeAdapter = async (models: unknown[], initial: Record<string, unknown> = {}, language = 'en') => {
+    const { DiscordAdapter } = await import(join(repoRoot, 'plugins/discord/lib/adapter.mjs')) as { DiscordAdapter: new (...args: unknown[]) => any };
+    const channels: Record<string, Record<string, unknown>> = { C: initial };
+    const state = {
+      get: (id: string) => channels[id] ?? {},
+      patch: (id: string, fields: Record<string, unknown>) => { channels[id] = { ...(channels[id] ?? {}), ...fields }; },
+    };
+    const adapter = new DiscordAdapter(
+      { language, rolePolicies: [{ roleId: 'ADMIN', admin: true }] },
+      log, state, async () => models, [], () => null, () => false, DISCORD_CHAT_COMMANDS,
+    );
+    const replies: any[] = [];
+    adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
+    return { adapter, channels, replies };
+  };
+
+  const models30 = Array.from({ length: 30 }, (_, i) => ({ provider: 'p', providerLabel: 'Prov', model: `model-${i}` }));
+
+  it('registers /context in the slash-command set', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    adapter.appId = 'APP';
+    await adapter.registerCommands();
+    const commands = replies[0] as Array<{ name: string }>;
+    expect(commands.find((c) => c.name === 'context')).toEqual({
+      name: 'context', description: 'Continue this channel in one of your conversations', type: 1,
+    });
+  });
+
+  it('buildPagedSelect windows options into ≤25-row selects with prev/next nav', async () => {
+    const { adapter } = await makeAdapter([]);
+    const options = Array.from({ length: 30 }, (_, i) => ({ label: `l${i}`, value: `v${i}` }));
+    const page0 = adapter.buildPagedSelect(options, 0, 'pick_model', 'ph');
+    expect(page0[0].components[0].options).toHaveLength(25);
+    const nav0 = page0[1].components;
+    expect(nav0[0]).toMatchObject({ custom_id: 'pick_model_page:-1', disabled: true });   // prev disabled on page 0
+    expect(nav0[1]).toMatchObject({ label: '1/2', disabled: true });
+    expect(nav0[2]).toMatchObject({ custom_id: 'pick_model_page:1', disabled: false });    // next enabled
+    const page1 = adapter.buildPagedSelect(options, 1, 'pick_model', 'ph');
+    expect(page1[0].components[0].options).toHaveLength(5);
+    expect(page1[1].components[0]).toMatchObject({ custom_id: 'pick_model_page:0', disabled: false }); // prev enabled
+    expect(page1[1].components[2]).toMatchObject({ disabled: true }); // next disabled on the last page
+  });
+
+  it('/model no longer truncates: a model past row 25 renders on page 2 and can be selected', async () => {
+    const { adapter, channels, replies } = await makeAdapter(models30);
+    await adapter.onInteraction({ type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'model' } });
+    // Page 0: exactly 25 options + a nav row (no silent drop of the remaining 5).
+    expect(replies[0].data.components[0].components[0].options).toHaveLength(25);
+    // Navigate to page 1 → the 30th model (model-29) is now rendered.
+    replies.length = 0;
+    await adapter.onInteraction({ type: 3, id: 'I2', token: 'T2', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { custom_id: 'pick_model_page:1' } });
+    const values = replies[0].data.components[0].components[0].options.map((o: { value: string }) => o.value);
+    expect(values).toContain('p::model-29');
+    // Selecting it persists it — proving the removed .slice(0,25) no longer hides it.
+    await adapter.onInteraction({ type: 3, id: 'I3', token: 'T3', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { custom_id: 'pick_model', values: ['p::model-29'] } });
+    expect(channels.C?.model).toEqual({ provider: 'p', model: 'model-29' });
+  });
+
+  it('/context renders the caller\'s own conversations from the control surface', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    const listContext = vi.fn(() => ({ items: [{ id: 'brain-7-1', title: 'Refactor', model: 'gpt-5' }], total: 1, hasMore: false }));
+    adapter.control({ listContext, bindContext: vi.fn() });
+    await adapter.onInteraction({ type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'], user: { id: 'U1' } }, data: { name: 'context' } });
+    expect(listContext).toHaveBeenCalledWith({ platform: 'discord', channelId: 'C#0' }, 'U1', { offset: 0, limit: 200 });
+    const options = replies[0].data.components[0].components[0].options;
+    expect(options).toEqual([{ label: 'Refactor', value: 'brain-7-1', description: 'gpt-5' }]);
+  });
+
+  it('/context is operator-gated: a non-admin member is refused and never reaches the control surface', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    const listContext = vi.fn();
+    adapter.control({ listContext, bindContext: vi.fn() });
+    await adapter.onInteraction({ type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: [] }, data: { name: 'context' } });
+    expect(listContext).not.toHaveBeenCalled();
+    expect(JSON.stringify(replies[0])).toContain('Only the operator');
+  });
+
+  it('picking a conversation dispatches the bind and warns about shared history', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    const bindContext = vi.fn(async () => ({ title: 'Refactor' }));
+    adapter.control({ listContext: vi.fn(), bindContext });
+    await adapter.onInteraction({ type: 3, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'], user: { id: 'U1' } }, data: { custom_id: 'pick_context', values: ['brain-7-1'] } });
+    expect(bindContext).toHaveBeenCalledWith({ platform: 'discord', channelId: 'C#0' }, 'U1', 'brain-7-1');
+    const content = replies[0].data.content as string;
+    expect(content).toContain('Refactor');
+    expect(content).toContain('continues');
+    expect(replies[0].data.components).toEqual([]); // the picker is closed out
+  });
+
+  it('surfaces a bind guard rejection as an error reply', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    const bindContext = vi.fn(async () => { throw new Error('unknown session'); });
+    adapter.control({ listContext: vi.fn(), bindContext });
+    await adapter.onInteraction({ type: 3, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'], user: { id: 'U1' } }, data: { custom_id: 'pick_context', values: ['brain-7-1'] } });
+    expect(JSON.stringify(replies[0])).toContain('unknown session');
   });
 });

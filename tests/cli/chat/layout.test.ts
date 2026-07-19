@@ -47,7 +47,7 @@ describe('chat layout components', () => {
   it('renders one turn through the focused turn renderer without owning viewport state', () => {
     const renderer = new TurnRenderer(getMarkdownTheme());
     const rows = renderer.render({ role: 'you', text: 'focused module' }, 0, 40, {
-      showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, expandedThoughts: new Set(), expandedTools: new Set(),
+      showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set(),
     });
     expect(rows.map((row) => row.line).join('\n')).toContain('focused module');
   });
@@ -55,34 +55,42 @@ describe('chat layout components', () => {
   beforeAll(() => { initTheme(); });
 
   describe('tool-call authoring indicator', () => {
+    const SPIN = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/;
     const render = (turn: Parameters<TurnRenderer['render']>[0], composingMarkerReady = true): string =>
       new TurnRenderer(getMarkdownTheme())
-        .render(turn, 0, 80, { showThoughts: true, thinkingSeconds: 0, composingMarkerReady, expandedThoughts: new Set(), expandedTools: new Set() })
+        .render(turn, 0, 80, { showThoughts: true, thinkingSeconds: 0, composingMarkerReady, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set() })
         .map((row) => row.line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
 
-    it('shows the working line once the authoring window has stalled, even after prose', () => {
-      const rendered = render({ role: 'elowen', streaming: true, composing: true, segments: [{ kind: 'text', text: 'Let me look.' }] });
+    it('shows a spinner and the real tool name once the authoring window has stalled, even after prose', () => {
+      const rendered = render({ role: 'elowen', streaming: true, composing: true, composingTool: 'Write', segments: [{ kind: 'text', text: 'Let me look.' }] });
       expect(rendered).toContain('Let me look.');
-      expect(rendered).toContain('Writing tool call');
+      expect(rendered).toMatch(SPIN);
+      expect(rendered).toContain('Write'); // the tool being authored, not a generic placeholder
+    });
+
+    it('falls back to a neutral label when the tool name is not yet known', () => {
+      const rendered = render({ role: 'elowen', streaming: true, composing: true, segments: [{ kind: 'text', text: 'Let me look.' }] });
+      expect(rendered).toMatch(SPIN);
+      expect(rendered).toContain('working');
     });
 
     it('stays silent while the authoring window is still under the threshold', () => {
-      const rendered = render({ role: 'elowen', streaming: true, composing: true, segments: [{ kind: 'text', text: 'Let me look.' }] }, false);
+      const rendered = render({ role: 'elowen', streaming: true, composing: true, composingTool: 'Write', segments: [{ kind: 'text', text: 'Let me look.' }] }, false);
       expect(rendered).toContain('Let me look.');
-      expect(rendered).not.toContain('Writing tool call');
+      expect(rendered).not.toMatch(SPIN);
     });
 
-    it('drops the working line once the tool marker renders', () => {
+    it('drops the spinner once the tool marker renders', () => {
       const rendered = render({ role: 'elowen', streaming: true, composing: false, segments: [
         { kind: 'text', text: 'Let me look.' },
         { kind: 'tools', items: [{ name: 'Read', id: 't1' }] },
       ] });
-      expect(rendered).not.toContain('Writing tool call');
+      expect(rendered).not.toMatch(SPIN);
     });
 
     it('shows nothing extra on a settled turn', () => {
       const rendered = render({ role: 'elowen', streaming: false, segments: [{ kind: 'text', text: 'done' }] });
-      expect(rendered).not.toContain('Writing tool call');
+      expect(rendered).not.toMatch(SPIN);
     });
   });
 
@@ -92,7 +100,7 @@ describe('chat layout components', () => {
         { kind: 'tools' as const, items: [{ name: 'Delegate', sub }] },
       ] };
       return new TurnRenderer(getMarkdownTheme())
-        .render(turn, 0, 80, { showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, expandedThoughts: new Set(), expandedTools: new Set() })
+        .render(turn, 0, 80, { showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set() })
         .map((row) => row.line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
     };
 

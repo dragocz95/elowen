@@ -1,8 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
+
+// Monaco is browser-only and never mounts under jsdom; stub the personality body editor.
+vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
+  MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <textarea aria-label="personality-body" value={value} onChange={(e) => onChange(e.target.value)} />
+  ),
+  MonacoDiffEditor: () => null,
+}));
 import { AccountView } from '../../../modules/account/AccountView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { UiScaleProvider } from '../../../lib/useUiScale';
@@ -83,30 +91,32 @@ describe('AccountView', () => {
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
         model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '',
-        autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '',
-        autoRecall: true, autoSave: true,
+        autoCompact: false, autoCompactAt: 80, advisorStyle: 'concise', personalityBody: '',
+        discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true,
       })),
-      http.get('*/api/personality/profiles', ({ request }) => {
-        const platform = new URL(request.url).searchParams.get('platform') ?? 'web';
-        return HttpResponse.json(platform === 'discord' ? [{
-          id: 2, user_id: 2, platform: 'discord', name: 'Discord persona', description: '', tone: '', style: '', prompt: 'Friendly.',
-          enabled: true, active: false, created_at: '', updated_at: '',
-        }] : []);
-      }),
+      http.patch('*/api/auth/me/cli-settings', () => HttpResponse.json({})),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     await screen.findByText('@bob');
     fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
-    const discord = await screen.findByRole('radio', { name: 'Discord' });
-    fireEvent.click(discord);
-    await waitFor(() => expect(screen.getByText('Discord persona')).toBeVisible());
+    // Wait for the personality form to seed ('Concise' pill pressed) before changing a local control.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Concise' })).toHaveAttribute('aria-pressed', 'true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Friendly' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Friendly' })).toHaveAttribute('aria-pressed', 'true'));
 
+    // Navigate away: the panel is kept mounted but hidden (React <Activity>), so it drops out of the
+    // accessibility tree — findable only with hidden:true, and not visible.
     fireEvent.click(screen.getByRole('radio', { name: 'Account' }));
-    await waitFor(() => expect(screen.getByText('Discord persona')).not.toBeVisible());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Friendly', hidden: true })).not.toBeVisible());
     fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
-    expect(screen.getByRole('radio', { name: 'Discord' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByText('Discord persona')).toBeVisible();
+    // The visited panel stayed mounted, so the local pick survives navigating away and back. The reveal
+    // from <Activity> hidden→visible is deferred, so wait for it rather than asserting synchronously.
+    await waitFor(() => {
+      const friendly = screen.getByRole('button', { name: 'Friendly' });
+      expect(friendly).toHaveAttribute('aria-pressed', 'true');
+      expect(friendly).toBeVisible();
+    });
   });
 });

@@ -58,13 +58,14 @@ import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { AdvisorService } from '../advisor/service.js';
 import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { BrainService } from '../brain/brainService.js';
+import { BrainTerminalService } from '../brain/terminalService.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { lspManager } from '../brain/tools/lspTools.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import type { BrainCredentialAccess } from '../brain/providerUsage.js';
 import { BrainStore } from '../store/brainStore.js';
-import { PersonalityStore } from '../store/personalityStore.js';
-import { PersonalityService } from '../brain/personalityService.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
@@ -139,7 +140,7 @@ export interface BuildOpts {
   allowOpen?: boolean;
 }
 
-export function buildApp(opts: BuildOpts) {
+export async function buildApp(opts: BuildOpts) {
   const db = openDb(opts.dbPath);
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux ?? new RealTmuxDriver();
@@ -185,6 +186,10 @@ export function buildApp(opts: BuildOpts) {
   // ELOWEN_CLI=elowen (the systemd unit does); a source checkout leaves it unset and falls back to running
   // this daemon's own CLI by absolute path via node. Single source — threaded to spawn/pilot/overseer.
   const cli = (process.env.ELOWEN_CLI) ?? `node ${cliPath}`;
+  // The SAME invocation as argv tokens (not a split of the shell string), for the direct tmux launch of an
+  // admin's chat terminal (BrainTerminalService → tmux `-- <argv>`). Prod's ELOWEN_CLI=elowen → ['elowen'];
+  // a checkout → ['node', <cliPath>]. (Space-bearing checkout paths would mis-tokenize; ours has none.)
+  const cliArgv = (process.env.ELOWEN_CLI) ? process.env.ELOWEN_CLI.split(' ') : ['node', cliPath];
   // Reuse the existing agent token across restarts so a daemon restart doesn't 401 in-flight agents
   // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
   const serviceToken = users.count() > 0 ? users.ensureAgentToken(users.list()[0]!.id) : '';
@@ -388,14 +393,26 @@ export function buildApp(opts: BuildOpts) {
   // The brain's credential store: OAuth tokens (Anthropic/Copilot/OpenAI accounts) persist here and
   // pi refreshes them in place. Lives next to the brain's cwd, never inside a repo checkout.
   const brainDir = (() => { const p = join(dirname(opts.dbPath), 'brain'); mkdirSync(p, { recursive: true }); return p; })();
-  const brainAuth = opts.dbPath === ':memory:' ? AuthStorage.inMemory() : AuthStorage.create(join(brainDir, 'auth.json'));
-  // Kimi is not one of PI's import-time built-ins, so it has to be registered before a sign-in can arrive
-  // — see registerKimiOAuth. Must stay ahead of BrainOAuthManager, which is what serves /brain/oauth/*.
-  registerKimiOAuth(brainAuth);
-  const brainOauth = new BrainOAuthManager(brainAuth);
+  // The brain's model runtime: a file-backed credential store (OAuth tokens persist + pi refreshes them in
+  // place) plus the built-in model catalog. A `:memory:` test DB gets an ephemeral in-memory store instead.
+  const brainAuthPath = opts.dbPath === ':memory:' ? undefined : join(brainDir, 'auth.json');
+  const brainRuntime = await ModelRuntime.create(
+    brainAuthPath ? { authPath: brainAuthPath } : { credentials: new InMemoryCredentialStore() },
+  );
+  // Synchronous credential existence/read (config + usage pollers) reads auth.json directly; token
+  // resolution (with refresh) goes through the runtime. Both no-op safely for an in-memory `:memory:` store.
+  const brainCreds: BrainCredentialAccess = {
+    get: (provider) => (brainAuthPath ? readStoredCredential(provider, brainAuthPath) : undefined),
+    getApiKey: async (provider) => (await brainRuntime.getAuth(provider))?.auth.apiKey,
+  };
+  // Kimi is not one of PI's import-time built-ins, so it has to be registered on the runtime before a
+  // sign-in can arrive — see registerKimiOAuth. Must stay ahead of BrainOAuthManager, which serves
+  // /brain/oauth/* over this same runtime.
+  registerKimiOAuth(brainRuntime);
+  const brainOauth = new BrainOAuthManager(brainRuntime, brainCreds);
   // Live provider resolver: adding a provider / connecting an account in Settings applies to the next
   // brain start without a daemon restart.
-  const brainConfig = () => brainConfigFromElowen(config, brainAuth);
+  const brainConfig = () => brainConfigFromElowen(config, brainCreds);
   // Central provider credential resolver exposed to plugins (voice STT/TTS, image gen) so they reuse the
   // operator's configured provider key instead of duplicating a secret. Reads live config each call.
   const resolveProvider = (id: string) => {
@@ -406,15 +423,6 @@ export function buildApp(opts: BuildOpts) {
   // provider credentials via the same resolver plugins get. Pure network service, no DB access.
   const embeddings = new EmbeddingService({ resolveProvider });
   const brainStore = new BrainStore(db);
-  const personalityStore = new PersonalityStore(db);
-  // SINGLE SOURCE for the personality system-prompt chunk: the brain (activePersonality seam) and the
-  // preview route both render through this ONE instance, so the chunk/persona can never drift. Reuses the
-  // exact prompts/users/agentName seams the brain uses.
-  const personalityService = new PersonalityService({
-    store: personalityStore, prompts, users,
-    userSettings: (userId) => userSettings.cliSettings(userId),
-    agentName: () => config.get().brain.agentName,
-  });
   const memoryStore = new MemoryStore(db);
   // ONE embedding-config mapper shared by the retrieval service AND the background embed queue, so both
   // read the same live config each call (a Settings change applies without a restart). Empty
@@ -458,7 +466,7 @@ export function buildApp(opts: BuildOpts) {
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
   // ONE shared plugin registry for the whole daemon (brain chat + elowen-exec workers + platforms):
-  // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
+  // loading is lazy (plugins load on first use, not at boot), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
   const pluginProvider = new PluginRegistryProvider(() => {
     const enabled = config.get().plugins.enabled;
@@ -515,7 +523,7 @@ export function buildApp(opts: BuildOpts) {
   const brain: BrainService | undefined = opts.dbPath !== ':memory:'
     ? new BrainService({
         store: brainStore, users, config: brainConfig, prompts, url: elowenCli.url,
-        authStorage: brainAuth,
+        runtime: brainRuntime,
         cwd: brainDir,
         projectPath: () => homeProject.path,
         plugins: pluginProvider,
@@ -528,7 +536,9 @@ export function buildApp(opts: BuildOpts) {
         // "Always allow" persistence behind the owner-chat approval prompt.
         permissions: (userId) => userSettings.permissionSettings(userId),
         saveAlwaysAllow: (userId, scope, pattern) => { userSettings.addPermissionAllowRule(userId, scope, pattern); },
-        activePersonality: (userId, platform) => personalityService.activeAppend(userId, platform),
+        // One global personality body per user (user_settings key 'personalityBody'), identical on every
+        // platform. Empty → undefined so nothing is appended and the system-prompt prefix stays byte-stable.
+        activePersonality: (userId) => { const body = userSettings.cliSettings(userId).personalityBody.trim(); return body ? body : undefined; },
         agentName: () => config.get().brain.agentName,
         maxSteps: () => config.get().brain.maxSteps,
         brainLimits: () => config.get().brain.limits,
@@ -568,6 +578,15 @@ export function buildApp(opts: BuildOpts) {
         memoryCategorizer, memoryCategoryStore,
       })
     : undefined;
+  // Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Its cwd is a
+  // neutral per-admin scratch dir alongside the DB (never a project checkout), mirroring the advisor dir.
+  // Constructed after `brain` (it needs store+users+url); the delete-conversation teardown is attached back
+  // onto the brain via a late setter to avoid a constructor cycle (mirrors spawn.attachBrainWorker).
+  const brainTerminal = opts.dbPath === ':memory:' ? undefined : new BrainTerminalService({
+    tmux, users, store: brainStore, url: elowenCli.url, cliArgv,
+    terminalDir: (id) => { const p = join(dirname(opts.dbPath), 'terminal', String(id)); mkdirSync(p, { recursive: true }); return p; },
+  });
+  if (brain && brainTerminal) brain.attachTerminalTeardown((userId, sessionId) => brainTerminal.stopForSession(userId, sessionId));
   // Wake the operator's conversation when a background command they started finishes ON ITS OWN (a killed
   // one is dropped before its close fires, so it never wakes). Delivered as an INTERNAL turn — no 'you'
   // bubble, and it runs after any in-flight turn — so a completed build/command nudges the agent instead of
@@ -604,7 +623,7 @@ export function buildApp(opts: BuildOpts) {
   // spawned CLI. Shares the brain's providers/auth/plugins; closes tasks through the same REST route.
   const brainWorkers = new BrainWorkerService({
     store: brainStore, tasks, bus, taskUsage,
-    config: brainConfig, authStorage: brainAuth, prompts,
+    config: brainConfig, runtime: brainRuntime, prompts,
     url: elowenCli.url, token: elowenCli.token,
     plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
   });
@@ -671,7 +690,7 @@ export function buildApp(opts: BuildOpts) {
   // same systemd path the web/CLI command uses. Built here (needs the units + marker), wired now.
   if (brain && restartDaemon) brain.restartHandler = restartDaemon;
 
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, restartDaemon, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
@@ -711,6 +730,9 @@ export function buildApp(opts: BuildOpts) {
     // Restart zombies on the brain side: goals still marked 'active' whose in-memory continuation timers
     // died with the process. Pause them so nothing falsely claims to be running (the user /goal resumes).
     try { brain?.reconcileGoalsOnBoot(); } catch (e) { log.error('reconcileGoalsOnBoot failed', e); }
+    // One-shot: reap chat terminals + tokens orphaned while the daemon was down (tmux died / conversation
+    // deleted), and kill stray `elowen-chat-*` panes with no binding. Periodic sweep is scheduled below.
+    void brainTerminal?.sweep().catch((e) => log.error('brain terminal sweep failed', e));
     // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. If this boot follows an
     // operator `/restart`, announce "back online" once the platforms are connected, then clear the marker
     // (so ordinary restarts/deploys stay quiet — only a user-triggered restart is echoed).
@@ -873,6 +895,11 @@ export function buildApp(opts: BuildOpts) {
     const stopSessionPurge = clock.setInterval(purgeStaleSessions, 3_600_000);
     // Sweep expired terminal-WS tickets so a burst of unredeemed tickets can't grow the map unbounded.
     const stopTicketSweep = clock.setInterval(() => tickets.sweep(clock.now()), 60_000);
+    // Reconcile chat terminals against live tmux: reap orphaned tokens/bindings and stray `elowen-chat-*`
+    // panes. Backstops the proactive teardown (self-exit `/quit`, delete-conversation) so nothing leaks.
+    const stopTerminalSweep = clock.setInterval(() => {
+      void brainTerminal?.sweep().catch((e) => log.error('brain terminal sweep failed', e));
+    }, 60_000);
     // PR feedback loop (no-op unless PR mode + open PRs): poll each open PR for fresh actionable review
     // feedback and, within the fix budget, route it through the pilot (1..N fix phases on the mission's
     // exec) then re-engage the mission so an agent applies them. Relay-only (no agent pilot) degrades to
@@ -912,7 +939,7 @@ export function buildApp(opts: BuildOpts) {
     const stopEmbedQueue = clock.setInterval(() => {
       void embedQueue.drain().catch((e) => log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopDecisionSweep(); stopTokenPurge(); stopEventPurge(); stopSessionPurge(); stopTicketSweep(); stopPrFeedback(); stopBrainWorkerWatchdog(); stopEmbedQueue(); };
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopDecisionSweep(); stopTokenPurge(); stopEventPurge(); stopSessionPurge(); stopTicketSweep(); stopTerminalSweep(); stopPrFeedback(); stopBrainWorkerWatchdog(); stopEmbedQueue(); };
   };
   return { app, startLoops, tickets, tmux };
 }

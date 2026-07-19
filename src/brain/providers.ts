@@ -1,5 +1,6 @@
-import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import { kimiOAuthProvider } from './kimiOAuth.js';
@@ -45,27 +46,16 @@ export const OAUTH_BUILTIN: Record<string, string> = {
   'oauth-kimi': 'kimi-coding',
 };
 
-/** Models exposed by the ChatGPT/OpenAI OAuth account. PI ships the stable core catalog; Elowen adds
- *  newly enabled account models here until they land in the pinned PI release. Registration preserves
- *  PI's exact descriptors for existing models and derives safe descriptors for the additions. */
-const OPENAI_CODEX_OAUTH_MODELS = [
-  'gpt-5.3-codex-spark',
-  'gpt-5.5',
-  'gpt-5.6-luna',
-  'gpt-image-1.5',
-  'gpt-image-2',
-  'gpt-5.4',
-  'gpt-5.4-mini',
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-] as const;
+/** Image models the ChatGPT/OpenAI OAuth account exposes for the GenerateImage tool but that the pinned PI
+ *  release does not list in the openai-codex catalog. The account's text models now ship natively, so only
+ *  these remain Elowen's to add — the copy-forward below keeps PI's descriptors for everything else. */
+const OPENAI_CODEX_OAUTH_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
 
 function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   const provider = 'openai-codex';
   const builtins = registry.getAll().filter((model) => model.provider === provider);
   const template = builtins.find((model) => model.id === 'gpt-5.5') ?? builtins[0];
-  const builtinOauth = registry.authStorage.getOAuthProviders().find((entry) => entry.id === provider);
-  if (!template || !builtinOauth) return;
+  if (!template) return; // PI dropped the provider — nothing to extend.
   const existing = new Set(builtins.map((model) => model.id));
   const models = builtins.map((model) => ({
     id: model.id,
@@ -97,35 +87,27 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
       compat: template.compat,
     });
   }
+  // No `oauth` here: registering an extension config over a built-in provider composes onto it, so the
+  // provider's native OAuth is preserved (composeOAuthAuth falls back to the base when the extension omits
+  // it). Re-supplying it would only be needed for a provider PI ships without one — see registerKimiCatalog.
   registry.registerProvider(provider, {
     name: 'OpenAI Codex',
     api: 'openai-codex-responses',
     baseUrl: 'https://chatgpt.com/backend-api',
-    oauth: builtinOauth,
     models,
   });
 }
 
-/** Models the Kimi Code account serves that the pinned PI release does not list yet. Same arrangement as
- *  OPENAI_CODEX_OAUTH_MODELS: PI owns the stable core, Elowen adds what the account can already reach. */
-const KIMI_OAUTH_MODELS = ['k3'] as const;
-
-/** Attach OAuth to PI's built-in `kimi-coding` provider and add the models it does not list yet.
- *
- *  Passing `oauth` through registerProvider is not a stylistic choice: npm always installs two physical
- *  copies of pi-ai (one nested under pi-coding-agent), each with its own OAuth registry Map, and only the
- *  nested one is what AuthStorage reads. ModelRegistry imports `registerOAuthProvider` from its own
- *  resolution, so registering this way lands in the right Map — importing it here would not.
- *
- *  registerProvider REPLACES the provider's model list, so PI's own descriptors are copied forward rather
- *  than dropped. `headers` is copied with them: Kimi pins its `User-Agent` per model, and losing it would
- *  present us to the endpoint as an unknown client. */
+/** Attach OAuth to PI's built-in `kimi-coding` provider, which PI ships API-key only. Registering an
+ *  extension config over the built-in composes onto it, so the `oauth` we supply here (via composeOAuthAuth,
+ *  since the base has none) is what makes it loginable. PI now ships the full account catalog natively
+ *  (k3 and its siblings, each already carrying Kimi's per-model `User-Agent`), so we copy those descriptors
+ *  forward unchanged — registerProvider REPLACES the model list — rather than injecting our own. */
 function registerKimiCatalog(registry: ModelRegistry): void {
   const provider = 'kimi-coding';
   const builtins = registry.getAll().filter((model) => model.provider === provider);
   const template = builtins[0];
   if (!template) return; // PI dropped the provider — nothing to extend, and inventing a catalog would guess.
-  const existing = new Set(builtins.map((model) => model.id));
   const models = builtins.map((model) => ({
     id: model.id,
     name: model.name,
@@ -140,24 +122,6 @@ function registerKimiCatalog(registry: ModelRegistry): void {
     maxTokens: model.maxTokens,
     compat: model.compat,
   }));
-  for (const id of KIMI_OAUTH_MODELS) {
-    if (existing.has(id)) continue;
-    const capabilities = descriptorCapabilities(provider, id);
-    models.push({
-      id,
-      name: id,
-      api: template.api,
-      baseUrl: template.baseUrl,
-      headers: template.headers,
-      reasoning: capabilities.reasoning,
-      thinkingLevelMap: capabilities.thinkingLevelMap,
-      input: template.input,
-      cost: template.cost,
-      contextWindow: template.contextWindow,
-      maxTokens: template.maxTokens,
-      compat: template.compat,
-    });
-  }
   registry.registerProvider(provider, {
     name: 'Kimi For Coding',
     api: template.api,
@@ -233,20 +197,17 @@ const windowFor = (cfg: BrainRuntimeConfig, providerId: string, model: string): 
   cfg.contextWindows?.[`${providerId}/${model}`];
 
 /**
- * Make Kimi loginable, once per process.
+ * Make Kimi loginable on `runtime`.
  *
- * PI's OAuth registry is module-global, and it seeds itself with Anthropic/Copilot/Codex at import time —
- * so those three are loginable the moment the daemon boots. Kimi is not: it only exists once
- * `registerKimiCatalog` has run. Nothing on the sign-in path builds a registry (`/brain/oauth/:type/start`
- * goes straight to `AuthStorage.login`), and on a daemon with no provider configured yet nothing else does
- * either — so without this call the FIRST Kimi sign-in, the one on a fresh install, is exactly the one that
- * fails with `Unknown OAuth provider: kimi-coding`. Call it at bootstrap, before any login can arrive.
- *
- * The throwaway registry is the point: registration is a side effect on that global map, so the instance
- * here is discarded while the Kimi provider stays registered for every AuthStorage in the process.
+ * PI seeds the built-in OAuth providers (Anthropic/Copilot/Codex) itself, so those are loginable the moment
+ * the daemon boots. `kimi-coding` PI ships API-key only, so its OAuth exists only once `registerKimiCatalog`
+ * has attached it to this runtime. The sign-in path (`/brain/oauth/:type/start`) drives `runtime.login`, and
+ * on a daemon with no provider configured yet nothing else builds a registry over this runtime — so without
+ * this call the FIRST Kimi sign-in, the one on a fresh install, fails with `Unknown OAuth provider:
+ * kimi-coding`. Call it at bootstrap, over the same runtime the login manager uses, before any login arrives.
  */
-export function registerKimiOAuth(authStorage: AuthStorage): void {
-  registerKimiCatalog(ModelRegistry.inMemory(authStorage));
+export function registerKimiOAuth(runtime: ModelRuntime): void {
+  registerKimiCatalog(new ModelRegistry(runtime));
 }
 
 /** The registry provider name a config entry registers/reads under. Custom endpoints get a stable
@@ -255,13 +216,28 @@ export function registryProviderName(p: BrainProviderEntry): string {
   return OAUTH_BUILTIN[p.type] ?? `elowen-${p.id}`;
 }
 
-/** Build the brain's ModelRegistry from the configured providers. Custom endpoints are registered with
- *  inline API keys; OAuth entries need no registration (built-in catalog + AuthStorage credential). */
-export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthStorage = AuthStorage.inMemory()): ModelRegistry {
+/** A credential-less ModelRuntime for reading the built-in catalog and Elowen's descriptor profiles —
+ *  no auth.json, so it never touches or resolves an operator credential. Used to inspect what a provider
+ *  COULD serve (settings pickers, catalog listing) and by tests that build a throwaway registry. */
+export function inMemoryModelRuntime(): Promise<ModelRuntime> {
+  return ModelRuntime.create({ credentials: new InMemoryCredentialStore() });
+}
+
+/** Build the brain's ModelRegistry from the configured providers, over a shared ModelRuntime (the credential
+ *  store + built-in catalog). Custom endpoints are registered with inline API keys; OAuth entries need no
+ *  registration (built-in catalog + the runtime's stored credential). */
+export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntime): ModelRegistry {
   // pi-ai's openai client discards OpenRouter's reported `usage.cost`; this fetch-layer meter recovers it.
   // Idempotent, and co-located with provider setup so it's always active before the first brain request.
   installOpenRouterMeter();
-  const registry = ModelRegistry.inMemory(authStorage);
+  const registry = new ModelRegistry(runtime);
+  // The runtime is shared across sessions, so a custom endpoint deleted from config would otherwise linger
+  // registered — with its API key — until a daemon restart. Drop any `elowen-*` provider not in the current
+  // config before (re-)registering, so the registry reflects exactly today's custom endpoints.
+  const wanted = new Set(cfg.providers.map(registryProviderName));
+  for (const id of registry.getRegisteredProviderIds()) {
+    if (id.startsWith('elowen-') && !wanted.has(id)) registry.unregisterProvider(id);
+  }
   extendOpenAiCodexCatalog(registry);
   registerKimiCatalog(registry);
   for (const p of cfg.providers) {
@@ -332,14 +308,17 @@ function resolveEntryModel(
   const model = registry.find(providerName, modelId);
   if (model) return model;
   if (entry.type === 'openai' || entry.type === 'anthropic') {
-    // Not in the advertised list — register it ad hoc so a hand-typed model id still works.
+    // Not in the advertised list — register it ad hoc so a hand-typed model id still works. Mirror
+    // buildBrainRegistry's relay-safe compat: registerProvider REPLACES the provider on the shared runtime,
+    // so omitting it here would strip `system`-role safety for THIS and every other session on that provider.
+    const compat = entry.type === 'openai' && openAiApiFor(entry) === 'openai-completions' ? RELAY_SAFE_COMPAT : undefined;
     registry.registerProvider(providerName, {
       name: entry.label,
       api: entry.type === 'openai' ? openAiApiFor(entry) : 'anthropic-messages',
       baseUrl: entry.type === 'openai' ? normOpenAiBase(entry.baseUrl || 'https://api.openai.com/v1') : (entry.baseUrl || 'https://api.anthropic.com'),
       apiKey: entry.apiKey ?? undefined,
       headers: { ...APP_IDENTITY_HEADERS },
-      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(providerName, m, windowFor(cfg, entry.id, m))),
+      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(providerName, m, windowFor(cfg, entry.id, m), compat)),
     });
     const added = registry.find(providerName, modelId);
     if (added) return added;

@@ -36,7 +36,7 @@ export type BrainEvent =
    *  the matching `tool` event, which renders the marker, ends it. Purely a live hint: no durable row, and
    *  a client may ignore it. Authoring is atomic per turn (PI writes every call, then executes), so this
    *  needs no id — the first `tool` of the turn clears it. */
-  | { type: 'tool_authoring' }
+  | { type: 'tool_authoring'; name?: string }
   /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
    *  (single source; clients render it, falling back to a generic glyph when absent). */
   | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
@@ -314,7 +314,12 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
   const anyE = e as {
     type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } }; isError?: boolean;
     toolCallId?: string; partialResult?: unknown;
-    assistantMessageEvent?: { type?: string; delta?: string };
+    // toolcall_start additionally carries the in-progress assistant message: the tool NAME is already on
+    // the partial block at `contentIndex` (only its arguments stream in later), so we thread it out.
+    assistantMessageEvent?: {
+      type?: string; delta?: string; contentIndex?: number;
+      partial?: { content?: { type?: string; name?: string }[] };
+    };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
     // compaction_end carries its outcome: `result` is the CompactionResult on success, undefined on a
     // no-op/failure; `aborted` marks a cancelled run. Both let the status line avoid a false success.
@@ -331,8 +336,14 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
     if (ev?.type === 'thinking_delta' && ev.delta) return { type: 'reasoning', delta: ev.delta };
     // The model started composing a tool call — surface the authoring window as a live "working" hint.
     // Every provider adapter emits `toolcall_start` before the arguments stream; the delta events after it
-    // are the args accumulating and stay dropped (the marker, not the raw JSON, is what renders).
-    if (ev?.type === 'toolcall_start') return { type: 'tool_authoring' };
+    // are the args accumulating and stay dropped (the marker, not the raw JSON, is what renders). The tool
+    // NAME is already on the partial block at start (only its arguments stream in later), so thread it out
+    // to let the hint show the real tool (e.g. "Write") instead of a generic placeholder.
+    if (ev?.type === 'toolcall_start') {
+      const block = typeof ev.contentIndex === 'number' ? ev.partial?.content?.[ev.contentIndex] : undefined;
+      const name = block?.type === 'toolCall' && typeof block.name === 'string' ? block.name : undefined;
+      return name ? { type: 'tool_authoring', name } : { type: 'tool_authoring' };
+    }
     return null;
   }
   // Runtime notices so a stalled turn explains itself instead of hanging silently on the spinner.

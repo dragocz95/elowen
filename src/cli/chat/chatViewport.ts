@@ -40,6 +40,8 @@ export interface ChatViewportState {
    * "writing tool call" hint. Owned by the frame loop (it holds the clock); the turn only knows it is
    * composing, not for how long. */
   composingMarkerReady?: boolean;
+  /** Monotonic frame counter (owned by the frame loop's clock) that advances the composing spinner. */
+  spinnerFrame?: number;
   /** Render the model's Thought rows (default true) — `/reasoning show` toggles it. */
   showThoughts?: boolean;
 }
@@ -775,6 +777,7 @@ export class ChatViewport implements Component {
       showThoughts: this.state.showThoughts !== false,
       thinkingSeconds: this.state.thinkingSeconds,
       composingMarkerReady: this.state.composingMarkerReady === true,
+      spinnerFrame: this.state.spinnerFrame ?? 0,
       expandedThoughts: this.expandedThoughts,
       expandedTools: this.expandedTools,
     });

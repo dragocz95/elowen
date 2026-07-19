@@ -19,7 +19,9 @@ interface TestAdapter {
   pendingMenus: Map<string, unknown>;
   control(api: {
     status?: (ref: unknown) => { provider?: string; model: string } | null;
-    setFast: (ref: unknown, on?: boolean) => { fast: boolean; fastAvailable: boolean } | null;
+    setFast?: (ref: unknown, on?: boolean) => { fast: boolean; fastAvailable: boolean } | null;
+    listContext?: (ref: unknown, sender: string, opts: unknown) => { items: { id: string; title: string; model: string }[]; total: number; hasMore: boolean } | null;
+    bindContext?: (ref: unknown, sender: string, sessionId: string) => Promise<{ title: string }>;
   }): void;
   handleCommand(chatJid: string, senderJid: string, text: string): Promise<boolean>;
   handleTextReply(chatJid: string, senderJid: string, text: string, message: unknown): Promise<boolean>;
@@ -187,5 +189,48 @@ describe('whatsapp /fast capability gate', () => {
     const { adapter, sent } = await makeAdapter(models, { model: { provider: 'openai', model: 'gpt-5.4' } }, 'en', []);
     expect(await adapter.handleCommand(CHAT, CHAT, '/fast')).toBe(false);
     expect(sent).toEqual([]);
+  });
+});
+
+describe('whatsapp paged menus + /context', () => {
+  const models20 = Array.from({ length: 20 }, (_, i) => ({ provider: 'p', providerLabel: 'Prov', model: `model-${i}` }));
+
+  it('/model pages the FULL catalog (no .slice(0,20) truncation) and picks a model from a later page', async () => {
+    const { adapter, chats, sent } = await makeAdapter(models20);
+    await adapter.handleCommand(CHAT, CHAT, '/model');
+    // Page 1/2: 18 numbered models + a "Next page" nav entry (numbered 19) — nothing dropped.
+    expect(sent[0]).toContain('(1/2)');
+    expect(sent[0]).toContain('19. *➡️ Next page*');
+    expect((adapter.pendingMenus.get(CHAT) as { options: unknown[] }).options).toHaveLength(20);
+    // Selecting the nav entry re-renders page 2.
+    expect(await adapter.handleTextReply(CHAT, CHAT, '19', {})).toBe(true);
+    expect(sent.at(-1)).toContain('(2/2)');
+    expect(sent.at(-1)).toContain('1. *model-18*');
+    // Pick the first row of page 2 → model-18 (index 18), only reachable because the list is not truncated.
+    expect(await adapter.handleTextReply(CHAT, CHAT, '1', {})).toBe(true);
+    expect(chats[CHAT]).toMatchObject({ model: { provider: 'p', model: 'model-18' } });
+  });
+
+  it('/context lists the caller\'s own conversations and binds the pick with a privacy warning', async () => {
+    const { adapter, sent } = await makeAdapter([]);
+    const listContext = vi.fn(() => ({ items: [{ id: 'brain-7-1', title: 'Refactor', model: 'gpt-5' }], total: 1, hasMore: false }));
+    const bindContext = vi.fn(async () => ({ title: 'Refactor' }));
+    adapter.control({ listContext, bindContext });
+    expect(await adapter.handleCommand(CHAT, CHAT, '/context')).toBe(true);
+    expect(listContext).toHaveBeenCalledWith({ platform: 'whatsapp', channelId: `${CHAT}#0` }, CHAT, { offset: 0, limit: 200 });
+    expect(sent.at(-1)).toContain('1. *Refactor*');
+    expect(await adapter.handleTextReply(CHAT, CHAT, '1', {})).toBe(true);
+    expect(bindContext).toHaveBeenCalledWith({ platform: 'whatsapp', channelId: `${CHAT}#0` }, CHAT, 'brain-7-1');
+    expect(sent.at(-1)).toContain('Refactor');
+    expect(sent.at(-1)).toContain('continues');
+  });
+
+  it('/context is operator-gated (a non-admin sender is refused)', async () => {
+    const { adapter, sent } = await makeAdapter([]);
+    const listContext = vi.fn();
+    adapter.control({ listContext, bindContext: vi.fn() });
+    expect(await adapter.handleCommand(CHAT, 'stranger@s.whatsapp.net', '/context')).toBe(true);
+    expect(listContext).not.toHaveBeenCalled();
+    expect(sent.at(-1)).toContain('Only the operator');
   });
 });

@@ -11,7 +11,7 @@ import type { LiveBrain } from '../session/liveBrain.js';
 import { queueDisplayItems } from '../session/queueMirror.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
-import { isNonUserSession } from '../sessionId.js';
+import { isNonUserSession, defaultUserSessionId } from '../sessionId.js';
 import { terminalizeWorkflow } from '../workflowRuns.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
@@ -19,6 +19,24 @@ import type { ConversationLifecycle } from './lifecycle.js';
 import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
+
+/** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
+export interface SessionListItem { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }
+
+/** Opt-in slice for the session listings. Both fields are already clamped to non-negative ints by the
+ *  route; absent → the full unpaginated list (the historical bare-array response). */
+export interface SessionPageOpts { limit?: number; offset?: number }
+
+/** A paginated listing: the requested window plus the totals a client needs to page. */
+export interface SessionPage<T> { items: T[]; total: number; hasMore: boolean }
+
+/** Slice `all` by `opts` (offset/limit already non-negative ints; missing limit means "to the end").
+ *  `hasMore` is computed from the real slice length so an out-of-range offset reports false, not a lie. */
+function paginate<T>(all: T[], opts?: SessionPageOpts): SessionPage<T> {
+  const offset = opts?.offset ?? 0;
+  const items = opts?.limit === undefined ? all.slice(offset) : all.slice(offset, offset + opts.limit);
+  return { items, total: all.length, hasMore: offset + items.length < all.length };
+}
 
 interface StatusServiceDeps {
   store: BrainStore;
@@ -30,7 +48,7 @@ interface StatusServiceDeps {
   lifecycle: ConversationLifecycle;
   permissions: PermissionApprovalService;
   config: BrainDeps['config'];
-  authStorage?: BrainDeps['authStorage'];
+  runtime: BrainDeps['runtime'];
   /** Injected for tests; defaults to PI's createAgentSession (smoke test only). */
   createSession?: typeof createAgentSession;
   /** Working dir for the throwaway smoke-test session. Default: process.cwd(). */
@@ -92,7 +110,7 @@ export class BrainStatusService {
     const cfg = this.currentConfig();
     if (!cfg) return null;
     try {
-      const registry = buildBrainRegistry(cfg, this.d.authStorage);
+      const registry = buildBrainRegistry(cfg, this.d.runtime);
       return resolveBrainModel(registry, cfg).id;
     } catch { return null; }
   }
@@ -107,7 +125,7 @@ export class BrainStatusService {
     if (!cfg) return { ok: false, error: 'no brain provider configured — add one in Settings → Brain' };
     let session: import('@earendil-works/pi-coding-agent').AgentSession | undefined;
     try {
-      const registry = buildBrainRegistry(cfg, this.d.authStorage);
+      const registry = buildBrainRegistry(cfg, this.d.runtime);
       const selection = sel?.providerId || sel?.model ? { provider: sel?.providerId, model: sel?.model } : undefined;
       const resolved = resolveBrainModel(registry, cfg, selection);
       // Cap the output tiny — a connectivity probe needs one word, not a paragraph.
@@ -121,7 +139,7 @@ export class BrainStatusService {
       const create = this.d.createSession ?? createAgentSession;
       ({ session } = await create({
         cwd, sessionManager: SessionManager.inMemory(cwd),
-        modelRegistry: registry, model, resourceLoader,
+        modelRuntime: this.d.runtime, model, resourceLoader,
         customTools: [], tools: [], noTools: 'all',
       }));
       const live = session;
@@ -176,18 +194,37 @@ export class BrainStatusService {
     };
   }
 
-  /** The user's conversations (channel sessions excluded), most recent first, with live/active flags
-   *  and how many client streams currently hold each one (pickers show an "attached" marker so the
-   *  user sees which conversations another terminal/dock is working in). */
-  listSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }[] {
+  /** The user's conversations (channel sessions excluded), most recent first, with live/active flags and
+   *  how many client streams currently hold each one — the shared, unpaginated source for the public
+   *  listings below. A conversation begins when the user says something, not when a client opens one: the
+   *  CLI mints a session the moment it launches, and listing that row would put an empty, untitled
+   *  conversation in the picker for a chat nobody had typed into yet, so unspoken shells are withheld. */
+  private ownedSessions(userId: number): SessionListItem[] {
     const activeId = this.d.lifecycle.activeSessionId(userId);
-    // A conversation begins when the user says something, not when a client opens one. The CLI starts a
-    // session the moment it launches, and listing that row put an empty, untitled conversation in the
-    // picker for a chat nobody had typed into yet.
     const unspoken = this.d.store.unspokenSessionIds(userId);
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
       .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id) }));
+  }
+
+  /** The user's conversations, most recent first (pickers show an "attached" marker so the user sees
+   *  which conversations another terminal/dock is working in). Pagination is opt-in and applied AFTER the
+   *  identity/unspoken filter: omit `opts` for the historical bare array (every current caller relies on
+   *  it), pass it for a `{ items, total, hasMore }` window. */
+  listSessions(userId: number): SessionListItem[];
+  listSessions(userId: number, opts: SessionPageOpts): SessionPage<SessionListItem>;
+  listSessions(userId: number, opts?: SessionPageOpts): SessionListItem[] | SessionPage<SessionListItem> {
+    const all = this.ownedSessions(userId);
+    return opts ? paginate(all, opts) : all;
+  }
+
+  /** The caller's conversations eligible to bind into a channel (the /context picker). Same identity
+   *  scoping as listSessions, minus the bare default `brain-<uid>` — re-keying it into a channel slot
+   *  would strip the user's default id for their next fresh start, so it is never offered. Always
+   *  paginated (the picker's only consumer). bindChannelContext re-checks the exclusion server-side. */
+  listContextSessions(userId: number, opts?: SessionPageOpts): SessionPage<SessionListItem> {
+    const all = this.ownedSessions(userId).filter((s) => s.id !== defaultUserSessionId(userId));
+    return paginate(all, opts);
   }
 
   /** Fulltext search across the user's stored conversations (channel sessions included — they carry

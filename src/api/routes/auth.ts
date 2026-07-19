@@ -120,14 +120,14 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', autoRecall: true, autoSave: true };
+    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', autoRecall: true, autoSave: true };
     return c.json({ ...s, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoSave?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoSave?: boolean } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoSave?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoSave?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -143,6 +143,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.telegramUserId === 'string') patch.telegramUserId = b.telegramUserId.trim(); // store validates the numeric-id shape
     // Communication style: only accept a known style; anything else is silently ignored.
     if (typeof b.advisorStyle === 'string' && ADVISOR_STYLES.includes(b.advisorStyle as never)) patch.advisorStyle = b.advisorStyle;
+    // The global personality body: free-form instructions appended to the system prompt on every platform.
+    // Empty clears it. Capped so an oversized body can't bloat the system prompt / DB row.
+    if (typeof b.personalityBody === 'string') patch.personalityBody = b.personalityBody.slice(0, 100_000);
     // A complete provider+model pick must be on the caller's allow-list (clearing is always fine).
     if (patch.model && patch.modelProvider
       && !isExecAllowedForUser(u, d.config.get().allowedExecs, elowenExec(patch.modelProvider, patch.model))) {
@@ -172,8 +175,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       throw e;
     }
     // Apply live: a running brain restarts with the new settings (history rehydrates from SQLite),
-    // so a model change takes effect immediately instead of on the next daemon/chat restart.
-    await d.brain?.restart(u.id);
+    // so a model change takes effect immediately instead of on the next daemon/chat restart. A changed
+    // personality body feeds the global persona on EVERY platform, so it also drops the shared channel
+    // sessions (Discord) via applyPersonalityChange — which itself restarts owner chat, so we don't also
+    // call restart. An unrelated save keeps the lighter owner-chat-only restart.
+    if (patch.personalityBody !== undefined) await d.brain?.applyPersonalityChange(u.id);
+    else await d.brain?.restart(u.id);
     return c.json({ ...d.userSettings.cliSettings(u.id), serverDefault: serverDefaultModel() });
   });
   // Per-user web-terminal appearance (xterm palette/font/cursor) — self-service, kept separate from
@@ -291,8 +298,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (users.isAdmin(Number(c.req.param('id')))) return c.json({ error: 'cannot delete the admin' }, 400);
     const id = Number(c.req.param('id'));
     users.delete(id);
-    d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings so no orphan rows linger
-    d.personalityStore?.removeForUser(id); // drop the user's personality profiles + active pointers so no orphan rows linger
+    d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings (incl. personalityBody) so no orphan rows linger
     d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events
     d.memoryCategoryStore?.removeForUser(id); // drop the user's memory categories so no orphan rows linger
     return c.json({ ok: true });

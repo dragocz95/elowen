@@ -1,9 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
-import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor } from '../../src/brain/providers.js';
+import { beforeEach, describe, it, expect } from 'vitest';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities } from '../../src/brain/modelCapabilities.js';
 import { KIMI_CLI_VERSION } from '../../src/brain/kimiOAuth.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
+
+// A fresh runtime per test: buildBrainRegistry re-registers the kimi-coding provider, and that copy-forward
+// reads the provider's live descriptors — running it twice over one runtime would copy the already-consumed
+// (header-nulled) descriptors, so each test needs its own credential-less runtime, as the old per-test
+// in-memory registries gave.
+let runtime: ModelRuntime;
+beforeEach(async () => { runtime = await inMemoryModelRuntime(); });
 
 const cfg: BrainRuntimeConfig = {
   providers: [
@@ -14,14 +21,14 @@ const cfg: BrainRuntimeConfig = {
 
 describe('brain providers', () => {
   it('resolves the first provider + first model by default', () => {
-    const reg = buildBrainRegistry(cfg);
+    const reg = buildBrainRegistry(cfg, runtime);
     const m = resolveBrainModel(reg, cfg);
     expect(m.id).toBe('gpt-x');
     expect(m.provider).toBe('elowen-relay');
   });
 
   it('resolves an explicit provider + model selection', () => {
-    const reg = buildBrainRegistry(cfg);
+    const reg = buildBrainRegistry(cfg, runtime);
     expect(resolveBrainModel(reg, cfg, { provider: 'ant', model: 'claude-x' }).id).toBe('claude-x');
     expect(resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }).id).toBe('kimi');
   });
@@ -31,7 +38,7 @@ describe('brain providers', () => {
       id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
       models: ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol'], apiKey: null,
     }] };
-    const registry = buildBrainRegistry(oauth);
+    const registry = buildBrainRegistry(oauth, runtime);
 
     const luna = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-luna' });
     expect(luna.providerId).toBe('codex');
@@ -52,7 +59,7 @@ describe('brain providers', () => {
       id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
       models: ['removed-default-model'], apiKey: null,
     }] };
-    const route = resolveBrainModelRoute(buildBrainRegistry(oauth), oauth, {
+    const route = resolveBrainModelRoute(buildBrainRegistry(oauth, runtime), oauth, {
       provider: 'codex', model: 'gpt-5.6-luna',
     });
     expect(route.model.id).toBe('gpt-5.6-luna');
@@ -64,7 +71,7 @@ describe('brain providers', () => {
       id: 'proxy', label: 'Proxy', type: 'openai', baseUrl: 'https://proxy.example/v1',
       models: ['stable-summary-model', 'preview-chat-model'], apiKey: 'k',
     }] };
-    const route = resolveBrainModelRoute(buildBrainRegistry(proxy), proxy, {
+    const route = resolveBrainModelRoute(buildBrainRegistry(proxy, runtime), proxy, {
       provider: 'proxy', model: 'preview-chat-model',
     });
     expect(route.model.id).toBe('preview-chat-model');
@@ -72,7 +79,7 @@ describe('brain providers', () => {
   });
 
   it('does not advertise speculative reasoning controls for an unknown custom model', () => {
-    const reg = buildBrainRegistry(cfg);
+    const reg = buildBrainRegistry(cfg, runtime);
     const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' });
     expect(m.reasoning).toBe(false);
     expect(m.thinkingLevelMap).toBeUndefined();
@@ -88,7 +95,7 @@ describe('brain providers', () => {
       id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'https://relay.example.test/v1',
       models: ['oe-deepseek-v4-flash', 'plain-chat-model'], apiKey: 'k',
     }] };
-    const reg = buildBrainRegistry(relay);
+    const reg = buildBrainRegistry(relay, runtime);
     const reasoner = resolveBrainModel(reg, relay, { provider: 'relay', model: 'oe-deepseek-v4-flash' });
     expect(reasoner.reasoning).toBe(true); // the trigger: only reasoning models take the developer path
     expect(reasoner.compat?.supportsDeveloperRole).toBe(false);
@@ -104,7 +111,7 @@ describe('brain providers', () => {
     }] };
     // It registers as openai-responses, where the developer role is correct — the pin must not reach it.
     expect(openAiApiFor(openai.providers[0]!)).toBe('openai-responses');
-    const m = resolveBrainModel(buildBrainRegistry(openai), openai, { provider: 'oai', model: 'gpt-5.5' });
+    const m = resolveBrainModel(buildBrainRegistry(openai, runtime), openai, { provider: 'oai', model: 'gpt-5.5' });
     expect(m.compat?.supportsDeveloperRole).toBeUndefined();
   });
 
@@ -112,7 +119,7 @@ describe('brain providers', () => {
     const known: BrainRuntimeConfig = {
       providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.4'], apiKey: 'k' }],
     };
-    const m = resolveBrainModel(buildBrainRegistry(known), known);
+    const m = resolveBrainModel(buildBrainRegistry(known, runtime), known);
     expect(m.thinkingLevelMap).toMatchObject({ minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' });
     expect(modelCapabilities(m).labels.xhigh).toBe('ultra');
   });
@@ -122,7 +129,7 @@ describe('brain providers', () => {
       { id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6-sol'], apiKey: 'k' },
       { id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: ['claude-sonnet-5'], apiKey: 'k' },
     ] };
-    const registry = buildBrainRegistry(profiled);
+    const registry = buildBrainRegistry(profiled, runtime);
     const openai = modelCapabilities(resolveBrainModel(registry, profiled, { provider: 'oa' }));
     const claude = modelCapabilities(resolveBrainModel(registry, profiled, { provider: 'ant' }));
     expect(openai.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -136,7 +143,7 @@ describe('brain providers', () => {
       id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com',
       models: ['claude-sonnet-4-6'], apiKey: 'k',
     }] };
-    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled), profiled)).levels)
+    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled, runtime), profiled)).levels)
       .toEqual(['minimal', 'low', 'medium', 'high', 'max']);
   });
 
@@ -145,7 +152,7 @@ describe('brain providers', () => {
       id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com',
       models: ['claude-opus-4.8'], apiKey: 'k',
     }] };
-    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled), profiled)).levels)
+    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled, runtime), profiled)).levels)
       .toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   });
 
@@ -154,7 +161,7 @@ describe('brain providers', () => {
       id: 'router', label: 'Router', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1',
       models: ['openai/gpt-5.6-sol', 'anthropic/claude-sonnet-5'], apiKey: 'k',
     }] };
-    const registry = buildBrainRegistry(namespaced);
+    const registry = buildBrainRegistry(namespaced, runtime);
     expect(modelCapabilities(resolveBrainModel(registry, namespaced, { model: 'openai/gpt-5.6-sol' })).levels).toContain('max');
     expect(modelCapabilities(resolveBrainModel(registry, namespaced, { model: 'anthropic/claude-sonnet-5' })).reasoning).toBe(true);
   });
@@ -163,9 +170,9 @@ describe('brain providers', () => {
     const oauth: BrainRuntimeConfig = {
       providers: [{ id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5'], apiKey: null }],
     };
-    const m = resolveBrainModel(buildBrainRegistry(oauth), oauth);
+    const m = resolveBrainModel(buildBrainRegistry(oauth, runtime), oauth);
     expect(modelCapabilities(m).fast).toBe(true);
-    const regular = resolveBrainModel(buildBrainRegistry(cfg), cfg);
+    const regular = resolveBrainModel(buildBrainRegistry(cfg, runtime), cfg);
     expect(modelCapabilities(regular).fast).toBe(false);
   });
 
@@ -202,21 +209,22 @@ describe('brain providers', () => {
   describe('Kimi Code (kimi-coding)', () => {
     const empty: BrainRuntimeConfig = { providers: [] };
 
-    it('registers the OAuth provider where AuthStorage will look for it', async () => {
-      // The trap this guards: npm installs two physical copies of pi-ai, each with its own OAuth registry,
-      // and only the one nested under pi-coding-agent is the registry AuthStorage reads. Registering via
-      // registerProvider({ oauth }) is what lands in the right one; importing registerOAuthProvider
-      // directly would silently register into the copy nobody reads and login would 404.
-      const auth = AuthStorage.inMemory();
-      buildBrainRegistry(empty, auth);
-      expect(auth.getOAuthProviders().map((p) => p.id)).toContain('kimi-coding');
+    it('attaches the Kimi OAuth provider onto the runtime a login reads from', async () => {
+      // PI 0.80.8 dropped AuthStorage; the ModelRuntime is now the single registry a login reads. PI
+      // ships kimi-coding as API-key only, so its OAuth exists only once buildBrainRegistry re-registers
+      // the provider with `oauth` attached — the original intent: land Kimi's OAuth where sign-in looks
+      // for it, so `/brain/oauth/kimi/start` doesn't 404 with "Unknown OAuth provider".
+      const freshRuntime = await inMemoryModelRuntime();
+      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth).toBeUndefined();
+      buildBrainRegistry(empty, freshRuntime);
+      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth).toBeDefined();
     });
 
 
     it("keeps PI's built-in models and adds the ones the account can reach", () => {
       // registerProvider replaces a provider's model list wholesale, so the builtins are only still here
       // because we copy them forward.
-      const ids = buildBrainRegistry(empty).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
+      const ids = buildBrainRegistry(empty, runtime).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
       expect(ids).toEqual(expect.arrayContaining(['k2p7', 'kimi-for-coding', 'kimi-k2-thinking']));
       expect(ids).toContain('k3');
     });
@@ -229,7 +237,7 @@ describe('brain providers', () => {
       // Both a copied builtin AND an added model are checked because they take their headers from
       // different places (the builtin's own descriptor vs the template's). Testing only one leaves the
       // other free to lose its User-Agent green.
-      const reg = buildBrainRegistry(empty);
+      const reg = buildBrainRegistry(empty, runtime);
       const wireAgent = async (id: string) => {
         const model = reg.getAll().find((m) => m.provider === 'kimi-coding' && m.id === id);
         const resolved = await (reg as unknown as {
@@ -242,27 +250,30 @@ describe('brain providers', () => {
     });
 
     it('knows k3 reasons and offers only the efforts Kimi documents', () => {
-      // K3 always thinks; the catalog grades it low/high/max (not medium/xhigh). Regression guard: with
-      // kimi-for-coding missing from the capability catalog, k3 read as a non-reasoning model.
-      const model = buildBrainRegistry(empty).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
+      // K3 always thinks; registerKimiCatalog copies PI 0.80.10's NATIVE k3 descriptor forward (Elowen no
+      // longer imposes its own effort grading), and that descriptor documents a single usable effort —
+      // `max` — with every lesser level unsupported (null). Regression guard: k3 must still read as a
+      // reasoning model offering exactly Kimi's documented effort, not a non-reasoning model.
+      const model = buildBrainRegistry(empty, runtime).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
       expect(model?.reasoning).toBe(true);
-      expect(model?.thinkingLevelMap?.low).toBe('low');
-      expect(model?.thinkingLevelMap?.high).toBe('high');
       expect(model?.thinkingLevelMap?.max).toBe('max');
+      expect(model?.thinkingLevelMap?.minimal).toBeNull();
+      expect(model?.thinkingLevelMap?.low).toBeNull();
       expect(model?.thinkingLevelMap?.medium).toBeNull();
+      expect(model?.thinkingLevelMap?.high).toBeNull();
       expect(model?.thinkingLevelMap?.xhigh).toBeNull();
     });
   });
 
   it('registers a hand-typed model id on the fly for a custom endpoint', () => {
-    const reg = buildBrainRegistry(cfg);
+    const reg = buildBrainRegistry(cfg, runtime);
     const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'brand/new-model' });
     expect(m.id).toBe('brand/new-model');
     expect(m.provider).toBe('elowen-relay');
   });
 
   it('keeps the /v1 segment in the openai base url (client appends /chat/completions)', () => {
-    const reg = buildBrainRegistry(cfg);
+    const reg = buildBrainRegistry(cfg, runtime);
     const m = resolveBrainModel(reg, cfg);
     expect(m.baseUrl).toBe('https://relay.example.test/v1');
   });
@@ -275,26 +286,26 @@ describe('brain providers', () => {
     expect(openAiApiFor({ baseUrl: 'https://api.openai.com/v1', api: 'openai-completions' })).toBe('openai-completions');
     expect(openAiApiFor({ baseUrl: 'https://ai.example/v1', api: 'openai-responses' })).toBe('openai-responses');
     // …and the registry actually registers the model under that API.
-    const reg = buildBrainRegistry({ providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-x'], apiKey: 'k' }] });
+    const reg = buildBrainRegistry({ providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-x'], apiKey: 'k' }] }, runtime);
     expect(reg.find('elowen-oa', 'gpt-x')?.api).toBe('openai-responses');
   });
 
   it('throws a clear error with no providers configured', () => {
     const empty: BrainRuntimeConfig = { providers: [] };
-    const reg = buildBrainRegistry(empty);
+    const reg = buildBrainRegistry(empty, runtime);
     expect(() => resolveBrainModel(reg, empty)).toThrow(/no brain provider/);
   });
 
   it('applies a per-model context-window override (keyed providerId/model), else the default', () => {
     const withWindows: BrainRuntimeConfig = { ...cfg, contextWindows: { 'relay/kimi': 32000 } };
-    const reg = buildBrainRegistry(withWindows);
+    const reg = buildBrainRegistry(withWindows, runtime);
     expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'kimi' }).contextWindow).toBe(32000);
     expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'gpt-x' }).contextWindow).toBe(200000);
   });
 
   it('applies the override to an ad-hoc (hand-typed) model registered on the fly', () => {
     const withWindows: BrainRuntimeConfig = { ...cfg, contextWindows: { 'relay/typed-x': 16000 } };
-    const reg = buildBrainRegistry(withWindows);
+    const reg = buildBrainRegistry(withWindows, runtime);
     expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'typed-x' }).contextWindow).toBe(16000);
   });
 });

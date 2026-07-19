@@ -311,11 +311,6 @@ export class ChannelSessionService {
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
           thinkingLevel: opts.thinkingLevel,
           fast: opts.fast,
-          // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves
-          // the OWNER's 'discord' active profile (never the per-sender id: that persona would leak to the
-          // next sender in the shared session). 'discord' is the only locked channel platform, so it's
-          // hardcoded here rather than threaded through ChannelSendOpts.
-          platform: 'discord',
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAtPct: DEFAULT_AUTO_COMPACT_PCT,
         });

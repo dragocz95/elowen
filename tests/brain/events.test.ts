@@ -66,7 +66,13 @@ describe('compaction status notice (single source of truth, no false success)', 
 });
 
 describe('message_update → assistant stream events', () => {
-  it('surfaces the start of a tool call as a live authoring hint', () => {
+  it('surfaces the start of a tool call as a live authoring hint, carrying the tool name from the partial block', () => {
+    expect(ev({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1,
+      partial: { content: [{ type: 'text', text: 'ok' }, { type: 'toolCall', id: 'c1', name: 'Write', arguments: {} }] } } }))
+      .toEqual({ type: 'tool_authoring', name: 'Write' });
+  });
+
+  it('still surfaces the authoring hint without a name when the partial block is not yet a resolved tool call', () => {
     expect(ev({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1 } }))
       .toEqual({ type: 'tool_authoring' });
   });

@@ -17,6 +17,11 @@ export interface BrainSessionRow {
 export interface BrainMessageRow {
   id: string; session_id: string; parent_id: string | null; role: string; content: string; created_at: string;
 }
+/** Durable binding for an admin's interactive `elowen chat` terminal (BrainTerminalService): the tmux
+ *  session name → the brain conversation it resumes + the per-terminal auth token minted for it. */
+export interface BrainTerminalRow {
+  terminal_name: string; user_id: number; brain_session_id: string; token: string; created_at: string;
+}
 
 /** One settled PI run, expressed without PI-specific types so the persistence layer remains the
  * only caller that translates agent messages. A `reusePreprojectedUser` entry keeps the clean user
@@ -697,6 +702,29 @@ export class BrainStore {
 
   deleteCard(sessionId: string, cardId: string): void {
     this.db.prepare('DELETE FROM brain_cards WHERE session_id = ? AND card_id = ?').run(sessionId, cardId);
+  }
+
+  /** Persist (or refresh) the terminal binding for an (admin, conversation) pair. The UNIQUE constraint
+   *  guarantees one terminal per conversation; a re-open of a session whose tmux died updates the name +
+   *  token in place (BrainTerminalService revokes the stale token before re-minting). */
+  upsertBrainTerminal(input: { terminalName: string; userId: number; brainSessionId: string; token: string }): void {
+    this.db.prepare(`INSERT INTO brain_terminals (terminal_name, user_id, brain_session_id, token)
+      VALUES (@terminalName, @userId, @brainSessionId, @token)
+      ON CONFLICT(user_id, brain_session_id) DO UPDATE SET terminal_name = excluded.terminal_name, token = excluded.token`)
+      .run(input);
+  }
+  getBrainTerminalBySession(userId: number, brainSessionId: string): BrainTerminalRow | undefined {
+    return this.db.prepare('SELECT * FROM brain_terminals WHERE user_id = ? AND brain_session_id = ?')
+      .get(userId, brainSessionId) as BrainTerminalRow | undefined;
+  }
+  getBrainTerminal(terminalName: string): BrainTerminalRow | undefined {
+    return this.db.prepare('SELECT * FROM brain_terminals WHERE terminal_name = ?').get(terminalName) as BrainTerminalRow | undefined;
+  }
+  deleteBrainTerminal(terminalName: string): void {
+    this.db.prepare('DELETE FROM brain_terminals WHERE terminal_name = ?').run(terminalName);
+  }
+  listBrainTerminals(): BrainTerminalRow[] {
+    return this.db.prepare('SELECT * FROM brain_terminals').all() as BrainTerminalRow[];
   }
 
   /** The conversation's persisted cards, in the order they were first emitted. A row that no longer parses

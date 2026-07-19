@@ -20,15 +20,16 @@ function setup() {
   const config = new ConfigStore(db);
   config.update({ autopilot: { model: 'claude-opus-4-8' } });
   const restart = vi.fn(async () => {});
+  const applyPersonalityChange = vi.fn(async () => {});
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     userSettings: new UserSettingStore(db),
-    brain: { restart } as never,
+    brain: { restart, applyPersonalityChange } as never,
   });
-  return { app, restart, users, config, amyTok: users.issueToken(amy.id) };
+  return { app, restart, applyPersonalityChange, users, config, amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -38,14 +39,23 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
     const { app, restart, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('PATCH saves the personality body and applies it via applyPersonalityChange (not a plain restart)', async () => {
+    const { app, restart, applyPersonalityChange, amyTok } = setup();
+    const res = await app.request('/auth/me/cli-settings', patch(amyTok, { personalityBody: 'Be concise.' }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).personalityBody).toBe('Be concise.');
+    expect(applyPersonalityChange).toHaveBeenCalledTimes(1); // drops channel sessions so the global body reaches Discord
+    expect(restart).not.toHaveBeenCalled(); // applyPersonalityChange already restarts owner chat — no double restart
   });
 
   it('PATCH accepts any configured brain model for a non-admin, but a personal allow-list still narrows it', async () => {

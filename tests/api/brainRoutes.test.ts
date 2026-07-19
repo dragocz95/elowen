@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +36,8 @@ function fakeBrain() {
   const subagentSends: { id: number; session: string; text: string }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
+  const bindContextCalls: { id: number; channel: string; session: string }[] = [];
+  let bindContextError: Error | null = null;
   let subagentPreflightError: Error | null = null;
   let sendBeforeAdmissionError: Error | null = null;
   let sendAfterAdmissionError: Error | null = null;
@@ -209,14 +211,32 @@ function fakeBrain() {
     sendToSubagent: async (id: number, session: string, text: string) => { subagentSends.push({ id, session, text }); },
     searchMessages: (id: number, q: string) =>
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
+    bindContextCalls,
+    __failBindContext: (message: string | null) => { bindContextError = message ? new Error(message) : null; },
+    // Two conversations, so a limit=1 window has a real second page (hasMore).
+    listSessions: (id: number, opts?: { limit?: number; offset?: number }) => {
+      const all = [
+        { id: `brain-${id}`, title: 'A', model: 'm', updated_at: '', running: false, active: true, attached: 0 },
+        { id: `brain-${id}-x`, title: 'B', model: 'm', updated_at: '', running: false, active: false, attached: 0 },
+      ];
+      if (!opts) return all;
+      const offset = opts.offset ?? 0;
+      const items = opts.limit === undefined ? all.slice(offset) : all.slice(offset, offset + opts.limit);
+      return { items, total: all.length, hasMore: offset + items.length < all.length };
+    },
+    bindChannelContext: async (id: number, channel: string, session: string) => {
+      bindContextCalls.push({ id, channel, session });
+      if (bindContextError) throw bindContextError;
+      return { title: `title-of-${session}` };
+    },
   };
 }
 
-function setup(opts: { brainAuth?: AuthStorage } = {}) {
+function setup(opts: { brainAuth?: BrainCredentialAccess } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
-  users.create('admin', 'pw');
+  const admin = users.create('admin', 'pw');
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
   const brain = fakeBrain();
@@ -225,9 +245,9 @@ function setup(opts: { brainAuth?: AuthStorage } = {}) {
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-    brain: brain as never, brainAuth: opts.brainAuth as never,
+    brain: brain as never, brainAuth: opts.brainAuth,
   });
-  return { app, amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain };
+  return { app, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -510,9 +530,12 @@ describe('brain routes', () => {
   });
 
   it('selects the usage service by the active model provider and returns its windows', async () => {
-    const brainAuth = AuthStorage.inMemory({
-      'openai-codex': { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' },
-    });
+    const brainAuth: BrainCredentialAccess = {
+      get: (p) => (p === 'openai-codex'
+        ? { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' }
+        : undefined),
+      getApiKey: async (p) => (p === 'openai-codex' ? 'tok' : undefined),
+    };
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
       plan_type: 'pro',
       rate_limit: {
@@ -546,9 +569,12 @@ describe('brain routes', () => {
   });
 
   it('GET /brain/rate-limits/all returns every connected account keyed by provider, ignoring the active model', async () => {
-    const brainAuth = AuthStorage.inMemory({
-      'openai-codex': { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' },
-    });
+    const brainAuth: BrainCredentialAccess = {
+      get: (p) => (p === 'openai-codex'
+        ? { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' }
+        : undefined),
+      getApiKey: async (p) => (p === 'openai-codex' ? 'tok' : undefined),
+    };
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
       plan_type: 'pro',
       rate_limit: {
@@ -628,6 +654,47 @@ describe('brain routes', () => {
     expect(hits).toEqual([{ sessionId: 's-2', sessionTitle: 'T', role: 'user', snippet: 'daemon', ts: '2026-01-01 00:00:00' }]);
     expect(await (await app.request('/brain/search?q=d', auth(amyTok))).json()).toEqual([]);
     expect(await (await app.request('/brain/search', auth(amyTok))).json()).toEqual([]);
+  });
+
+  it('GET /brain/sessions returns a bare array by default and a paged window with ?limit&offset', async () => {
+    const { app, amyTok } = setup();
+    // Back-compat: no paging params → the historical bare array every current caller consumes.
+    const bare = await (await app.request('/brain/sessions', auth(amyTok))).json();
+    expect(Array.isArray(bare)).toBe(true);
+    expect(bare).toHaveLength(2);
+    // Opt-in: a { items, total, hasMore } window.
+    const page = await (await app.request('/brain/sessions?limit=1&offset=0', auth(amyTok))).json() as { items: unknown[]; total: number; hasMore: boolean };
+    expect(page.total).toBe(2);
+    expect(page.items).toHaveLength(1);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it('POST /brain/context binds the admin\'s chosen conversation into the channel and returns its title', async () => {
+    const { app, adminTok, brain } = setup();
+    const res = await app.request('/brain/context', post(adminTok, { channel: 'discord-123', session: 'brain-1-x' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ title: 'title-of-brain-1-x' });
+    expect(brain.bindContextCalls).toHaveLength(1);
+    expect(brain.bindContextCalls[0]).toMatchObject({ channel: 'discord-123', session: 'brain-1-x' });
+  });
+
+  it('POST /brain/context is admin-gated (shared channel state) and validates its body', async () => {
+    const { app, adminTok, amyTok, agentTok } = setup();
+    // Binding mutates SHARED channel state on a caller-supplied target, so unlike /brain/model it is
+    // admin-only: an agent token and a plain non-admin user are both rejected before any binding.
+    expect((await app.request('/brain/context', post(agentTok, { channel: 'discord-1', session: 'brain-1-x' }))).status).toBe(403);
+    expect((await app.request('/brain/context', post(amyTok, { channel: 'discord-1', session: 'brain-1-x' }))).status).toBe(403);
+    expect((await app.request('/brain/context', post(adminTok, { session: 'brain-1-x' }))).status).toBe(400);
+    expect((await app.request('/brain/context', post(adminTok, { channel: 'discord-1' }))).status).toBe(400);
+    expect((await app.request('/brain/context', post(adminTok, { channel: 5, session: 'x' }))).status).toBe(400);
+  });
+
+  it('POST /brain/context surfaces a guard rejection as 409', async () => {
+    const { app, adminTok, brain } = setup();
+    brain.__failBindContext('this conversation cannot be bound to a channel');
+    const res = await app.request('/brain/context', post(adminTok, { channel: 'discord-1', session: 'brain-1' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'this conversation cannot be bound to a channel' });
   });
 });
 

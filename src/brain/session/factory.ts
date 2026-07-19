@@ -1,5 +1,5 @@
 import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate, settlePartialTurn } from '../persistence.js';
@@ -25,7 +25,7 @@ export interface SessionSpec {
   parentSessionId?: string;
   /** Immutable access boundary for a delegated child; verified on every respawn. */
   delegatedAccess?: DelegatedExecutionScope;
-  registry: ModelRegistry;
+  runtime: ModelRuntime;
   model: Model<Api>;
   /** Same-provider configured default used deterministically for PI-owned Codex compaction requests. */
   compactionFallbackModel?: Model<Api>;
@@ -250,7 +250,7 @@ export class BrainSessionFactory {
     const { session } = await create({
       cwd: spec.cwd,
       sessionManager,
-      modelRegistry: spec.registry,
+      modelRuntime: spec.runtime,
       model: spec.model,
       resourceLoader,
       settingsManager,

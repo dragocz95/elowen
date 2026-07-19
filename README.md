@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/elowen-logo-white.png">
-  <img alt="Elowen" src="docs/brand/elowen-logo-black.png" width="360">
+  <img alt="Elowen" src="docs/brand/elowen-mark.png" width="320">
 </picture>
 
 **A self-hosted AI agent you can talk to, steer, and trust with real work.**

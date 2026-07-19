@@ -1,8 +1,11 @@
 'use client';
 import { useState, useEffect } from 'react';
+import * as m from 'motion/react-m';
 import { NeedsInputBanner } from '../../components/ui/NeedsInputBanner';
 import { FinishSetupBanner } from '../../components/ui/FinishSetupBanner';
 import { MotionReveal } from '../../components/ui/Motion';
+import { motionTransition } from '../../lib/motion';
+import { useEffects } from '../../lib/useEffects';
 import { HeroNowTile } from './HeroNowTile';
 import { AttentionRail } from './SignalTiles';
 import { ActivityTile } from './ActivityTile';
@@ -24,15 +27,23 @@ function useNow(): Date {
 export function DashboardView() {
   const now = useNow();
   const nowMs = now.getTime();
+  const { resolvedMode } = useEffects();
 
   return (
     <WorkspacePage className="dashboard-workspace flex flex-col gap-5">
       <FinishSetupBanner />
       <NeedsInputBanner />
 
-      <MotionReveal>
+      {/* Transform-only entrance. Fractional opacity over the hero's blurred presence aura makes
+          Chromium brighten the whole hero before it settles (same artifact RouteTransition works
+          around), so the hero rises without fading. */}
+      <m.div
+        initial={resolvedMode === 'full' ? { y: 10 } : false}
+        animate={{ y: 0 }}
+        transition={motionTransition}
+      >
         <HeroNowTile now={nowMs} />
-      </MotionReveal>
+      </m.div>
 
       {/* One continuous journal below the hero. Activity and today's work form the story; compact
           signals sit in a narrow attention rail instead of competing as a grid of equal cards. */}

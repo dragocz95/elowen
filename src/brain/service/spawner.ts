@@ -48,7 +48,7 @@ interface SpawnerDeps {
   /** See the BrainDeps fields of the same names — the spawner receives the subset it composes from. */
   config: BrainDeps['config'];
   store: BrainDeps['store'];
-  authStorage?: BrainDeps['authStorage'];
+  runtime: BrainDeps['runtime'];
   users: BrainDeps['users'];
   prompts: BrainDeps['prompts'];
   url: string;
@@ -88,7 +88,7 @@ export class LiveSessionSpawner {
     const { sessionId, ownerUserId } = opts;
 
     const cfg = this.runtimeConfig();
-    const registry = buildBrainRegistry(cfg, this.d.authStorage);
+    const registry = buildBrainRegistry(cfg, this.d.runtime);
     const route = resolveBrainModelRoute(registry, cfg, opts.selection);
     const { model } = route;
     const capabilities = modelCapabilities(model);
@@ -147,11 +147,11 @@ export class LiveSessionSpawner {
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
     const promptTemplates = buildPromptTemplates(plugins?.commands.values() ?? []);
     const fragments = plugins?.promptFragments ?? [];
-    // The user's active personality profile (owner's per-platform pin) layers AFTER the persona as a
-    // separate appended chunk — never the per-turn context (personality is stable system-prompt material,
-    // so putting it per-turn would waste the prompt cache). Undefined when no enabled profile is pinned →
+    // The user's global personality body — one persona, identical on every platform — layers AFTER the
+    // persona as a separate appended chunk, never the per-turn context (personality is stable system-prompt
+    // material, so putting it per-turn would waste the prompt cache). Undefined when the body is empty →
     // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
-    const persoAppend = this.d.activePersonality?.(ownerUserId, opts.platform ?? 'web');
+    const persoAppend = this.d.activePersonality?.(ownerUserId);
     // Skills awareness block (progressive disclosure): PI would render `<available_skills>` itself, but
     // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `Read`
     // etc., so PI never renders it. We therefore append it ourselves so the model learns which skills
@@ -191,7 +191,7 @@ export class LiveSessionSpawner {
     }));
     const { session } = await this.d.factory.create({
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
-      registry, model, compactionFallbackModel: route.compactionFallback, cwd,
+      runtime: this.d.runtime, model, compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, thinkingLevel: opts.thinkingLevel, requestProfile,
       autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,

@@ -275,7 +275,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(updated);
   });
 
-  // Soft-delete (owner-scoped no-op on a foreign id, mirroring the personality delete).
+  // Soft-delete (owner-scoped no-op on a foreign id).
   app.delete('/memory/:id', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;

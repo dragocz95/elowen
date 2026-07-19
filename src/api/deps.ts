@@ -28,8 +28,7 @@ import type { SkillService } from './services/skillService.js';
 import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 import type { BrainOAuthManager } from '../brain/oauth.js';
-import type { AuthStorage } from '@earendil-works/pi-coding-agent';
-import type { PersonalityStore } from '../store/personalityStore.js';
+import type { BrainCredentialAccess } from '../brain/providerUsage.js';
 import type { EmbeddingService } from '../embeddings/embeddingService.js';
 
 /** Everything the daemon injects into the REST server. Lives in its own module (rather than server.ts)
@@ -68,8 +67,9 @@ export interface ServerDeps {
   pluginDataRoot?: string;
   /** Brain provider OAuth flows (connect Anthropic/Copilot/OpenAI accounts). Absent → routes degrade. */
   brainOauth?: BrainOAuthManager;
-  /** The brain's credential store — lets /brain/models surface connected OAuth accounts' catalogs. */
-  brainAuth?: AuthStorage;
+  /** The brain's credential access — lets /brain/models surface connected OAuth accounts' catalogs and
+   *  the usage pollers read their tokens. */
+  brainAuth?: BrainCredentialAccess;
   /** User-aware prompt renderer (resolves a user's override else the file default). Absent → callers
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;
@@ -95,6 +95,9 @@ export interface ServerDeps {
   advisor?: import('../advisor/service.js').AdvisorService;
   /** Per-user embedded brain (PI agent) — the new advisor engine. Absent → brain routes degrade to 503. */
   brain?: import('../brain/brainService.js').BrainService;
+  /** Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Absent →
+   *  POST /brain/terminal degrades to 503 and the DELETE /sessions chat branch is inert. */
+  brainTerminal?: import('../brain/terminalService.js').BrainTerminalService;
   /** Restart the Elowen daemon (the admin-only `/restart` slash command): announce it on the platforms,
    *  drop a marker so the next boot announces "back online", then hand off to systemd. Absent → 501. */
   restartDaemon?: (byUserId: number) => Promise<void>;
@@ -102,8 +105,6 @@ export interface ServerDeps {
   brainWorkers?: { isLive(session: string): boolean; abort(session: string): Promise<void> };
   /** Brain message store — feeds GET /tasks/:id/conversation for elowen workers. */
   brainStore?: import('../store/brainStore.js').BrainStore;
-  /** Per-user, per-platform personality profiles (named prompt bodies). Absent → the personality API degrades. */
-  personalityStore?: PersonalityStore;
   /** Elowen RAW memory persistence (user-scoped): facts, packed-Float32 embeddings, audit events. */
   memoryStore?: import('../store/memoryStore.js').MemoryStore;
   /** Per-user memory categories (labels + LLM-facing descriptions). Absent → the category routes 400. */

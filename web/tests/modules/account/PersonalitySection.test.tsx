@@ -1,71 +1,65 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, renderHook, fireEvent } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { PersonalitySection } from '../../../modules/account/PersonalitySection';
-import { useActivatePersonality } from '../../../lib/mutations';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
-import type { PersonalityProfile } from '../../../lib/types';
+import type { CliSettings } from '../../../lib/types';
 
-// Monaco is browser-only (web workers) and never mounts in these list/switch tests; stub it so the
-// dynamic import doesn't try to load the real editor under jsdom.
+// Monaco is browser-only (web workers) and never mounts under jsdom; stub it with a plain textarea that
+// forwards value/onChange so the body field is exercisable without loading the real editor.
 vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
-  MonacoEditor: () => null,
+  MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <textarea aria-label="personality-body" value={value} onChange={(e) => onChange(e.target.value)} />
+  ),
   MonacoDiffEditor: () => null,
 }));
 
-const profile = (over: Partial<PersonalityProfile>): PersonalityProfile => ({
-  id: 1, user_id: 1, platform: 'web', name: 'Web persona', description: '', tone: '', style: '', prompt: 'Be helpful.',
-  enabled: true, active: false, created_at: '', updated_at: '', ...over,
-});
-
-const byPlatform: Record<string, PersonalityProfile[]> = {
-  web: [profile({ id: 1, platform: 'web', name: 'Web persona' })],
-  discord: [profile({ id: 2, platform: 'discord', name: 'Discord persona' })],
-  cli: [],
+const settings: CliSettings = {
+  model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: 'medium',
+  autoCompact: true, autoCompactAt: 0, advisorStyle: 'concise', personalityBody: '',
+  discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true,
 };
 
+let lastPatch: Partial<CliSettings> | null = null;
+
 const server = setupServer(
-  http.get('*/api/personality/profiles', ({ request }) => {
-    const platform = new URL(request.url).searchParams.get('platform') ?? 'web';
-    return HttpResponse.json(byPlatform[platform] ?? []);
+  http.get('*/api/auth/me/cli-settings', () => HttpResponse.json(settings)),
+  http.patch('*/api/auth/me/cli-settings', async ({ request }) => {
+    lastPatch = (await request.json()) as Partial<CliSettings>;
+    return HttpResponse.json({ ...settings, ...lastPatch });
   }),
-  http.post('*/api/personality/profiles/:id/activate', ({ params }) => HttpResponse.json(profile({ id: Number(params.id) })),
-  ),
 );
-beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen()); afterEach(() => { server.resetHandlers(); lastPatch = null; }); afterAll(() => server.close());
 
 describe('PersonalitySection', () => {
-  it('marks the server-flagged active profile', async () => {
-    const { wrapper } = createWrapper();
-    render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
-    // The web profile is flagged active by the server → the Active badge shows without any preview parsing.
-    expect(await screen.findByText('Web persona')).toBeInTheDocument();
-  });
-
-  it('shows a platform\'s profiles and switches platform', async () => {
+  it('renders the pills and opens the body editor in a modal', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
 
-    expect(await screen.findByText('Web persona')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Discord' }));
-    expect(await screen.findByText('Discord persona')).toBeInTheDocument();
-    expect(screen.queryByText('Web persona')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Professional' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Friendly' })).toBeInTheDocument();
+    // Empty body → no inline editor; the Monaco editor only mounts inside the modal.
+    expect(screen.queryByLabelText('personality-body')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add instructions' }));
+    expect(await screen.findByLabelText('personality-body')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
-});
 
-describe('useActivatePersonality', () => {
-  it('invalidates the profiles list on success', async () => {
-    const client = new QueryClient();
-    const spy = vi.spyOn(client, 'invalidateQueries');
-    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-    const { result } = renderHook(() => useActivatePersonality(), { wrapper });
-    result.current.mutate(2);
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['personalities'] });
+  it('autosaves advisorStyle and personalityBody together in one PATCH', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
+
+    // The server style is 'concise' — wait for the seed to land (that pill becomes pressed) before
+    // editing, otherwise the seeding effect would overwrite the edits.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Concise' })).toHaveAttribute('aria-pressed', 'true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Friendly' }));
+    // Open the modal to reach the body editor, then edit it.
+    fireEvent.click(screen.getByRole('button', { name: 'Add instructions' }));
+    fireEvent.change(await screen.findByLabelText('personality-body'), { target: { value: 'Be warm.' } });
+
+    await waitFor(() => expect(lastPatch).not.toBeNull());
+    await waitFor(() => expect(lastPatch).toEqual({ advisorStyle: 'friendly', personalityBody: 'Be warm.' }));
   });
 });

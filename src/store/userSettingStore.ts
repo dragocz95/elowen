@@ -7,10 +7,10 @@ import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -113,6 +113,7 @@ export class UserSettingStore {
       autoCompact: all.autoCompact !== undefined ? all.autoCompact === 'true' : CLI_DEFAULTS.autoCompact,
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
+      personalityBody: all.personalityBody ?? CLI_DEFAULTS.personalityBody,
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
       whatsappNumber: all.whatsappNumber ?? CLI_DEFAULTS.whatsappNumber,
       telegramUserId: all.telegramUserId ?? CLI_DEFAULTS.telegramUserId,
@@ -141,6 +142,9 @@ export class UserSettingStore {
       if (patch.autoRecall !== undefined) this.set(userId, 'autoRecall', String(patch.autoRecall));
       if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));
       if (patch.advisorStyle !== undefined && isAdvisorStyle(patch.advisorStyle)) this.set(userId, 'advisorStyle', patch.advisorStyle);
+      // The global personality body — free-form instructions appended to the system prompt on every
+      // platform. Empty is a valid stored value (clears the body), so no remove branch is needed.
+      if (patch.personalityBody !== undefined) this.set(userId, 'personalityBody', patch.personalityBody);
       // A Discord snowflake is digits-only; anything else (or empty) clears the link. A snowflake already
       // claimed by ANOTHER user is refused — otherwise a squatter could claim the operator's id and have
       // that account's Discord messages (and its memory namespace / admin flag) attributed to themselves.

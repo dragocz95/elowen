@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { pollOAuthDeviceCodeFlow } from '@earendil-works/pi-ai/oauth';
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from '@earendil-works/pi-ai';
+import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
+import type { ModelRegistry } from '@earendil-works/pi-coding-agent';
+
+/** PI's OAuth-config shape for `registerProvider({ oauth })`. PI 0.80.8 stopped exporting the type by
+ *  name, so we derive it from the registration API it feeds — the single source of truth. */
+type ExtensionOAuthConfig = NonNullable<Parameters<ModelRegistry['registerProvider']>[1]['oauth']>;
 
 /**
  * Kimi Code (Moonshot AI) sign-in: RFC 8628 device authorization.
@@ -157,35 +161,70 @@ function toCredentials(raw: unknown, deviceId: string, fallbackRefresh?: string)
   };
 }
 
-async function pollForToken(device: DeviceCode, deviceId: string, signal?: AbortSignal): Promise<KimiCredentials> {
-  return pollOAuthDeviceCodeFlow<KimiCredentials>({
-    intervalSeconds: device.intervalSeconds,
-    expiresInSeconds: device.expiresInSeconds,
-    waitBeforeFirstPoll: true,
-    signal,
-    poll: async () => {
-      const response = await postForm(TOKEN_URL, deviceId, {
-        client_id: CLIENT_ID,
-        device_code: device.deviceCode,
-        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      }, signal);
-      // The BODY decides, never the status: while the user has not approved yet, Kimi answers
-      // `400 {"error":"authorization_pending"}`, so treating a non-2xx as failure would kill every login
-      // on its first poll.
-      const code = errorCode(response.data);
-      if (code === 'authorization_pending') return { status: 'pending' };
-      if (code === 'slow_down') {
-        // PI adds RFC 8628's +5s itself when the server names no new interval.
-        const interval = isRecord(response.data) ? response.data.interval : undefined;
-        return { status: 'slow_down', intervalSeconds: typeof interval === 'number' ? interval : undefined };
-      }
-      if (code) return { status: 'failed', message: `Kimi login failed: ${errorText(response)}` };
-      if (isRecord(response.data) && typeof response.data.access_token === 'string') {
-        return { status: 'complete', value: toCredentials(response.data, deviceId) };
-      }
-      return { status: 'failed', message: `Invalid Kimi device token response (${errorText(response)})` };
-    },
+/** RFC 8628 §3.2: a client polls at 5s when the server omits `interval`; §3.5: a `slow_down` raises it by
+ *  5s. PI clamps to a 1s floor. These drive the token poll below. */
+const MIN_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_POLL_INTERVAL_SECONDS = 5;
+const SLOW_DOWN_INTERVAL_INCREMENT_MS = 5_000;
+
+/** A sleep a login abort can cut short. Uses the same `setTimeout` PI's helper did, so a caller on fake
+ *  timers (the login tests) drains it deterministically instead of waiting real seconds. */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('Kimi login cancelled')); return; }
+    const onAbort = () => { clearTimeout(timer); reject(new Error('Kimi login cancelled')); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * Drive the device-authorization token poll to a credential (RFC 8628 §3.4–3.5). Ported from PI's own
+ * device-code helper, which its 0.80.8 release dropped from the public surface — inlined here so the login
+ * rides our `postForm` and no longer imports a pi-ai internal that can vanish under us.
+ *
+ * The BODY decides every outcome, never the status: while the user has not approved yet, Kimi answers
+ * `400 {"error":"authorization_pending"}`, so treating a non-2xx as failure would kill every login on its
+ * first poll. We wait one interval before the first attempt — the code has only just been shown.
+ */
+async function pollForToken(device: DeviceCode, deviceId: string, signal?: AbortSignal): Promise<KimiCredentials> {
+  const deadline = Date.now() + device.expiresInSeconds * 1000;
+  let intervalMs = Math.max(MIN_POLL_INTERVAL_MS, Math.floor((device.intervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS) * 1000));
+  let slowedDown = false;
+
+  const firstWait = Math.min(intervalMs, deadline - Date.now());
+  if (firstWait > 0) await abortableSleep(firstWait, signal);
+
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error('Kimi login cancelled');
+    const response = await postForm(TOKEN_URL, deviceId, {
+      client_id: CLIENT_ID,
+      device_code: device.deviceCode,
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    }, signal);
+    const code = errorCode(response.data);
+    if (code === 'slow_down') {
+      slowedDown = true;
+      // Trust a server-named interval when given; otherwise apply the +5s. A client-only bump risks polling
+      // early forever under WSL/VM clock drift.
+      const named = isRecord(response.data) ? response.data.interval : undefined;
+      intervalMs = typeof named === 'number' && Number.isFinite(named) && named > 0
+        ? Math.max(MIN_POLL_INTERVAL_MS, Math.floor(named * 1000))
+        : Math.max(MIN_POLL_INTERVAL_MS, intervalMs + SLOW_DOWN_INTERVAL_INCREMENT_MS);
+    } else if (code && code !== 'authorization_pending') {
+      throw new Error(`Kimi login failed: ${errorText(response)}`);
+    } else if (!code && isRecord(response.data) && typeof response.data.access_token === 'string') {
+      return toCredentials(response.data, deviceId);
+    } else if (!code) {
+      throw new Error(`Invalid Kimi device token response (${errorText(response)})`);
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await abortableSleep(Math.min(intervalMs, remaining), signal);
+  }
+  throw new Error(slowedDown
+    ? 'Kimi login timed out after a slow_down — often VM/WSL clock drift; sync the clock and retry.'
+    : 'Kimi login timed out');
 }
 
 /** The device id a refresh must replay, tolerating a credential written before this field existed. */
@@ -193,12 +232,11 @@ const credentialDeviceId = (credentials: OAuthCredentials): string =>
   typeof credentials.deviceId === 'string' && credentials.deviceId ? credentials.deviceId : randomUUID();
 
 /**
- * Kimi's OAuth provider, minus `id` — `ModelRegistry.registerProvider` stamps the id from the provider
- * name it is registered under, and doing that through the registry (rather than calling
- * `registerOAuthProvider` here) is deliberate: it is what puts the provider in the same module instance
- * `AuthStorage` reads. npm ships two physical copies of pi-ai and only that one counts.
+ * Kimi's OAuth config, attached to the built-in `kimi-coding` provider through
+ * `ModelRegistry.registerProvider({ oauth })` — PI ships `kimi-coding` as an API-key provider, so this is
+ * what makes it loginable. The provider id is stamped from the name it is registered under.
  */
-export const kimiOAuthProvider: Omit<OAuthProviderInterface, 'id'> = {
+export const kimiOAuthProvider: ExtensionOAuthConfig = {
   name: 'Kimi',
   async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
     const deviceId = randomUUID();

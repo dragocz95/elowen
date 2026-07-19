@@ -5,13 +5,13 @@ import { UserSettingStore, DiscordIdConflictError, WhatsAppNumberConflictError, 
 describe('UserSettingStore', () => {
   it('defaults CLI settings when nothing is stored', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('round-trips model + autoCompact + threshold via the typed helper', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
-    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('round-trips the provider-native max reasoning level', () => {
@@ -47,7 +47,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'm', autoCompact: true });
     s.setCliSettings(1, { model: 'n' });
-    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('isolates settings per user', () => {
@@ -72,7 +72,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'a', autoCompact: true });
     s.removeForUser(1);
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('terminal settings default, round-trip, merge, and survive a corrupt blob', () => {

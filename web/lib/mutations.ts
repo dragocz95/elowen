@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { QUERY_KEYS } from './queries';
-import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
+import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
 
 type TaskCacheSnapshot = Array<[QueryKey, Task[] | undefined]>;
 
@@ -130,6 +130,15 @@ export function useKillSession() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (name: string) => elowenClient.killSession(name), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }) });
 }
+/** Admin: open (or reuse) an `elowen chat` terminal for the active brain conversation. Refreshing
+ *  /sessions lets the newly-created chat terminal resolve its role/label when the pane mounts. */
+export function useOpenBrainTerminal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (session: string) => elowenClient.brainTerminal(session),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }),
+  });
+}
 export function useSendInput() {
   return useMutation({ mutationFn: (v: { name: string; keys: string[] }) => elowenClient.sendKeys(v.name, v.keys) });
 }
@@ -220,38 +229,6 @@ export function useSaveMyTerminalSettings() {
 export function useSaveMyPermissions() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: Partial<PermissionSettings>) => elowenClient.saveMyPermissions(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-permissions'] }) });
-}
-/** Create a personality profile. Invalidates the profiles list (all platforms). */
-export function useCreatePersonality() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PersonalityCreate) => elowenClient.createPersonality(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['personalities'] }),
-  });
-}
-/** Patch a personality profile. Refresh the profiles list (the server carries the authoritative active flag). */
-export function useUpdatePersonality() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: number; patch: PersonalityPatch }) => elowenClient.updatePersonality(v.id, v.patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['personalities'] }),
-  });
-}
-/** Delete a personality profile (also clears any active pointer to it). Refresh the profiles list. */
-export function useDeletePersonality() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) => elowenClient.deletePersonality(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['personalities'] }),
-  });
-}
-/** Pin a profile active. Refresh the profiles list (the server's active flag marks the badge). */
-export function useActivatePersonality() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) => elowenClient.activatePersonality(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['personalities'] }),
-  });
 }
 /** Toggle a plugin on/off. Optimistic: the installed list AND the open detail flip instantly so the UI
  *  reacts immediately, without waiting for the daemon's hot-reload + refetch. On settle we re-fetch the

@@ -15,7 +15,7 @@ import type { NavEntry } from './NavItem';
 /** Top to bottom: where you land, then the work, then the context behind it, then administration.
  *  Home first and the admin surfaces last, so the axis reads in the order you actually use it. */
 const SPATIAL_ROUTE_ORDER = [
-  '/dash',                                        // home
+  '/dash', '/chat',                               // home, then chat
   '/tasks', '/kanban', '/sessions', '/timeline',  // the work
   '/projects', '/editor', '/memory', '/stats',    // what the work runs on
   '/account', '/settings', '/users',              // administration

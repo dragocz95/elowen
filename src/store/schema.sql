@@ -270,31 +270,19 @@ CREATE TABLE IF NOT EXISTS brain_goals (
 );
 CREATE INDEX IF NOT EXISTS idx_brain_goals_user ON brain_goals(user_id, status);
 
--- Per-user, per-platform personality profiles: named prompt bodies that shape how Elowen behaves on a
--- given surface ('web'/'discord'/'cli', future keys allowed). A user may keep several named profiles
--- per platform; the single active one per platform is pinned in personality_active_profiles. user_id
--- is INTEGER (joins users.id) — the spec's TEXT predates Elowen's integer user ids.
-CREATE TABLE IF NOT EXISTS personality_profiles (
-  id INTEGER PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  platform TEXT NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  tone TEXT NOT NULL DEFAULT '',
-  style TEXT NOT NULL DEFAULT '',
-  prompt TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(user_id, platform, name)
-);
-CREATE INDEX IF NOT EXISTS idx_personality_profiles_user_platform ON personality_profiles(user_id, platform);
-CREATE TABLE IF NOT EXISTS personality_active_profiles (
-  user_id INTEGER NOT NULL,
-  platform TEXT NOT NULL,
-  profile_id INTEGER NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (user_id, platform)
+-- Durable binding for an admin's interactive `elowen chat` terminal (BrainTerminalService): the tmux
+-- session name → the brain conversation it resumes + the per-terminal auth token minted for it. The token
+-- is stored verbatim (not hashed) because the tmux session survives a daemon restart and teardown must be
+-- able to revoke the exact live token; this table is private, out of every wire/log path. One terminal per
+-- (admin, conversation) via the UNIQUE constraint; the tmux name is the stable handle the DELETE/stream
+-- routes key on.
+CREATE TABLE IF NOT EXISTS brain_terminals (
+  terminal_name    TEXT PRIMARY KEY,
+  user_id          INTEGER NOT NULL,
+  brain_session_id TEXT NOT NULL,
+  token            TEXT NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, brain_session_id)
 );
 
 -- Elowen RAW memory (v1: user-scoped only). Durable facts/preferences/instructions/corrections about a

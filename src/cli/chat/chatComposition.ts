@@ -742,6 +742,8 @@ export function createChatComposition(
       if (!composeStart) composeStart = Date.now();
     } else composeStart = 0;
     const composingMarkerReady = composeStart > 0 && Date.now() - composeStart >= COMPOSE_MARKER_MS;
+    // ~4 fps, matching the thinking timer's re-render cadence noted above — one spinner step per frame.
+    const spinnerFrame = Math.floor(Date.now() / 250);
     parentViewport.setState({
       transcript: rt.transcript,
       conversationKey: client.boundSession,
@@ -750,6 +752,7 @@ export function createChatComposition(
       modelName: rt.modelName,
       thinkingSeconds: currentRunSeconds,
       composingMarkerReady,
+      spinnerFrame,
       showThoughts: rt.showThoughts,
     });
     if (rt.childView) {
@@ -767,6 +770,7 @@ export function createChatComposition(
         modelName: rt.modelName,
         thinkingSeconds: currentRunSeconds,
         composingMarkerReady,
+        spinnerFrame,
         showThoughts: rt.showThoughts,
       });
     } else if (childViewport) {

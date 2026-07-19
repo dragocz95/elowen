@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  AuthStorage,
   calculateContextTokens,
   createAgentSession,
   DefaultResourceLoader,
@@ -11,6 +10,7 @@ import {
   type ExtensionAPI,
   defineTool,
 } from '@earendil-works/pi-coding-agent';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { Type } from 'typebox';
 import {
   createAssistantMessageEventStream,
@@ -116,7 +116,8 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   let ordinaryCalls = 0;
   let activeSession: AgentSession | undefined;
   const api = `elowen-test-compaction-${++apiSequence}` as Api;
-  const registry = ModelRegistry.inMemory(AuthStorage.inMemory());
+  const runtime = await inMemoryModelRuntime();
+  const registry = new ModelRegistry(runtime);
   registry.registerProvider(provider, {
     name: 'Compaction test provider', api, baseUrl: 'https://provider.example.test',
     apiKey: 'oauth-token', headers: { 'x-native-route': 'preserved' },
@@ -169,7 +170,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   });
   await resourceLoader.reload();
   const { session } = await createAgentSession({
-    cwd, sessionManager, settingsManager, modelRegistry: registry, model: selected,
+    cwd, sessionManager, settingsManager, modelRuntime: runtime, model: selected,
     resourceLoader,
     customTools: [defineTool({
       name: 'context_probe', label: 'Context probe', description: 'Continue one deterministic tool turn',

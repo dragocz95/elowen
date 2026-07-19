@@ -161,6 +161,18 @@ export interface PlatformControlApi {
   /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
    *  available on this deployment. The caller is responsible for its own admin gate. */
   restart(): Promise<void>;
+  /** The invoking sender's OWN conversations eligible to bind into this channel (the /context picker),
+   *  paginated. Identity-scoped to the sender's linked Elowen account (resolved from `senderPlatformId`);
+   *  null when that sender is not linked to any account (they have no bindable sessions). The bare default
+   *  conversation is excluded server-side. */
+  listContext(ref: ChannelRef, senderPlatformId: string, opts: { limit?: number; offset?: number }): {
+    items: { id: string; title: string; model: string; updated_at: string }[]; total: number; hasMore: boolean;
+  } | null;
+  /** Bind (MOVE) one of the sender's OWN conversations into this channel slot so the next channel turn
+   *  continues in it. Resolves with the bound conversation's title (for the privacy warning), or rejects on
+   *  a guard failure (foreign/unknown/non-bindable session) or an unlinked sender. The caller is
+   *  responsible for its own operator gate. */
+  bindContext(ref: ChannelRef, senderPlatformId: string, sessionId: string): Promise<{ title: string }>;
 }
 
 /** Scoped logger handed to a plugin (prefixed with the plugin name by the registry). */

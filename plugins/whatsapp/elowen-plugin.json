@@ -1,6 +1,6 @@
 {
   "name": "whatsapp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "1",
   "description": "WhatsApp bot (Baileys): write to it and it answers from Elowen AI. Text commands (/model, /new, /help), a per-chat model picker (numbered text menu you reply to with a number), live streaming replies (edit-in-place with the agent's tool trace), status reactions and proactive cron/tick pushes. Group tools (admin sessions): list & inspect groups, create groups, add/remove members, and send a message to any chat (operator). Each sender (phone number, JID or whole group) maps to allowed Elowen projects + a role prompt. Pair by scanning a QR code or with a pairing code.",
   "entry": "index.mjs",

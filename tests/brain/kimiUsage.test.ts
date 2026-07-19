@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { UsageService, type UsageAuth } from '../../src/brain/providerUsage.js';
 import { kimiUsageSource } from '../../src/brain/kimiUsage.js';
 
@@ -62,7 +61,7 @@ describe('kimiUsageSource via UsageService', () => {
 
   it('returns null for a non-OAuth credential without making a request', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
-    const apiKeyAuth = AuthStorage.inMemory({ 'kimi-coding': { type: 'api_key', key: 'not-oauth' } });
+    const apiKeyAuth: UsageAuth = { get: () => ({ type: 'api_key' as const, key: 'not-oauth' }), getApiKey: async () => 'not-oauth' };
     await expect(service({ auth: apiKeyAuth, fetchImpl }).getUsage()).resolves.toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });

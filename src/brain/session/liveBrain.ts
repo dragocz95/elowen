@@ -151,10 +151,6 @@ export interface SpawnOpts {
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
   delegatedAccess?: DelegatedExecutionScope;
-  /** Which personality platform this session is: 'web'|'cli' for per-user owner chat, 'discord' for
-   *  shared owner-anchored channels. Selects which active profile the personality chunk resolves from
-   *  (owner's per-platform pin). Default 'web'. */
-  platform?: string;
   /** PI's built-in auto-compaction toggle for this session (the owner's per-user setting; always on for
    *  long-lived channels). */
   autoCompact: boolean;

@@ -4,6 +4,10 @@ import { LanguageProvider } from '../../../lib/i18n';
 import { AdvisorPanel } from '../../../modules/advisor/AdvisorPanel';
 import type { UseDockState } from '../../../lib/useDockState';
 
+const currentPath = vi.hoisted(() => ({ value: '/dash' }));
+vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value }));
+beforeEach(() => { currentPath.value = '/dash'; });
+
 vi.mock('../../../modules/advisor/AdvisorPane', () => ({
   AdvisorPane: ({ pane }: { pane: { id: string } }) => <div data-testid="pane">{pane.id}</div>,
 }));
@@ -50,5 +54,17 @@ describe('AdvisorPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /dock position|pozice panelu/i }));
     fireEvent.click(screen.getByRole('button', { name: /dock to bottom|ukotvit dolů/i }));
     expect(dock.setSide).toHaveBeenCalledWith('bottom');
+  });
+
+  it('forces terminal-only on /chat: no Chat segment, terminal branch renders despite the stored mode', () => {
+    // The stored mode is chat (default), but /chat's ChatView owns the chat surface — the dock hides the
+    // Chat segment and renders the terminal branch regardless, without a second chat surface.
+    localStorage.setItem('elowen.dock.mode', 'chat');
+    currentPath.value = '/chat';
+    renderPanel(fakeDock());
+    expect(screen.queryByRole('radio', { name: /^chat$/i })).toBeNull();
+    expect(screen.getByRole('radio', { name: /^terminal|^terminál/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('brain-chat')).toBeNull();
+    expect(screen.getByTestId('pane')).toBeInTheDocument();
   });
 });

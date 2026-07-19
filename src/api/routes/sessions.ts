@@ -47,6 +47,13 @@ export function registerSessionRoutes(app: ElowenApp, ctx: RouteContext): void {
       await d.advisor.stop(info.userId);
       return c.json({ ok: true });
     }
+    // An admin's chat terminal: route the explicit Stop through the service so it also revokes the
+    // per-terminal token and drops the durable binding (a bare tmux.kill would leak both). sessionAccessible
+    // above already gated it owner-only; stop() re-checks the binding's owner defensively.
+    if (info.role === 'chat' && info.userId !== undefined && d.brainTerminal) {
+      await d.brainTerminal.stop(c.get('user').id, name);
+      return c.json({ ok: true });
+    }
     // Embedded-brain workers have no tmux pane — kill controls route to the in-process session.
     if (d.brainWorkers?.isLive(name)) { await d.brainWorkers.abort(name); return c.json({ ok: true }); }
     await d.tmux.kill(name); return c.json({ ok: true });

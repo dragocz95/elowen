@@ -18,6 +18,8 @@ const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending AskUserQuest
 const MAX_UPLOAD_IMAGES = 4;             // default generated-image uploads per outgoing message (cfg: maxUploadImages)
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper's per-file limit — larger clips are just noted
 const TTS_MAX_CHARS = 4000;              // cap the spoken text (OpenAI TTS input limit is 4096)
+const SELECT_PAGE = 25;                  // Discord StringSelect hard cap — the /model + /context picker page size
+const CONTEXT_MAX = 200;                 // upper bound of own conversations the /context picker pages over
 
 /** Read a numeric config field, clamped to [min,max], falling back to `def` when unset/invalid. */
 function cfgNum(cfg, key, def, min, max) {
@@ -95,6 +97,49 @@ export class DiscordAdapter {
    *  folded with the /new generation), so a command targets the exact session a message would. */
   channelRef(channelId) { return { platform: 'discord', channelId: `${channelId}#${this.state.get(channelId).gen ?? 0}` }; }
 
+  /** StringSelect option rows for the FULL model catalog (no truncation — pagination handles the 25-row
+   *  cap), marking the channel's current pick (or the daemon default) as selected. */
+  modelOptions(channelId, models) {
+    const current = this.state.get(channelId).model;
+    return models.map((mo) => ({
+      label: mo.model.slice(0, 100),
+      value: `${mo.provider}::${mo.model}`.slice(0, 100),
+      description: mo.providerLabel.slice(0, 100),
+      default: current ? current.provider === mo.provider && current.model === mo.model : mo.default === true,
+    }));
+  }
+
+  /** StringSelect option rows for the /context picker — one per bindable conversation (value = its
+   *  session id, description = the model it runs on). */
+  contextOptions(items) {
+    return items.map((s) => {
+      const desc = String(s.model ?? '').slice(0, 100);
+      return {
+        label: (s.title || 'Untitled').slice(0, 100),
+        value: String(s.id).slice(0, 100),
+        ...(desc ? { description: desc } : {}),
+      };
+    });
+  }
+
+  /** A paged StringSelect: the `page`-th window of ≤25 options (custom_id = `prefix`) plus, when there is
+   *  more than one page, a nav row of prev/next buttons (`${prefix}_page:<n>`, disabled at the ends) and a
+   *  page indicator. Shared by /model and /context so neither ever truncates its catalog. */
+  buildPagedSelect(options, page, prefix, placeholder) {
+    const pages = Math.max(1, Math.ceil(options.length / SELECT_PAGE));
+    const p = Math.min(Math.max(Number(page) || 0, 0), pages - 1);
+    const slice = options.slice(p * SELECT_PAGE, p * SELECT_PAGE + SELECT_PAGE);
+    const rows = [{ type: 1, components: [{ type: 3, custom_id: prefix, options: slice, placeholder }] }];
+    if (pages > 1) {
+      rows.push({ type: 1, components: [
+        { type: 2, style: 2, custom_id: `${prefix}_page:${p - 1}`, label: '◀', disabled: p === 0 },
+        { type: 2, style: 2, custom_id: `${prefix}_page:cur`, label: `${p + 1}/${pages}`, disabled: true },
+        { type: 2, style: 2, custom_id: `${prefix}_page:${p + 1}`, label: '▶', disabled: p >= pages - 1 },
+      ] });
+    }
+    return rows;
+  }
+
   /** Resolve the model that will drive the next turn. The catalog marks the daemon's real resolved
    *  default; catalog ordering is presentation-only and must not silently choose a different model. */
   modelForChannel(channelId, models) {
@@ -123,15 +168,24 @@ export class DiscordAdapter {
   /** Register the bot's slash commands. Guild-scoped when a guildId is set (instant), else global.
    *  Fingerprint the payload so an unchanged set skips the PUT — avoids needless syncs + rate limits. */
   async registerCommands() {
-    const description = (name, fallback) => this.chatCommands.find((c) => c.name === name)?.description ?? fallback;
-    const commands = [
-      { name: 'model', description: description('model', 'Pick the AI model for this channel'), type: 1 },
-      { name: 'reasoning', description: description('reasoning', 'Set reasoning effort for this channel'), type: 1 },
-      ...(this.chatCommands.some((c) => c.name === 'fast') ? [{ name: 'fast', description: description('fast', 'Toggle OpenAI OAuth priority processing'), type: 1, options: [
+    // Single source of truth: the daemon's command registry for this surface (slashCommands.ts →
+    // ctx.chatCommands('discord')) is the command LIST. We only attach the Discord-specific option
+    // schemas (by name) and append the two adapter-LOCAL commands (voice, display) that aren't daemon
+    // commands — so adding/removing a daemon command reflects on Discord automatically, no parallel
+    // hardcoded list to drift out of sync. Discord slash names must be lowercase single tokens, which
+    // every daemon command name already is.
+    const DISCORD_OPTIONS = {
+      fast: [
         { name: 'state', description: 'on or off (omit to toggle)', type: 3, required: false, choices: [
           { name: 'on', value: 'on' }, { name: 'off', value: 'off' },
         ] },
-      ] }] : []),
+      ],
+    };
+    const daemonCommands = this.chatCommands.map((c) => ({
+      name: c.name, description: c.description, type: 1,
+      ...(DISCORD_OPTIONS[c.name] ? { options: DISCORD_OPTIONS[c.name] } : {}),
+    }));
+    const localCommands = [
       { name: 'voice', description: 'Toggle spoken audio replies in this channel', type: 1, options: [
         { name: 'state', description: 'on or off (omit to toggle)', type: 3, required: false, choices: [
           { name: 'on', value: 'on' }, { name: 'off', value: 'off' },
@@ -151,23 +205,19 @@ export class DiscordAdapter {
           { name: 'global default', value: 'default' }, { name: 'one message', value: 'single' }, { name: 'one message per tool', value: 'per_tool' },
         ] },
       ] },
-      { name: 'new', description: description('new', 'Start a fresh conversation in this channel'), type: 1 },
-      { name: 'stop', description: description('stop', 'Stop the running agent in this channel'), type: 1 },
-      { name: 'status', description: description('status', 'Show the model, context and usage for this channel'), type: 1 },
-      { name: 'compact', description: description('compact', 'Summarize the conversation to free up context'), type: 1 },
-      { name: 'restart', description: description('restart', 'Restart the Elowen daemon (admin only)'), type: 1 },
-      { name: 'help', description: description('help', 'What can Elowen do here?'), type: 1 },
     ];
+    const commands = [...daemonCommands, ...localCommands];
     const globalPath = `/applications/${this.appId}/commands`;
     const path = this.cfg.guildId ? `/applications/${this.appId}/guilds/${this.cfg.guildId}/commands` : globalPath;
     const meta = this.state.get('__meta');
-    // A guild-scoped bot must NOT also carry a stale GLOBAL command set — Discord merges global + guild
-    // commands in a guild, so an earlier global registration (e.g. before a guildId was configured) shows
-    // every command TWICE. Clear the global set once, tracked per app id, independent of the payload
-    // fingerprint. (In global mode there's no per-guild set we could enumerate to clear, so we don't try.)
-    if (this.cfg.guildId && meta.globalCleared !== this.appId) {
-      await this.rest('PUT', globalPath, []).catch(() => { /* best-effort — nothing to clear is fine */ });
-      this.state.patch('__meta', { globalCleared: this.appId });
+    // A guild-scoped bot must NOT also carry a GLOBAL command set — Discord merges global + guild commands
+    // inside a guild, so any leftover global registration (e.g. from before a guildId was configured) shows
+    // every command TWICE. Clear the global set on EVERY guild-mode startup: it is idempotent (clearing an
+    // already-empty set is a harmless no-op PUT), so a stale global set always self-heals. This deliberately
+    // does NOT gate behind a one-shot flag — a best-effort clear that failed once (rate limit, transient)
+    // must not latch "cleared" forever and leave the duplicates in place.
+    if (this.cfg.guildId) {
+      await this.rest('PUT', globalPath, []).catch(() => { /* best-effort — retried on the next startup */ });
     }
     const fingerprint = `${this.appId}:${this.cfg.guildId ?? 'global'}:${JSON.stringify(commands)}`;
     if (meta.commandFingerprint === fingerprint) return; // unchanged → skip
@@ -436,21 +486,28 @@ export class DiscordAdapter {
         // Only the operator (a role mapped admin:true) may switch the model — the choice is shared by
         // everyone talking in this channel/thread, so a stranger must not repoint it.
         if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.modelForbidden, flags: 64 });
-        const models = (await this.listModels().catch(() => [])).slice(0, 25);
+        const models = await this.listModels().catch(() => []);
         if (models.length === 0) return this.respond(i, 4, { content: this.msg.noModels, flags: 64 });
-        const current = this.state.get(i.channel_id).model;
-        const options = models.map((mo) => ({
-          label: mo.model.slice(0, 100),
-          value: `${mo.provider}::${mo.model}`.slice(0, 100),
-          description: mo.providerLabel.slice(0, 100),
-          default: current
-            ? current.provider === mo.provider && current.model === mo.model
-            : mo.default === true,
-        }));
+        // The FULL catalog is paged (StringSelect caps at 25), so a model past the 26th is reachable via the
+        // nav row instead of being silently dropped.
         return this.respond(i, 4, {
           content: this.msg.pickModel,
           flags: 64,
-          components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_model', options, placeholder: this.msg.modelPlaceholder }] }],
+          components: this.buildPagedSelect(this.modelOptions(i.channel_id, models), 0, 'pick_model', this.msg.modelPlaceholder),
+        });
+      }
+      if (name === 'context') {
+        // Operator-gated like /model (the channel is shared). Ownership is the real boundary: the picker only
+        // ever offers the invoking sender's OWN conversations (identity-scoped, bare default excluded), and
+        // bindContext re-checks server-side. Binding exposes the chosen history to everyone here.
+        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.controlForbidden, flags: 64 });
+        const senderId = i.member?.user?.id ?? i.user?.id;
+        const listing = this.ctl?.listContext?.(this.channelRef(i.channel_id), senderId, { offset: 0, limit: CONTEXT_MAX }) ?? null;
+        if (!listing || listing.items.length === 0) return this.respond(i, 4, { content: this.msg.noContextSessions, flags: 64 });
+        return this.respond(i, 4, {
+          content: this.msg.pickContext,
+          flags: 64,
+          components: this.buildPagedSelect(this.contextOptions(listing.items), 0, 'pick_context', this.msg.contextPlaceholder),
         });
       }
       if (name === 'reasoning') {
@@ -568,6 +625,42 @@ export class DiscordAdapter {
     // AskUserQuestion components (select menus + Submit/Other buttons) resolve a parked turn.
     if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.startsWith('ask:')) {
       return this.onAskInteraction(i);
+    }
+    // Paged-picker nav (`pick_model_page:<n>` / `pick_context_page:<n>`): re-fetch the list, rebuild page
+    // <n> and update the message in place (type 7). Operator-gated, like the pickers themselves.
+    if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.includes('_page:')) {
+      const idx = i.data.custom_id.indexOf('_page:');
+      const prefix = i.data.custom_id.slice(0, idx);
+      const page = Number(i.data.custom_id.slice(idx + '_page:'.length));
+      if (!Number.isInteger(page)) return this.respond(i, 6, {}); // the disabled indicator button — ack, no change
+      if (!this.isAdminMember(i.member)) return this.respond(i, 7, { content: this.msg.modelForbidden, components: [] });
+      if (prefix === 'pick_model') {
+        const models = await this.listModels().catch(() => []);
+        if (!models.length) return this.respond(i, 7, { content: this.msg.noModels, components: [] });
+        return this.respond(i, 7, { content: this.msg.pickModel, components: this.buildPagedSelect(this.modelOptions(i.channel_id, models), page, 'pick_model', this.msg.modelPlaceholder) });
+      }
+      if (prefix === 'pick_context') {
+        const senderId = i.member?.user?.id ?? i.user?.id;
+        const listing = this.ctl?.listContext?.(this.channelRef(i.channel_id), senderId, { offset: 0, limit: CONTEXT_MAX }) ?? null;
+        if (!listing || listing.items.length === 0) return this.respond(i, 7, { content: this.msg.noContextSessions, components: [] });
+        return this.respond(i, 7, { content: this.msg.pickContext, components: this.buildPagedSelect(this.contextOptions(listing.items), page, 'pick_context', this.msg.contextPlaceholder) });
+      }
+      return this.respond(i, 6, {});
+    }
+    if (i.type === 3 && i.data?.custom_id === 'pick_context') {
+      // Re-check the operator gate on submit (the component round-trips independently). The MOVE is
+      // dispatched through the host control surface; ownership is re-verified server-side.
+      if (!this.isAdminMember(i.member)) return this.respond(i, 7, { content: this.msg.controlForbidden, components: [] });
+      if (!this.ctl?.bindContext) return this.respond(i, 7, { content: this.msg.noSession, components: [] });
+      const senderId = i.member?.user?.id ?? i.user?.id;
+      const sessionId = String(i.data.values?.[0] ?? '');
+      if (!sessionId) return this.respond(i, 7, { content: this.msg.contextError('no conversation selected'), components: [] });
+      try {
+        const { title } = await this.ctl.bindContext(this.channelRef(i.channel_id), senderId, sessionId);
+        return this.respond(i, 7, { content: this.msg.contextBound(title), components: [] });
+      } catch (e) {
+        return this.respond(i, 7, { content: this.msg.contextError(e?.message ?? e), components: [] });
+      }
     }
     if (i.type === 3 && i.data?.custom_id === 'pick_reasoning') {
       // Re-resolve capabilities on submit: the channel model or provider catalog may have changed while

@@ -755,11 +755,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // The account's full built-in catalog — what the settings model picker offers for selection.
-  app.get('/brain/oauth/:type/catalog', (c) => {
+  app.get('/brain/oauth/:type/catalog', async (c) => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const type = c.req.param('type');
     if (!oauthProviderOf(type)) return c.json({ error: 'unknown oauth provider' }, 404);
-    return c.json({ models: oauthBuiltinCatalog(type) });
+    return c.json({ models: await oauthBuiltinCatalog(type) });
   });
 
   app.post('/brain/oauth/:type/start', (c) => {
@@ -784,12 +784,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
 
-  app.delete('/brain/oauth/:type', (c) => {
+  app.delete('/brain/oauth/:type', async (c) => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.brainOauth) return c.json({ error: 'oauth unavailable' }, 503);
     const builtin = oauthProviderOf(c.req.param('type'));
     if (!builtin) return c.json({ error: 'unknown oauth provider' }, 404);
-    d.brainOauth.disconnect(builtin);
+    await d.brainOauth.disconnect(builtin);
     return c.json({ ok: true });
   });
 }

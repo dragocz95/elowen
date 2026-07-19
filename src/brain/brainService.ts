@@ -19,7 +19,7 @@ import { PlatformOrchestrator } from './platforms.js';
 import type { BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult } from './events.js';
-import { isNonUserSession } from './sessionId.js';
+import { isNonUserSession, defaultUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
 import { PermissionApprovalService } from './service/permissionApproval.js';
@@ -32,6 +32,7 @@ import { terminalizeWorkflow } from './workflowRuns.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
+import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import type { BrainDeps } from './brainDeps.js';
@@ -147,7 +148,7 @@ export class BrainService {
     this.spawner = new LiveSessionSpawner({
       get config() { return d.config; },
       store: d.store,
-      get authStorage() { return d.authStorage; },
+      get runtime() { return d.runtime; },
       get users() { return d.users; },
       get prompts() { return d.prompts; },
       get url() { return d.url; },
@@ -195,7 +196,7 @@ export class BrainService {
       elicitation: this.elicitation, cards: this.cards,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
-      get authStorage() { return d.authStorage; },
+      get runtime() { return d.runtime; },
       get createSession() { return d.createSession; },
       get cwd() { return d.cwd; },
     });
@@ -236,12 +237,33 @@ export class BrainService {
         onEvent?.({ type: 'session', sessionId });
         return lastAssistantText(this.d.store, sessionId);
       },
+      // /context picker (all three platform surfaces): resolve the platform sender to their linked Elowen
+      // account, then reach the SAME BrainService methods the web endpoint uses — one implementation, not
+      // two. An unlinked sender has no bindable sessions: listing returns null, binding rejects.
+      listContextSessions: (platform, platformUserId, opts) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        return linked ? this.listContextSessions(linked.id, opts) : null;
+      },
+      bindContext: async (platform, platformUserId, channelKey, sessionId) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        if (!linked) throw new Error('unknown session'); // no linked account → none of their sessions exist here
+        return this.bindChannelContext(linked.id, channelKey, sessionId);
+      },
     });
   }
 
   /** Admin daemon-restart handler for a platform `/restart` slash. Late-bound: it's built after the brain
    *  (it needs the systemd units + marker path), so bootstrap sets it once ready. Undefined ⇒ unavailable. */
   restartHandler?: (byUserId: number) => Promise<void>;
+
+  /** Tear down the admin chat terminal bound to a conversation before it is deleted (BrainTerminalService.
+   *  stopForSession). Late-bound: the terminal service is constructed AFTER the brain (it needs store+users),
+   *  so bootstrap attaches this once ready — avoids a constructor cycle (mirrors SpawnService.attachBrainWorker).
+   *  Undefined ⇒ no terminals wired; the janitor sweep still reaps an orphaned binding as a backstop. */
+  private terminalTeardown?: (userId: number, sessionId: string) => Promise<void>;
+  attachTerminalTeardown(fn: (userId: number, sessionId: string) => Promise<void>): void {
+    this.terminalTeardown = fn;
+  }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
     return this.sessions.withLock(key, fn);
@@ -442,21 +464,23 @@ export class BrainService {
     const cleanUp = async (sessionId: string): Promise<{ stopped: boolean; disposed: boolean }> => {
       const live = this.sessions.get(sessionId);
       if (!live) return { stopped: false, disposed: false };
+      // The caller's own attachment was released above, so a zero count now unambiguously means no other
+      // observer. A detaching client MUST NOT abort a turn another client is still watching (Invariant 2):
+      // only the last watcher leaving may abort + dispose. Legacy callers without a stable id retain the
+      // conservative behavior — only an already-detached stream can make the count zero.
+      if (this.attachments.attachedCount(sessionId) !== 0) return { stopped: true, disposed: false };
       try { await this.abort(userId, sessionId); } catch { /* already idle/settled */ }
-      // The caller's own attachment was removed above, so zero now unambiguously means no other observer.
-      // Legacy callers without a stable id retain the conservative behavior: only an already-detached
-      // stream can make the count zero; we never guess which remaining listener belongs to the caller.
-      const disposable = this.attachments.attachedCount(sessionId) === 0;
-      if (disposable) {
-        this.goals.cancelGoalContinuation(sessionId);
-        this.elicitation.cancelForSession(sessionId, 'client closed');
-        this.cards.clearSession(sessionId);
-        this.sessions.dispose(sessionId);
-        // A conversation nobody ever typed into leaves with the session it was the identity of, rather than
-        // lingering as an untitled shell until some later `/new` sweeps it up.
-        this.lifecycle.dropIfUnspoken(sessionId);
-      }
-      return { stopped: true, disposed: disposable };
+      // Re-check after the abort settles: a client can attach during that await, and it must not be disposed
+      // out from under. If one arrived, leave the (now idle) session live for the new observer.
+      if (this.attachments.attachedCount(sessionId) !== 0) return { stopped: true, disposed: false };
+      this.goals.cancelGoalContinuation(sessionId);
+      this.elicitation.cancelForSession(sessionId, 'client closed');
+      this.cards.clearSession(sessionId);
+      this.sessions.dispose(sessionId);
+      // A conversation nobody ever typed into leaves with the session it was the identity of, rather than
+      // lingering as an untitled shell until some later `/new` sweeps it up.
+      this.lifecycle.dropIfUnspoken(sessionId);
+      return { stopped: true, disposed: true };
     };
     // Reserve the bare session lock BEFORE any wait/ownership lookup. `settled(bound)` outside this lock
     // can race a replacement start (and can deadlock when that lifecycle holder waits on this cleanup).
@@ -608,6 +632,10 @@ export class BrainService {
   deleteSession(userId: number, sessionId: string): void {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
+    // Tear down any chat terminal bound to this conversation FIRST (docs order: terminal, then session).
+    // Fire-and-forget — deleteSession is sync and the binding row outlives store.deleteSession (separate
+    // table), so the async teardown still resolves the row; the janitor is the backstop if it's unwired.
+    void this.terminalTeardown?.(userId, sessionId).catch((e) => logger('brain').error(`terminal teardown failed for ${sessionId}`, e));
     this.cleanupProcessesForTree(sessionId);
     this.elicitation.cancelForSession(sessionId, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(sessionId);
@@ -646,9 +674,61 @@ export class BrainService {
     return this.goals.subgoal(userId, action, value, session);
   }
 
-  /** The user's conversations with live/active/attached flags — see BrainStatusService.listSessions. */
-  listSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }[] {
-    return this.statusView.listSessions(userId);
+  /** The user's conversations with live/active/attached flags — see BrainStatusService.listSessions.
+   *  Pagination is opt-in: no `opts` → the historical bare array; with `opts` → a paged window. */
+  listSessions(userId: number): SessionListItem[];
+  listSessions(userId: number, opts: SessionPageOpts): SessionPage<SessionListItem>;
+  listSessions(userId: number, opts?: SessionPageOpts): SessionListItem[] | SessionPage<SessionListItem> {
+    return opts ? this.statusView.listSessions(userId, opts) : this.statusView.listSessions(userId);
+  }
+
+  /** The caller's conversations eligible to bind into a channel (the /context picker) — the bare default
+   *  is excluded. Always paginated — see BrainStatusService.listContextSessions. */
+  listContextSessions(userId: number, opts?: SessionPageOpts): SessionPage<SessionListItem> {
+    return this.statusView.listContextSessions(userId, opts);
+  }
+
+  /** Bind (MOVE, not fork) one of the caller's own conversations INTO a platform channel slot so the
+   *  channel's next turn continues in that conversation's history. IRREVERSIBLE by design: the chosen
+   *  session is re-keyed onto the deterministic `brain-ch-<channel>` id, and whatever occupied the slot
+   *  is archived under a fresh id (nothing is lost, exactly like idle rollover). Guards: only the caller's
+   *  OWN sessions are bindable (owner-scope); never the bare default `brain-<uid>` (re-keying it would
+   *  strip the user's default id) and never a channel/task session; a session can hold only one slot, so a
+   *  second bind of the same id finds nothing and throws. Serialized on the channel session lock so it
+   *  cannot race that channel's turn/compact/rollover. Returns the bound conversation's title for the
+   *  adapter's confirmation message. */
+  async bindChannelContext(callerUserId: number, channelKey: string, chosenSessionId: string): Promise<{ title: string }> {
+    // Guard (b), id-only so it needs no store read: the bare default must never be re-keyed, and only a
+    // real personal conversation (not a channel/task shell) may move into a shared channel.
+    if (chosenSessionId === defaultUserSessionId(callerUserId) || isNonUserSession(chosenSessionId)) {
+      throw new Error('this conversation cannot be bound to a channel');
+    }
+    const channelSession = channelSessionId(channelKey);
+    // The channel session lock (same key the channel turn/compact/rollover take) serializes the whole move.
+    return this.serial(channelSession, async () => {
+      // Guards (a) + (c), resolved INSIDE the lock: only the caller's own session is bindable, and a second
+      // bind of an already-moved id finds nothing here (the id ceased to exist on the first bind).
+      const row = this.d.store.getSession(chosenSessionId);
+      if (!row || row.user_id !== callerUserId) throw new Error('unknown session');
+      // Live-session safety: a conversation open in web/CLI must not have its id changed underneath the
+      // live PI object — dispose it and clear the active pointer first (mirrors deleteSession).
+      if (this.sessions.get(chosenSessionId)) this.sessions.dispose(chosenSessionId);
+      if (this.sessions.activeIdFor(callerUserId) === chosenSessionId) this.sessions.clearActive(callerUserId);
+      // Clear the chosen session's in-memory sidecar state keyed on its OLD id before the re-key: the durable
+      // rows move with reassignSession, but a goal-continuation timer, a parked question, or the cards cache
+      // would otherwise dangle on an id that ceases to exist. Background processes/subagents are deliberately
+      // NOT torn down — this is a move that keeps the work, not a delete.
+      this.goals.cancelGoalContinuation(chosenSessionId);
+      this.elicitation.cancelForSession(chosenSessionId, 'moved to channel');
+      this.cards.clearSession(chosenSessionId);
+      // Mirror the channel rollover (channels.ts): drop the live PI on the slot, ARCHIVE whatever occupies
+      // `brain-ch-<key>` under a fresh id (a no-op touching 0 rows if the channel never spawned), then MOVE
+      // the chosen session into the now-free deterministic channel slot in one transaction.
+      this.sessions.channelDispose(channelKey);
+      this.d.store.reassignSession(channelSession, archivedChannelSessionId(channelKey));
+      this.d.store.reassignSession(chosenSessionId, channelSession);
+      return { title: this.d.store.getSession(channelSession)?.title ?? '' };
+    });
   }
 
   /** Fulltext search across the user's stored conversations — see BrainStatusService.searchMessages. */
@@ -667,6 +747,9 @@ export class BrainService {
   deleteManagedSession(userId: number, id: string): number {
     const row = this.d.store.getSession(id);
     if (!row || row.user_id !== userId) return 0;
+    // Same terminal-first teardown as deleteSession (the admin panel's per-session delete). No-op when the
+    // conversation has no bound terminal (channel/task sessions never do).
+    void this.terminalTeardown?.(userId, id).catch((e) => logger('brain').error(`terminal teardown failed for ${id}`, e));
     this.cleanupProcessesForTree(id);
     this.elicitation.cancelForSession(id, 'session deleted');
     this.goals.cancelGoalContinuation(id);

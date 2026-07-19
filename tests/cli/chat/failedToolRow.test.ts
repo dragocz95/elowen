@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
+import { TOOL_INDENT, TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
 import type { ChatTurn, ToolItem } from '../../../src/brain/transcript.js';
 
 beforeAll(() => { initTheme(); });
@@ -20,7 +20,7 @@ const turnOf = (...items: ToolItem[]): ChatTurn => ({
 
 const render = (turn: ChatTurn, expandedTools: Set<string> = new Set()) =>
   new TurnRenderer(getMarkdownTheme()).render(turn, 0, 96, {
-    showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, expandedThoughts: new Set(), expandedTools,
+    showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools,
   });
 const text = (rows: { line: string }[]) => rows.map((row) => row.line).join('\n');
 /** The rendered words, free of colour codes and of wherever the terminal happened to wrap them — so an
@@ -39,6 +39,11 @@ describe('a failed tool result in the transcript', () => {
     expect(body).toContain('/docs/routes.md');
     expect(body).not.toContain('needs attention'); // the row already says Error — the status is dead weight
     expect(body).not.toContain('risks overwriting'); // the explanation is behind the click
+    const errorRow = rows.find((row) => row.line.includes('Error'))!;
+    // Aligned with the sibling tool rows it belongs to (TOOL_INDENT), not the shallower thought/prose gutter.
+    expect(errorRow.line.startsWith(TOOL_INDENT)).toBe(true);
+    // A collapsed error stacks like any tool row: only the single turn-closing blank follows it — no extra spacer.
+    expect(rows.map((row) => row.line)).toEqual([errorRow.line, '']);
   });
 
   it('gives up the whole message when the user asks for it', () => {

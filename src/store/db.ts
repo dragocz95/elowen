@@ -135,7 +135,23 @@ export function openDb(path: string): Db {
   migrateRegistryToolNames(db);
   repairImageToolNames(db);
   widenSessionEventKinds(db);
+  dropPersonalityTables(db);
   return db;
+}
+
+/** v6 — drop the retired per-user/per-platform personality tables. The personality subsystem collapsed
+ *  into a single global body stored in user_settings (key 'personalityBody'), so both profile tables are
+ *  dead. Their CREATE statements are gone from schema.sql, so a fresh DB never makes them; this drops them
+ *  on every DB that predates the collapse. DROP TABLE IF EXISTS is idempotent (no-op on a fresh DB) and
+ *  takes each table's indexes with it, so no explicit DROP INDEX is needed. Nobody had profiles, so there
+ *  is no data to preserve.
+ *
+ *  NUMBERED 6: versions 4 and 5 are spent (see widenSessionEventKinds) — a runner numbered ≤5 would be
+ *  skipped in silence on prod and every install already at user_version 5. */
+function dropPersonalityTables(db: Db): void {
+  runOnce(db, 6, () => {
+    db.exec('DROP TABLE IF EXISTS personality_active_profiles; DROP TABLE IF EXISTS personality_profiles;');
+  });
 }
 
 /** v5 — let `brain_session_events.kind` also carry 'cwd' (see sessionEvents.ts).

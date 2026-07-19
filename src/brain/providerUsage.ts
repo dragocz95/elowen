@@ -1,4 +1,4 @@
-import type { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { Credential } from '@earendil-works/pi-ai';
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -22,7 +22,16 @@ export interface ProviderUsage {
   stale: boolean;
 }
 
-export type UsageAuth = Pick<AuthStorage, 'get' | 'getApiKey'>;
+/** The brain's credential access, backed by the stored `auth.json` and the ModelRuntime. `get` is a
+ *  synchronous read of the stored credential (existence + the account/device id a usage cache key is built
+ *  from); `getApiKey` resolves the live request token for a provider, refreshing through the runtime under
+ *  its lock. Replaces the former direct `AuthStorage` dependency, which PI 0.80.8 stopped exporting. */
+export interface BrainCredentialAccess {
+  get(provider: string): Credential | undefined;
+  getApiKey(provider: string): Promise<string | undefined>;
+}
+
+export type UsageAuth = BrainCredentialAccess;
 
 /** A per-provider adapter: how to key the cache, build the request, and parse the response. The generic
  *  {@link UsageService} owns everything else — TTL cache, single-flight, timeout, and stale-on-error. */
@@ -118,7 +127,7 @@ export class UsageService {
     try {
       // PI owns refresh locking and persistence. Re-read the cache key afterwards because a refresh can
       // update both the access token and its decoded account/device id.
-      const accessToken = await this.auth.getApiKey(this.source.authKey, { includeFallback: false });
+      const accessToken = await this.auth.getApiKey(this.source.authKey);
       key = this.source.cacheKey(this.auth) ?? '';
       if (!accessToken || !key) return null;
 

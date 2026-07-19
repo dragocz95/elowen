@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainWorkerService } from '../../../src/brain/worker/brainWorker.js';
+import { inMemoryModelRuntime } from '../../../src/brain/providers.js';
+
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 import { openDb } from '../../../src/store/db.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
 import { TaskStore } from '../../../src/store/taskStore.js';
@@ -47,6 +52,7 @@ function setup(opts: { idleMs?: number; prompts?: unknown } = {}) {
   let now = 1_000_000;
   const svc = new BrainWorkerService({
     store: new BrainStore(db),
+    runtime: sharedRuntime,
     tasks, bus,
     taskUsage: { record: (...a: unknown[]) => { recorded.push(a); } } as never,
     config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] }),
@@ -161,7 +167,7 @@ describe('BrainWorkerService', () => {
     const tasks2 = new TaskStore(first.db);
     const { session: s2 } = fakeSession();
     const svc2 = new BrainWorkerService({
-      store: new BrainStore(first.db), tasks: tasks2, bus: new EventBus(),
+      store: new BrainStore(first.db), runtime: sharedRuntime, tasks: tasks2, bus: new EventBus(),
       config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] }),
       url: 'http://daemon', token: 'tok',
       createSession: vi.fn(async () => ({ session: s2 })) as never,

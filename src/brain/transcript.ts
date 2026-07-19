@@ -121,7 +121,10 @@ export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boole
   /** True while the model is writing a tool call whose marker has not yet rendered — a live-only hint set
    *  by `tool_authoring` and cleared by the first `tool` of the turn. Never persisted (history turns are
    *  never streaming). */
-  composing?: boolean };
+  composing?: boolean;
+  /** The name of the tool currently being authored, known from the `toolcall_start` block before its
+   *  arguments finish streaming — lets the composing hint show the real tool. Cleared alongside `composing`. */
+  composingTool?: string };
 /** A context-compaction boundary: everything before it was summarized away, so the surface renders a
  *  subtle "context compacted" divider in its place followed by the kept tail (see `persistCompaction`). */
 export type DividerTurn = { role: 'divider' };

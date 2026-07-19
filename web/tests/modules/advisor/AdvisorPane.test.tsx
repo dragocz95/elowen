@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -53,5 +53,33 @@ describe('AdvisorPane', () => {
     expect((await screen.findByTestId('stream')).textContent).toBe('elowen-w1');
     fireEvent.click(screen.getByRole('button', { name: /close panel|zavřít panel/i }));
     expect(onRemove).toHaveBeenCalled();
+  });
+
+  it('shows the Stop control on a chat terminal pane and stops + detaches on click', async () => {
+    const onRemove = vi.fn();
+    let killed: string | null = null;
+    server.use(
+      ...baseHandlers,
+      http.get('*/api/advisor/status', () => HttpResponse.json({ running: false, exec: '', session: null })),
+      http.get('*/api/sessions', () => HttpResponse.json([{ name: 'elowen-chat-1-abcd', role: 'chat', agent: 'chat-1' }])),
+      http.delete('*/api/sessions/:name', ({ params }) => { killed = String(params.name); return HttpResponse.json({ ok: true }); }),
+    );
+    renderPane(<AdvisorPane pane={{ id: 'elowen-chat-1-abcd', kind: 'session', name: 'elowen-chat-1-abcd' }} onRemove={onRemove} />);
+    expect((await screen.findByTestId('stream')).textContent).toBe('elowen-chat-1-abcd');
+    const stop = await screen.findByRole('button', { name: /stop terminal|ukončit terminál/i });
+    fireEvent.click(stop);
+    await waitFor(() => expect(killed).toBe('elowen-chat-1-abcd'));
+    await waitFor(() => expect(onRemove).toHaveBeenCalled());
+  });
+
+  it('does not show the Stop control on a non-chat session pane', async () => {
+    server.use(
+      ...baseHandlers,
+      http.get('*/api/advisor/status', () => HttpResponse.json({ running: false, exec: '', session: null })),
+      http.get('*/api/sessions', () => HttpResponse.json([{ name: 'elowen-w1', role: 'agent', agent: 'w1' }])),
+    );
+    renderPane(<AdvisorPane pane={{ id: 'elowen-w1', kind: 'session', name: 'elowen-w1' }} onRemove={vi.fn()} />);
+    expect((await screen.findByTestId('stream')).textContent).toBe('elowen-w1');
+    expect(screen.queryByRole('button', { name: /stop terminal|ukončit terminál/i })).toBeNull();
   });
 });

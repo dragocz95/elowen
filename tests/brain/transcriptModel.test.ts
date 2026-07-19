@@ -298,14 +298,16 @@ describe('TranscriptModel', () => {
     model.apply({ type: 'text', delta: 'let me check' });
     expect(turn().composing).toBeFalsy();
 
-    model.apply({ type: 'tool_authoring' });
+    model.apply({ type: 'tool_authoring', name: 'Write' });
     expect(turn().composing).toBe(true);
+    expect(turn().composingTool).toBe('Write'); // the tool name is known before its arguments finish
     // A second authoring event within the same turn is a no-op (no visible change).
-    expect(model.apply({ type: 'tool_authoring' })).toBe(false);
+    expect(model.apply({ type: 'tool_authoring', name: 'Write' })).toBe(false);
 
-    // The tool marker rendering ends the authoring window.
+    // The tool marker rendering ends the authoring window and forgets the authored tool.
     model.apply({ type: 'tool', name: 'Read', id: 't1' });
     expect(turn().composing).toBe(false);
+    expect(turn().composingTool).toBeUndefined();
   });
 
   it('clears composing when the turn settles even if no tool followed', () => {

@@ -36,7 +36,7 @@ import { CliSection } from '../../../modules/account/CliSection';
 
 const CLI: CliSettings = {
   model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '',
-  autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '',
+  autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '',
   autoRecall: true, autoSave: true,
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };

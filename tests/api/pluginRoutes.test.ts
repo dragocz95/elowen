@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,9 +14,15 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { BrainOAuthManager } from '../../src/brain/oauth.js';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+
+const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 function makePlugin(root: string, name: string, extra: Record<string, unknown> = {}) {
   const dir = join(root, name);
@@ -56,7 +62,7 @@ function setup() {
     pluginDirs: [root],
     pluginDataRoot: dataRoot,
     brain: { reloadPlugins } as never,
-    brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+    brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
   });
   return { app, config, reloadPlugins, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
@@ -163,7 +169,7 @@ describe('plugin routes', () => {
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-      pluginDirs: [root], brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+      pluginDirs: [root], brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     });
     const tok = users.issueToken(admin.id);
     const enriched = await (await app.request('/plugins/enricher', auth(tok))).json() as { capabilities: Record<string, unknown> };
@@ -209,7 +215,7 @@ describe('plugin routes', () => {
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
       pluginDirs: [root],
       plugins: new PluginRegistryProvider(() => loadPlugins({ dirs: [root], enabled: ['mcp'], logger: { info() {}, warn() {}, error() {} } })),
-      brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+      brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     });
     const adminTok = users.issueToken(admin.id);
     const amyTok = users.issueToken(amy.id);
@@ -299,7 +305,7 @@ describe('sub-agent (typed .md) routes', () => {
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
       pluginDirs: [], pluginDataRoot,
       brain: { reloadPlugins: vi.fn(async () => {}) } as never,
-      brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+      brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     });
     return { app, userAgentsDir: join(cfgDir, 'agents'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
   }

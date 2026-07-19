@@ -50,10 +50,14 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // default is edited in web Account → Elowen AI (or PATCH /auth/me/permissions).
   { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'] },
   { name: 'model', description: 'Switch the AI model', kind: 'picker' },
+  // Move (not fork) one of the caller's own conversations INTO this channel/thread so the bot continues in
+  // it. A `picker` (not `action`), so it is never server-dispatched through POST /brain/command — its
+  // dedicated endpoint is POST /brain/context. Absent from the CLI: there is no shared channel to re-key.
+  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', surfaces: ['discord', 'whatsapp', 'telegram', 'web'] },
   { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'web'] },
   // CLI-only: the reasoning-effort picker is wired in the TUI. Discord tunes reasoning through its own
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
-  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', surfaces: ['cli'] },
+  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', surfaces: ['cli', 'discord', 'whatsapp', 'telegram'] },
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
   // CLI-only: ticks what the bottom status bar shows. The toggles are the statusline plugin's shared
   // config (also editable in the web dock), so the picker PATCHes it server-side and refreshes the bar.

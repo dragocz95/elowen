@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -14,8 +14,14 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { BrainOAuthManager } from '../../src/brain/oauth.js';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
+
+const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 /** Write a minimal valid plugin manifest into `<dir>/<name>/elowen-plugin.json` so discoverPlugins finds it. */
 function writePlugin(dir: string, name: string): void {
@@ -47,7 +53,7 @@ function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [])
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     pluginDirs, pluginDataRoot: '/tmp/none',
-    brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+    brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     marketplace: marketplace as never,
   });
   return { app, config, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };

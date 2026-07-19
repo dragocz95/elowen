@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { realpathSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +21,10 @@ import type { MemoryRow } from '../../src/store/memoryStore.js';
 import { HookAuditBuffer } from '../../src/shared/hookAudit.js';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 function fakeDeps() {
   const listeners: ((e: unknown) => void)[] = [];
@@ -94,6 +99,7 @@ function fakeDeps() {
     /** Raw DB handle so tests can backdate stored rows (the idle-rollover cutoff). */
     db,
     store: new BrainStore(db),
+    runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'full-token', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
     prompts: { render: vi.fn((name: string, vars: Record<string, string>) => `PERSONA:${name}:${vars.userName}`) },
@@ -1855,12 +1861,18 @@ describe('BrainService', () => {
     expect(await svc.stopSession(1, 'brain-1')).toEqual({ stopped: false, disposed: false });
   });
 
-  it('stopSession aborts but does not dispose while another client stream is attached', async () => {
+  it('stopSession detaches but does NOT abort while another client stream is attached', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
+    await svc.send({ userId: 1, text: 'a running turn another client is watching' });
+    d.session.isStreaming = true; // a turn is in flight, watched by the other client
     const detachOther = svc.subscribe(1, () => {});
+    d.session.abort.mockClear();
     expect(await svc.stopSession(1, 'brain-1')).toEqual({ stopped: true, disposed: false });
+    // Invariant 2: the shared turn belongs to the still-attached watcher — a detaching client must not
+    // abort it. (This test previously encoded the bug by claiming stopSession "aborts" here.)
+    expect(d.session.abort).not.toHaveBeenCalled();
     expect(svc.status(1).running).toBe(true);
     detachOther();
   });
@@ -2444,38 +2456,38 @@ describe('BrainService', () => {
 });
 
 describe('BrainService personality layering', () => {
-  it('appends the active personality chunk (owner chat resolves platform web)', async () => {
+  it('appends the global personality body (owner chat)', async () => {
     const d = fakeDeps();
-    const seen: string[] = [];
-    (d as unknown as { activePersonality: (u: number, p: string) => string | undefined }).activePersonality =
-      (userId, platform) => { seen.push(`${userId}:${platform}`); return userId === 1 ? 'User personality for web:\nName: Zen' : undefined; };
+    const seen: number[] = [];
+    (d as unknown as { activePersonality: (u: number) => string | undefined }).activePersonality =
+      (userId) => { seen.push(userId); return userId === 1 ? 'Global instructions:\nBe zen.' : undefined; };
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
     const svc = new BrainService(d as never);
     await svc.start(1);
-    expect(seen).toContain('1:web'); // owner chat threads the default 'web' platform
-    expect((seenAppend ?? []).join('\n')).toContain('User personality for web:');
-    expect((seenAppend ?? []).join('\n')).toContain('Name: Zen');
+    expect(seen).toContain(1); // resolved for the owner (no platform argument)
+    expect((seenAppend ?? []).join('\n')).toContain('Global instructions:');
+    expect((seenAppend ?? []).join('\n')).toContain('Be zen.');
   });
 
-  it('appends NOTHING when the user has no active profile (cache-safe prefix)', async () => {
+  it('appends NOTHING when the personality body is empty (cache-safe prefix)', async () => {
     const d = fakeDeps();
     (d as unknown as { activePersonality: () => string | undefined }).activePersonality = () => undefined;
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
     const svc = new BrainService(d as never);
     await svc.start(1);
-    expect((seenAppend ?? []).join('\n')).not.toContain('User personality');
+    expect((seenAppend ?? []).join('\n')).not.toContain('Global instructions');
   });
 
-  it('channel sessions resolve the owner personality on platform discord', async () => {
+  it('channel sessions resolve the owner personality (owner id, never a per-sender id)', async () => {
     const d = fakeDeps();
-    const seen: string[] = [];
-    (d as unknown as { activePersonality: (u: number, p: string) => string | undefined }).activePersonality =
-      (userId, platform) => { seen.push(`${userId}:${platform}`); return undefined; };
+    const seen: number[] = [];
+    (d as unknown as { activePersonality: (u: number) => string | undefined }).activePersonality =
+      (userId) => { seen.push(userId); return undefined; };
     const svc = new BrainService(d as never);
     await svc.channelSend({ channelId: 'disc-p', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
-    expect(seen).toContain('1:discord'); // owner id + discord platform (never a per-sender id)
+    expect(seen).toContain(1); // owner id — the one global persona, identical on every platform
   });
 
   it('applyPersonalityChange restarts the owner session AND disposes channel sessions', async () => {
@@ -3886,5 +3898,139 @@ describe('BrainService — background processes', () => {
     expect(() => svc.processes(1, 'brain-nope')).toThrow('unknown session');
     expect(() => svc.killProcess(1, '1', 'brain-2')).toThrow('unknown session');
     expect(() => svc.processOutput(1, '1', 'brain-2')).toThrow('unknown session');
+  });
+});
+
+describe('BrainService.bindChannelContext (/context move-binding)', () => {
+  /** Mint a spoken, named personal conversation for user 1 and return its id (it becomes active + live). */
+  async function freshSpoken(svc: BrainService, text: string): Promise<string> {
+    const id = (await svc.start(1, { fresh: true })).sessionId;
+    await svc.send({ userId: 1, text, session: id });
+    return id;
+  }
+
+  it('moves the chosen conversation into the channel slot, disposes its live PI + clears the active pointer, and leaves no copy of the chosen id', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);                                   // brain-1 (bare default), live but unspoken
+    const chosen = await freshSpoken(svc, 'personal secret'); // brain-1-<ts>, now active + live + spoken
+    expect(svc.status(1).sessionId).toBe(chosen);
+    expect(svc.listContextSessions(1).items.map((s) => s.id)).toContain(chosen);
+
+    const disposedBefore = d.session.dispose.mock.calls.length;
+    const { title } = await svc.bindChannelContext(1, 'discord-c1', chosen);
+    expect(typeof title).toBe('string');
+
+    // The live PI on the chosen session was disposed before the re-key (Live-session safety guard).
+    expect(d.session.dispose.mock.calls.length).toBeGreaterThan(disposedBefore);
+    // The chosen id no longer exists — its rows moved onto the deterministic channel slot verbatim.
+    expect(d.store.getSession(chosen)).toBeUndefined();
+    expect(d.store.getMessages('brain-ch-discord-c1').some((m) => JSON.parse(m.content).content === 'personal secret')).toBe(true);
+    // Active pointer cleared: status no longer resolves to the (now vanished) chosen conversation.
+    expect(svc.status(1).sessionId).not.toBe(chosen);
+    // The chosen conversation is gone from BOTH listings (it is a channel session now).
+    expect(svc.listSessions(1).map((s) => s.id)).not.toContain(chosen);
+    expect(svc.listContextSessions(1).items.map((s) => s.id)).not.toContain(chosen);
+  });
+
+  it('rejects a foreign session (owner-scope guard, invariant 6)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-2')).rejects.toThrow('unknown session');
+    // The foreign session's history stays where it is — no channel slot was written.
+    expect(d.store.getSession('brain-2')?.user_id).toBe(2);
+    expect(d.store.getSession('brain-ch-discord-c1')).toBeUndefined();
+  });
+
+  it('rejects the bare default and any channel/task session (bare-default + non-user guard)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1); // brain-1 exists
+    await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-1')).rejects.toThrow('cannot be bound to a channel');
+    await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-ch-other')).rejects.toThrow('cannot be bound to a channel');
+    await expect(svc.bindChannelContext(1, 'discord-c1', 'brain-task-42')).rejects.toThrow('cannot be bound to a channel');
+  });
+
+  it('is single-channel unique: a second bind of the same session fails, and the channel keeps the chosen history', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const chosen = await freshSpoken(svc, 'once bound');
+    await svc.bindChannelContext(1, 'discord-c1', chosen);
+    // The id ceased to exist on the first bind, so a second attempt hits getSession()===undefined.
+    await expect(svc.bindChannelContext(1, 'discord-c1', chosen)).rejects.toThrow('unknown session');
+    // The first bind's history still lives under the channel slot (a second channel was never written).
+    expect(d.store.getMessages('brain-ch-discord-c1').some((m) => JSON.parse(m.content).content === 'once bound')).toBe(true);
+    expect(d.store.getSession('brain-ch-discord-c2')).toBeUndefined();
+  });
+
+  it('archives an EXISTING channel conversation before moving the chosen one in (nothing is lost)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    // Pre-seed the deterministic channel slot with a prior conversation.
+    d.store.createSession({ id: 'brain-ch-discord-c1', userId: 1, model: 'm' });
+    d.store.appendMessage({ id: 'oldch', sessionId: 'brain-ch-discord-c1', parentId: null, role: 'user', content: { content: 'prior channel chat' } });
+    await svc.start(1);
+    const chosen = await freshSpoken(svc, 'the new context');
+
+    await svc.bindChannelContext(1, 'discord-c1', chosen);
+
+    // The slot now hosts the chosen conversation...
+    expect(d.store.getMessages('brain-ch-discord-c1').some((m) => JSON.parse(m.content).content === 'the new context')).toBe(true);
+    expect(d.store.getMessages('brain-ch-discord-c1').some((m) => JSON.parse(m.content).content === 'prior channel chat')).toBe(false);
+    // ...and the prior channel conversation survives under a fresh archive id.
+    const archived = d.store.listSessions(1).filter((s) => s.id.startsWith('brain-ch-discord-c1-arch-'));
+    expect(archived).toHaveLength(1);
+    expect(d.store.getMessages(archived[0]!.id).some((m) => JSON.parse(m.content).content === 'prior channel chat')).toBe(true);
+  });
+
+  it('listContextSessions withholds the bare default while listSessions still includes it (web history rail unaffected)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send({ userId: 1, text: 'default chat' }); // brain-1 spoken
+    const named = await freshSpoken(svc, 'named chat');
+
+    const listIds = svc.listSessions(1).map((s) => s.id);
+    expect(listIds).toContain('brain-1');
+    expect(listIds).toContain(named);
+
+    const contextIds = svc.listContextSessions(1).items.map((s) => s.id);
+    expect(contextIds).not.toContain('brain-1'); // bare default never offered
+    expect(contextIds).toContain(named);
+  });
+
+  it('paginates listSessions only when asked, after the identity filter, and never leaks a foreign session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
+    d.store.appendMessage({ id: 'f1', sessionId: 'brain-2', parentId: null, role: 'user', content: { content: 'foreign' } });
+    await svc.start(1);
+    await svc.send({ userId: 1, text: 'a' }); // brain-1 spoken
+    await freshSpoken(svc, 'b');
+    await freshSpoken(svc, 'c');
+
+    // No opts → historical bare array.
+    const bare = svc.listSessions(1);
+    expect(Array.isArray(bare)).toBe(true);
+    expect(bare).toHaveLength(3);
+    expect(bare.map((s) => s.id)).not.toContain('brain-2'); // identity-scoped
+
+    // Opts → a { items, total, hasMore } window sliced after the filter.
+    const page = svc.listSessions(1, { limit: 2, offset: 0 });
+    expect(page.total).toBe(3);
+    expect(page.items).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+    expect(page.items.map((s) => s.id)).not.toContain('brain-2');
+
+    const tail = svc.listSessions(1, { limit: 2, offset: 2 });
+    expect(tail.items).toHaveLength(1);
+    expect(tail.hasMore).toBe(false);
+
+    // An out-of-range offset reports an empty window, not a lie about more.
+    const past = svc.listSessions(1, { offset: 99 });
+    expect(past.items).toHaveLength(0);
+    expect(past.hasMore).toBe(false);
   });
 });

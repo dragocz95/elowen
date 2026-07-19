@@ -4,6 +4,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { ToolPolicy, TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
+import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
 import {
   delegatedToolPolicy,
   normalizeDelegatedExecutionScope,
@@ -40,6 +41,13 @@ export interface PlatformOrchestratorDeps {
    *  user — the orchestrator then falls back to the normal channel path. Emits a `session` event
    *  carrying the origin session id on success, so the caller can tell origin delivery happened. */
   originSend?: (userId: number, sessionId: string, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
+  /** The caller's OWN conversations eligible to bind into a channel (the /context picker), resolved from
+   *  the platform sender id to their linked Elowen account. Null when that sender is not linked to any
+   *  account (they have no bindable sessions). Paginated for the surface pickers. */
+  listContextSessions?: (platform: string, platformUserId: string, opts: SessionPageOpts) => SessionPage<SessionListItem> | null;
+  /** Bind (MOVE) one of the caller's own conversations into the channel slot — see
+   *  BrainService.bindChannelContext. Rejects when the sender is unlinked or a guard fails. */
+  bindContext?: (platform: string, platformUserId: string, channelKey: string, sessionId: string) => Promise<{ title: string }>;
 }
 
 /** THE single expression mapping an inbound conversation to its registry channel key — used by both the
@@ -223,6 +231,16 @@ export class PlatformOrchestrator {
             const fn = this.d.restart?.();
             if (!fn) throw new Error('restart is not available on this deployment');
             await fn(this.d.platformOwner?.() ?? 0); // attributed to the instance operator
+          },
+          // /context picker: list the invoking sender's OWN conversations (identity-scoped, bare default
+          // excluded server-side) and bind (MOVE) the chosen one into THIS channel slot. The channel key
+          // is the exact one the message pipeline uses (keyOf), so the bound history continues on the next
+          // turn. The sender platform id resolves to their linked Elowen account inside the deps.
+          listContext: (ref, senderPlatformId, opts) => this.d.listContextSessions?.(ref.platform, senderPlatformId, opts) ?? null,
+          bindContext: (ref, senderPlatformId, sessionId) => {
+            const bind = this.d.bindContext;
+            if (!bind) return Promise.reject(new Error('context binding is not available on this deployment'));
+            return bind(ref.platform, senderPlatformId, keyOf(ref), sessionId);
           },
         });
         await adapter.connect();

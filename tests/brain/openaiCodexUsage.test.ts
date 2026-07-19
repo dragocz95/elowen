@@ -1,16 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { OAuthCredential } from '@earendil-works/pi-ai';
 import { UsageService, type UsageAuth } from '../../src/brain/providerUsage.js';
 import { codexUsageSource } from '../../src/brain/openaiCodexUsage.js';
 
 const service = (deps: { auth: UsageAuth; fetchImpl?: typeof fetch; now?: () => number; ttlMs?: number; timeoutMs?: number }) =>
   new UsageService(codexUsageSource, deps.auth, { fetchImpl: deps.fetchImpl, now: deps.now, ttlMs: deps.ttlMs, timeoutMs: deps.timeoutMs });
 
-const oauth = (accountId = 'acct-1', access = 'oauth-secret') => AuthStorage.inMemory({
-  'openai-codex': {
-    type: 'oauth', access, refresh: 'refresh-secret', expires: Date.now() + 3_600_000, accountId,
-  },
-});
+// Hand-rolled credential access (AuthStorage was dropped in PI 0.80.8): `get` is the sync stored
+// credential the cache key is built from, `getApiKey` the resolved request token, and `set` lets a test
+// swap the account mid-flight the way a token refresh would.
+const oauth = (accountId = 'acct-1', access = 'oauth-secret') => {
+  let cred: OAuthCredential = { type: 'oauth', access, refresh: 'refresh-secret', expires: Date.now() + 3_600_000, accountId };
+  return {
+    get: () => cred,
+    getApiKey: async () => cred.access,
+    set: (_provider: string, next: OAuthCredential) => { cred = next; },
+  };
+};
 
 const body = (overrides: Record<string, unknown> = {}) => ({
   plan_type: 'pro',
@@ -26,7 +32,7 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 });
 
 describe('codexUsageSource via UsageService', () => {
-  it('refreshes through AuthStorage, sends the official headers, and orders windows shortest-first', async () => {
+  it('refreshes through getApiKey, sends the official headers, and orders windows shortest-first', async () => {
     const auth = oauth();
     const key = vi.spyOn(auth, 'getApiKey');
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({
@@ -42,7 +48,7 @@ describe('codexUsageSource via UsageService', () => {
 
     const usage = await svc.getUsage();
 
-    expect(key).toHaveBeenCalledWith('openai-codex', { includeFallback: false });
+    expect(key).toHaveBeenCalledWith('openai-codex');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = vi.mocked(fetchImpl).mock.calls[0]!;
     expect(String(url)).toBe('https://chatgpt.com/backend-api/wham/usage');
@@ -148,7 +154,7 @@ describe('codexUsageSource via UsageService', () => {
     });
 
     const fetchImpl = vi.fn() as unknown as typeof fetch;
-    const apiKeyAuth = AuthStorage.inMemory({ 'openai-codex': { type: 'api_key', key: 'not-oauth' } });
+    const apiKeyAuth: UsageAuth = { get: () => ({ type: 'api_key' as const, key: 'not-oauth' }), getApiKey: async () => 'not-oauth' };
     const unavailable = service({ auth: apiKeyAuth, fetchImpl });
     await expect(unavailable.getUsage()).resolves.toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();

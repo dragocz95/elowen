@@ -36,7 +36,7 @@ describe('workflow CLI rendering', () => {
     }]);
     const turn = model.turnAt(0)!;
     const rows = renderer.render(turn, 0, 90, {
-      showThoughts: false, thinkingSeconds: 0, composingMarkerReady: false, expandedThoughts: new Set(), expandedTools: new Set(),
+      showThoughts: false, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set(),
     });
     show('transcript marker', rows.map((r) => r.line));
 

@@ -291,7 +291,12 @@ export class ConversationLifecycle {
       const previous = this.d.sessions.get(sessionId);
       const prevWorkDir = previous?.workDir; // the switch must not move the session cwd
       const prevFast = previous?.requestProfile.fast;
+      const carried = previous?.listeners; // non-tap direct subscribers; taps re-attach via the spawner
       const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+      // No in-flight turn can be running here: a send holds serial(send-<id>)→serial(<id>) across the whole
+      // prompt() (turnRunner), and this switch runs under the same serial(sessionId) lock — so it only
+      // proceeds once any active turn has fully settled and persisted (agent_end → BrainSessionFactory).
+      // The respawn then rehydrates that output from SQLite, so no in-flight output is lost.
       this.d.sessions.dispose(sessionId);
       const userCfg = this.d.userSettings?.(userId);
       const live = await this.d.spawn({
@@ -306,8 +311,14 @@ export class ConversationLifecycle {
       });
       live.interactedAt = Date.now(); // a model switch is a deliberate touch — don't idle-roll it over
       this.d.sessions.set(sessionId, live);
+      // Carry the previous live's direct listeners onto the fresh one (mirrors maybeRollover/maybeVisionHop):
+      // open SSE taps are already re-attached by the spawner (sessionTaps), so this covers the non-tap
+      // subscribe() listeners. `listeners` is a Set keyed by reference, so re-adding a tap is a no-op.
+      if (carried) for (const l of carried) live.listeners.add(l);
       // The switch respawned the session, so record the change on the FRESH live (the old one is disposed):
-      // a visible transcript marker + a one-shot notice so the agent knows its model changed next turn.
+      // a visible transcript marker + a one-shot notice so the agent knows its model changed next turn. This
+      // publishes a `session-event` on the live stream — every attached client refetches history + status
+      // WITHOUT reopening its SSE (unlike a raw `session` event, which would reset the transcript).
       if (previous && previous.model !== live.model) recordSessionEvent(this.d.store, live.sessionId, live, 'model', live.model);
       const projectRoot = gitProjectRoot(policy, prevWorkDir);
       if (projectRoot && sel.provider && sel.model) {

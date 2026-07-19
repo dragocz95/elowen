@@ -12,6 +12,7 @@ import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
+import { BrainChatProvider } from '../../modules/advisor/BrainChatProvider';
 import { ImpersonationBanner } from './ImpersonationBanner';
 import { useDockState } from '../../lib/useDockState';
 import { useElementWidth } from '../../lib/useElementWidth';
@@ -55,6 +56,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const dock = useDockState();
   const docked = dock.state.open;
+  // On /chat the ChatView is the sole chat host: the floating launcher is suppressed (the dock may still
+  // open in Terminál mode — see AdvisorPanel). This is a UX guard only; the single controller in
+  // BrainChatProvider guarantees one SSE stream regardless of how many surfaces mount.
+  const onChat = usePathname() === '/chat';
   // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in
   // web chat (Sessions → open in chat). BrainChat mounts on open and switches to the requested session.
   useEffect(() => {
@@ -113,8 +118,12 @@ function ShellLayout({ children }: { children: ReactNode }) {
     </div>
   );
 
+  // The single brain-chat controller lives here — ONE mount above both the route content and every
+  // dock-side AdvisorPanel, so its SSE stream / transcript / draft survive dock open-close, the
+  // Chat↔Terminál toggle and route changes. It is inert until the first chat open (lazy ensureAttached).
+  // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
   return (
-    <>
+    <BrainChatProvider>
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
@@ -129,8 +138,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>
       <CommandPalette />
-      {!docked && <AdvisorLauncher onOpen={() => dock.setOpen(true)} />}
-    </>
+      {!docked && !onChat && <AdvisorLauncher onOpen={() => dock.setOpen(true)} />}
+    </BrainChatProvider>
   );
 }
 

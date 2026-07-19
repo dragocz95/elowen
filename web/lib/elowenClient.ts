@@ -1,5 +1,6 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, TerminalSettings, PermissionSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, WhatsAppPairing, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, ManagedSession, BrainSearchHit, BrainMessage, BrainStatus, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, WhatsAppPairing, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, ManagedSession, BrainSearchHit, BrainMessage, BrainStatus, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
 import { clearToken } from './token';
+import type { BrainBinding } from './brainSession';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
 // daemon bearer token server-side from the httpOnly session cookie. No token ever lives in JS.
@@ -148,14 +149,6 @@ export const elowenClient = {
   saveMyTerminalSettings: (patch: Partial<TerminalSettings>) => req<TerminalSettings>('/auth/me/terminal-settings', json(patch, 'PATCH')),
   myPermissions: () => req<PermissionSettings>('/auth/me/permissions'),
   saveMyPermissions: (patch: Partial<PermissionSettings>) => req<PermissionSettings>('/auth/me/permissions', json(patch, 'PATCH')),
-  /** The caller's own personality profiles, optionally narrowed to one platform. */
-  listPersonalities: (platform?: string) => req<PersonalityProfile[]>(`/personality/profiles${platform ? `?platform=${encodeURIComponent(platform)}` : ''}`),
-  createPersonality: (body: PersonalityCreate) => req<PersonalityProfile>('/personality/profiles', json(body)),
-  updatePersonality: (id: number, patch: PersonalityPatch) => req<PersonalityProfile>(`/personality/profiles/${id}`, json(patch, 'PATCH')),
-  deletePersonality: (id: number) => req<{ ok: true }>(`/personality/profiles/${id}`, { method: 'DELETE' }),
-  /** Pin a profile active for its own platform; the daemon restarts owner chat + drops channel sessions. */
-  activatePersonality: (id: number) => req<PersonalityProfile>(`/personality/profiles/${id}/activate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  /** The resolved system-prompt stack (core persona + active personality chunk) for one platform. */
   plugins: () => req<PluginInfo[]>('/plugins'),
   togglePlugin: (name: string, enabled: boolean) => req<PluginInfo>(`/plugins/${encodeURIComponent(name)}`, json({ enabled }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
@@ -203,25 +196,52 @@ export const elowenClient = {
   whatsappUnpair: () => req<{ connected: boolean }>('/plugins/whatsapp/unpair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   brainModels: () => req<BrainModelOption[]>('/brain/models'),
   taskBrainConversation: (taskId: string) => req<BrainMessage[]>(`/tasks/${encodeURIComponent(taskId)}/conversation`),
-  brainStatus: () => req<BrainStatus>('/brain/status'),
-  brainStart: (opts: { session?: string; fresh?: boolean } = {}) => req<{ sessionId: string }>('/brain/start', json(opts)),
-  brainSend: (text: string, images?: { data: string; mimeType: string }[], display?: string) =>
-    req<{ ok: boolean }>('/brain/send', json({ text, ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) })),
+  /** `session` binds the query to the caller's own explicit conversation (a session-bound chat client);
+   *  absent → the server's active pointer. */
+  brainStatus: (session?: string) => req<BrainStatus>(`/brain/status${session ? `?session=${encodeURIComponent(session)}` : ''}`),
+  /** `identity` claims the tab's stable client id + the new start generation on the selected conversation,
+   *  so the daemon fences a network-reordered older selection (mirror of the CLI's start()). */
+  brainStart: (opts: { session?: string; fresh?: boolean } = {}, identity?: { client: string; generation: number }) =>
+    req<{ sessionId: string }>('/brain/start', json({ ...opts, ...(identity ?? {}) })),
+  /** `bind` threads the bound session + client/generation onto the turn so it lands in THIS client's
+   *  conversation regardless of where the server's active pointer moved (mirror of the CLI's send()). */
+  brainSend: (text: string, images?: { data: string; mimeType: string }[], display?: string, bind: BrainBinding = {}) =>
+    req<{ ok: boolean }>('/brain/send', json({ text, ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}), ...bind })),
   brainAnswer: (id: string, answers: AskAnswer[]) => req<{ ok: boolean; matched: boolean }>('/brain/answer', json({ id, answers })),
-  /** The active conversation's pending mid-turn message queue (full snapshot). */
-  brainQueue: () => req<{ id: string; text: string }[]>('/brain/queue'),
+  /** Admin: launch (or reuse) an `elowen chat` TUI terminal bound to the given brain conversation.
+   *  Returns the opaque tmux terminal name to stack as a dock pane; `created:false` when one already runs. */
+  brainTerminal: (session: string) => req<{ terminal: string; created: boolean }>('/brain/terminal', json({ session })),
+  /** The conversation's pending mid-turn message queue (full snapshot); `session` scopes it to a bound one. */
+  brainQueue: (session?: string) => req<{ id: string; text: string }[]>(`/brain/queue${session ? `?session=${encodeURIComponent(session)}` : ''}`),
   /** Remove one pending queued message by id (the × button). The reduced snapshot rides back on the
-   *  `queue` stream event — the server is authoritative. */
-  brainQueueRemove: (id: string) => req<{ removed: boolean }>(`/brain/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+   *  `queue` stream event — the server is authoritative. `session` scopes it to a bound conversation. */
+  brainQueueRemove: (id: string, session?: string) => req<{ removed: boolean }>(`/brain/queue/${encodeURIComponent(id)}${session ? `?session=${encodeURIComponent(session)}` : ''}`, { method: 'DELETE' }),
   /** The slash-command catalog published for the web surface (single source of truth, admin-filtered). */
   brainCommands: () => req<{ commands: SlashCommandDef[] }>('/brain/commands?surface=web'),
-  /** Run a server-side (`action`) slash command through the shared dispatcher. */
-  brainCommand: (name: string) => req<{ ok?: boolean; message?: string; error?: string }>('/brain/command', json({ name })),
-  /** Switch the active conversation's model (the `/model` picker). Server rebuilds the session. */
-  brainSetModel: (sel: { provider?: string; model?: string }) => req<{ model: string }>('/brain/model', json(sel)),
+  /** Run a server-side (`action`) slash command through the shared dispatcher; `session` scopes `/stop`
+   *  and friends to the caller's bound conversation. */
+  brainCommand: (name: string, session?: string) => req<{ ok?: boolean; message?: string; error?: string }>('/brain/command', json({ name, ...(session ? { session } : {}) })),
+  /** Switch the conversation's model (the `/model` picker). Server rebuilds the session; `session` targets
+   *  the caller's own bound conversation. */
+  brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
+  /** Stop the streaming turn for ALL watchers of the bound conversation (the explicit Stop intent). */
+  brainAbort: (session?: string) => req<{ ok: boolean }>('/brain/abort', json(session ? { session } : {})),
+  /** Detach-unless-last on tab close: abort this client's run + dispose the live session only when it is
+   *  the final attachment. Fire-and-forget via sendBeacon (keepalive fetch fallback) so it survives unload. */
+  brainSessionStop: (payload: { session?: string; client: string; generation?: number }): void => {
+    const url = `${BASE}/brain/session/stop`;
+    const body = JSON.stringify(payload);
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      try { if (navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }))) return; } catch { /* fall through to fetch */ }
+    }
+    void fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, credentials: 'same-origin', keepalive: true }).catch(() => undefined);
+  },
   brainSessions: () => req<BrainSessionInfo[]>('/brain/sessions'),
   brainSearch: (q: string) => req<BrainSearchHit[]>(`/brain/search?q=${encodeURIComponent(q)}`),
   brainDeleteSession: (id: string) => req<{ ok: boolean }>(`/brain/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Rename a conversation (metadata only — no rebind). PATCH mirrors the daemon's title update. */
+  brainRenameSession: (id: string, title: string) =>
+    req<{ id: string; title: string }>(`/brain/sessions/${encodeURIComponent(id)}`, json({ title }, 'PATCH')),
   /** Download a conversation as a self-contained HTML transcript or a JSONL session file. Fetches the
    *  attachment over the authenticated (cookie) request, then triggers a browser save via an object URL
    *  — the daemon streams it with a Content-Disposition filename we honour when present. */

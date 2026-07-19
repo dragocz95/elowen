@@ -12,6 +12,9 @@ import { activeKeymap } from './keys.js';
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
 const PROGRESS_TAIL_ROWS = 8;
+/** Braille spinner cycled while the model is authoring a tool call; the frame loop re-renders ~4×/s, which
+ *  the caller-supplied `spinnerFrame` advances one step per render. */
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /** The one line that identifies a failed tool result. Its own `status` ("needs attention") is dropped: the
  *  collapsed row already says Error, and repeating it would spend the only line we have on nothing. */
@@ -32,6 +35,8 @@ export interface TurnRenderOptions {
   thinkingSeconds: number;
   /** The frame loop has decided the authoring window stalled long enough to surface the hint. */
   composingMarkerReady: boolean;
+  /** Monotonic frame counter driving the composing spinner; the renderer stays pure by taking it as input. */
+  spinnerFrame: number;
   expandedThoughts: ReadonlySet<string>;
   expandedTools: ReadonlySet<string>;
 }
@@ -144,24 +149,27 @@ export class TurnRenderer {
             const members = group.members ?? [item];
             const expanded = options.expandedTools.has(key);
             const label = members.length > 1 ? `${members.length}× Error` : 'Error';
-            const summary = truncateToWidth(errorHeadline(item.output), Math.max(12, width - 34), '…');
+            const summary = truncateToWidth(errorHeadline(item.output), Math.max(12, width - 36), '…');
+            // The error headline sits in the tool column (TOOL_INDENT), so it aligns with the sibling tool
+            // rows it belongs to rather than the shallower thought/prose gutter.
             add(
-              `  ${color.warning(expanded ? '▾' : '▸')} ${color.warning(label)} ${color.faint('click')}`
+              `${TOOL_INDENT}${color.warning(expanded ? '▾' : '▸')} ${color.warning(label)} ${color.faint('click')}`
                 + (expanded ? '' : `  ${color.dim(summary)}`),
               'expandable', key,
             );
             if (expanded && members.length > 1) {
               for (const member of members) {
-                const line = truncateToWidth(errorHeadline(member.output!), Math.max(12, width - 10), '…');
-                add(`   ${color.faint('·')} ${color.dim(line)}`);
+                const line = truncateToWidth(errorHeadline(member.output!), Math.max(12, width - 12), '…');
+                add(`${TOOL_OUTPUT_INDENT}${color.faint('·')} ${color.dim(line)}`);
               }
+              addBlank();
             } else if (expanded) {
               // Wrapped, not framed: the framed block clips a long line at the box edge, so "expand" would
               // still hide the end of the very sentence the user opened it to read.
               const full = terminalPlainText(item.output.fullText ?? item.output.text ?? '');
-              for (const line of wrapTextWithAnsi(full, Math.max(12, width - 6))) add(`    ${color.dim(line)}`);
+              for (const line of wrapTextWithAnsi(full, Math.max(12, width - 8))) add(`${TOOL_OUTPUT_INDENT}${color.dim(line)}`);
+              addBlank();
             }
-            addBlank();
           } else if (item.output) {
             const before = rows.length;
             for (const line of toolOutputBlock(item.output, width, options.expandedTools.has(key))) add(line);
@@ -213,9 +221,15 @@ export class TurnRenderer {
     // While the model is writing a tool call whose marker hasn't rendered yet, the transcript would
     // otherwise sit frozen (the text is done, the tool row not started). Only surface it once the window
     // has stalled past the threshold (`composingMarkerReady`) — quick tool calls stay silent so the hint
-    // reads as "something is taking a while", not as noise on every call.
-    if (turn.streaming && turn.composing && options.composingMarkerReady) add(`  ${color.faint('--- Writing tool call ---')}`);
-    else if (!hasText && turn.streaming) add(`  ${color.faint('…')}`);
+    // reads as "something is taking a while", not as noise on every call. The row lives in the tool column
+    // with a spinner and the real tool name (known before its arguments finish); when the tool starts
+    // executing this hint gives way to the full tool row (with its detail). If the name is not yet known it
+    // falls back to a neutral label.
+    if (turn.streaming && turn.composing && options.composingMarkerReady) {
+      const spin = SPINNER[((options.spinnerFrame % SPINNER.length) + SPINNER.length) % SPINNER.length]!;
+      const label = turn.composingTool ? toolRowSpec(turn.composingTool).title : 'working';
+      add(`${TOOL_INDENT}${color.warning(spin)} ${color.dim(truncateToWidth(label, Math.max(12, width - 10), '…'))}`);
+    } else if (!hasText && turn.streaming) add(`  ${color.faint('…')}`);
     addBlank();
     return rows;
   }

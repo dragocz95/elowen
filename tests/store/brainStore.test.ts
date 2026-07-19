@@ -73,6 +73,27 @@ describe('BrainStore', () => {
     expect(store.getSession('child')?.parent_session_id).toBe('root-archived');
   });
 
+  it('the /context three-step move archives the channel slot, then re-keys the chosen session into it, leaving no copy of the chosen id', () => {
+    // Whatever currently occupies the deterministic channel slot...
+    store.createSession({ id: 'brain-ch-discord-c1', userId: 1, model: 'm' });
+    store.appendMessage({ id: 'ch1', sessionId: 'brain-ch-discord-c1', parentId: null, role: 'user', content: { text: 'channel history' } });
+    // ...and the caller's own personal conversation being bound in.
+    store.createSession({ id: 'brain-1-abc', userId: 1, model: 'm' });
+    store.appendMessage({ id: 'p1', sessionId: 'brain-1-abc', parentId: null, role: 'user', content: { text: 'personal history' } });
+
+    // Step 1 (archive the slot), step 2 (move the chosen session into the freed slot) — the exact pair
+    // BrainService.bindChannelContext performs after channelDispose.
+    store.reassignSession('brain-ch-discord-c1', 'brain-ch-discord-c1-arch-x');
+    store.reassignSession('brain-1-abc', 'brain-ch-discord-c1');
+
+    // The chosen id is GONE (uniqueness: a second bind of it would hit getSession()===undefined).
+    expect(store.getSession('brain-1-abc')).toBeUndefined();
+    // The channel slot now carries the chosen conversation's history verbatim...
+    expect(store.getMessages('brain-ch-discord-c1').map((m) => JSON.parse(m.content).text)).toEqual(['personal history']);
+    // ...and the previous channel conversation survives, browsable under the archive id (nothing lost).
+    expect(store.getMessages('brain-ch-discord-c1-arch-x').map((m) => JSON.parse(m.content).text)).toEqual(['channel history']);
+  });
+
   it('persists only validated direct same-owner sub-agent progress', () => {
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });

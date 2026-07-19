@@ -1,7 +1,6 @@
-import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
-import { buildBrainRegistry, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
+import { buildBrainRegistry, inMemoryModelRuntime, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
 import { inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
 
 /** One pickable model for the account UI dropdown, grouped by the provider entry it runs through.
@@ -75,10 +74,10 @@ export function clearModelsCache(): void { cache.clear(); }
 
 /** The full built-in pi-ai catalog for one OAuth provider type (e.g. 'oauth-anthropic') — what the
  *  account COULD serve, regardless of any manual selection. Feeds the settings model picker. */
-export function oauthBuiltinCatalog(type: string): string[] {
+export async function oauthBuiltinCatalog(type: string): Promise<string[]> {
   const builtin = OAUTH_BUILTIN[type];
   if (!builtin) return [];
-  const registry = buildBrainRegistry({ providers: [] }, AuthStorage.inMemory());
+  const registry = buildBrainRegistry({ providers: [] }, await inMemoryModelRuntime());
   return registry.getAll().filter((m) => m.provider === builtin).map((m) => m.id);
 }
 
@@ -89,7 +88,7 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
   const out: BrainModelOption[] = [];
   // One registry to read both built-in OAuth metadata and Elowen's custom-model capability profiles.
   // No credentials are required to inspect descriptors.
-  const registry = buildBrainRegistry(cfg, AuthStorage.inMemory());
+  const registry = buildBrainRegistry(cfg, await inMemoryModelRuntime());
   let defaultProvider: string | undefined;
   let defaultModel: string | undefined;
   try {

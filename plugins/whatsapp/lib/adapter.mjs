@@ -17,6 +17,8 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger inbound images are n
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
 const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending ask after this (cfg: askTimeoutMs; > the core 5-min timeout)
 const MENU_TTL_MS = 6 * 60_000;          // a numbered-menu number-reply is valid this long
+const MENU_PAGE = 18;                     // numbered-menu options per page (leaves room for nav rows)
+const CONTEXT_MAX = 200;                  // upper bound of own conversations the /context picker pages over
 const MAX_UPLOAD_IMAGES = 4;             // default generated-image uploads per reply (cfg: maxUploadImages)
 
 /** Read a numeric config field, clamped to [min,max], falling back to `def` when unset/invalid. */
@@ -78,7 +80,7 @@ export class WhatsAppAdapter {
     this.lastQrLogAt = 0;    // throttle the ASCII-QR log line
     this.sentStore = new Map(); // messageId → sent proto message (for getMessage retries + edits)
     this.pendingAsks = new Map(); // askId → { jid, askerJid, questions, selected, awaitingText, key, createdAt }
-    this.pendingMenus = new Map(); // jid → { kind:'model'|'thinking', options:[{n,id,label}], createdAt }
+    this.pendingMenus = new Map(); // jid → { kind:'model'|'thinking'|'context', title, options, entries, page, createdAt }
     this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en'];
   }
 
@@ -431,8 +433,23 @@ export class WhatsAppAdapter {
   // ── pending menus & prompts (all text-driven — WhatsApp native buttons are unreliable on personal
   //    accounts, so pickers are numbered text menus the user replies to with a number) ──
 
-  /** Apply a numbered-menu pick id (`model:*`, `think:*`) — resolved from a numeric text reply. */
+  /** Apply a numbered-menu pick id (`model:*`, `think:*`, `context:*`) — resolved from a numeric text reply. */
   async handleSelection(chatJid, senderJid, id, m) {
+    if (id.startsWith('context:')) {
+      const ids = this.senderIds(senderJid, chatJid);
+      if (!senderIsAdmin(ids, this.cfg.senderPolicies)) { await this.sendText(chatJid, this.msg.controlForbidden, m); return true; }
+      const sessionId = id.slice('context:'.length);
+      this.pendingMenus.delete(chatJid);
+      if (!this.ctl?.bindContext) { await this.sendText(chatJid, this.msg.noSession, m); return true; }
+      // The MOVE is dispatched through the host control surface; ownership is re-verified server-side.
+      try {
+        const { title } = await this.ctl.bindContext(this.chatRef(chatJid), senderJid, sessionId);
+        await this.sendText(chatJid, this.msg.contextBound(title), m);
+      } catch (e) {
+        await this.sendText(chatJid, this.msg.contextError(e?.message ?? e), m);
+      }
+      return true;
+    }
     if (id.startsWith('model:')) {
       const ids = this.senderIds(senderJid, chatJid);
       if (!senderIsAdmin(ids, this.cfg.senderPolicies)) { await this.sendText(chatJid, this.msg.modelForbidden, m); return true; }
@@ -516,26 +533,38 @@ export class WhatsAppAdapter {
         if (settled) return true; // answer delivered — the model's reply is the acknowledgement, no ack line
       }
     }
-    // Numeric reply to a pending model/thinking menu.
+    // Numeric reply to a pending model/thinking/context menu, resolved against the CURRENT page's entries
+    // (a "nav" entry re-renders another page; a "pick" entry selects).
     const menu = this.pendingMenus.get(chatJid);
     if (menu) {
       if (Date.now() - menu.createdAt > MENU_TTL_MS) { this.pendingMenus.delete(chatJid); return false; }
+      const entries = menu.entries ?? [];
       const n = Number(t);
-      if (Number.isInteger(n) && n >= 1 && n <= menu.options.length) {
-        const opt = menu.options[n - 1];
-        return this.handleSelection(chatJid, senderJid, opt.id, m);
+      if (Number.isInteger(n) && n >= 1 && n <= entries.length) {
+        const e = entries[n - 1];
+        if (e.type === 'nav') { await this.sendMenu(chatJid, menu.kind, menu.title, menu.options, m, e.page); return true; }
+        return this.handleSelection(chatJid, senderJid, e.id, m);
       }
     }
     return false;
   }
 
   /** Render a numbered text menu the user replies to with a number, and register a pending entry so the
-   *  reply resolves. `options`: [{ id, label, description? }]. */
-  async sendMenu(chatJid, kind, title, options, quoted) {
-    const opts = options.slice(0, 20);
-    const lines = opts.map((o, i) => `${i + 1}. *${o.label}*${o.description ? ` — ${o.description}` : ''}`);
-    const body = `${title}\n\n${lines.join('\n')}\n\n_${this.msg.replyWithNumber(opts.length)}_`;
-    this.pendingMenus.set(chatJid, { kind, options: opts.map((o, i) => ({ n: i + 1, id: o.id, label: o.label })), createdAt: Date.now() });
+   *  reply resolves. `options`: [{ id, label, description? }]. The FULL option list is paged (no truncation):
+   *  each page shows ≤MENU_PAGE numbered picks plus, when there is more than one page, numbered nav entries
+   *  ("Previous/Next page") the user selects like any other row. The stored `entries` mirror exactly what is
+   *  rendered, so a numeric reply resolves against the current page. */
+  async sendMenu(chatJid, kind, title, options, quoted, page = 0) {
+    const pages = Math.max(1, Math.ceil(options.length / MENU_PAGE));
+    const p = Math.min(Math.max(Number(page) || 0, 0), pages - 1);
+    const entries = options.slice(p * MENU_PAGE, p * MENU_PAGE + MENU_PAGE)
+      .map((o) => ({ type: 'pick', id: o.id, label: o.label, description: o.description }));
+    if (p > 0) entries.push({ type: 'nav', page: p - 1, label: this.msg.pagePrev });
+    if (p < pages - 1) entries.push({ type: 'nav', page: p + 1, label: this.msg.pageNext });
+    const lines = entries.map((e, i) => `${i + 1}. *${e.label}*${e.type === 'pick' && e.description ? ` — ${e.description}` : ''}`);
+    const heading = pages > 1 ? `${title} (${p + 1}/${pages})` : title;
+    const body = `${heading}\n\n${lines.join('\n')}\n\n_${this.msg.replyWithNumber(entries.length)}_`;
+    this.pendingMenus.set(chatJid, { kind, title, options, entries, page: p, createdAt: Date.now() });
     await this.sendText(chatJid, body, quoted);
   }
 
@@ -593,10 +622,22 @@ export class WhatsAppAdapter {
       }
       case 'model': {
         if (!admin()) { await this.sendText(chatJid, this.msg.modelForbidden); return true; }
-        const models = (await this.listModels().catch(() => [])).slice(0, 20);
+        const models = await this.listModels().catch(() => []);
         if (!models.length) { await this.sendText(chatJid, this.msg.noModels); return true; }
+        // The FULL catalog is paged by sendMenu (no truncation) — a model past the first page is reachable
+        // via the numbered nav rows.
         const options = models.map((mo) => ({ id: `model:${mo.provider}:${mo.model}`, label: mo.model, description: mo.providerLabel }));
         await this.sendMenu(chatJid, 'model', this.msg.pickModel, options);
+        return true;
+      }
+      case 'context': {
+        // Operator-gated like /model; ownership is enforced server-side (only the invoking sender's OWN
+        // conversations are offered, and binding re-checks). Binding exposes the chosen history to this chat.
+        if (!admin()) { await this.sendText(chatJid, this.msg.controlForbidden); return true; }
+        const listing = this.ctl?.listContext?.(this.chatRef(chatJid), senderJid, { offset: 0, limit: CONTEXT_MAX }) ?? null;
+        if (!listing || !listing.items.length) { await this.sendText(chatJid, this.msg.noContextSessions); return true; }
+        const options = listing.items.map((s) => ({ id: `context:${s.id}`, label: s.title || 'Untitled', description: s.model || undefined }));
+        await this.sendMenu(chatJid, 'context', this.msg.pickContext, options);
         return true;
       }
       case 'thinking': {

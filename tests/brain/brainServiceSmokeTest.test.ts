@@ -1,11 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainService, type BrainDeps } from '../../src/brain/brainService.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 type Provider = { id: string; label: string; type: 'openai'; baseUrl: string; models: string[]; apiKey: string };
 
@@ -36,6 +41,7 @@ function makeService(opts: { providers?: Provider[]; reply?: string | Error } = 
   const store = new BrainStore(db);
   const deps: BrainDeps = {
     store,
+    runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'tok', get: () => null },
     config: { providers },
     prompts: { render: () => '' },

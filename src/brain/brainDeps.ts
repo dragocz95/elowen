@@ -1,4 +1,4 @@
-import type { createAgentSession, AuthStorage, ResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { createAgentSession, ModelRuntime, ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { HookAuditBuffer } from '../shared/hookAudit.js';
 import type { Policy } from '../plugins/policy.js';
@@ -27,8 +27,9 @@ export interface BrainDeps {
   /** The provider set, or a live resolver so provider/OAuth changes apply without a daemon restart.
    *  A resolver returning null means "nothing configured yet" — `start` fails with a clear error. */
   config: BrainRuntimeConfig | (() => BrainRuntimeConfig | null);
-  /** Credential store for the brain's providers (OAuth tokens live here). Default: in-memory. */
-  authStorage?: AuthStorage;
+  /** The brain's model runtime: credential store (OAuth tokens) + built-in catalog. buildBrainRegistry
+   *  wraps it per session; its stored credentials resolve OAuth auth. */
+  runtime: ModelRuntime;
   /** Renders the brain's system prompt from the editable `elowen` template (per-user override aware). */
   prompts: { render(name: string, vars: Record<string, string>, userId?: number): string };
   /** Daemon REST base the brain's tools call (ELOWEN_URL). */
@@ -53,11 +54,10 @@ export interface BrainDeps {
   /** The CLI's per-user model choice for a canonical, policy-authorized Git project root. */
   projectModelPreference?: (userId: number, projectRoot: string) => ProjectModelPreference | undefined;
   setProjectModelPreference?: (userId: number, projectRoot: string, selection: ProjectModelPreference) => void;
-  /** The user's active personality profile as a ready-to-append system-prompt chunk, or undefined when
-   *  none is pinned (delegates to PersonalityService.activeAppend). Appended AFTER the persona in
-   *  appendSystemPrompt — the cache-safe seam. For Discord `userId` is the channel owner and `platform`
-   *  is 'discord', so it resolves the owner's one Discord persona (the locked shared-channel decision). */
-  activePersonality?: (userId: number, platform: string) => string | undefined;
+  /** The user's global personality body as a ready-to-append system-prompt chunk, or undefined when it is
+   *  empty. Appended AFTER the persona in appendSystemPrompt — the cache-safe seam. One global persona per
+   *  user, identical on every platform (web/cli/discord/cron); for a channel `userId` is the channel owner. */
+  activePersonality?: (userId: number) => string | undefined;
   /** The assistant's configured display identity (Settings → Elowen AI). Absent → 'Elowen'. */
   agentName?: () => string;
   /** Max agent steps (model round-trips) per run before the turn is aborted (Settings → Elowen AI). Read

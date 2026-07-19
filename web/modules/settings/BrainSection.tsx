@@ -525,6 +525,8 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
           onDone={(ok) => {
             setFlow(null);
             void oauth.refetch();
+            // A fresh connect must surface the account's usage rail now, not on the next 20s poll tick.
+            if (ok) void rateLimits.refetch();
             toast(ok ? t.brain.connectedToast : t.brain.connectFailed, ok ? undefined : 'error');
           }}
         />

@@ -1,6 +1,6 @@
 {
   "name": "elowen",
-  "version": "0.27.7",
+  "version": "0.27.71",
   "description": "Elowen is a self-hosted personal AI agent you talk to: chat, act, automate and extend from the CLI, web, Discord or WhatsApp.",
   "license": "MIT",
   "type": "module",
@@ -63,9 +63,9 @@
     "serve": "node --experimental-strip-types src/daemon/index.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
-    "@earendil-works/pi-tui": "^0.80.6",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-tui": "0.80.10",
     "@hono/node-server": "^1.13.0",
     "@hono/node-ws": "^1.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

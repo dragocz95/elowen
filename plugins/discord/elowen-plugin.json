@@ -1,6 +1,6 @@
 {
   "name": "discord",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": "1",
   "description": "Discord bot: mention it and it answers from Elowen AI. Slash commands (/model, /display, /new, /help), per-channel model and presentation settings, live tool activity with independent answer delivery, status reactions and proactive cron/tick pushes. Server tools (admin sessions): server/channel/member info, list & search members, roles, pins, threads (create/archive/lock/members), channels (create/rename/delete, categories) and message management (delete/purge). Each Discord role maps to allowed Elowen projects + a role prompt.",
   "entry": "index.mjs",

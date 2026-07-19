@@ -1,8 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { sanitizePermissionSettings } from '../../src/brain/toolPermissions.js';
+
+let sharedRuntime: ModelRuntime;
+beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 /** Minimal fake deps: just enough for start()/status()/setYolo() (mirrors brainService.test.ts). */
 function fakeDeps(persistedYolo: boolean) {
@@ -15,6 +20,7 @@ function fakeDeps(persistedYolo: boolean) {
   };
   return {
     store: new BrainStore(openDb(':memory:')),
+    runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
     prompts: { render: () => 'PERSONA' },

@@ -37,10 +37,11 @@ describe('slash command registry', () => {
     }
   });
 
-  it('scopes /reasoning to the CLI (the only surface that wires the reasoning picker)', () => {
-    expect(commandsFor('cli', true).some((c) => c.name === 'reasoning')).toBe(true);
+  it('publishes /reasoning to the CLI and every chat platform that wires the picker (not web)', () => {
+    for (const surface of ['cli', 'discord', 'whatsapp', 'telegram'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'reasoning'), surface).toBe(true);
+    }
     expect(commandsFor('web', true).some((c) => c.name === 'reasoning')).toBe(false);
-    expect(commandsFor('discord', true).some((c) => c.name === 'reasoning')).toBe(false);
   });
 
   it('scopes local work modes to the CLI surface', () => {
@@ -102,6 +103,17 @@ describe('slash command registry', () => {
       expect(isPromptCommand('/etc/passwd is a file', session)).toBe(false);
       expect(isPromptCommand('deploy without a slash', session)).toBe(false);
     });
+  });
+
+  it('publishes /context to every platform channel surface but never the CLI (no channel to re-key)', () => {
+    const context = findCommand('context')!;
+    expect(context.kind).toBe('picker');
+    for (const surface of ['discord', 'whatsapp', 'telegram', 'web'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'context'), `${surface} context`).toBe(true);
+    }
+    // CLI keeps /resume + /sessions; /context must be absent there for both operators and non-operators.
+    expect(commandsFor('cli', true).some((c) => c.name === 'context')).toBe(false);
+    expect(commandsFor('cli', false).some((c) => c.name === 'context')).toBe(false);
   });
 
   it('gates /lsp behind adminOnly (daemon-wide toggle)', () => {

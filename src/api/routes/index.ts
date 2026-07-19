@@ -11,7 +11,6 @@ import { registerMissionRoutes } from './missions.js';
 import { registerConfigRoutes } from './config.js';
 import { registerPluginRoutes } from './plugins.js';
 import { registerTaskRoutes } from './tasks.js';
-import { registerPersonalityRoutes } from './personality.js';
 import { registerMemoryRoutes } from './memory.js';
 
 /** Register every route family on the app. Order matters: the auth/tenancy guards are global
@@ -30,6 +29,5 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerMissionRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
   registerPluginRoutes(app, ctx);
-  registerPersonalityRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);
 }

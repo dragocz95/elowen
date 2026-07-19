@@ -8,7 +8,7 @@ import { openDb } from '../../src/store/db.js';
 
 describe('buildApp', () => {
   it('wires a healthy app with an injected tmux fake', async () => {
-    const { app } = buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true });
+    const { app } = await buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true });
     expect((await app.request('/health')).status).toBe(200);
     expect((await app.request('/sessions')).status).toBe(200);
   });
@@ -22,7 +22,7 @@ describe('buildApp', () => {
       db.prepare("INSERT INTO projects (id,slug,path) VALUES (9,'Elowen','/var/www/elowen')").run();
       db.close();
 
-      const { app } = buildApp({
+      const { app } = await buildApp({
         dbPath,
         tmux: new FakeTmuxDriver(),
         project: { id: 1, slug: 'elowen', path: '/var/www/elowen' },

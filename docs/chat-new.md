@@ -2,6 +2,41 @@
 
 Jedna Elowen konverzace, tři prezentace stejného stavu: kompaktní dock, plná stránka `/chat` a — jen pro adminy — reálné `elowen chat` TUI ve webovém terminálu. Přepnutí prezentace nesmí zahodit draft, rozpojit běžící odpověď ani vytvořit druhý modelový běh.
 
+## Grounding a potvrzená rozhodnutí (2026-07-19)
+
+Multi-agent grounding proti reálnému kódu (19 stale/wrong anchorů). Tato sekce má přednost před staršími formulacemi níže.
+
+**Potvrzená rozhodnutí (Filip):**
+
+1. **Abort-ownership:** explicitní **Stop = abort turnu pro všechny** sledující; zavření tabu / ukončení CLI = **detach jen daného transportu** (abort až když odejde poslední sledující). → `stopSession` (`brainService.ts:428`) přejde na detach-unless-last; `cleanUp` už neabortuje bezpodmínečně (dnes `abort()` na :445 zabije i turn, který sleduje web). Explicitní abort zůstává samostatná akce.
+2. **Web binding:** web přijme **explicitní `tapSession(?session=)` jako CLI** (přežije model-switch přes `sessionTaps`); žádná paralelní anonymní `subscribe()` cesta.
+3. **Osobnost migrace:** **tvrdě smazat** `personality_profiles` + `personality_active_profiles` (nikdo žádné profily nemá — není co archivovat). Nový global body začíná prázdný v CliSettings vedle `advisorStyle`; celý `personality_*` subsystém se odstraní (koordinovaná deadcode deleta).
+4. **/context dispatch:** **nový `POST /brain/context`** (ne uvolňovat action-only guard `/brain/command`, který dnes odmítá `kind!=='action'`).
+
+**Deferred defaulty (potvrdit u příslušné fáze):**
+
+- Fáze 1 fix (TOCTOU): gated abort v `cleanUp` (`brainService.ts:442`) — `attachedCount` číst **po** `await abort()` těsně před dispose, ne před ním (klient připojený během abortu se nesmí disposnout zpod ruky).
+- Osiřelý turn: detach už neabortuje → poslední klient umře bez stop POSTu (SIGKILL/síť/sleep) ⇒ turn doběhne a live session zůstane v paměti do dalšího sendu / restartu daemonu (osobní `brain-<uid>` nemá watchdog). Rozhodnutí: **zatím akceptovat** (idle-rollover/restart uklidí); reaper doplnit až kdyby paměť vadila.
+- Fáze 3: `switchModel` (`lifecycle.ts:283`) přidá `abortSessionWork` drain/settle před dispose (neztratit in-flight output).
+- Fáze 7 `/context`: move re-key je **nevratný** (bez unbind/restore) — dle rozhodnutí „Move, ne fork".
+- Fáze 4: tmux `new-session -e … -- elowen chat` (ověřit tmux ≥3.0 na hostu); per-terminal token jako string v nové tabulce `brain_terminals`, mimo logy i tmux name.
+- Fáze 7 pickery: `buildPagedSelect` realisticky **per-surface** (tři nezávislé `.mjs` adaptéry), ne jeden sdílený modul; odstranit Discord `.slice(0,25)` **i** Telegram `.slice(0,40)`.
+
+**Známé minory (dořešit ve finálním review před publishem):**
+
+- Fáze 7 `/context`: bind pojmenované personal session s **in-flight delegovaným dítětem** desyncuje in-memory parent tracking (stop se nepropíše na to dítě) — úzký, non-corrupting; oprava = přemapovat in-memory child klíče (invazivní do concurrency).
+- Fáze 7 pickery: `CONTEXT_MAX=200` stropuje picker na 200 nejnovějších vlastních konverzací per surface (serverová `GET /brain/sessions` pagination je unbounded).
+- Fáze 7: `sessionPageOpts` clampne malformed `?limit` na 0 → prázdná stránka s `hasMore=true` (neškodné).
+
+**Load-bearing korekce anchorů:**
+
+- Invariant 2 i 3 jsou **dnes porušené** — nejde o zachování, ale o opravu.
+- `detachClient`/`abortConversation` metody neexistují (transport detach = `attachments.detachTransport:306`; abort = `abort→abortLive→abortSessionWork`).
+- `refreshPersonality` je phantom → reálně `applyPersonalityChange` (`brainService.ts:1013`), už keyovaný na usera.
+- `SPATIAL_ROUTE_ORDER` je hardcoded v `OrbitalNav.tsx:17`, ne v registry; „Chat pod Home" = editace `OrbitalNav.tsx` + `OrbitalNav.test.tsx:80`.
+- Fáze 1 server je hotová: daemon už přijímá `{client,generation,session}` všude; gap je čistě webový (`web/lib/elowenClient.ts` + raw EventSource).
+- `POST /brain/model` (ne PATCH) už přijímá `session`. Telegram `/model` taky ořezává (`.slice(0,40)`).
+
 ## Invarianty
 
 Vše ostatní se jim podřizuje. Testy i akceptace na ně odkazují, nepřepisují je.

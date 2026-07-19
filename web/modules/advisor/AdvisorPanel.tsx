@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { X, Plus, PanelLeft, PanelRight, PanelTop, PanelBottom, MessageCircle, SquareTerminal } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
@@ -24,6 +25,11 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
   // Chat = the embedded brain (same one `elowen chat` talks to); Terminal = the tmux panes. Chat first.
   const [mode, setMode] = usePersistentState<'chat' | 'terminal'>('elowen.dock.mode', 'chat', ['chat', 'terminal']);
+  // On /chat the ChatView owns the chat surface, so the dock is forced to Terminál only — the Chat
+  // segment is hidden and the terminal branch renders regardless of the stored mode. The persisted mode
+  // is left untouched, so leaving /chat restores the user's choice. This never touches the controller.
+  const onChat = usePathname() === '/chat';
+  const effectiveMode = onChat ? 'terminal' : mode;
   const horizontal = state.side === 'left' || state.side === 'right';
 
   // Width drag: on the right the panel grows as the divider moves left (negative dx), so the sign
@@ -70,10 +76,10 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
           aria-label={t.brainChat.modeNav}
           size="sm"
           options={[
-            { value: 'chat', label: t.brainChat.modeChat, icon: MessageCircle },
+            ...(onChat ? [] : [{ value: 'chat', label: t.brainChat.modeChat, icon: MessageCircle }]),
             { value: 'terminal', label: t.brainChat.modeTerminal, icon: SquareTerminal },
           ]}
-          value={mode}
+          value={effectiveMode}
           onChange={(v) => setMode(v as 'chat' | 'terminal')}
         />
         <div className="flex-1" />
@@ -105,7 +111,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
             </div>
           ) : null}
         </div>
-        <div className="relative" style={mode === 'chat' ? { display: 'none' } : undefined}>
+        <div className="relative" style={effectiveMode === 'chat' ? { display: 'none' } : undefined}>
           <button
             type="button"
             onClick={() => setPickerOpen((v) => !v)}
@@ -135,7 +141,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
         </button>
       </div>
 
-      {mode === 'chat' ? <div className="min-h-0 flex-1"><BrainChat /></div> : (
+      {effectiveMode === 'chat' ? <div className="min-h-0 flex-1"><BrainChat /></div> : (
       <div ref={stackRef} className="flex min-h-0 flex-1 flex-col">
         {state.panes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center text-text-muted">

@@ -206,6 +206,13 @@ export function createRouteContext(d: ServerDeps): RouteContext {
       if (c.get('tokenScope') === 'agent') return false;
       return !!u && (u.id === info.userId || d.userProjects.isAdmin(u.id));
     }
+    // An admin's interactive chat terminal is OWNER-ONLY — deliberately BEFORE the admin bypass below, so a
+    // second admin is refused (invariant 4: the generic admin bypass does not apply to the `chat` role). An
+    // agent-scoped token never reaches it, and a malformed name (userId undefined) is inaccessible to all.
+    if (info.role === 'chat') {
+      if (c.get('tokenScope') === 'agent') return false;
+      return !!u && u.id === info.userId;
+    }
     // Admin sees every session — but NOT via an agent-scoped token (it's owned by the admin user yet
     // must stay confined to its working set; fall through to the project check below).
     if (c.get('tokenScope') !== 'agent' && u && d.userProjects.isAdmin(u.id)) return true;

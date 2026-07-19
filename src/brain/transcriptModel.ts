@@ -156,6 +156,7 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         if (turn.composing) return false; // already flagged this turn — no visible change
         turn.composing = true;
+        turn.composingTool = event.name;
         this.thinkingState = true;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
@@ -163,6 +164,7 @@ export class TranscriptModel implements TranscriptRead {
       case 'tool': {
         const { turn, index, fresh } = this.ensureAssistant();
         turn.composing = false; // the marker renders now — the authoring hint has done its job
+        turn.composingTool = undefined;
         const item: ToolItem = {
           name: event.name,
           detail: event.detail,

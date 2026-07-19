@@ -6,6 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
+import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { openBrainComposer, openBrainSession } from '../../../lib/brainDock';
 
 /** Minimal EventSource stand-in: BrainChat registers per-event listeners on it and we drive them by
@@ -48,7 +49,7 @@ beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSour
 
 function renderChat() {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><BrainChat /></ToastProvider></Wrapper>);
+  return render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
 }
 
 describe('BrainChat pending queue', () => {

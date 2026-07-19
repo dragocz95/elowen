@@ -25,6 +25,21 @@ function compactInstruction(v: unknown): string | undefined {
   return trimmed ? trimmed.slice(0, 2000) : undefined;
 }
 
+/** Opt-in pagination for the session listing: undefined when neither query param is present (the caller
+ *  keeps the historical bare-array response), otherwise the clamped non-negative ints. A missing/garbage
+ *  value coerces to 0 rather than 400 — pagination is a convenience window, not a validated resource. */
+function sessionPageOpts(rawLimit?: string, rawOffset?: string): { limit?: number; offset?: number } | undefined {
+  if (rawLimit === undefined && rawOffset === undefined) return undefined;
+  const clamp = (v?: string): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  };
+  const opts: { limit?: number; offset?: number } = {};
+  if (rawLimit !== undefined) opts.limit = clamp(rawLimit);
+  if (rawOffset !== undefined) opts.offset = clamp(rawOffset);
+  return opts;
+}
+
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
  *  Full-scope callers only — a spawned agent must not drive a human's brain. Each route acts on the
  *  caller's own conversation (`brain-<userId>`). Degrades gracefully when the brain is not wired. */
@@ -96,10 +111,13 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // The caller's conversations (most recent first) for the session pickers in web chat and the CLI.
+  // Pagination is opt-in via ?limit&offset (applied after the identity filter): absent → the historical
+  // bare array every current caller consumes; present → a { items, total, hasMore } window.
   app.get('/brain/sessions', async c => {
     if (!d.brain) return c.json([]);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json(d.brain.listSessions(c.get('user').id));
+    const opts = sessionPageOpts(c.req.query('limit'), c.req.query('offset'));
+    return c.json(opts ? d.brain.listSessions(c.get('user').id, opts) : d.brain.listSessions(c.get('user').id));
   });
 
   // Admin session-management panel: EVERY brain session the operator anchors — their own conversations
@@ -324,14 +342,55 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 404); }
   });
 
-  // Switch the active conversation to another configured model (the /model picker). Existing event
-  // streams die with the old session — clients reopen their stream after this call.
+  // Switch the active conversation (or the caller's explicit `session`) to another configured model (the
+  // /model picker). The session respawns in place under the same id — open SSE taps survive the respawn
+  // and every attached client reconciles via the pushed `session-event`, so no client reopens its stream.
   app.post('/brain/model', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const { session, ...sel } = await parseBody(c, brainModelSchema);
     try { return c.json(await d.brain.switchModel(c.get('user').id, sel, session)); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
+  // Bind (MOVE, not fork) one of the caller's OWN conversations into a platform channel/thread (the
+  // /context picker): the chosen session is re-keyed onto `brain-ch-<channel>` so the channel's next turn
+  // continues in it, and whatever occupied the slot is archived. A `picker`, so it can NOT go through
+  // POST /brain/command (that handler rejects kind!=='action') — hence this dedicated endpoint. Unlike
+  // POST /brain/model (which only mutates the caller's OWN session), binding mutates SHARED channel state
+  // on a caller-supplied `channel` target, so it is ADMIN-gated here too — matching the operator gate the
+  // platform adapters already apply — on top of the ownership guard inside bindChannelContext (caller-owned
+  // sessions only). `channel` is the keyOf key (e.g. 'discord-123'); a guard rejection surfaces as 409.
+  app.post('/brain/context', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { channel?: unknown; session?: unknown };
+    if (typeof b.channel !== 'string' || typeof b.session !== 'string') return c.json({ error: 'channel and session must be strings' }, 400);
+    try { return c.json(await d.brain.bindChannelContext(c.get('user').id, b.channel, b.session)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
+  // Open (or re-attach to) an admin's interactive `elowen chat` terminal bound to one of THEIR OWN
+  // conversations. ADMIN-only (invariant 4): agent tokens AND ordinary full-scope non-admins are rejected
+  // 403 — the same is_admin gate /brain/context uses. Ownership is enforced inside open() (a foreign
+  // admin's session throws `unknown session`), so the generic admin bypass never widens this. The response
+  // carries only { terminal, created } — the per-terminal token (invariant 5) never leaves the daemon.
+  // The running state is DERIVED from the owner-filtered GET /sessions (no separate polling endpoint).
+  app.post('/brain/terminal', async c => {
+    if (!d.brain || !d.brainTerminal) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { session?: unknown };
+    if (typeof b.session !== 'string') return c.json({ error: 'session must be a string' }, 400);
+    try { return c.json(await d.brainTerminal.open(c.get('user').id, b.session), 201); }
+    catch (e) {
+      // Never echo raw error text here: open()'s launch-failure path would otherwise carry the tmux argv
+      // (and thus the per-terminal token) into the response body. Only the known ownership rejection is
+      // surfaced verbatim; open() already sanitizes launch failures to a constant, and any other throw
+      // collapses to that same constant so nothing sensitive leaks (invariant 5).
+      const msg = (e as Error).message;
+      if (msg === 'unknown session') return c.json({ error: msg }, 404);
+      return c.json({ error: 'terminal launch failed' }, 409);
+    }
   });
 
   // Set the active conversation's reasoning effort live (the /think command) — no session rebuild.

@@ -1,5 +1,5 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AuthStorage, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, ModelRuntime, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { TaskStore } from '../../store/taskStore.js';
@@ -38,7 +38,7 @@ export interface BrainWorkerDeps {
   taskUsage?: TaskUsageStore;
   /** Live provider config resolver (null → nothing configured, launch fails clearly). */
   config: () => BrainRuntimeConfig | null;
-  authStorage?: AuthStorage;
+  runtime: ModelRuntime;
   prompts?: PromptService;
   /** Daemon REST base + token the close tool calls (same reach-back the CLI workers use). */
   url: string;
@@ -143,7 +143,7 @@ export class BrainWorkerService {
     const sessionName = `elowen-${input.agentName}`;
     if (this.live.has(sessionName)) return { session: sessionName }; // idempotent re-launch
 
-    const registry = buildBrainRegistry(cfg, this.d.authStorage);
+    const registry = buildBrainRegistry(cfg, this.d.runtime);
     const route = resolveBrainModelRoute(registry, cfg, selectionFor(cfg, input.spec.model));
     const { model } = route;
     const sessionId = taskSessionId(input.taskId);
@@ -202,7 +202,7 @@ export class BrainWorkerService {
     // The shared assembly (store row + rehydrate + resource loader + PI session + persistence
     // subscription) — identical to the chat brain's, so the two can never drift.
     const { session } = await this.factory.create({
-      sessionId, ownerUserId: input.ownerId ?? 0, registry, model,
+      sessionId, ownerUserId: input.ownerId ?? 0, runtime: this.d.runtime, model,
       compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt, appendSystemPrompt: append, skills,
       tools: [closeTool, ...pluginTools],

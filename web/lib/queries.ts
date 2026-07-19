@@ -264,11 +264,6 @@ export const useMyTerminalSettings = () =>
 export const useMyPermissions = () =>
   useQuery({ queryKey: ['my-permissions'], queryFn: elowenClient.myPermissions });
 
-/** The caller's personality profiles for one platform. Edited in Account → Personality; mutations
- *  invalidate the ['personalities'] prefix (all platforms). */
-export const usePersonalities = (platform: string) =>
-  useQuery({ queryKey: ['personalities', platform], queryFn: () => elowenClient.listPersonalities(platform) });
-
 /** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
 export const usePlugins = () =>
   useQuery({ queryKey: ['plugins'], queryFn: elowenClient.plugins });

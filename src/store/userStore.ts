@@ -11,9 +11,11 @@ export interface User { id: number; username: string; created_at: string; is_adm
 /** What a token may do. 'full' = an interactive user session (the user's own rights). 'agent' = a
  *  spawned worker/overseer/pilot, restricted to its task-close / plan-submit / overseer verbs.
  *  'advisor' is stored in the DB for the per-user advisor session; it grants full access (mapped to
- *  'full' at the guard) but is isolated so rotating/stopping the advisor never touches login tokens. */
+ *  'full' at the guard) but is isolated so rotating/stopping the advisor never touches login tokens.
+ *  'terminal' is the same isolation for an admin's interactive `elowen chat` terminal (BrainTerminalService):
+ *  full access at the guard, its own DB scope so revoking a terminal never disturbs login/advisor/agent tokens. */
 export type TokenScope = 'full' | 'agent';
-export type StoredScope = TokenScope | 'advisor';
+export type StoredScope = TokenScope | 'advisor' | 'terminal';
 /** A resolved token: the owning user plus the token's scope, so route guards can narrow an agent. */
 export interface Principal { user: User; scope: TokenScope }
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
@@ -123,6 +125,7 @@ export class UserStore {
     // ProjectStore.remove and TaskStore.delete). The schema has no FK cascade, so order is explicit.
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_terminals WHERE user_id = ?').run(id); // no orphan terminal bindings (their tokens went with auth_tokens above)
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);

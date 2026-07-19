@@ -3,7 +3,7 @@ import type { PluginRegistry } from './registry.js';
 /** The ONE memoized plugin registry for the whole daemon. Every consumer (brain chat sessions, elowen-exec
  *  brain workers, platform adapters) resolves through this shared instance, so flipping a plugin on/off
  *  invalidates ALL of them at once — a per-service memo would leave some consumers running on a stale
- *  registry until a daemon restart. Loading stays lazy: buildApp is sync, plugins load on first use. */
+ *  registry until a daemon restart. Loading stays lazy: plugins load on first use, not at boot. */
 export class PluginRegistryProvider {
   private memo: Promise<PluginRegistry> | undefined;
 

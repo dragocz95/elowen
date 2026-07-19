@@ -2,7 +2,7 @@ export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancel
 /** Outcome the daemon records when a task closes (`src/store/types.ts`). */
 type TaskOutcome = 'ok' | 'fail';
 export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number; changed_files?: CommitFileChange[]; resume_note?: string | null }
-type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor';
+type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor' | 'chat';
 /** Structured identity of a live agent session, classified by the daemon (single source of truth).
  *  Clients render from `role` — they never parse meaning out of the raw session name. */
 export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string; projectId?: number; userId?: number }
@@ -175,41 +175,9 @@ export interface User { id: number; username: string; created_at: string; is_adm
 export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
-/** A named personality profile: a prompt body a user pins active per platform ('web'/'discord'/'cli').
- *  Scoped per (user, platform); `enabled` gates whether the pinned profile actually applies. The active
- *  pointer lives server-side — the UI derives which profile is active from the preview's append layer. */
-export interface PersonalityProfile {
-  id: number;
-  user_id: number;
-  platform: string;
-  name: string;
-  description: string;
-  tone: string;
-  style: string;
-  prompt: string;
-  enabled: boolean;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-/** Body for POST /personality/profiles — platform/name/prompt are required, the rest optional. */
-export interface PersonalityCreate {
-  platform: string;
-  name: string;
-  prompt: string;
-  description?: string;
-  tone?: string;
-  style?: string;
-  enabled?: boolean;
-}
-
-/** Any subset of the mutable fields for PATCH /personality/profiles/:id. */
-export type PersonalityPatch = Partial<Omit<PersonalityCreate, 'platform'>> & { platform?: string };
-
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
- *  (`serverDefault`, response-only). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean; serverDefault?: string }
+ *  (`serverDefault`, response-only). `personalityBody` is the global persona applied on every surface. */
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean; serverDefault?: string }
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,

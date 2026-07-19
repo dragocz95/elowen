@@ -1,13 +1,13 @@
 'use client';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Bot, BotOff, X, Square, RotateCcw, MoreVertical, Eye, SquareTerminal, SquareArrowOutUpRight, Power } from 'lucide-react';
+import { Bot, BotOff, X, Square, RotateCcw, MoreVertical, Eye, SquareTerminal, MessagesSquare, SquareArrowOutUpRight, Power } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useAdvisorStatus, useConfig, useMe, useSessionInfos, useTasks } from '../../lib/queries';
-import { useAdvisorStart, useAdvisorStop } from '../../lib/mutations';
+import { useAdvisorStart, useAdvisorStop, useKillSession } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { apiErrorMessage } from '../../lib/elowenClient';
 import { sessionLabel } from '../../lib/agentUtils';
@@ -33,11 +33,17 @@ function PaneHeader({ children }: { children: React.ReactNode }) {
 
 function SessionPane({ name, onRemove }: { name: string; onRemove?: () => void }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const infos = useSessionInfos();
   const tasks = useTasks();
+  const kill = useKillSession();
   const info = infos.data?.find((s) => s.name === name);
-  const Icon = info?.role === 'overseer' ? Eye : info?.role === 'pilot' || info?.role === 'advisor' ? Bot : SquareTerminal;
+  const isChat = info?.role === 'chat';
+  const Icon = info?.role === 'overseer' ? Eye : info?.role === 'pilot' || info?.role === 'advisor' ? Bot : isChat ? MessagesSquare : SquareTerminal;
   const label = sessionLabel(info ?? { name, role: 'agent' }, tasks.data ?? []);
+  // Chat terminals get an explicit Stop (kill tmux + revoke token) on top of detach — a killed pane is
+  // then detached from the dock. Arbitrary agent/task terminals stay detach-only.
+  const doStop = () => kill.mutate(name, { onSuccess: () => onRemove?.(), onError: (e) => toast(apiErrorMessage(e), 'error') });
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PaneHeader>
@@ -53,6 +59,18 @@ function SessionPane({ name, onRemove }: { name: string; onRemove?: () => void }
         >
           <SquareArrowOutUpRight size={15} aria-hidden />
         </button>
+        {isChat ? (
+          <button
+            type="button"
+            onClick={doStop}
+            disabled={kill.isPending}
+            aria-label={t.advisor.stopTerminal}
+            title={t.advisor.stopTerminal}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
+          >
+            <Square size={15} aria-hidden />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onRemove}

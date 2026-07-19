@@ -10,6 +10,7 @@ const server = setupServer(
   http.post('*/api/sessions/elowen-A/keys', async ({ request }) => { await record(request); return HttpResponse.json({ ok: true }); }),
   http.patch('*/api/missions/m1', async ({ request }) => { await record(request); return HttpResponse.json({ id: 'm1', state: 'paused' }); }),
   http.delete('*/api/brain/queue/:id', async ({ request }) => { await record(request); return HttpResponse.json({ removed: true }); }),
+  http.patch('*/api/brain/sessions/:id', async ({ request, params }) => { await record(request); return HttpResponse.json({ id: params['id'], title: 'Renamed' }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -31,5 +32,10 @@ describe('elowenClient mutations', () => {
     const r = await elowenClient.brainQueueRemove('q-42');
     expect(r.removed).toBe(true);
     expect(calls.at(-1)).toMatchObject({ url: '/api/brain/queue/q-42', method: 'DELETE' });
+  });
+  it('brainRenameSession PATCHes /brain/sessions/:id with a JSON title body', async () => {
+    const r = await elowenClient.brainRenameSession('brain-9', 'New title');
+    expect(r).toMatchObject({ id: 'brain-9', title: 'Renamed' });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/brain/sessions/brain-9', method: 'PATCH', body: { title: 'New title' } });
   });
 });
