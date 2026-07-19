@@ -206,6 +206,21 @@ export interface PluginEmbeddings {
  *  shape stays plugin-specific so core does not need to import plugin modules or duplicate their state. */
 export type PluginControl = Record<string, unknown>;
 
+/** Shared shape of a plugin control that detaches a foreground wait (a delegate or a command) into
+ *  background work. Both the subagent and terminal plugins register one under their own control key, so
+ *  core calls them through the same typed contract instead of an `as unknown as` cast at each call site. */
+export interface DetachControl {
+  detachForeground(input: { sessionId: string; principal: string }): { detached: number };
+}
+
+/** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
+ *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
+ *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
+export interface KnownControls {
+  subagent: DetachControl;
+  terminal: DetachControl;
+}
+
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
  *  sends `prompt` to the agent as a normal user turn; PI's native prompt-template engine substitutes the
  *  argument placeholders — `$ARGUMENTS`/`$@` (everything typed after the command), `$1`..`$9` (positionals),

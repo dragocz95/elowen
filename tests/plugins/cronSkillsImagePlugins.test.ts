@@ -440,7 +440,7 @@ describe('subagent plugin', () => {
     expect(seen!.access).toMatchObject({
       projectIds: [1], admin: false, owner: false, parentSessionId: 'brain-parent-1',
       // The delegate transcript never rolls over into a fresh session mid-flight.
-      sessionIdleMs: Infinity,
+      sessionIdleMs: Number.MAX_SAFE_INTEGER,
       toolPolicy: { allow: ['Delegate'], deny: ['DiscordApi'] },
     });
   });

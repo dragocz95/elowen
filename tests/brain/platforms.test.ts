@@ -243,6 +243,15 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.delegatedAccess?.toolPolicy?.allow).toEqual(['Read']); // Read ∩ READ_ONLY_AGENT_TOOLS = Read
   });
 
+  it('throws when the call-level allow-list is disjoint from the type preset (empty intersection)', async () => {
+    // MemorySearch is not in READ_ONLY_AGENT_TOOLS, so preset ∩ ['MemorySearch'] = [] — the child would
+    // have no tool it could ever run. The host fails the spawn instead of muting it silently.
+    await expect(runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['MemorySearch'] }, permissionBoundary: null,
+    })).rejects.toThrow('delegated tool scope is empty');
+  });
+
   it('a bare read_only delegation (no type) takes the same host-side read-only path', async () => {
     // read_only without a subagent_type: the host applies READ_ONLY_AGENT_TOOLS + the minted boundary, so a
     // generic read-only child now gets read-only shell too — one read-only definition, no plugin toolset.

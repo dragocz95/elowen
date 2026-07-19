@@ -6,7 +6,8 @@ import { MarketplaceError } from '../../plugins/marketplace.js';
 import { isValidSchedule } from '../../shared/cronSchedule.js';
 import { OAUTH_BUILTIN } from '../../brain/providers.js';
 import { oauthBuiltinCatalog } from '../../brain/models.js';
-import { loadAgentRegistry, parseAgentFile } from '../../brain/agents/agentRegistry.js';
+import { loadAgentRegistry, parseAgentFile, NAME_RE as AGENT_NAME_RE } from '../../brain/agents/agentRegistry.js';
+import { builtinToolMetas } from '../../brain/tools/index.js';
 import { promptsPath } from '../../prompts/index.js';
 import { stringify as stringifyYaml } from 'yaml';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -576,7 +577,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   // tools + a body prompt). Built-in explore/plan ship in dist/prompts/agents and are read-only; user
   // agents live next to the DB in <config>/agents and can be created/edited/deleted here. A write or
   // delete hot-reloads the plugins, so the sub-agent catalog refreshes for new conversations. ──
-  const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/; // mirrors NAME_RE in src/brain/agents/agentRegistry.ts
   // User agents sit beside plugins-data under the config dir (both hang off dirname(dbPath) — see bootstrap).
   const userAgentsDir = (): string | null => (d.pluginDataRoot ? join(dirname(d.pluginDataRoot), 'agents') : null);
   const builtinAgentsDir = (): string => promptsPath('agents');
@@ -625,6 +625,26 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const description = typeof b?.description === 'string' ? b.description.trim() : '';
     const body = typeof b?.body === 'string' ? b.body : '';
     if (description === '' || body.trim() === '') return c.json({ error: 'description and body must be non-empty' }, 400);
+    // Bound both fields so a single agent file cannot be grown without limit (the description rides the
+    // sub-agent catalog in every delegate tool description; the body becomes the child's system prompt).
+    if (description.length > 4096) return c.json({ error: 'description must be at most 4096 characters' }, 400);
+    if (body.length > 65536) return c.json({ error: 'body must be at most 65536 characters' }, 400);
+    // An explicit tool list must name tools that actually exist — an unknown name is not a narrower
+    // toolset, it silently no-ops at delegation-time intersection and leaves the child unable to act.
+    // Validate against the LIVE toolset: the native brain tools (Elowen*/Memory*) plus every plugin tool
+    // in the merged registry. Preset keywords (read-only/all/inherit) arrive as a string, not an array,
+    // and are validated by parseAgentFile below instead.
+    const toolsRaw = b?.tools;
+    if (Array.isArray(toolsRaw)) {
+      const registry = await d.plugins?.get();
+      const known = new Set<string>([
+        ...builtinToolMetas().map((m) => m.name),
+        ...(registry?.tools.map((t) => t.name) ?? []),
+      ]);
+      const requested = toolsRaw.map((t) => String(t).trim()).filter(Boolean);
+      const unknownTools = requested.filter((toolName) => !known.has(toolName));
+      if (unknownTools.length) return c.json({ error: `unknown tool(s): ${unknownTools.join(', ')}` }, 400);
+    }
     const composed = buildAgentBody(name, description, b?.tools, body);
     if (!parseAgentFile(composed, 'user', join(userDir, `${name}.md`))) {
       return c.json({ error: 'invalid agent definition — check the tools value (read-only / all / inherit or a tool list) and the body' }, 400);

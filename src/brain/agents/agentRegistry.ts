@@ -35,7 +35,9 @@ export interface AgentDef {
   filePath: string;
 }
 
-const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+/** A valid agent/type name: kebab-case, 2–64 chars. Shared with the plugin routes so the create/delete
+ *  API and the loader agree on exactly what a legal name is. */
+export const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 /** Split the leading `---\n…\n---` YAML frontmatter from the markdown body. Returns null when there is no
  *  frontmatter block (an agent file must have one — it carries name + description). */

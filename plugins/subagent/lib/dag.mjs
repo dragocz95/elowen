@@ -29,8 +29,9 @@ function hasCycle(nodes) {
   return false;
 }
 
-/** Normalize one raw node into `{ id, task, deps, model?, tools?, readOnly? }`, or return an error
- *  string. `knownIds` is the full set of ids in the (combined) graph so deps can be checked eagerly. */
+/** Normalize one raw node into `{ id, task, deps, model?, tools?, readOnly?, subagentType? }`, or return
+ *  an error string. `knownIds` is the full set of ids in the (combined) graph so deps can be checked
+ *  eagerly. `subagentType` is validated against the live catalog later (host-side, in buildNodeAccess). */
 function normalizeNode(raw, knownIds) {
   if (!raw || typeof raw !== 'object') return { error: 'each node must be an object' };
   const id = str(raw.id);
@@ -56,6 +57,8 @@ function normalizeNode(raw, knownIds) {
     node.tools = tools;
   }
   if (raw.read_only === true || raw.readOnly === true) node.readOnly = true;
+  const subagentType = str(raw.subagent_type);
+  if (subagentType) node.subagentType = subagentType;
   return { node };
 }
 

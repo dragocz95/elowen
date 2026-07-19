@@ -28,6 +28,7 @@ const NODE_SHAPE = Type.Object({
   model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours.' })),
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node only read-only tools (explore/report, no writing or delegation).' })),
   tools: Type.Optional(Type.Array(Type.String(), { description: 'Give this node EXACTLY these tools (names from your own toolset). Narrows only.' })),
+  subagent_type: Type.Optional(Type.String({ description: 'Run this node as a named sub-agent TYPE (from the delegate tool\'s type list) — it supplies the role prompt and toolset (a read-only type already includes read-only shell). Omit for a generic node.' })),
 });
 
 /** Register the workflow tools on the subagent plugin. `getRun` returns the host channel handler once
@@ -102,6 +103,16 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (!hit) throw new Error(`model "${node.model}" is not available for node "${node.id}"`);
       model = { provider: hit.provider, model: hit.model };
     }
+    // A named sub-agent TYPE, validated against the live catalog exactly as the delegate tool does — the
+    // host resolves the name into the node's role prompt, toolset and (for a read-only type) boundary.
+    let agentType;
+    if (node.subagentType) {
+      const types = ctx.subagentTypes?.() ?? [];
+      if (!types.some((t) => t.name === node.subagentType)) {
+        throw new Error(`unknown subagent_type "${node.subagentType}" for node "${node.id}". Available: ${types.map((t) => t.name).join(', ') || '(none)'}.`);
+      }
+      agentType = node.subagentType;
+    }
     const restricted = resolveDelegateTools(wf.parentAccess.toolPolicy?.allow, node.tools, ctx.toolNames());
     if (restricted.error) throw new Error(restricted.error);
     const toolPolicy = restricted.allow
@@ -123,12 +134,17 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ...(toolPolicy ? { toolPolicy } : {}),
       model,
       parentSessionId: wf.originSessionId,
-      // In-memory host object; never serialized (Infinity would become null in JSON) — keeps the node
-      // transcript pinned to this workflow instead of rolling over mid-run.
-      sessionIdleMs: Infinity,
+      // Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip (Infinity would
+      // serialize to null) — keeps the node transcript pinned to this workflow instead of rolling over
+      // mid-run, even though this object stays host-in-memory today.
+      sessionIdleMs: Number.MAX_SAFE_INTEGER,
       // read_only selects the host-side read-only MODE (preset toolset + minted boundary), same as delegate.
       ...(node.readOnly ? { readOnly: true } : {}),
-      prompt: 'You are a focused sub-agent running one node of a workflow. Complete the task and report the result concisely — no preamble.',
+      // A typed node gets its role prompt from the host (resolved from `agentType`); an untyped node uses
+      // the generic workflow-node prompt. Mirrors the delegate tool's typed/untyped split.
+      ...(agentType
+        ? { agentType }
+        : { prompt: 'You are a focused sub-agent running one node of a workflow. Complete the task and report the result concisely — no preamble.' }),
       ...(context ? { context } : {}),
     };
   };

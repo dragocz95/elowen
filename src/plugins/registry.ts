@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginLogger, PluginModelOption, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { KnownControls, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginLogger, PluginModelOption, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { commandsFor, isBuiltinCommand } from '../brain/slashCommands.js';
@@ -143,6 +143,15 @@ export class PluginRegistry {
       }
       this.toolPlanSafe.add(name);
     }
+  }
+
+  /** Resolve a KNOWN plugin control already narrowed to its typed contract, or undefined when no plugin
+   *  registered it (or it lacks the expected method). The one place an opaque `PluginControl` is narrowed
+   *  for core callers, so no call site needs an `as unknown as` cast. */
+  control<K extends keyof KnownControls>(name: K): KnownControls[K] | undefined {
+    const raw: unknown = this.controls.get(name);
+    if (!raw || typeof (raw as { detachForeground?: unknown }).detachForeground !== 'function') return undefined;
+    return raw as KnownControls[K];
   }
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;

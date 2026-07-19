@@ -309,9 +309,10 @@ export function register(ctx) {
         model,
         parentSessionId: ctx.currentSessionId(),
         // The delegate transcript belongs to THIS delegation and to no earlier one — never roll it over
-        // into a fresh session mid-flight (rolloverDue with an Infinity threshold never fires). This
-        // object stays in-memory on the host; NEVER serialize it over JSON, where Infinity becomes null.
-        sessionIdleMs: Infinity,
+        // into a fresh session mid-flight (rolloverDue never fires for a real elapsed time below this
+        // threshold). Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip
+        // (Infinity would serialize to null) even though this object stays host-in-memory today.
+        sessionIdleMs: Number.MAX_SAFE_INTEGER,
         // read_only selects the host-side read-only MODE (preset toolset + minted boundary); the host also
         // applies it for a read-only agent TYPE, so both converge on one definition. Redundant with a
         // read-only type, harmless to pass alongside it.
