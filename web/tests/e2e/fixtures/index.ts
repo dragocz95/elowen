@@ -6,16 +6,23 @@ import { STORAGE_STATE } from '../../../playwright.config.ts';
 import { DAEMON_URL } from './env.ts';
 import { SseScript } from './SseScript.ts';
 import { Seed } from './Seed.ts';
+import { Calls } from './Calls.ts';
 
 export interface HarnessFixtures {
   /** A page in a context that carries the admin session cookie (from global setup's real login) and the
    *  test Next server's baseURL — so `app.goto('/chat')` opens the shell already authenticated, no matter
    *  which Playwright project runs the spec. */
   app: Page;
+  /** A SECOND independently-authed page (its own browser context → its own per-tab brain clientId), for the
+   *  multi-client scenarios: two chat clients on the same conversation, distinguished by their stream client
+   *  id. Same cookie/baseURL as `app`; created only when a spec destructures it. */
+  app2: Page;
   /** Push scripted `BrainEvent` frames into the chat's open SSE stream (defaults to the seeded session). */
   sse: SseScript;
   /** Override the fake daemon's canned REST answers / message history BEFORE navigating. */
   seed: Seed;
+  /** Read back the control calls the UI posted upstream (the /model switch, the Stop abort). */
+  calls: Calls;
 }
 
 export const test = base.extend<HarnessFixtures & { isolate: void }>({
@@ -37,7 +44,20 @@ export const test = base.extend<HarnessFixtures & { isolate: void }>({
     await use(new SseScript(request));
   },
 
+  calls: async ({ request }, use) => {
+    await use(new Calls(request));
+  },
+
   app: async ({ browser, baseURL }, use) => {
+    const context = await browser.newContext({ storageState: STORAGE_STATE, baseURL });
+    const page = await context.newPage();
+    await use(page);
+    await context.close();
+  },
+
+  app2: async ({ browser, baseURL }, use) => {
+    // A distinct browser context (not just a second page) so it gets its OWN in-memory brain clientId —
+    // two tabs of one context would share it and register as a single client. Same admin cookie + baseURL.
     const context = await browser.newContext({ storageState: STORAGE_STATE, baseURL });
     const page = await context.newPage();
     await use(page);
@@ -48,6 +68,7 @@ export const test = base.extend<HarnessFixtures & { isolate: void }>({
 export { expect };
 export { SseScript } from './SseScript.ts';
 export { Seed } from './Seed.ts';
+export { Calls } from './Calls.ts';
 export { ShellPage } from '../pages/ShellPage.ts';
 export { ChatPage } from '../pages/ChatPage.ts';
 export type { StreamTarget } from './SseScript.ts';

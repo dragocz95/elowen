@@ -7,22 +7,23 @@ import type { BrainEvent } from '../emitters.ts';
 import { idleEvent } from '../emitters.ts';
 import type { IdleEvent } from '../emitters.ts';
 import { emitToStreams, openStreams } from '../streams.ts';
-import { sentTurns, resetSentTurns } from './brain.ts';
+import { sentTurns, recordedControlCalls, resetSentTurns } from './brain.ts';
 import type { BrainMessage } from '../../../../lib/types.ts';
 import type { OverrideKey } from '../overrides.ts';
 import { setResponseOverride, setMessagesOverride, resetOverrides } from '../overrides.ts';
+import { setSetupMode, needsSetup, resetSetup } from '../setup.ts';
 
 export function registerControlRoutes(app: Hono): void {
   // Push one arbitrary BrainEvent into every stream matching {client?, session?} (both omitted =
   // broadcast to all open streams). Returns how many connections received it.
   app.post('/__test/emit', async (c) => {
     const body = (await c.req.json().catch(() => null)) as
-      | { client?: string; session?: string; event?: BrainEvent }
+      | { client?: string; session?: string; generation?: string; event?: BrainEvent }
       | null;
     if (!body || typeof body.event !== 'object' || body.event === null || typeof body.event.type !== 'string') {
       return c.json({ error: 'event required' }, 400);
     }
-    const delivered = await emitToStreams({ client: body.client, session: body.session }, body.event);
+    const delivered = await emitToStreams({ client: body.client, session: body.session, generation: body.generation }, body.event);
     return c.json({ delivered });
   });
 
@@ -45,12 +46,24 @@ export function registerControlRoutes(app: Hono): void {
     const session = c.req.query('session');
     const streams = openStreams()
       .filter((s) => session === undefined || s.session === session)
-      .map((s) => ({ id: s.id, client: s.client, session: s.session }));
+      .map((s) => ({ id: s.id, client: s.client, session: s.session, generation: s.generation }));
     return c.json({ streams, count: streams.length });
   });
 
   // Inspect the turns the UI has posted to `/brain/send` so far.
   app.get('/__test/sent', (c) => c.json({ sent: sentTurns() }));
+
+  // Inspect the non-send control calls the UI has posted (the /model switch, the Stop abort), so a spec
+  // can assert the exact upstream payload the web sent.
+  app.get('/__test/calls', (c) => c.json({ calls: recordedControlCalls() }));
+
+  // Arm/disarm the fresh-install lane: while on (and no admin created yet) `GET /setup` reports
+  // needsSetup:true and `POST /users` bootstraps the first admin. Returns the resulting probe value.
+  app.post('/__test/setup', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { needsSetup?: unknown };
+    setSetupMode(body.needsSetup === true);
+    return c.json({ ok: true, needsSetup: needsSetup() });
+  });
 
   // Override the canned answers a polled GET / the seed transcript returns, BEFORE a spec navigates —
   // the daemon-side twin of the `seed` fixture. `responses` replaces a polled endpoint's body wholesale
@@ -72,6 +85,7 @@ export function registerControlRoutes(app: Hono): void {
   app.post('/__test/reset', (c) => {
     resetSentTurns();
     resetOverrides();
+    resetSetup();
     return c.json({ ok: true });
   });
 }

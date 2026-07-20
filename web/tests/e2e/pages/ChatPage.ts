@@ -51,6 +51,30 @@ export class ChatPage {
     return body.streams.reduce((max, s) => Math.max(max, s.id), 0);
   }
 
+  /** The client ids of every open `/brain/stream` on the bound session — a multi-client spec asserts that
+   *  two chat pages registered as two DISTINCT clients (and can address one of them via `sse.to({client})`). */
+  async streamClients(): Promise<string[]> {
+    const res = await this.page.request.get(`${DAEMON_URL}/__test/streams?session=${DEFAULT_SESSION_ID}`);
+    const body = (await res.json()) as { streams: { client?: string }[] };
+    return body.streams.map((s) => s.client).filter((c): c is string => c !== undefined);
+  }
+
+  /** The ids of every open `/brain/stream` on the bound session — a model-switch spec asserts the SAME
+   *  stream survives an in-place respawn (no reconnect ⇒ the id set is unchanged after the switch). */
+  async streamIds(): Promise<number[]> {
+    const res = await this.page.request.get(`${DAEMON_URL}/__test/streams?session=${DEFAULT_SESSION_ID}`);
+    const body = (await res.json()) as { streams: { id: number }[] };
+    return body.streams.map((s) => s.id).sort((a, b) => a - b);
+  }
+
+  /** The `generation` each open `/brain/stream` on the bound session was opened at — the multi-client spec
+   *  reads the live generation so it can mint a matching (delivered) vs a stale (dropped) frame. */
+  async streamGenerations(): Promise<string[]> {
+    const res = await this.page.request.get(`${DAEMON_URL}/__test/streams?session=${DEFAULT_SESSION_ID}`);
+    const body = (await res.json()) as { streams: { generation?: string }[] };
+    return body.streams.map((s) => s.generation).filter((g): g is string => g !== undefined);
+  }
+
   /** The surface is ready once its transcript and composer have mounted AND THIS load's EventSource has
    *  registered on the fake daemon (a stream id past `afterId`). The stream opens asynchronously
    *  (brainStart → history → status → EventSource) well after the DOM paints, and a scripted frame emitted
@@ -140,9 +164,16 @@ export class ChatPage {
 
   // --- Model picker ---
 
+  /** The picker's trigger button — its text is the conversation's CURRENT model (or the "pick a model"
+   *  placeholder). Assert on it to check a model switch landed (initiator label, or a watcher reconciled
+   *  via the `session-event` → status refetch). */
+  modelTrigger(): Locator {
+    return this.modelPicker.locator('button[aria-haspopup="listbox"]');
+  }
+
   /** Open the model-picker popover (its trigger carries `aria-haspopup="listbox"`). */
   async openModelPicker(): Promise<void> {
-    await this.modelPicker.locator('button[aria-haspopup="listbox"]').click();
+    await this.modelTrigger().click();
   }
 
   /** The picker's option rows (role="option"), available once it is open. */

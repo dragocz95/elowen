@@ -9,10 +9,17 @@ export class ShellPage {
   readonly nav: Locator;
   /** The login form's password field — its ABSENCE is how we know the gate is open (mirror smoke spec). */
   readonly loginPassword: Locator;
+  /** The onboarding "Add user" form fields + submit (the fresh-install bootstrap-admin lane). */
+  readonly onboardingUsername: Locator;
+  readonly onboardingPassword: Locator;
+  readonly onboardingCreate: Locator;
 
   constructor(readonly page: Page) {
     this.nav = page.getByRole('navigation').first();
     this.loginPassword = page.locator('input[type="password"]');
+    this.onboardingUsername = page.getByTestId('onboarding-username');
+    this.onboardingPassword = page.getByTestId('onboarding-password');
+    this.onboardingCreate = page.getByTestId('onboarding-create');
   }
 
   /** Open any route by URL. */
@@ -34,5 +41,12 @@ export class ShellPage {
   async waitForShell(): Promise<void> {
     await expect(this.loginPassword).toHaveCount(0);
     await expect(this.nav).toBeVisible();
+  }
+
+  /** Fill the onboarding bootstrap-admin form and submit it (creates the first user → auth re-engages). */
+  async createFirstAdmin(username: string, password: string): Promise<void> {
+    await this.onboardingUsername.fill(username);
+    await this.onboardingPassword.fill(password);
+    await this.onboardingCreate.click();
   }
 }

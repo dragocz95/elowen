@@ -7,6 +7,10 @@ export interface OpenStream {
   readonly id: number;
   readonly client?: string;
   readonly session?: string;
+  /** The `generation` query param the web opened its EventSource with — the daemon delivers a client only
+   *  the frames of the generation it is attached at. Modeled so a spec can prove a STALE-generation frame
+   *  (a superseded run's late output) is dropped server-side and never reaches the live client. */
+  readonly generation?: string;
   /** Serialize a BrainEvent as an SSE frame (`event: <type>`, `data: <json>`) into this connection. */
   write(event: BrainEvent): Promise<void>;
 }
@@ -14,11 +18,13 @@ export interface OpenStream {
 const open = new Set<OpenStream>();
 let seq = 0;
 
-/** How the control channel addresses streams: match on whichever of client/session is provided. When
- *  BOTH are omitted every open stream matches (broadcast) — handy for a single-stream test. */
+/** How the control channel addresses streams: match on whichever of client/session/generation is provided.
+ *  When ALL are omitted every open stream matches (broadcast) — handy for a single-stream test. Supplying
+ *  `generation` scopes delivery to streams opened at that generation (the daemon's stale-frame fence). */
 export interface StreamTarget {
   client?: string;
   session?: string;
+  generation?: string;
 }
 
 export function registerStream(s: Omit<OpenStream, 'id'>): OpenStream {
@@ -40,11 +46,12 @@ export function openStreams(): OpenStream[] {
 
 export function matchStreams(target: StreamTarget): OpenStream[] {
   const streams = [...open];
-  if (target.client === undefined && target.session === undefined) return streams;
+  if (target.client === undefined && target.session === undefined && target.generation === undefined) return streams;
   return streams.filter(
     (s) =>
       (target.client === undefined || s.client === target.client) &&
-      (target.session === undefined || s.session === target.session),
+      (target.session === undefined || s.session === target.session) &&
+      (target.generation === undefined || s.generation === target.generation),
   );
 }
 

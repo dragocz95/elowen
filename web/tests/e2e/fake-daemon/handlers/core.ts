@@ -3,8 +3,10 @@
 // quiet state.
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import type { CliDetectionResult } from '../../../../lib/types.ts';
 import { config, sessions, tasks, missions, projects } from '../../seed/fixtures.ts';
 import { getResponse } from '../overrides.ts';
+import { needsSetup } from '../setup.ts';
 
 export function registerCoreRoutes(app: Hono): void {
   // Playwright's webServer readiness probe hits this (never overridable).
@@ -31,4 +33,17 @@ export function registerCoreRoutes(app: Hono): void {
   app.get('/tasks/ready', (c) => c.json(getResponse('tasks/ready', tasks)));
   app.get('/missions', (c) => c.json(getResponse('missions', missions)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
+
+  // CLI detection the root page (`app/page.tsx`) reads to decide first-run routing: a fresh install
+  // (`freshInstall.noConfigPersisted`) redirects to /onboarding, otherwise to /dash. Tie it to the setup
+  // lane so an armed fresh-install run routes to onboarding exactly as the real daemon does.
+  app.get('/integrations/cli-status', (c) => {
+    const fresh = needsSetup();
+    const result: CliDetectionResult = {
+      tools: [{ name: 'claude', installed: true, functional: true, version: '1.0.0-e2e', error: null }],
+      summary: { allInstalled: true, allFunctional: true },
+      freshInstall: { noConfigPersisted: fresh, noApiKey: fresh, noCustomSetup: fresh },
+    };
+    return c.json(result);
+  });
 }

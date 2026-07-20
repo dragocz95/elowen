@@ -19,6 +19,10 @@ type PayloadOf<T extends BrainEvent['type']> = Omit<EventOf<T>, 'type'>;
 export interface StreamTarget {
   session?: string;
   client?: string;
+  /** The EventSource `generation` the frame is minted for. When set, the fake daemon delivers it ONLY to
+   *  streams opened at that generation — modeling the daemon's stale-frame fence (a superseded run's late
+   *  output never reaches a client attached at a newer generation). */
+  generation?: string;
 }
 
 export class SseScript {

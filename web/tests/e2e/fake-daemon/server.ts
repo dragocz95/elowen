@@ -7,12 +7,31 @@
 // Launched by Playwright's webServer as: node --experimental-strip-types tests/e2e/fake-daemon/server.ts
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
+import { ADMIN_TOKEN } from '../seed/fixtures.ts';
+import { needsSetup } from './setup.ts';
 import { registerAuthRoutes } from './handlers/auth.ts';
 import { registerCoreRoutes } from './handlers/core.ts';
 import { registerBrainRoutes } from './handlers/brain.ts';
 import { registerControlRoutes } from './handlers/control.ts';
 
 const app = new Hono();
+
+// Global auth gate, mirroring the real daemon's `authMiddleware` (src/api/auth.ts): a few public paths
+// (plus the out-of-band `/__test/*` control channel, which never carries a token) are always open; while
+// the fresh-install lane is armed and no admin exists the whole API is open so onboarding can run; after
+// that a request must carry the admin bearer the BFF injects from the session cookie, or it is 401 —
+// which is exactly what returns the app to login when the session is cleared or revoked.
+function isPublicPath(method: string, path: string): boolean {
+  if (path === '/health' || path === '/setup' || path === '/events') return true;
+  if (method === 'POST' && path === '/auth/login') return true;
+  return path.startsWith('/__test/');
+}
+app.use('*', async (c, next) => {
+  if (isPublicPath(c.req.method, c.req.path)) return next();
+  if (needsSetup()) return next();
+  if (c.req.header('authorization') === `Bearer ${ADMIN_TOKEN}`) return next();
+  return c.json({ error: 'unauthorized' }, 401);
+});
 
 registerAuthRoutes(app);
 registerCoreRoutes(app);

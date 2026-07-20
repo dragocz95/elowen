@@ -87,6 +87,13 @@ export class Seed {
     return this.post({ responses: { tasks: list, 'tasks/ready': list } });
   }
 
+  /** Arm (or disarm) the fresh-install lane BEFORE navigating: `GET /setup` then reports needsSetup, so the
+   *  login gate routes an unauthed visitor to /onboarding, and `POST /users` bootstraps the first admin
+   *  (which flips needsSetup back off). Routed through the dedicated `POST /__test/setup` control endpoint. */
+  async needsSetup(on = true): Promise<void> {
+    await this.request.post(`${DAEMON_URL}/__test/setup`, { data: { needsSetup: on } });
+  }
+
   /** Reference to the shared seed defaults, for a spec that wants to build on them. */
   static readonly defaults = {
     brainStatus: defaultBrainStatus,
