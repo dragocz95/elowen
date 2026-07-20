@@ -10,6 +10,7 @@ import {
   installTurnBoundaryAutoCompaction,
   type PendingCompactionMessage,
 } from './turnBoundaryCompaction.js';
+import { installHistoryImageStripping } from './historyImageStripping.js';
 import { logger } from '../../shared/logger.js';
 
 let missingBoundaryCompactionWarned = false;
@@ -263,6 +264,10 @@ export class BrainSessionFactory {
     // pipeline created for this session. The extension above has already been loaded and only marks
     // PI's own compaction signal; it never executes or returns a custom compaction.
     compactionModelRoute?.install(session);
+    // Egress-only: image blocks that have scrolled into history (a newer user turn exists) become text
+    // placeholders in every provider request, for ANY image source — Read images, MCP screenshots,
+    // future plugins. The current run's fresh image is still seen; persisted history is untouched.
+    installHistoryImageStripping(session);
     // Compaction is PI-native: our per-user % maps to PI's absolute reserveTokens (shouldCompact fires
     // once contextTokens > contextWindow − reserveTokens). Applied AFTER create — createAgentSession reads
     // compaction lazily (getCompactionSettings at each check), so an in-memory override here takes effect;

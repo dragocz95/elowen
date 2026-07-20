@@ -104,10 +104,21 @@ function setServerState(name, patch) {
   state.servers.set(name, { ...prev, ...patch, updatedAt: new Date().toISOString() });
 }
 
-/** Map an MCP tool-call result into the brain tool-result shape. */
+/** Image mime types the brain can embed inline as real image blocks (same set as the files plugin). */
+const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Map an MCP tool-call result into the brain tool-result shape. Image parts become REAL image blocks
+ *  (so a vision model actually sees a screenshot, and history stripping can placeholder them later);
+ *  anything else non-text collapses to a short placeholder — never a stringified base64 payload. */
 function mapResult(res) {
   const parts = Array.isArray(res?.content) ? res.content : [];
-  const content = parts.map((p) => (p?.type === 'text' ? { type: 'text', text: String(p.text ?? '') } : { type: 'text', text: JSON.stringify(p) }));
+  const content = parts.map((p) => {
+    if (p?.type === 'text') return { type: 'text', text: String(p.text ?? '') };
+    if (p?.type === 'image' && typeof p.data === 'string' && INLINE_IMAGE_TYPES.has(p.mimeType)) {
+      return { type: 'image', data: p.data, mimeType: p.mimeType };
+    }
+    return { type: 'text', text: `[${typeof p?.type === 'string' ? p.type : 'unknown'} content omitted]` };
+  });
   if (!content.length) content.push({ type: 'text', text: res?.isError ? 'MCP tool returned an error.' : '(no output)' });
   return { content, details: { ok: !res?.isError, isError: !!res?.isError } };
 }

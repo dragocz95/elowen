@@ -41,6 +41,22 @@ describe('mcp plugin — helpers', () => {
     expect(mapResult({ content: [], isError: true }).details.ok).toBe(false);
   });
 
+  it('mapResult passes inline-supported image parts through as REAL image blocks', () => {
+    expect(mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] }))
+      .toEqual({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }], details: { ok: true, isError: false } });
+  });
+
+  it('mapResult collapses non-inlineable parts to a short placeholder, never the raw payload', () => {
+    const audio = { type: 'audio', data: 'Q'.repeat(10_000), mimeType: 'audio/wav' };
+    expect(mapResult({ content: [audio] }).content).toEqual([{ type: 'text', text: '[audio content omitted]' }]);
+    const resource = { type: 'resource', resource: { uri: 'file:///x', blob: 'Z'.repeat(10_000) } };
+    expect(mapResult({ content: [resource] }).content).toEqual([{ type: 'text', text: '[resource content omitted]' }]);
+    // An image with an unsupported/inline-hostile mime type is placeholdered too, not stringified.
+    expect(mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/tiff' }] }).content)
+      .toEqual([{ type: 'text', text: '[image content omitted]' }]);
+    expect(mapResult({ content: [{}] }).content).toEqual([{ type: 'text', text: '[unknown content omitted]' }]);
+  });
+
   it('killTree kills the whole process group (negative pid)', () => {
     const spy = vi.spyOn(process, 'kill').mockImplementation(() => true as never);
     killTree({ pid: 4242 });
