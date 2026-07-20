@@ -31,6 +31,11 @@ export function serializeRange(r: DateRange): string {
  *  default rather than restoring junk. */
 export function parseRange(raw: string): DateRange | null {
   const parts = raw.split('|');
+  // Legacy single-preset form (the old Timeline stored just the preset string, no from/to) — accept it as a
+  // preset window so a saved 7d/30d/all range survives the collapse onto this shared model.
+  if (parts.length === 1) {
+    return raw !== 'custom' && (RANGE_PRESETS as readonly string[]).includes(raw) ? { preset: raw as RangePreset, from: null, to: null } : null;
+  }
   if (parts.length !== 3) return null;
   const [preset, from, to] = parts;
   if (!(RANGE_PRESETS as readonly string[]).includes(preset)) return null;
@@ -62,4 +67,12 @@ export function rangeBounds(r: DateRange, now: number): { fromMs: number; toMs: 
 export function inRange(ms: number, r: DateRange, now: number): boolean {
   const { fromMs, toMs } = rangeBounds(r, now);
   return ms >= fromMs && ms <= toMs;
+}
+
+/** Cap of the visible window in hours — the distance from the window's lower bound to now. `all` (and a
+ *  custom range left open on the `from` side) is unbounded → Infinity. Used by the Timeline to size its
+ *  axis. */
+export function rangeWindowCapHours(r: DateRange, now: number): number {
+  const { fromMs } = rangeBounds(r, now);
+  return Number.isFinite(fromMs) ? (now - fromMs) / 3_600_000 : Infinity;
 }

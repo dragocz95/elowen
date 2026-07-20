@@ -19,9 +19,12 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
 import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
-import { DateRangeFilter } from './DateRangeFilter';
+import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
+import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours, type RangePreset } from '../../lib/dateRange';
+
+/** The Timeline offers only the rolling presets (no Today, no 90d, no custom picker). */
+const TIMELINE_PRESETS: RangePreset[] = ['7d', '30d', 'all'];
 import { SpatialWorkspaceLayout, WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
@@ -349,7 +352,7 @@ export function TimelineView() {
           <ControlSurfaceToolbar className="flex-wrap">
             <div className="min-w-0 flex-1"><Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} /></div>
             <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
-            <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} />
+            <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} presets={TIMELINE_PRESETS} />
           </ControlSurfaceToolbar>
 
           <ControlSurfaceRegister className="workspace-master-detail timeline-workspace-grid" data-detail={picked != null}>

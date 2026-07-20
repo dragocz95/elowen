@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DEFAULT_RANGE, RANGE_PRESETS, serializeRange, parseRange, isStoredRange, rangeBounds, inRange,
+  DEFAULT_RANGE, RANGE_PRESETS, serializeRange, parseRange, isStoredRange, rangeBounds, inRange, rangeWindowCapHours,
 } from '../../lib/dateRange';
 
 describe('dateRange', () => {
@@ -78,5 +78,16 @@ describe('dateRange', () => {
     // yesterday and tomorrow are excluded
     expect(inRange(new Date('2026-06-22T23:59:59').getTime(), r, now)).toBe(false);
     expect(inRange(new Date('2026-06-24T00:00:00').getTime(), r, now)).toBe(false);
+  });
+
+  it('rangeWindowCapHours: finite for a bounded window, Infinity for open-ended (moved from the timeline fork)', () => {
+    const now = new Date('2026-06-23T12:00:00').getTime();
+    // 7d reaches back to the start of 6 days ago → (now - fromMs) hours, > 6 days.
+    const cap7 = rangeWindowCapHours({ preset: '7d', from: null, to: null }, now);
+    expect(cap7).toBeGreaterThan(6 * 24);
+    expect(cap7).toBeLessThan(7 * 24);
+    expect(rangeWindowCapHours({ preset: 'all', from: null, to: null }, now)).toBe(Infinity);
+    // A custom range left open on the `from` side is unbounded too.
+    expect(rangeWindowCapHours({ preset: 'custom', from: null, to: '2026-06-12' }, now)).toBe(Infinity);
   });
 });
