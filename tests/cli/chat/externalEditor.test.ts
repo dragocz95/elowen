@@ -103,7 +103,16 @@ describe('editTextExternally', () => {
         editing,
         new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('TERM-ignoring editor survived abort')), 1_000)),
       ]);
-      expect(() => process.kill(editorPid, 0)).toThrow();
+      // The TERM-ignoring editor is SIGKILLed on abort, but the OS can briefly hold it as an unreaped
+      // zombie for which `kill(pid, 0)` still succeeds. Poll until it reports the process gone rather than
+      // asserting instantaneously, which races reaping and flakes on loaded CI runners.
+      const goneBy = Date.now() + 2_000;
+      let alive = true;
+      while (alive && Date.now() < goneBy) {
+        try { process.kill(editorPid, 0); await new Promise((resolve) => setTimeout(resolve, 10)); }
+        catch { alive = false; }
+      }
+      expect(alive).toBe(false);
     } finally {
       lifecycle.abort();
       if (editorPid > 0) {
