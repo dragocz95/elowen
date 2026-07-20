@@ -259,10 +259,17 @@ reuse it so a fix or a new field lands once, not three times:
 | `_shared/stateStore.mjs` | `StateStore` | Per-conversation JSON state (chosen model, reasoning/voice/display overrides, the `/new` generation counter), keyed by your transport's own conversation id. |
 | `_shared/display.mjs` | `resolveDisplaySettings`, `updateDisplayOverrides` | The `/display` presentation policy (tool activity, answer mode, tool output, per-tool messages) resolved from global config + per-conversation overrides. |
 | `_shared/format.mjs` | `splitContent(text, chunk)`, `extractImageRefs`, `stripThinking`, `parseModelExec`, `stripForSpeech` | Splitting a reply into fenced-code-safe chunks, pulling generated-image links, stripping leaked `<think>` reasoning, parsing a model exec, and flattening markdown for text-to-speech. Every helper guards a null/undefined body — an empty daemon reply must never crash a send. |
+| `_shared/messages.mjs` | `SHARED_MESSAGES` | The service-message keys that are identical on every surface (`noModels`, `restarting`, `compacted`, …). Spread these into your `MESSAGES[lang]` and layer your surface-specific texts (channel-vs-chat wording, your emphasis markers, picker prompts) on top. |
+| `_shared/help.mjs` | `HELP_DESCRIPTIONS`, `renderHelpLines` | The per-command `/help` wording, localized once. Give `renderHelpLines` the ordered command names your surface exposes, your `mono` inline-code wrapper and the container noun (`{place}`/`{placeLoc}`); it returns the command lines so a command can never be listed on one surface/language and dropped on another. |
+| `_shared/chatCommands.mjs` | `CONTROL_COMMANDS`, `runControlCommand` | The transport-agnostic control commands — `new` / `fast` / `stop` / `status` / `compact` / `restart`. Route those names to the core with a small binding (reply, admin gate, state, ctl/ref, active-model lookup); keep only the pickers and `/help` in your own switch. |
+| `_shared/liveTrace.mjs` | `makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`, `makeOutputSummary`, `outputFailed`, `diffSummary`, `sanitizeControl` | The live-tool-trace render/fold rule: how a settled tool result is summarized, how consecutive calls fold into one counted row (mirroring the CLI transcript), and how a row/card becomes text. Build these from a per-surface `style` (mention/fence hardening, bold/strike, the output-line prefix). |
 
 A plugin's own `lib/state.mjs` / `lib/display.mjs` are one-line re-exports of the
 shared modules. Its `lib/format.mjs` re-exports the shared helpers and adds only
-the genuinely per-surface pieces (see below).
+the genuinely per-surface pieces (see below); its `lib/messages.mjs` spreads
+`SHARED_MESSAGES` and renders `/help` through `renderHelpLines`; its `lib/adapter.mjs`
+delegates `CONTROL_COMMANDS` to `runControlCommand`; its `lib/stream.mjs` builds the
+render helpers from a `style`.
 
 ### What stays per-platform
 
@@ -287,12 +294,19 @@ shared helpers rather than forking them:
    and `lib/display.mjs` → re-export the two display helpers.
 3. `lib/format.mjs` → re-export the shared format helpers, then add your `CHUNK`,
    the `splitContent` wrapper, `footerLine`, and `buildReplyContext`.
-4. In `index.mjs`, open the transport connection, map inbound messages to brain
+4. `lib/messages.mjs` → spread `SHARED_MESSAGES` into `MESSAGES.en`/`MESSAGES.cs`,
+   add your surface-specific texts, and render `help` via `renderHelpLines` with
+   the command names your surface exposes.
+5. `lib/adapter.mjs` → in your command handler, delegate `CONTROL_COMMANDS` to
+   `runControlCommand` first (passing the reply, admin gate, state, ctl/ref and
+   active-model binding); keep only the pickers and `/help` in your own switch.
+6. `lib/stream.mjs` → build the render helpers from a `style` object
+   (`makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`,
+   `makeOutputSummary`); keep the throttled editable-message transport and the
+   event→state reducer local, since those genuinely differ per transport.
+7. In `index.mjs`, open the transport connection, map inbound messages to brain
    turns through `ctx`, and render the streamed reply using the shared helpers +
    your local footer/chunking.
-5. Reuse the command handling and live-stream rendering the existing adapters
-   share where practical, so control commands and streaming behave consistently
-   across platforms.
 
 ## Loading and testing
 
