@@ -52,10 +52,10 @@ export function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-/** A USD cost as a fixed 4-decimal "$0.1234" label. Single source of truth for cost rendering
- *  across the usage surfaces. */
-export function formatCost(usd: number): string {
-  return `$${usd.toFixed(4)}`;
+/** A USD cost as a "$0.1234" label. Single source of truth for cost rendering across every surface;
+ *  `decimals` defaults to the 4dp the usage tables want — the chat statuslines pass 2 for a coarser chip. */
+export function formatCost(usd: number, decimals = 4): string {
+  return `$${usd.toFixed(decimals)}`;
 }
 
 // ---------------------------------------------------------------------------------------------

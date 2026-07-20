@@ -2,7 +2,7 @@
 import { MessagesSquare } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useBrainChat } from '../advisor/BrainChatProvider';
-import { formatTokens } from '../../lib/format';
+import { formatTokens, formatCost } from '../../lib/format';
 
 /** The Elowen-style identity hero for /chat: the section icon + title, then a row of live stats about the
  *  user's conversations (count, active model, context fill, total tokens, cost) read straight off the one
@@ -21,7 +21,7 @@ export function ChatDeckHero() {
     ...(model ? [{ label: t.chat.heroModel, value: model, mono: true }] : []),
     ...(usage && usage.percent != null ? [{ label: t.brainChat.context, value: `${Math.round(usage.percent)}%` }] : []),
     ...(usage ? [{ label: t.chat.heroTokens, value: `Σ ${formatTokens(usage.totalTokens)}` }] : []),
-    ...(usage ? [{ label: t.chat.heroCost, value: `$${usage.cost.toFixed(2)}` }] : []),
+    ...(usage ? [{ label: t.chat.heroCost, value: formatCost(usage.cost, 2) }] : []),
   ];
 
   return (

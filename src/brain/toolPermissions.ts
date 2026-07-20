@@ -69,6 +69,8 @@ const isPermissionScope = (v: unknown): v is PermissionScope => v === 'tools' ||
 /** 13 built-ins + at most 200 user rules in each map today; leave bounded headroom for future defaults. */
 const MAX_BOUNDARY_RULES = 512;
 const MAX_BOUNDARY_PATTERN_CHARS = 200;
+/** Cap on the number of user rules kept per sanitized map (distinct from the pattern-length cap above). */
+const MAX_RULES_PER_MAP = 200;
 
 /** Keep a user's rule maps bounded and well-typed. Invalid keys/actions are dropped (the blob is
  *  untrusted JSON); insertion order of the surviving entries is preserved — it decides precedence. */
@@ -77,8 +79,8 @@ function sanitizeRuleMap(input: unknown): Record<string, PermissionAction> {
   const out: Record<string, PermissionAction> = {};
   let count = 0;
   for (const [pattern, action] of Object.entries(src)) {
-    if (count >= 200) break; // a runaway blob must not balloon per-call rule matching
-    if (!pattern.trim() || pattern.length > 200 || !isAction(action)) continue;
+    if (count >= MAX_RULES_PER_MAP) break; // a runaway blob must not balloon per-call rule matching
+    if (!pattern.trim() || pattern.length > MAX_BOUNDARY_PATTERN_CHARS || !isAction(action)) continue;
     out[pattern] = action;
     count++;
   }

@@ -1,6 +1,16 @@
 // Provider ↔ exec-string mapping. Mirrors the daemon's src/overseer/routing.ts so the UI
 // shows and edits the SAME provider the spawn path will actually resolve.
+import type { BrainModelOption } from './types';
+
 export type ProviderId = 'claude-code' | 'opencode' | 'codex' | 'kilo' | 'pi' | 'omp' | 'elowen';
+
+/** Short auth-source chip for a brain model (mirrors the `source` the daemon derives from how the model is
+ *  reachable). The ONE source for every model picker so the chip set never drifts between them. */
+export const SOURCE_BADGE: Record<BrainModelOption['source'], string> = {
+  oauth: 'OAuth',
+  'api-key': 'API',
+  relay: 'Relay',
+};
 
 /** Explicit `<prefix>:<model>` spec prefixes, in match order, mapped to their provider. Mirrors the
  *  daemon's PROGRAM_PREFIXES (src/shared/execs.ts) so the UI parses execs the same way spawn does. */

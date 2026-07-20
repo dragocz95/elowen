@@ -14,7 +14,7 @@ import { AgentsTable } from './AgentsTable';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { useBrainChat } from './BrainChatProvider';
-import { formatTokens } from '../../lib/format';
+import { formatTokens, formatCost } from '../../lib/format';
 
 /** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
 function TextSegment({ text, className = '' }: { text: string; className?: string }) {
@@ -539,7 +539,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
             <span>{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
           ) : null}
           {lineCfg.showTokens && usage ? <span>Σ {formatTokens(usage.totalTokens)} tok</span> : null}
-          {lineCfg.showCost && usage ? <span>${usage.cost.toFixed(2)}</span> : null}
+          {lineCfg.showCost && usage ? <span>{formatCost(usage.cost, 2)}</span> : null}
         </div>
       ) : null}
 

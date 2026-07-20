@@ -4,7 +4,7 @@ import { ModelIcon } from './ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectionModal';
 import { SelectionSummary } from './SelectionSummary';
 import { providerMeta } from '../../modules/settings/providers';
-import { execProvider, type ProviderId } from '../../lib/modelProvider';
+import { execProvider, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 
@@ -68,7 +68,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
       group: `b:${m.provider}`,
       groupLabel: m.providerLabel,
       icon: <ModelIcon name={m.model} size={14} />,
-      badges: m.source === 'oauth' ? [{ text: 'OAuth', tone: 'muted' as const }] : undefined,
+      badges: [{ text: SOURCE_BADGE[m.source], tone: 'muted' as const }],
     })),
   ];
 

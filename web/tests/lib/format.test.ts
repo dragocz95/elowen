@@ -69,6 +69,11 @@ describe('formatCost', () => {
     expect(formatCost(1)).toBe('$1.0000');
     expect(formatCost(0)).toBe('$0.0000');
   });
+
+  it('honours a custom decimal count (the chat statuslines pass 2)', () => {
+    expect(formatCost(0.1234, 2)).toBe('$0.12');
+    expect(formatCost(1.5, 2)).toBe('$1.50');
+  });
 });
 
 const ISO = '2026-06-18 10:00:00'; // SQLite UTC format

@@ -3,16 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import type { BrainModelOption } from '../../lib/types';
+import { SOURCE_BADGE } from '../../lib/modelProvider';
 import { useBrainChat } from './BrainChatProvider';
-
-/** Short auth-source badge on each provider group — mirrors the `source` field the daemon derives from how
- *  the provider authenticates (drives the OAuth badge in every picker). Stable technical tokens, identical
- *  in every locale. */
-const SOURCE_BADGE: Record<BrainModelOption['source'], string> = {
-  oauth: 'OAuth',
-  'api-key': 'API',
-  relay: 'Relay',
-};
 
 /** Group the flat catalog into ordered provider buckets keyed by the provider's display label, preserving
  *  the server's ordering (first occurrence wins the slot). */

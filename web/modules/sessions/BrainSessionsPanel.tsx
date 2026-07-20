@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
-import { localDateTime } from '../../lib/format';
+import { localDateTime, formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { useMe, useConfig, QUERY_KEYS } from '../../lib/queries';
@@ -23,12 +23,6 @@ import { ContextMenu, type ContextMenuState } from '../../components/ui/ContextM
 import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
 const PAGE_SIZE = 12;
-
-/** Compact token count: 1 234 → "1.2k", 980 → "980". */
-function fmtTokens(n: number): string {
-  if (!n) return '0';
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
-}
 
 interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number }
 
@@ -210,7 +204,7 @@ export function BrainSessionsPanel() {
                             {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                           </span>
                           <span className="truncate font-mono text-tiny text-text-muted">
-                            {s.tokens != null ? `${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
+                            {s.tokens != null ? `${formatTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
                           </span>
                         </button>
                         <ActionMenu

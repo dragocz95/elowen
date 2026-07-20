@@ -7,7 +7,7 @@ import { useBrainSessions, useBrainCommands } from '../../lib/queries';
 import { elowenClient, BASE } from '../../lib/elowenClient';
 import type { AskAnswer, AskQuestion, BrainCard, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { fromHistory, prependHistory, reduce, upsertCard, type ChatTurn, type TranscriptEvent } from '../../lib/transcript';
-import { formatTokens } from '../../lib/format';
+import { formatTokens, formatCost } from '../../lib/format';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import {
   BRAIN_COMPOSE_EVENT,
@@ -506,7 +506,7 @@ function useBrainChatController(): BrainChatValue {
       if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
       if (cmd.name === 'status') {
         const s = await elowenClient.brainStatus(boundSessionRef.current); const u = s.usage;
-        const parts = [s.model && `model: ${s.model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${formatTokens(u.totalTokens)} tok`, u && `$${u.cost.toFixed(2)}`].filter(Boolean) as string[];
+        const parts = [s.model && `model: ${s.model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${formatTokens(u.totalTokens)} tok`, u && formatCost(u.cost, 2)].filter(Boolean) as string[];
         toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
       }
       if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }

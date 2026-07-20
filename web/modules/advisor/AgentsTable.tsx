@@ -3,9 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Users, ChevronRight } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { Modal } from '../../components/ui/Modal';
+import { formatTokens } from '../../lib/format';
 import type { SubagentState } from '../../lib/transcript';
-
-const fmtK = (n: number): string => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`);
 
 const STATUS_DOT: Record<SubagentState['status'], string> = {
   running: 'text-success',
@@ -68,7 +67,7 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-text-muted">{a.model ?? '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-muted">{a.tokens != null ? fmtK(a.tokens) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-text-muted">{a.tokens != null ? formatTokens(a.tokens) : '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-text-muted">{a.tools}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-text-muted">{idle == null ? '—' : `${idle}s`}</td>
                   <td className="px-2 py-2 text-right"><ChevronRight size={13} className="text-text-muted" aria-hidden /></td>
