@@ -117,7 +117,11 @@ export class TelegramAdapter {
 
   async connect() {
     this.stopped = false;
-    this.bot = new Bot(this.cfg.botToken);
+    // Testability seam: point grammY at a non-production Bot API server when `apiRoot` is configured
+    // (the E2E suite injects a fake Bot API here). Pure passthrough — unset means grammY's own default
+    // (https://api.telegram.org), so production behaviour is unchanged.
+    const apiRoot = typeof this.cfg.apiRoot === 'string' && this.cfg.apiRoot.trim() ? this.cfg.apiRoot.trim() : '';
+    this.bot = apiRoot ? new Bot(this.cfg.botToken, { client: { apiRoot } }) : new Bot(this.cfg.botToken);
     await this.bot.init(); // populate botInfo (id + username) before we publish commands / detect mentions
     this.botId = this.bot.botInfo?.id ?? null;
     this.botUsername = this.bot.botInfo?.username ?? '';

@@ -27,6 +27,7 @@
   },
   "ignoreBinaries": [
     "tmux",
+    "systemctl",
     "which",
     "dot",
     "gh",

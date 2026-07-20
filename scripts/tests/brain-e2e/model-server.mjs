@@ -31,13 +31,16 @@ function chunkFrame(payload) {
  * Start the scripted model server on an ephemeral loopback port.
  *
  * @param {object} [opts]
- * @param {string} [opts.toolName]   Tool the model calls on the first request (must exist in the daemon).
+ * @param {string|null} [opts.toolName] Tool the model calls on the first request (must exist in the
+ *   daemon). Pass `null` for a plain-text turn: the model streams text and stops with NO tool call — one
+ *   request, no follow-up (used by surfaces where the sender lacks the owner tools).
  * @param {string} [opts.toolArgs]   JSON string of the tool arguments (default '{}').
- * @param {string} [opts.firstText]  Text streamed before the tool call.
- * @param {string} [opts.finalText]  Text streamed on the follow-up (post-tool) request.
+ * @param {string} [opts.firstText]  Text streamed before the tool call (or the whole answer in no-tool mode).
+ * @param {string} [opts.finalText]  Text streamed on the follow-up (post-tool) request, or appended in no-tool mode.
  * @returns {Promise<{ baseUrl: string, port: number, requests: object[], setFail: (v:boolean)=>void, close: ()=>Promise<void> }>}
  */
 export async function startModelServer(opts = {}) {
+  const noTool = opts.toolName === null; // explicit null → answer directly, never call a tool
   const toolName = opts.toolName ?? 'ElowenListMissions';
   const toolArgs = opts.toolArgs ?? '{}';
   const firstText = opts.firstText ?? 'Let me check the Elowen missions for you. ';
@@ -81,7 +84,14 @@ export async function startModelServer(opts = {}) {
     const usage = (prompt, completion) =>
       chunkFrame({ ...base, choices: [], usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion } });
 
-    if (!hasToolResult) {
+    if (noTool) {
+      // Plain-text turn: stream a couple of accumulating text deltas and stop — no tool call, so a
+      // single request completes the turn (a sender without the owner toolset just gets an answer).
+      res.write(delta({ role: 'assistant', content: firstText }));
+      res.write(delta({ content: finalText }));
+      res.write(delta({}, 'stop'));
+      res.write(usage(90, 12));
+    } else if (!hasToolResult) {
       // First model turn: stream a couple of text deltas (assert they ACCUMULATE, not replace), then a
       // single tool call the daemon actually executes.
       res.write(delta({ role: 'assistant', content: firstText }));

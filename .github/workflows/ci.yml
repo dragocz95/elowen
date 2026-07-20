@@ -78,6 +78,165 @@ jobs:
       - run: npm run build
       - run: node scripts/tests/brain-e2e/chat-turn.mjs
 
+  telegram-e2e:
+    name: Telegram E2E (real daemon + fake Bot API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Boots the ACTUAL built daemon on a throwaway port, enables the REAL telegram plugin pointed at a
+      # fake Telegram Bot API server (via the adapter's `apiRoot` seam), and drives a private message + the
+      # shared control commands (/status, /new, /fast) end to end, asserting the bot's captured replies are
+      # Telegram plain text. Plus a teeth check that a provider error surfaces as the bot's "⚠️" reply.
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/tests/telegram-e2e/telegram-roundtrip.mjs
+
+  discord-e2e:
+    name: Discord E2E (real daemon + fake Discord API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Boots the ACTUAL built daemon, enables the REAL discord plugin pointed at a fake Discord REST +
+      # gateway server (via the adapter's `apiBase`/`gatewayUrl` seam), and drives a message + the shared
+      # control commands (/status, /new, /fast) as slash interactions end to end, asserting the bot's
+      # captured replies use Discord formatting (markdown bold, ephemeral interaction callbacks, message
+      # references). Plus a teeth check that a provider error surfaces as the bot's "⚠️" reply.
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/tests/discord-e2e/discord-roundtrip.mjs
+
+  cron-e2e:
+    name: Cron E2E (real daemon + scheduled collector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Boots the ACTUAL built daemon, enables the cronjob plugin, registers a one-shot job whose `check`
+      # collector emits a marker, shortens the tick, and asserts the collector output reaches the brain
+      # under the "Check output" framing, persists as the cron channel session, and the one-shot job is
+      # consumed. Teeth: an empty collector skips the turn and the poll times out.
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/tests/cron-e2e/run.mjs
+
+  api-e2e:
+    name: API E2E (REST/SSE/WS contract)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Boots the ACTUAL built daemon and asserts the auth guard matrix (public routes, setup-mode open,
+      # bearer-required after first admin), the SSE stream lifecycle (unauthed reject, authed frames → idle,
+      # clean client disconnect), and the WebSocket terminal channel (single-use ws-ticket gate). Teeth:
+      # flipping a re-engaged 401 expectation to 200 fails the run.
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/tests/api-e2e/run.mjs
+
+  migration-e2e:
+    name: Migration E2E (old-schema DB upgrade)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Builds an old-schema (user_version 0) SQLite fixture with representative rows, boots the ACTUAL
+      # daemon against it, and asserts the migration runner advances the version, upgrades the data
+      # (tool-rename maps, prompt-key renames), preserves the pre-existing admin/sessions, and does not
+      # re-trigger setup. Teeth: asserting a pre-migration value fails the run.
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/tests/migration-e2e/run.mjs
+
+  web-e2e:
+    name: Web E2E (Next standalone + BFF proxy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
+      # those best-effort calls don't spew errors during boot.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Builds both dist/ and the Next standalone (web-dist/), boots the ACTUAL daemon + web server on
+      # throwaway ports, and asserts the key app routes serve 200 and the BFF proxy contract (setup-mode
+      # tokenless passthrough, first admin via proxy, cookie→Bearer injection, Authorization not forwardable,
+      # 401 clears the cookie only when a token was present). Teeth: a dead upstream / broken route fails.
+      - run: npm ci
+      - run: npm ci --prefix web
+      - run: npm run build
+      - run: npm run build:web
+      - run: node scripts/tests/web-e2e/run.mjs
+
   web:
     name: Web (build + test)
     runs-on: ubuntu-latest

@@ -88,6 +88,11 @@ export class DiscordAdapter {
     this.awaitingAck = false; // heartbeat sent, ACK (op 11) not yet seen → zombie detection
     this.channelMeta = new Map(); // channel id → { name, topic }; names change rarely, never invalidated
     this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en']; // gateway service texts
+    // Testability seam: point REST + gateway at a local fake when configured (the E2E suite injects a fake
+    // Discord API here). Pure passthrough — unset means the real discord.com endpoints, so production is
+    // unchanged. Kept OUT of configSchema (internal-only).
+    this.api = typeof cfg.apiBase === 'string' && cfg.apiBase.trim() ? cfg.apiBase.trim().replace(/\/+$/, '') : API;
+    this.gateway = typeof cfg.gatewayUrl === 'string' && cfg.gatewayUrl.trim() ? cfg.gatewayUrl.trim() : GATEWAY;
   }
 
   listen(onMessage) { this.handler = onMessage; }
@@ -228,7 +233,7 @@ export class DiscordAdapter {
 
   openGateway() {
     if (this.stopped) return;
-    const ws = new WebSocket(this.sessionId && this.resumeUrl ? `${this.resumeUrl}?v=10&encoding=json` : GATEWAY);
+    const ws = new WebSocket(this.sessionId && this.resumeUrl ? `${this.resumeUrl}?v=10&encoding=json` : this.gateway);
     this.ws = ws;
     ws.onmessage = (ev) => this.onFrame(JSON.parse(String(ev.data)));
     ws.onclose = () => {
@@ -745,7 +750,7 @@ export class DiscordAdapter {
     const form = new FormData();
     form.append('payload_json', JSON.stringify({ content, ...extra }));
     files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.data], { type: 'image/png' }), f.name));
-    const res = await fetch(`${API}/channels/${channelId}/messages`, {
+    const res = await fetch(`${this.api}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { authorization: `Bot ${this.cfg.botToken}` }, // content-type: fetch sets the multipart boundary
       body: form,
@@ -817,7 +822,7 @@ export class DiscordAdapter {
     const form = new FormData();
     form.append('payload_json', JSON.stringify({ content, ...extra }));
     files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.data], { type: 'audio/mpeg' }), f.name));
-    const res = await fetch(`${API}/channels/${channelId}/messages`, {
+    const res = await fetch(`${this.api}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { authorization: `Bot ${this.cfg.botToken}` }, // fetch sets the multipart boundary
       body: form,
@@ -840,7 +845,7 @@ export class DiscordAdapter {
   }
 
   async rest(method, path, body, attempt = 0) {
-    const res = await fetch(`${API}${path}`, {
+    const res = await fetch(`${this.api}${path}`, {
       method,
       headers: { authorization: `Bot ${this.cfg.botToken}`, 'content-type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
