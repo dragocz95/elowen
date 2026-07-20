@@ -240,6 +240,60 @@ Persist the descriptor with stored vectors so a model or dimensionality change
 can trigger re-indexing. `embed` and `embedBatch` reject when the capability or
 embedding configuration is absent.
 
+## Building a platform adapter
+
+A *platform* plugin bridges a chat transport (Discord, Telegram, WhatsApp, …) to
+the brain: it receives inbound messages, forwards them as brain turns, and
+streams the reply back in that transport's shape. Declare `platforms` in
+`provides` and register with `ctx.registerPlatform(...)`. Each platform lives in
+`plugins/<name>/` with its entry `index.mjs` and a `lib/` folder; the daemon
+never talks to the transport directly, so an adapter is the whole integration.
+
+### Reuse the shared core, don't re-implement it
+
+The transport-neutral logic every adapter needs lives in `plugins/_shared/` —
+reuse it so a fix or a new field lands once, not three times:
+
+| Module | Exports | Use for |
+| --- | --- | --- |
+| `_shared/stateStore.mjs` | `StateStore` | Per-conversation JSON state (chosen model, reasoning/voice/display overrides, the `/new` generation counter), keyed by your transport's own conversation id. |
+| `_shared/display.mjs` | `resolveDisplaySettings`, `updateDisplayOverrides` | The `/display` presentation policy (tool activity, answer mode, tool output, per-tool messages) resolved from global config + per-conversation overrides. |
+| `_shared/format.mjs` | `splitContent(text, chunk)`, `extractImageRefs`, `stripThinking`, `parseModelExec`, `stripForSpeech` | Splitting a reply into fenced-code-safe chunks, pulling generated-image links, stripping leaked `<think>` reasoning, parsing a model exec, and flattening markdown for text-to-speech. Every helper guards a null/undefined body — an empty daemon reply must never crash a send. |
+
+A plugin's own `lib/state.mjs` / `lib/display.mjs` are one-line re-exports of the
+shared modules. Its `lib/format.mjs` re-exports the shared helpers and adds only
+the genuinely per-surface pieces (see below).
+
+### What stays per-platform
+
+Keep in the plugin only what is truly transport-specific, and pass it into the
+shared helpers rather than forking them:
+
+- **Chunk size** — Discord splits at 1990 chars, Telegram/WhatsApp at 4000. The
+  plugin owns its `CHUNK` and wraps the shared splitter:
+  `export const splitContent = (text) => splitAtChunk(text, CHUNK);`
+- **Footer + emphasis markup** — Discord uses `-# …` subtext, Telegram an em-dash
+  line, WhatsApp `_…_` italics. Keep `footerLine` local.
+- **Reply-quote shape** — the `buildReplyContext` signature differs per API
+  (Discord takes the referenced-message object; Telegram/WhatsApp take name +
+  body), so it stays local.
+- **Transport-only helpers** — e.g. Discord's mention/role/name resolution.
+
+### Steps to add a new platform
+
+1. Scaffold `plugins/<name>/` with a manifest declaring `provides.platforms` and
+   any config fields (token, allow-list, display defaults).
+2. `lib/state.mjs` → `export { StateStore } from '../../_shared/stateStore.mjs';`
+   and `lib/display.mjs` → re-export the two display helpers.
+3. `lib/format.mjs` → re-export the shared format helpers, then add your `CHUNK`,
+   the `splitContent` wrapper, `footerLine`, and `buildReplyContext`.
+4. In `index.mjs`, open the transport connection, map inbound messages to brain
+   turns through `ctx`, and render the streamed reply using the shared helpers +
+   your local footer/chunking.
+5. Reuse the command handling and live-stream rendering the existing adapters
+   share where practical, so control commands and streaming behave consistently
+   across platforms.
+
 ## Loading and testing
 
 Bundled plugins live under `plugins/<name>/` and are copied into the daemon
