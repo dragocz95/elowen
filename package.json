@@ -1,6 +1,6 @@
 {
   "name": "elowen",
-  "version": "0.27.72",
+  "version": "0.27.73",
   "description": "Elowen is a self-hosted personal AI agent you talk to: chat, act, automate and extend from the CLI, web, Discord or WhatsApp.",
   "license": "MIT",
   "type": "module",
@@ -60,6 +60,8 @@
     "test:e2e:api": "npm run build --silent && node scripts/tests/api-e2e/run.mjs",
     "test:e2e:migration": "npm run build --silent && node scripts/tests/migration-e2e/run.mjs",
     "test:e2e:web": "npm run build --silent && npm run build:web && node scripts/tests/web-e2e/run.mjs",
+    "test:e2e:whatsapp": "npm run build --silent && node scripts/tests/whatsapp-e2e/whatsapp-roundtrip.mjs",
+    "test:e2e:delegate": "npm run build --silent && node scripts/tests/delegate-e2e/run.mjs",
     "test:install": "node scripts/install-smoke/run.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

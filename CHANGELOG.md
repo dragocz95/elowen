@@ -5,6 +5,20 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.27.73] - 2026-07-20
+
+### Added
+- **The CLI shows what a long tool call is doing while it streams.** Instead of a generic "working" hint, a short action label in your language (e.g. "Píšu soubor readme.md…") appears next to the spinner while a long-running tool call is being written. Quick tools are unchanged.
+- **Chat-adapter service language is now a dropdown.** Telegram, Discord and WhatsApp pick their service-message language (English / Čeština) from a styled picker in Settings, instead of typing a language code.
+
+### Changed
+- **Conversation auto-cleanup moved to Settings → Elowen AI.** The "delete idle conversations older than N days" control now lives with the other Elowen AI settings, rendered as a normal settings row, instead of floating on the sessions list.
+- **Reasoning-effort changes settle before they're recorded.** Cycling quickly through reasoning levels no longer drops a marker into the transcript for every intermediate step — one marker lands once you settle on a level. The level itself still applies immediately.
+
+### Fixed
+- **Screenshots and images no longer bloat the conversation context.** Images read earlier in a session (screenshots, image files) are replaced with a placeholder in the model's context on later turns while staying visible on the turn they're used, so long sessions stay lean. MCP tool screenshots are now forwarded as real images instead of being stored as unreadable text.
+- **Reasoning effort works for Qwen on Alibaba/DashScope.** Selecting low/medium/high on Qwen thinking models now takes effect — mapped to the endpoint's thinking budget with a matching completion cap — instead of being ignored or failing on medium/high.
+
 ## [0.27.72] - 2026-07-20
 
 ### Added
