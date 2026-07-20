@@ -62,6 +62,15 @@ describe('/help stays in sync across surfaces (the Telegram /context drift regre
     }
   });
 
+  it('every text surface that gates /fast has a fastUsage string in both languages', () => {
+    // The shared core replies msg.fastUsage on an invalid /fast arg; Telegram + WhatsApp accept free text,
+    // so both languages must carry the key (Telegram cs previously lacked it → a silent, zero-reply path).
+    for (const M of [TELEGRAM, WHATSAPP]) {
+      expect(typeof M.en.fastUsage).toBe('string');
+      expect(typeof M.cs.fastUsage).toBe('string');
+    }
+  });
+
   it('WhatsApp omits the commands it has no surface for (/voice, /display)', () => {
     expect(WHATSAPP.en.help('Elowen')).not.toContain('/voice');
     expect(WHATSAPP.en.help('Elowen')).not.toContain('/display');

@@ -12,6 +12,7 @@ import { parseAskReply } from './ask.mjs';
 import { sameId, isGroup, numberOf, toJid, senderIsAdmin } from './jid.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage } from './stream.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger inbound images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
@@ -609,17 +610,22 @@ export class WhatsAppAdapter {
   /** Handle a `/command`. Returns true when the text was a (recognized) command. */
   async handleCommand(chatJid, senderJid, text) {
     const [cmd, arg] = text.slice(1).trim().split(/\s+/);
+    const command = cmd.toLowerCase();
     const admin = () => senderIsAdmin(this.senderIds(senderJid, chatJid), this.cfg.senderPolicies);
-    switch (cmd.toLowerCase()) {
+    // Control commands (new/fast/stop/status/compact/restart) share one transport-agnostic core; only the
+    // pickers below stay local because their numbered-menu UI is WhatsApp-specific.
+    if (CONTROL_COMMANDS.has(command)) {
+      return runControlCommand(command, {
+        msg: this.msg, reply: (t) => this.sendText(chatJid, t), isAdmin: admin, arg,
+        state: this.state, stateId: chatJid, ctl: this.ctl, ref: this.chatRef(chatJid),
+        activeModel: async () => (await this.modelForChat(chatJid)).active,
+        fastEnabled: this.chatCommands.some((c) => c.name === 'fast'),
+      });
+    }
+    switch (command) {
       case 'help':
         await this.sendText(chatJid, this.msg.help('Elowen'));
         return true;
-      case 'new': {
-        const gen = (this.state.get(chatJid).gen ?? 0) + 1;
-        this.state.patch(chatJid, { gen });
-        await this.sendText(chatJid, this.msg.newConversation);
-        return true;
-      }
       case 'model': {
         if (!admin()) { await this.sendText(chatJid, this.msg.modelForbidden); return true; }
         const models = await this.listModels().catch(() => []);
@@ -651,60 +657,6 @@ export class WhatsAppAdapter {
           ...levels.map((level) => ({ id: `think:${level}`, label: active.reasoningLabels?.[level] ?? level })),
         ];
         await this.sendMenu(chatJid, 'thinking', this.msg.pickThinking, options);
-        return true;
-      }
-      case 'fast': {
-        if (!this.chatCommands.some((c) => c.name === 'fast')) return false;
-        if (!admin()) { await this.sendText(chatJid, this.msg.controlForbidden); return true; }
-        const current = this.state.get(chatJid).fast === true;
-        const wanted = arg?.toLowerCase() === 'on' ? true : arg?.toLowerCase() === 'off' ? false : !current;
-        if (arg && !['on', 'off'].includes(arg.toLowerCase())) { await this.sendText(chatJid, this.msg.fastUsage); return true; }
-        const { active } = await this.modelForChat(chatJid);
-        // The catalog capability describes the selected provider/model for the next turn. Check it
-        // before touching a possibly stale live channel session, which may still run the previous model.
-        if (!active?.fastAvailable) {
-          if (wanted) { await this.sendText(chatJid, this.msg.fastUnavailable); return true; }
-          // A stale persisted `fast:true` must remain switchable off after moving to a non-OAuth model.
-          this.state.patch(chatJid, { fast: false });
-          await this.sendText(chatJid, this.msg.fastSet(false));
-          return true;
-        }
-        const ref = this.chatRef(chatJid);
-        const live = this.ctl?.status?.(ref) ?? null;
-        const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
-        const result = liveMatchesSelection ? (this.ctl?.setFast(ref, wanted) ?? null) : null;
-        if (result && !result.fastAvailable) { await this.sendText(chatJid, this.msg.fastUnavailable); return true; }
-        this.state.patch(chatJid, { fast: wanted });
-        await this.sendText(chatJid, this.msg.fastSet(wanted));
-        return true;
-      }
-      case 'stop': case 'status': case 'compact': {
-        if (!admin()) { await this.sendText(chatJid, this.msg.controlForbidden); return true; }
-        if (!this.ctl) { await this.sendText(chatJid, this.msg.noSession); return true; }
-        const ref = this.chatRef(chatJid);
-        if (cmd.toLowerCase() === 'stop') {
-          const st = this.ctl.status(ref);
-          if (!st?.streaming) { await this.sendText(chatJid, this.msg.nothingRunning); return true; }
-          await this.ctl.abort(ref);
-          await this.sendText(chatJid, this.msg.stopped);
-          return true;
-        }
-        if (cmd.toLowerCase() === 'status') {
-          const st = this.ctl.status(ref);
-          await this.sendText(chatJid, st ? this.msg.status(st.model, st.usage.percent ?? 0, st.usage.tokens ?? 0) : this.msg.noSession);
-          return true;
-        }
-        try {
-          const res = await this.ctl.compact(ref);
-          await this.sendText(chatJid, !res ? this.msg.noSession : (res.compacted ? this.msg.compacted(res.usage.percent ?? 0) : this.msg.nothingToCompact));
-        } catch { await this.sendText(chatJid, this.msg.compactFailed); }
-        return true;
-      }
-      case 'restart': {
-        if (!admin()) { await this.sendText(chatJid, this.msg.restartForbidden); return true; }
-        if (!this.ctl) { await this.sendText(chatJid, this.msg.restartUnavailable); return true; }
-        try { await this.ctl.restart(); await this.sendText(chatJid, this.msg.restarting); }
-        catch { await this.sendText(chatJid, this.msg.restartUnavailable); }
         return true;
       }
       default:

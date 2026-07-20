@@ -10,6 +10,7 @@ import { buildAskKeyboard } from './ask.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
@@ -452,15 +453,20 @@ export class TelegramAdapter {
     const cmd = cmdRaw.split('@')[0].toLowerCase(); // strip a trailing @botusername (group form)
     const arg = argParts.join(' ').trim().toLowerCase();
     const admin = () => this.isAdmin(ids);
+    // Control commands (new/fast/stop/status/compact/restart) share one transport-agnostic core; only the
+    // pickers below stay local because their inline-keyboard UI is Telegram-specific.
+    if (CONTROL_COMMANDS.has(cmd)) {
+      return runControlCommand(cmd, {
+        msg: this.msg, reply: (t) => this.tgSend(chatId, t), isAdmin: admin, arg,
+        state: this.state, stateId: String(chatId), ctl: this.ctl, ref: this.channelRef(chatId),
+        activeModel: async () => this.modelForChannel(chatId, await this.listModels().catch(() => [])),
+        fastEnabled: this.chatCommands.some((c) => c.name === 'fast'),
+      });
+    }
     switch (cmd) {
       case 'help':
         await this.tgSend(chatId, this.msg.help(this.cfg.agentName || 'Elowen'));
         return true;
-      case 'new': {
-        this.state.patch(String(chatId), { gen: (this.state.get(String(chatId)).gen ?? 0) + 1 });
-        await this.tgSend(chatId, this.msg.newConversation);
-        return true;
-      }
       case 'model': {
         if (!admin()) { await this.tgSend(chatId, this.msg.modelForbidden); return true; }
         const models = await this.listModels().catch(() => []);
@@ -499,29 +505,6 @@ export class TelegramAdapter {
         await this.tgSend(chatId, this.msg.pickThinking, { reply_markup: { inline_keyboard: keyboard } });
         return true;
       }
-      case 'fast': {
-        if (!this.chatCommands.some((c) => c.name === 'fast')) return false;
-        if (!admin()) { await this.tgSend(chatId, this.msg.controlForbidden); return true; }
-        const saved = this.state.get(String(chatId)).fast === true;
-        const wanted = arg === 'on' ? true : arg === 'off' ? false : !saved;
-        const models = await this.listModels().catch(() => []);
-        const active = this.modelForChannel(chatId, models);
-        // Validate the selected catalog model before touching a possibly stale live session.
-        if (!active?.fastAvailable) {
-          if (wanted) { await this.tgSend(chatId, this.msg.fastUnavailable); return true; }
-          this.state.patch(String(chatId), { fast: false });
-          await this.tgSend(chatId, this.msg.fastSet(false));
-          return true;
-        }
-        const ref = this.channelRef(chatId);
-        const live = this.ctl?.status?.(ref) ?? null;
-        const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
-        const result = liveMatchesSelection ? (this.ctl?.setFast(ref, wanted) ?? null) : null;
-        if (result && !result.fastAvailable) { await this.tgSend(chatId, this.msg.fastUnavailable); return true; }
-        this.state.patch(String(chatId), { fast: wanted });
-        await this.tgSend(chatId, this.msg.fastSet(wanted));
-        return true;
-      }
       case 'voice': {
         if (!admin()) { await this.tgSend(chatId, this.msg.modelForbidden); return true; }
         const next = arg === 'on' ? true : arg === 'off' ? false : !this.voiceEnabled(String(chatId));
@@ -534,35 +517,6 @@ export class TelegramAdapter {
         if (!admin()) { await this.tgSend(chatId, this.msg.controlForbidden); return true; }
         const resolved = resolveDisplaySettings(this.cfg, this.state.get(String(chatId)));
         await this.tgSend(chatId, this.msg.displaySet(resolved), { reply_markup: { inline_keyboard: this.displayKeyboard(resolved) } });
-        return true;
-      }
-      case 'stop': case 'status': case 'compact': {
-        if (!admin()) { await this.tgSend(chatId, this.msg.controlForbidden); return true; }
-        if (!this.ctl) { await this.tgSend(chatId, this.msg.noSession); return true; }
-        const ref = this.channelRef(chatId);
-        if (cmd === 'stop') {
-          const st = this.ctl.status(ref);
-          if (!st?.streaming) { await this.tgSend(chatId, this.msg.nothingRunning); return true; }
-          await this.ctl.abort(ref);
-          await this.tgSend(chatId, this.msg.stopped);
-          return true;
-        }
-        if (cmd === 'status') {
-          const st = this.ctl.status(ref);
-          await this.tgSend(chatId, st ? this.msg.status(st.model, st.usage.percent ?? 0, st.usage.tokens ?? 0) : this.msg.noSession);
-          return true;
-        }
-        try {
-          const res = await this.ctl.compact(ref);
-          await this.tgSend(chatId, !res ? this.msg.noSession : (res.compacted ? this.msg.compacted(res.usage.percent ?? 0) : this.msg.nothingToCompact));
-        } catch { await this.tgSend(chatId, this.msg.compactFailed); }
-        return true;
-      }
-      case 'restart': {
-        if (!admin()) { await this.tgSend(chatId, this.msg.restartForbidden); return true; }
-        if (!this.ctl) { await this.tgSend(chatId, this.msg.restartUnavailable); return true; }
-        try { await this.ctl.restart(); await this.tgSend(chatId, this.msg.restarting); }
-        catch { await this.tgSend(chatId, this.msg.restartUnavailable); }
         return true;
       }
       default:

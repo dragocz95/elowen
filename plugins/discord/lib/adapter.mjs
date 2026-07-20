@@ -7,6 +7,7 @@ import { buildAskComponents } from './ask.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
 
 const API = 'https://discord.com/api/v10';
 const GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
@@ -477,10 +478,26 @@ export class DiscordAdapter {
     if (i.type === 2) {
       const name = i.data?.name;
       if (name === 'help') return this.respond(i, 4, { content: this.msg.help(this.cfg.agentName || 'Elowen'), flags: 64 });
-      if (name === 'new') {
-        const gen = (this.state.get(i.channel_id).gen ?? 0) + 1;
-        this.state.patch(i.channel_id, { gen });
-        return this.respond(i, 4, { content: this.msg.newConversation, flags: 64 });
+      // Control commands (new/fast/stop/status/compact/restart) share one transport-agnostic core. Discord
+      // must ACK within 3s; /compact runs an LLM summary, so defer (type 5) and let the core edit the
+      // deferred reply — everything else answers immediately (ephemeral type 4). The pickers below stay
+      // local because their StringSelect UI is Discord-specific.
+      if (CONTROL_COMMANDS.has(name)) {
+        // Defer only when /compact will actually run its LLM summary — i.e. an admin with a live session.
+        // A forbidden/no-session /compact answers immediately (type 4), matching the pre-extraction flow.
+        const deferred = name === 'compact' && !!this.ctl && this.isAdminMember(i.member);
+        if (deferred) await this.respond(i, 5, { flags: 64 });
+        const reply = deferred
+          ? (content) => this.editOriginal(i, { content })
+          : (content) => this.respond(i, 4, { content, flags: 64 });
+        await runControlCommand(name, {
+          msg: this.msg, reply, isAdmin: () => this.isAdminMember(i.member),
+          arg: name === 'fast' ? (i.data?.options ?? []).find((o) => o.name === 'state')?.value : undefined,
+          state: this.state, stateId: i.channel_id, ctl: this.ctl, ref: this.channelRef(i.channel_id),
+          activeModel: async () => this.modelForChannel(i.channel_id, await this.listModels().catch(() => [])),
+          fastEnabled: true,
+        });
+        return;
       }
       if (name === 'model') {
         // Only the operator (a role mapped admin:true) may switch the model — the choice is shared by
@@ -533,29 +550,6 @@ export class DiscordAdapter {
           components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_reasoning', options, placeholder: this.msg.reasoningPlaceholder }] }],
         });
       }
-      if (name === 'fast') {
-        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.controlForbidden, flags: 64 });
-        const opt = (i.data?.options ?? []).find((o) => o.name === 'state')?.value;
-        const saved = this.state.get(i.channel_id).fast === true;
-        const wanted = opt === 'on' ? true : opt === 'off' ? false : !saved;
-        const models = await this.listModels().catch(() => []);
-        const active = this.modelForChannel(i.channel_id, models);
-        // Validate the selected catalog model before touching a possibly stale live session, which may
-        // still be running the previous OAuth model until the next channel message rebuilds it.
-        if (!active?.fastAvailable) {
-          if (wanted) return this.respond(i, 4, { content: this.msg.fastUnavailable, flags: 64 });
-          // A stale persisted `fast:true` must remain switchable off after moving to a non-OAuth model.
-          this.state.patch(i.channel_id, { fast: false });
-          return this.respond(i, 4, { content: this.msg.fastSet(false), flags: 64 });
-        }
-        const ref = this.channelRef(i.channel_id);
-        const live = this.ctl?.status?.(ref) ?? null;
-        const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
-        const result = liveMatchesSelection ? (this.ctl?.setFast(ref, wanted) ?? null) : null;
-        if (result && !result.fastAvailable) return this.respond(i, 4, { content: this.msg.fastUnavailable, flags: 64 });
-        this.state.patch(i.channel_id, { fast: wanted });
-        return this.respond(i, 4, { content: this.msg.fastSet(wanted), flags: 64 });
-      }
       if (name === 'voice') {
         // Spoken replies are a shared per-channel setting → operator-only, same gate as /model.
         if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.modelForbidden, flags: 64 });
@@ -579,47 +573,6 @@ export class DiscordAdapter {
         if (Object.keys(values).length) this.state.patch(i.channel_id, { display: updateDisplayOverrides(state.display, values) });
         const resolved = resolveDisplaySettings(this.cfg, this.state.get(i.channel_id));
         return this.respond(i, 4, { content: this.msg.displaySet(resolved), flags: 64 });
-      }
-      // Channel-session control (stop/status/compact) + daemon restart — routed through the host control
-      // surface. `this.ctl` is wired by the orchestrator after listen(); guard so a message-only host
-      // (or a not-yet-connected one) degrades gracefully instead of throwing. Operator-only, like /model
-      // and /voice: these act on the shared channel turn, so a stranger must not stop/compact/inspect it.
-      if (name === 'stop' || name === 'status' || name === 'compact') {
-        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.controlForbidden, flags: 64 });
-        if (!this.ctl) return this.respond(i, 4, { content: this.msg.noSession, flags: 64 });
-        const ref = this.channelRef(i.channel_id);
-        if (name === 'stop') {
-          const st = this.ctl.status(ref);
-          if (!st?.streaming) return this.respond(i, 4, { content: this.msg.nothingRunning, flags: 64 });
-          await this.ctl.abort(ref);
-          return this.respond(i, 4, { content: this.msg.stopped, flags: 64 });
-        }
-        if (name === 'status') {
-          const st = this.ctl.status(ref);
-          if (!st) return this.respond(i, 4, { content: this.msg.noSession, flags: 64 });
-          return this.respond(i, 4, { content: this.msg.status(st.model, st.usage.percent ?? 0, st.usage.tokens ?? 0), flags: 64 });
-        }
-        // /compact runs an LLM summary → defer (type 5), then edit the deferred reply with the result.
-        // Three outcomes: no session (null), a benign no-op (compacted:false → nothing to compact yet),
-        // or a real compaction failure (throw).
-        await this.respond(i, 5, { flags: 64 });
-        try {
-          const res = await this.ctl.compact(ref);
-          if (!res) return this.editOriginal(i, { content: this.msg.noSession });
-          return this.editOriginal(i, { content: res.compacted ? this.msg.compacted(res.usage.percent ?? 0) : this.msg.nothingToCompact });
-        } catch {
-          return this.editOriginal(i, { content: this.msg.compactFailed });
-        }
-      }
-      if (name === 'restart') {
-        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.restartForbidden, flags: 64 });
-        if (!this.ctl) return this.respond(i, 4, { content: this.msg.restartUnavailable, flags: 64 });
-        try {
-          await this.ctl.restart();
-          return this.respond(i, 4, { content: this.msg.restarting, flags: 64 });
-        } catch {
-          return this.respond(i, 4, { content: this.msg.restartUnavailable, flags: 64 });
-        }
       }
     }
     // AskUserQuestion components (select menus + Submit/Other buttons) resolve a parked turn.
