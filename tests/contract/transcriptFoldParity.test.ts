@@ -33,6 +33,16 @@ const BATTERY: Array<Record<string, unknown>>[] = [
    { name: 'Task', sub: { sessionId: 's', status: 'running', task: 't', tools: 0, seconds: 1 } },
    { name: 'WorkflowStart', wf: { id: 'w', toolCallId: 'c', status: 'running', nodes: [] } },
    { name: 'Bash', command: 'ls' }, { name: 'Bash', progress: 'running…' }],
+  // ADJACENT SAME-NAME items each carrying a non-collapsible block — the case that actually exercises
+  // isCollapsibleTool's `sub`/`diff`/`wf`/`command`/`progress` guards in the fold (a divergence on any of
+  // them changes the group count here, on one fold but not the other, and this parity assertion fails).
+  [{ name: 'Task', sub: { sessionId: 's1', status: 'running', task: 't', tools: 0, seconds: 1 } },
+   { name: 'Task', sub: { sessionId: 's2', status: 'running', task: 't', tools: 0, seconds: 1 } }],
+  [{ name: 'Edit', diff: '+a' }, { name: 'Edit', diff: '+b' }],
+  [{ name: 'WorkflowStart', wf: { id: 'w1', toolCallId: 'c1', status: 'running', nodes: [] } },
+   { name: 'WorkflowStart', wf: { id: 'w2', toolCallId: 'c2', status: 'running', nodes: [] } }],
+  [{ name: 'Bash', command: 'ls' }, { name: 'Bash', command: 'pwd' }],
+  [{ name: 'Bash', progress: 'a…' }, { name: 'Bash', progress: 'b…' }],
   [],
 ];
 
