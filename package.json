@@ -53,6 +53,7 @@
     "test:cli-tmux:built": "node scripts/tests/cli-tmux-built.mjs",
     "test:cli-tmux:goal": "npm run build --silent && node scripts/tests/cli-tmux-goal.mjs",
     "test:cli-tmux:analyze": "node scripts/tests/cli-tmux-analyze.mjs",
+    "test:install": "node scripts/install-smoke/run.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",

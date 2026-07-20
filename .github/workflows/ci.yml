@@ -71,3 +71,25 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  install-smoke:
+    name: Install smoke (packed tarball in Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Packs the real tarball, installs it in a clean node:22 container and asserts the fresh-install
+      # unbox flow (elowen up -> setup-mode API -> first admin -> web serves -> elowen down). Catches
+      # packaging/first-run bugs — missing `files`, unbuilt dist/web-dist, mis-pinned deps — that the
+      # source-tree jobs above never see. Its in-image `npm install` hits the public registry, so a
+      # registry outage (or a genuinely broken fresh install) is what turns this red.
+      - run: npm ci
+      - run: npm ci --prefix web
+      - run: npm run test:install
