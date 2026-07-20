@@ -5,8 +5,24 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.27.72] - 2026-07-20
+
+### Added
+- **Elowen AI can run as a task worker.** Any Elowen AI model enabled in Settings → Models can now be chosen as your Default worker in Account, and as a task or autopilot executor — not only as the chat model. The embedded brain runs the work in-process.
+- **`/chat` goes fullscreen and works on mobile.** The full-page chat expands to a distraction-free fullscreen view and lays out responsively on small screens.
+
 ### Changed
 - **The chat now loads long conversations lazily.** Opening a conversation fetches only the most recent messages and loads older ones as you scroll up, so a long history opens fast and stays responsive. Your reading position is preserved when older messages load, and scrolling up no longer jumps you back to the newest message while a reply is streaming.
+- **The web chat renders tool activity and session changes inline**, matching the CLI: grouped tool calls, session-event markers (model or mode switches) and workflow runs now appear in the transcript.
+- **Elowen AI is branded consistently in every model and worker picker** — one "Elowen AI" group carrying the Elowen mark, alongside Claude Code, Codex and OpenCode, with the underlying provider and auth source shown per model.
+
+### Removed
+- **OpenRouter free models are no longer listed.** The zero-cost `:free` catalog variants are dropped from the model pickers across the daemon, CLI and web.
+
+### Fixed
+- **A fresh install can complete setup from the browser.** First-run onboarding — detecting tooling, saving config and creating the first admin — is reachable again through the web app; previously the proxy rejected the tokenless setup requests, so the first admin could only be created from the CLI.
+- **A completed tool's output renders live in the web chat**, instead of only after the conversation is reloaded.
+- **Scheduled jobs (crons) fire on Windows.** The job's check no longer assumes a POSIX shell.
 
 ## [0.27.71] - 2026-07-19
 
