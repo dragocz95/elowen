@@ -281,6 +281,81 @@ describe('cron tick — reliability (re-entrancy guard + bounded retry)', () => 
   });
 });
 
+describe('cron control — pending wake-up origins (the retention seam)', () => {
+  const dueWakeup = (extra: Record<string, unknown>) => ({
+    id: 'j1', name: 'ping', schedule: 'in 30s', prompt: 'say hi',
+    runAt: new Date(Date.now() - 1_000).toISOString(), createdAt: new Date().toISOString(), ...extra,
+  });
+  function writeJobs(dataRoot: string, jobs: Record<string, unknown>[]): void {
+    mkdirSync(join(dataRoot, 'cronjob'), { recursive: true });
+    writeFileSync(jobsFile(dataRoot), JSON.stringify(jobs));
+  }
+
+  it('surfaces a pending wake-up\'s origin conversation, scoped to its user', async () => {
+    const dataRoot = freshDataRoot();
+    const { reg } = await loadCron(dataRoot);
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
+    await runWithPolicy(ADMIN, async () => {
+      await wakeup.execute('t', { name: 'ping', when: 'in 30s', prompt: 'check' }, undefined as never, undefined as never);
+    }, { identity: OWNER, sessionId: 'brain-1-abc' });
+    const control = reg.control('cron')!;
+    expect(control.pendingWakeupOriginSessionIds(1)).toEqual(['brain-1-abc']);
+    expect(control.pendingWakeupOriginSessionIds(2)).toEqual([]); // another user's sweep sees nothing
+  });
+
+  it('an originless wake-up (channel/task-scheduled) protects nothing', async () => {
+    const dataRoot = freshDataRoot();
+    const { reg } = await loadCron(dataRoot);
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
+    await runWithPolicy(ADMIN, async () => {
+      await wakeup.execute('t', { name: 'ch', when: 'in 30s', prompt: 'p' }, undefined as never, undefined as never);
+    }, { identity: OWNER, sessionId: 'brain-ch-cron-job-x' });
+    expect(reg.control('cron')!.pendingWakeupOriginSessionIds(1)).toEqual([]);
+  });
+
+  it('a fired (consumed) wake-up no longer protects its origin', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueWakeup({ originSessionId: 'brain-1-abc', originUserId: 1 })]);
+    const { reg, adapter } = await loadCron(dataRoot, async () => {});
+    expect(reg.control('cron')!.pendingWakeupOriginSessionIds(1)).toEqual(['brain-1-abc']); // pending → protected
+    adapter.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-1-abc' });
+      return 'done';
+    });
+    await adapter.tick();
+    expect(reg.control('cron')!.pendingWakeupOriginSessionIds(1)).toEqual([]); // consumed → unprotected
+  });
+
+  it('a removed wake-up no longer protects its origin', async () => {
+    const dataRoot = freshDataRoot();
+    const { reg } = await loadCron(dataRoot);
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
+    const remove = reg.tools.find((t) => t.name === 'CronRemove')!;
+    await runWithPolicy(ADMIN, async () => {
+      await wakeup.execute('t', { name: 'ping', when: 'in 30s', prompt: 'check' }, undefined as never, undefined as never);
+    }, { identity: OWNER, sessionId: 'brain-1-abc' });
+    const [job] = JSON.parse(readFileSync(jobsFile(dataRoot), 'utf-8')) as { id: string }[];
+    await runWithPolicy(ADMIN, async () => {
+      await remove.execute('t', { id: job!.id }, undefined as never, undefined as never);
+    }, { identity: OWNER, sessionId: 'brain-1-abc' });
+    expect(reg.control('cron')!.pendingWakeupOriginSessionIds(1)).toEqual([]);
+  });
+});
+
+describe('ScheduleWakeup tool doc', () => {
+  it('registers with a prompt hint that reflects the origin-bound replay (full conversation context)', async () => {
+    const { reg } = await loadCron(freshDataRoot());
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
+    expect(wakeup.description).toContain('ONE-SHOT');
+    expect(wakeup.description).toContain('full existing context');
+    const promptDesc = (wakeup.parameters as unknown as { properties: Record<string, { description?: string }> }).properties.prompt?.description ?? '';
+    // The old hint claimed the wake-up runs "with only this prompt for context" — wrong for the
+    // origin-bound case, which resumes the same conversation with its full context.
+    expect(promptDesc).not.toContain('only this prompt for context');
+    expect(promptDesc).toContain('full context');
+  });
+});
+
 describe('cron scheduler config (user-configurable limits)', () => {
   const dueJob = (extra: Record<string, unknown> = {}) => ({
     id: 'r1', name: 'report', schedule: 'every 5m', prompt: 'do it',

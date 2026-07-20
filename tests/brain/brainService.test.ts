@@ -4087,3 +4087,55 @@ describe('BrainService.bindChannelContext (/context move-binding)', () => {
     expect(past.hasMore).toBe(false);
   });
 });
+
+describe('retention janitor — pending cron wake-up protection', () => {
+  /** Seed one spoken-in conversation and age it past the retention horizon (mirrors the store test). */
+  function seedStale(d: ReturnType<typeof fakeDeps>, id: string): void {
+    d.store.createSession({ id, userId: 1, model: 'm' });
+    d.store.appendMessage({ id: `${id}-m`, sessionId: id, parentId: null, role: 'user', content: { text: 'hi' } });
+    d.db.prepare("UPDATE brain_sessions SET updated_at = datetime('now', '-90 days') WHERE id = ?").run(id);
+  }
+  /** A fresh spoken-in conversation so the active-pointer fallback (most recent session) lands on it,
+   *  not on one of the stale candidates under test. */
+  function seedCurrent(d: ReturnType<typeof fakeDeps>): void {
+    d.store.createSession({ id: 'brain-1-current', userId: 1, model: 'm' });
+    d.store.appendMessage({ id: 'cur-m', sessionId: 'brain-1-current', parentId: null, role: 'user', content: { text: 'hi' } });
+  }
+
+  it('keeps a stale conversation a pending wake-up is bound to and still deletes the genuinely stale one', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    reg.contextFor('cronjob', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('cron', { pendingWakeupOriginSessionIds: (userId: number) => (userId === 1 ? ['brain-1-pinned'] : []) });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    seedCurrent(d);
+    seedStale(d, 'brain-1-pinned');
+    seedStale(d, 'brain-1-stale');
+
+    await expect(svc.purgeStaleSessionsForUser(1, 30)).resolves.toBe(1);
+    expect(d.store.getSession('brain-1-pinned')).toBeTruthy(); // the wake-up's origin survives the sweep
+    expect(d.store.getSession('brain-1-stale')).toBeUndefined(); // no pending wake-up → deleted
+  });
+
+  it('purges normally when no cron control is registered (cronjob plugin disabled/absent)', async () => {
+    const d = fakeDeps();
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => new PluginRegistry());
+    const svc = new BrainService(d as never);
+    seedCurrent(d);
+    seedStale(d, 'brain-1-stale');
+
+    await expect(svc.purgeStaleSessionsForUser(1, 30)).resolves.toBe(1);
+    expect(d.store.getSession('brain-1-stale')).toBeUndefined();
+  });
+
+  it('purges normally with no plugin provider wired at all (minimal deployments)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    seedCurrent(d);
+    seedStale(d, 'brain-1-stale');
+
+    await expect(svc.purgeStaleSessionsForUser(1, 30)).resolves.toBe(1);
+    expect(d.store.getSession('brain-1-stale')).toBeUndefined();
+  });
+});

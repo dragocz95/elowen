@@ -32,6 +32,15 @@ export interface PluginEmbedder {
   embedBatch(cfg: EmbeddingConfig, texts: string[]): Promise<Float32Array[]>;
 }
 
+/** The method each KNOWN control must expose for `PluginRegistry.control()` to accept it — the runtime
+ *  narrowing check that a registered blob really is the contract its key promises (a plugin registers
+ *  an untyped `PluginControl`, so the shape is verified here, once, instead of at every call site). */
+const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: keyof KnownControls[K] & string } = {
+  subagent: 'detachForeground',
+  terminal: 'detachForeground',
+  cron: 'pendingWakeupOriginSessionIds',
+};
+
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
 export class PluginRegistry {
@@ -150,7 +159,7 @@ export class PluginRegistry {
    *  for core callers, so no call site needs an `as unknown as` cast. */
   control<K extends keyof KnownControls>(name: K): KnownControls[K] | undefined {
     const raw: unknown = this.controls.get(name);
-    if (!raw || typeof (raw as { detachForeground?: unknown }).detachForeground !== 'function') return undefined;
+    if (!raw || typeof (raw as Record<string, unknown>)[KNOWN_CONTROL_METHODS[name]] !== 'function') return undefined;
     return raw as KnownControls[K];
   }
 

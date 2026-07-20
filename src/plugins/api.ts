@@ -225,12 +225,22 @@ export interface DetachControl {
   detachForeground(input: { sessionId: string; principal: string }): { detached: number };
 }
 
+/** The cronjob plugin's retention seam: the ids of a user's conversations that still have a PENDING
+ *  one-shot wake-up scheduled INTO them (jobs recorded with that origin which have not fired yet —
+ *  firing consumes the job, so presence in the plugin's store IS pendingness). The retention janitor
+ *  excludes these ids from its stale sweep: purging the origin conversation would strand the wake-up's
+ *  context and demote its reply to the notification channel. */
+export interface PendingWakeupControl {
+  pendingWakeupOriginSessionIds(userId: number): string[];
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
 export interface KnownControls {
   subagent: DetachControl;
   terminal: DetachControl;
+  cron: PendingWakeupControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`

@@ -780,13 +780,21 @@ export class BrainService {
 
   /** Retention janitor: delete this user's own idle top-level conversations older than `days`. The store
    *  query already excludes non-user shells, delegated children and unspoken rows; here we add the live
-   *  exclusions it cannot see — a running session, the user's active conversation, and any session whose
-   *  sub-agent is still running (deleting it would kill that child). Returns the count removed. */
-  purgeStaleSessionsForUser(userId: number, days: number): number {
+   *  exclusions it cannot see — a running session, the user's active conversation, any session whose
+   *  sub-agent is still running (deleting it would kill that child), and any conversation a PENDING cron
+   *  wake-up was scheduled FROM (purging it would strand the wake-up's context and demote its reply to
+   *  the notification channel). Returns the count removed. */
+  async purgeStaleSessionsForUser(userId: number, days: number): Promise<number> {
+    // The cronjob plugin owns the wake-up jobs, so ask through its typed control; with the plugin
+    // disabled/absent no control is registered → nothing to protect. A failed plugin LOAD rejects
+    // instead — fail closed (the sweep skips, the caller logs) rather than delete a conversation a
+    // wake-up may still need.
+    const cron = (await this.resolvePlugins())?.control('cron');
+    const pendingOrigins = new Set(cron?.pendingWakeupOriginSessionIds(userId) ?? []);
     const activeId = this.lifecycle.activeSessionId(userId);
     let n = 0;
     for (const id of this.d.store.staleConversationIds(userId, days)) {
-      if (id === activeId) continue;
+      if (id === activeId || pendingOrigins.has(id)) continue;
       if (this.sessions.has(id) || this.sessions.hasActiveChildren(id)) continue;
       n += this.deleteManagedSession(userId, id);
     }

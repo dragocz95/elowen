@@ -584,14 +584,14 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'ScheduleWakeup', label: 'Schedule wake-up',
     description: [
-      'Wake yourself up ONCE after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. It is strictly one-shot — the job removes itself after running. Scheduled from a user conversation, the wake-up replies in that same conversation, so the user sees the result in context. Admin only.',
-      'Use it to check back on something that changes over time but does not notify you — a CI run, a deploy, an external queue. Do NOT use it to poll background work you started here: a background sub-agent and a background command both wake you on their own when they finish, so a wake-up on top of them only fires redundantly. If you want a safety net for work that might hang, set a LONG fallback ("in 30m") rather than a short poll.',
+      'Schedule a ONE-SHOT wake-up for yourself after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. Strictly one-shot — the job removes itself after firing. Scheduled from a user conversation, the wake-up resumes THAT conversation with its full existing context and replies there, so the follow-up lands where it was promised. Admin only.',
+      'Use it to check back on / verify something that changes over time but does not notify you — a CI run, a deploy, an external queue — in the same conversation. Do NOT use it to poll background work you started here: a background sub-agent and a background command both wake you on their own when they finish, so a wake-up on top of them only fires redundantly. If you want a safety net for work that might hang, set a LONG fallback ("in 30m") rather than a short poll.',
       'Pick the delay from how fast the watched thing actually changes, not from round numbers: a CI run that takes ~8 minutes deserves one "in 5m" check, not ten at 30s. For an idle tick with no specific signal, 20-30 minutes is the sane default.',
     ].join(' '),
     parameters: Type.Object({
       name: Type.String({ description: 'Short, specific human name — "check-deploy" beats "wakeup". Shown in schedules and telemetry.' }),
       when: Type.String({ description: '"in <N>s", "in <N>m", "in <N>h" or "at HH:MM"' }),
-      prompt: Type.String({ description: 'What to do when you wake up. Self-contained: the wake-up runs with only this prompt for context.' }),
+      prompt: Type.String({ description: 'What to do when you wake up. From a user conversation the wake-up resumes that same thread with its full context, so write a short note to your future self — what to check and what to do with the result ("verify deploy #142 finished; report the outcome"), not a recap of the conversation. Only a wake-up scheduled outside a user conversation runs standalone with just this prompt, so make it self-contained then.' }),
     }),
     execute: async (_id, p) => {
       try {
@@ -647,6 +647,17 @@ export function register(ctx) {
       } catch (e) { return fail(e); }
     },
   }));
+
+  // The retention janitor's seam (the host reads it via registry.control('cron')): which of this user's
+  // conversations still have a PENDING wake-up scheduled INTO them. Only ScheduleWakeup ever records an
+  // origin, and a one-shot is deleted at fire time (and by CronRemove), so presence in the store IS
+  // pendingness. The janitor must not purge these conversations — the wake-up would lose its context
+  // and fall back to the notification channel.
+  ctx.registerControl('cron', {
+    pendingWakeupOriginSessionIds: (userId) => store.all()
+      .filter((j) => typeof j.originSessionId === 'string' && j.originUserId === userId)
+      .map((j) => j.originSessionId),
+  });
 
   ctx.registerPlatform(new CronAdapter(store, ctx.logger, ctx.notify, ctx.config, () => ctx.timezone()));
   ctx.logger.info('cron tools + scheduler registered');

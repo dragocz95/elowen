@@ -881,19 +881,21 @@ export async function buildApp(opts: BuildOpts) {
     purgeEvents();
     const stopEventPurge = clock.setInterval(purgeEvents, 3_600_000);
     // Optional session retention (admin, off by default): hourly, delete each user's own idle
-    // conversations older than the configured age. Skips running/active/has-running-child sessions and the
-    // non-user channel/task shells (enforced in BrainService + the store query). No-op while disabled.
-    const purgeStaleSessions = () => {
+    // conversations older than the configured age. Skips running/active/has-running-child sessions,
+    // conversations a pending cron wake-up is bound to, and the non-user channel/task shells (enforced
+    // in BrainService + the store query). No-op while disabled. Async: the purge consults the plugin
+    // registry (the cronjob wake-up seam), so the sweep awaits each user in turn.
+    const purgeStaleSessions = async () => {
       const retention = config.get().sessionRetention;
       if (!retention.enabled || !brain || !users) return;
       try {
         let removed = 0;
-        for (const user of users.list()) removed += brain.purgeStaleSessionsForUser(user.id, retention.days);
+        for (const user of users.list()) removed += await brain.purgeStaleSessionsForUser(user.id, retention.days);
         if (removed > 0) log.info(`session retention: removed ${removed} conversation(s) older than ${retention.days} days`);
       } catch (e) { log.error('session retention sweep failed', e); }
     };
-    purgeStaleSessions();
-    const stopSessionPurge = clock.setInterval(purgeStaleSessions, 3_600_000);
+    void purgeStaleSessions();
+    const stopSessionPurge = clock.setInterval(() => void purgeStaleSessions(), 3_600_000);
     // Sweep expired terminal-WS tickets so a burst of unredeemed tickets can't grow the map unbounded.
     const stopTicketSweep = clock.setInterval(() => tickets.sweep(clock.now()), 60_000);
     // Reconcile chat terminals against live tmux: reap orphaned tokens/bindings and stray `elowen-chat-*`

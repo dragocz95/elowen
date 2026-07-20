@@ -14,10 +14,12 @@ All notable changes to Elowen are documented here. The format loosely follows
 ### Changed
 - **Conversation auto-cleanup moved to Settings → Elowen AI.** The "delete idle conversations older than N days" control now lives with the other Elowen AI settings, rendered as a normal settings row, instead of floating on the sessions list.
 - **Reasoning-effort changes settle before they're recorded.** Cycling quickly through reasoning levels no longer drops a marker into the transcript for every intermediate step — one marker lands once you settle on a level. The level itself still applies immediately.
+- **Self-scheduled wake-ups keep their conversation and its context.** A wake-up (`ScheduleWakeup`) scheduled from a conversation now clearly resumes that same thread with its full context — to check back on a deploy, a CI run or any state that changes without notifying you — and the conversation is no longer auto-deleted while a wake-up into it is still pending.
 
 ### Fixed
 - **Screenshots and images no longer bloat the conversation context.** Images read earlier in a session (screenshots, image files) are replaced with a placeholder in the model's context on later turns while staying visible on the turn they're used, so long sessions stay lean. MCP tool screenshots are now forwarded as real images instead of being stored as unreadable text.
 - **Reasoning effort works for Qwen on Alibaba/DashScope.** Selecting low/medium/high on Qwen thinking models now takes effect — mapped to the endpoint's thinking budget with a matching completion cap — instead of being ignored or failing on medium/high.
+- **Tool activity no longer shows "[exit 0]" for successful commands.** In the Discord/Telegram/WhatsApp chat adapters a clean command's result line surfaced a noisy `[exit 0]`; the exit status is now driven by structured signals, so a success shows its output (or nothing) and only a failure shows its exit code.
 
 ## [0.27.72] - 2026-07-20
 
