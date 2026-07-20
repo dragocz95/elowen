@@ -6,3 +6,9 @@ tsconfig.tsbuildinfo
 public/monaco/
 # sw.js is hand-written source (not build output) — it must be tracked despite the *.js rule above.
 !public/sw.js
+
+# Playwright E2E: the saved authenticated storage state (a real session cookie) is per-machine.
+tests/e2e/.auth/
+# Playwright artifacts (traces, reports) if a run writes them under web/.
+test-results/
+playwright-report/

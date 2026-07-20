@@ -56,7 +56,7 @@ function ToolOutputBlock({ output }: { output: NonNullable<ToolItem['output']> }
       ? 'bg-success/10 text-success'
       : 'bg-elevated/40 text-text-muted';
   return (
-    <div className={`my-1 overflow-hidden whitespace-pre-wrap break-words rounded-md px-2.5 py-1.5 ${tone}`}>
+    <div data-testid="chat-tool-output" className={`my-1 overflow-hidden whitespace-pre-wrap break-words rounded-md px-2.5 py-1.5 ${tone}`}>
       {output.command ? <div className="text-text">$ {output.command}</div> : null}
       {output.status ? <div className="opacity-80">{output.status}</div> : null}
       <div>{output.text || ' '}</div>
@@ -123,10 +123,10 @@ function ToolPills({ tools, full }: { tools: ToolItem[]; full?: boolean }) {
           </>
         );
         if (!rich) {
-          return <div key={i} className="flex items-center gap-1.5 py-0.5 text-text-muted">{head}</div>;
+          return <div key={i} data-testid="chat-tool-pill" data-tool-id={tool.id} className="flex items-center gap-1.5 py-0.5 text-text-muted">{head}</div>;
         }
         return (
-          <details key={i} className="chat-tool">
+          <details key={i} data-testid="chat-tool-pill" data-tool-id={tool.id} className="chat-tool">
             <summary className="flex cursor-pointer items-center gap-1.5 rounded py-0.5 text-text-muted transition-colors hover:text-text">
               {head}
               <ChevronRight size={11} aria-hidden className={`chat-tool__chev shrink-0 opacity-40 ${full ? '' : 'ml-auto'}`} />
@@ -158,9 +158,9 @@ function ProgressBlock({ text }: { text: string }) {
 function ContextDivider({ full }: { full?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className={`flex items-center gap-2 text-tiny text-text-muted ${full ? 'my-5' : 'my-1'}`} role="separator">
+    <div data-testid="chat-turn" data-role="divider" className={`flex items-center gap-2 text-tiny text-text-muted ${full ? 'my-5' : 'my-1'}`} role="separator">
       <span className="h-px flex-1 bg-border" aria-hidden />
-      <span className="shrink-0 uppercase tracking-wide">{t.brainChat.contextCompacted}</span>
+      <span data-testid="chat-divider" className="shrink-0 uppercase tracking-wide">{t.brainChat.contextCompacted}</span>
       <span className="h-px flex-1 bg-border" aria-hidden />
     </div>
   );
@@ -183,9 +183,9 @@ function eventLabel(kind: string, detail: string): string {
  *  as one faint line per marker, the web twin of the CLI's dim `⚙` event rows. */
 function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string }) {
   return (
-    <div data-tk={tk} className="flex flex-col gap-0.5 py-1 text-tiny text-text-muted">
+    <div data-tk={tk} data-testid="chat-turn" data-role="event" className="flex flex-col gap-0.5 py-1 text-tiny text-text-muted">
       {events.map((e) => (
-        <div key={e.id || `${e.kind}:${e.detail}`} className="flex items-center gap-1.5">
+        <div key={e.id || `${e.kind}:${e.detail}`} data-testid="chat-event-marker" className="flex items-center gap-1.5">
           <span aria-hidden className="shrink-0 opacity-60">⚙</span>
           <span className="truncate">{eventLabel(e.kind, e.detail)}</span>
         </div>
@@ -208,6 +208,7 @@ function Message({ turn, full, showRole, tk }: { turn: ChatTurn; full?: boolean;
   if (turn.role === 'event') return <SessionEvents events={turn.events} tk={tk} />;
 
   const you = turn.role === 'you';
+  const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
     ? <div className={`whitespace-pre-wrap text-sm leading-relaxed text-text ${full ? 'my-1.5' : ''}`}>{turn.text}</div>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
@@ -218,7 +219,7 @@ function Message({ turn, full, showRole, tk }: { turn: ChatTurn; full?: boolean;
 
   if (full) {
     return (
-      <div data-tk={tk} className={`grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
+      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className={`grid grid-cols-[16px_1fr] gap-x-3 ${showRole ? 'mt-6 first:mt-0' : ''}`}>
         {showRole ? (
           <span aria-hidden className={`mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
         ) : <span aria-hidden />}
@@ -232,12 +233,12 @@ function Message({ turn, full, showRole, tk }: { turn: ChatTurn; full?: boolean;
 
   if (you) {
     return (
-      <div data-tk={tk} className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
         {turn.role === 'you' ? turn.text : null}
       </div>
     );
   }
-  return <div data-tk={tk} className="mr-4 flex flex-col gap-1.5 self-start">{body}</div>;
+  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start">{body}</div>;
 }
 
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
@@ -483,7 +484,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
           uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
           dock keeps its own internal scroll and per-turn gap. */}
-      <div ref={scrollRef} className={`flex flex-1 flex-col ${variant === 'full' ? `chat-gutter py-4${fullscreen ? ' min-h-0 overflow-y-auto' : ''}` : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
+      <div ref={scrollRef} data-testid="chat-transcript" className={`flex flex-1 flex-col ${variant === 'full' ? `chat-gutter py-4${fullscreen ? ' min-h-0 overflow-y-auto' : ''}` : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
@@ -497,7 +498,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
         {/* Scroll-up lazy-load sentinel. A fixed-height slot kept whenever older history remains so mounting
             the spinner doesn't shift the transcript; the spinner shows only while a page is loading. */}
         {hasMoreHistory ? (
-          <div className="flex h-8 shrink-0 items-center justify-center" aria-hidden={!loadingOlder}>
+          <div data-testid="chat-history-sentinel" className="flex h-8 shrink-0 items-center justify-center" aria-hidden={!loadingOlder}>
             {loadingOlder ? <Loader2 size={16} className="animate-spin text-text-muted" aria-label={t.brainChat.loadingOlder} /> : null}
           </div>
         ) : null}
@@ -642,7 +643,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
       >
         {slashOpen && (
-          <div className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-elevated shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
+          <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-elevated shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
             <div className="max-h-60 overflow-y-auto py-1">
               {slashItems.map((it, i) => (
                 <button
@@ -680,6 +681,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
         </button>
         <textarea
           ref={composerRef}
+          data-testid="chat-composer"
           value={input}
           onChange={(e) => { setInput(e.target.value); if (slash.modelOptsOpen) slash.clearModelOpts(); setSlashIdx(0); }}
           onKeyDown={(e) => {
@@ -706,6 +708,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
         {busy ? (
           <button
             type="button"
+            data-testid="chat-stop"
             onClick={abort}
             aria-label={t.brainChat.stop}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
@@ -719,6 +722,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
         ) : (
           <button
             type="submit"
+            data-testid="chat-send"
             disabled={!input.trim() && attachments.length === 0}
             aria-label={t.brainChat.send}
             className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${

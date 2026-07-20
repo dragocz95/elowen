@@ -50,7 +50,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
   const label = currentModel || t.brainChat.modelPicker;
 
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    <div ref={rootRef} data-testid="chat-model-picker" className="relative shrink-0">
       <button
         type="button"
         onClick={toggle}

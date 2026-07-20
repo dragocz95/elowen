@@ -14,7 +14,15 @@
     "web": {
       "entry": [
         "app/providers.tsx"
-      ]
+      ],
+      "ignore": [
+        "tests/e2e/**",
+        "playwright.config.ts"
+      ],
+      "ignoreDependencies": [
+        "@playwright/test"
+      ],
+      "playwright": false
     }
   },
   "ignoreBinaries": [
@@ -23,7 +31,8 @@
     "dot",
     "gh",
     "elowen",
-    "ollama"
+    "ollama",
+    "playwright"
   ],
   "ignoreIssues": {
     "web/lib/i18n/types.ts": [

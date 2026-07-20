@@ -22,6 +22,10 @@ export default tseslint.config(
       '**/benchmark-env/**',
       'web/public/**',
       'web/scripts/**',
+      // The Playwright E2E harness has its own dedicated tsconfig typecheck; keep it out of the app lint
+      // (its fixture `use()` callbacks trip react-hooks/rules-of-hooks). Mirrors the tsc/knip/depcruise
+      // exclusions for this tree.
+      'web/tests/e2e/**',
       '**/*.tsbuildinfo',
       '**/*.d.ts',
     ],
