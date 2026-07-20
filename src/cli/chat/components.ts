@@ -766,12 +766,13 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.muted, terminalPlainText(output.command).replace(/\s+/g, ' ').trim())}`);
   // The working directory lifted out of the console framing — faint context under the command echo.
   if (output.cwd) lines.push(` ${ansi.open(theme.faint, `(cwd: ${terminalPlainText(output.cwd).replace(/\s+/g, ' ').trim()})`)}`);
-  // A clean success carries no status (the view seam leaves it undefined), so whatever arrives is
-  // worth a line — no string-filtering of "exit 0" here anymore.
-  const status = output.status ? terminalPlainText(output.status).replace(/\s+/g, ' ').trim() : '';
+  // A successful tool's status ("exit 0", "ok", "done") is never worth a line — only surface a status
+  // when the tool did NOT cleanly succeed, decided from the structured tone rather than string-matching.
+  // The view seam already leaves a clean success's status undefined, but a raw event that bypasses it
+  // (e.g. a mock/injected tool_output) can still carry one, so the CLI stays robust either way.
+  const status = output.status && output.tone !== 'success' ? terminalPlainText(output.status).replace(/\s+/g, ' ').trim() : '';
   if (status) {
-    const statusColor = output.tone === 'warning' || output.tone === 'danger' ? theme.warning : theme.success;
-    lines.push(` ${ansi.open(statusColor, status)}`);
+    lines.push(` ${ansi.open(theme.warning, status)}`);
   }
   if (lines.length > 0) lines.push('');
   const expandable = Boolean(output.fullText && output.fullText !== output.text);
