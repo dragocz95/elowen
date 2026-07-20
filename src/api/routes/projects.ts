@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, isProjectImage } from '../../integrations/projectFiles.js';
 import { parseBody, queryInt } from '../validation.js';
 import { createProjectSchema, updateProjectSchema, writeFileSchema, pathBodySchema, fromToSchema } from '../schemas/projects.js';
+import type { Context } from 'hono';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** Project registration + the in-app file editor (tree, read/write, raw bytes, file-manager ops) and
@@ -78,34 +79,41 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // --- Project file editor: tree, read, write, per-file diff. Paths are validated to stay inside
   // the project root (see projectFiles.safe); access is gated to the project's assigned users. ---
-  const projectOf = (c: { req: { param: (k: string) => string } }) => d.projects?.get(Number(c.req.param('id'))) ?? null;
+  const projectOf = (c: Context) => d.projects?.get(Number(c.req.param('id'))) ?? null;
+  /** Resolve `:id` to a project the caller may access, or the error Response to return — folds the
+   *  projects-unavailable (400) / not-found (404) / forbidden (403) triplet every handler repeated, so the
+   *  tenancy gate lives in ONE place instead of ~16 copies. */
+  const requireProject = (c: Context):
+    { project: NonNullable<ReturnType<typeof projectOf>> } | { res: Response } => {
+    if (!d.projects) return { res: c.json({ error: 'projects unavailable' }, 400) };
+    const project = projectOf(c);
+    if (!project) return { res: c.json({ error: 'project not found' }, 404) };
+    if (!canAccessProject(c, project.id)) return { res: c.json({ error: 'forbidden' }, 403) };
+    return { project };
+  };
   app.get('/projects/:id/files', (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     return c.json(listProjectFiles(p.path));
   });
   app.get('/projects/:id/file', (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json(readProjectFile(p.path, path)); }
     catch { return c.json({ error: 'invalid path' }, 400); }
   });
   app.put('/projects/:id/file', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const b = await parseBody(c, writeFileSchema);
     try { writeProjectFile(p.path, b.path, b.content); return c.json({ ok: true }); }
     catch { return c.json({ error: 'invalid path' }, 400); }
   });
   // Raw file bytes for binary previews (images). Content-type from extension; unknown → octet-stream.
   app.get('/projects/:id/raw', (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try {
       const bytes = readProjectBytes(p.path, path);
@@ -119,94 +127,82 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   // File-manager operations (create / mkdir / rename / copy / delete). Each validates the path(s)
   // stay inside the project root and is gated to the project's assigned users.
   app.post('/projects/:id/new-file', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const b = await parseBody(c, pathBodySchema);
     try { createProjectFile(p.path, b.path); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: e instanceof Error ? e.message : 'invalid path' }, 400); }
   });
   app.post('/projects/:id/dir', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const b = await parseBody(c, pathBodySchema);
     try { createProjectDir(p.path, b.path); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: e instanceof Error ? e.message : 'invalid path' }, 400); }
   });
   app.post('/projects/:id/rename', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const b = await parseBody(c, fromToSchema);
     try { renameProjectEntry(p.path, b.from, b.to); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: e instanceof Error ? e.message : 'invalid path' }, 400); }
   });
   app.post('/projects/:id/copy', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const b = await parseBody(c, fromToSchema);
     try { copyProjectEntry(p.path, b.from, b.to); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: e instanceof Error ? e.message : 'invalid path' }, 400); }
   });
   app.delete('/projects/:id/entry', (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { deleteProjectEntry(p.path, path); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: e instanceof Error ? e.message : 'invalid path' }, 400); }
   });
   app.get('/projects/:id/diff', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json({ diff: await projectFileDiff(p.path, path) }); }
     catch { return c.json({ error: 'invalid path' }, 400); }
   });
   app.get('/projects/:id/head', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json({ content: await projectFileAtHead(p.path, path) }); }
     catch { return c.json({ error: 'invalid path' }, 400); }
   });
   app.get('/projects/:id/commit/:hash', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const hash = c.req.param('hash');
     const [diff, files] = await Promise.all([projectCommitDiff(p.path, hash), projectCommitFiles(p.path, hash)]);
     return c.json({ diff, files });
   });
   app.get('/projects/:id/commit/:hash/diff', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json({ diff: await projectCommitFileDiff(p.path, c.req.param('hash'), path) }); }
     catch { return c.json({ error: 'invalid path' }, 400); }
   });
   app.get('/projects/:id/commits', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     const limit = queryInt(c.req.query('limit'), { min: 1, max: 500, fallback: 30 });
     return c.json({ commits: await projectCommitLog(p.path, limit) });
   });
   app.get('/projects/:id/changed', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     return c.json({ changed: await projectChangedFiles(p.path) });
   });
   app.get('/projects/:id/changes', async (c) => {
-    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
-    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    const gate = requireProject(c); if ('res' in gate) return gate.res;
+    const p = gate.project;
     return c.json({ diff: await projectWorkingDiff(p.path) });
   });
 }
