@@ -43,7 +43,7 @@ src/
 ├── store/        SQLite-backed data stores and schema
 ├── terminal/     terminal streaming
 ├── tmux/         tmux abstraction
-└── shared/       shared types, executor metadata, utility seams
+└── shared/       shared types, executor metadata, the daemon↔web wire contract
 
 web/
 ├── app/          Next.js routes, BFF proxy, global styles

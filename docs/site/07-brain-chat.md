@@ -33,7 +33,7 @@ Long conversations are managed in three complementary ways:
 
 ## Models and reasoning
 
-Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by the chat pickers and can also feed tasks and plugins that request a model field.
+Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by the chat pickers and can also feed tasks and plugins that request a model field. OpenRouter's zero-cost `:free` catalog variants are filtered out at the source, so every listed model has metered, reported pricing.
 
 Select a model for the current conversation where your surface provides a picker. Reasoning options are shown only when the chosen model exposes them. ChatGPT OAuth models can additionally use priority processing through `/fast` in the CLI when the selected model supports it. The daemon preserves provider credentials and returns only safe configuration metadata to the Web UI.
 

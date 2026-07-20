@@ -52,6 +52,7 @@ Run these from the repository root unless noted.
 | `npm run depcruise` | Dependency-boundary and cycle check |
 | `npm run check` | Lint, dead-code, dependency-cruise, and typecheck gates |
 | `npm --prefix web test` | Web Vitest/RTL/MSW suite |
+| `npm --prefix web run e2e:smoke` | Playwright browser E2E smoke suite (`e2e` for the full run) |
 | `npm --prefix web run build` | Next.js production build |
 
 For a built local CLI without a global link, invoke the declared executable:
@@ -91,7 +92,8 @@ src/
 ├── overseer/         Missions, planning, scheduling, review, and decisions
 ├── plugins/          Manifest loader, registry, policy, hooks, marketplace
 ├── prompts/          Prompt composition helpers
-├── shared/           Cross-cutting utilities and executor metadata
+├── shared/           Cross-cutting utilities, executor metadata, and the
+│                     daemon↔web wire contract (`wireContract.ts`)
 ├── spawn/            Agent launch and resume paths
 ├── store/            SQLite stores and schema
 ├── terminal/         PTY terminal transport
@@ -104,7 +106,8 @@ web/app/              Route shells, API proxy, and global styles
 web/components/       Shell, auth, terminal, control, and shared UI pieces
 web/modules/          Feature modules and their views
 web/lib/              Client, React Query hooks, i18n, and app state helpers
-web/tests/            Web tests using Vitest, RTL, and MSW
+web/tests/            Web tests: Vitest/RTL/MSW plus the Playwright E2E harness
+                      under `e2e/`
 ```
 
 ## Conventions

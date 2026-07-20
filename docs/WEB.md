@@ -75,6 +75,30 @@ The catch-all `app/api/[...path]/route.ts` BFF reads the httpOnly session cookie
 and injects the daemon bearer server-side. Never add a browser-visible daemon
 token or a `NEXT_PUBLIC_*` secret.
 
+The proxy holds no authorization logic of its own: a tokenless request is
+forwarded without an `Authorization` header and the daemon's global guard
+decides — first-run setup routes stay open while no admin user exists, and
+every protected route returns 401 thereafter. The cookie-clear on a daemon 401
+applies only when a token was actually sent, so the pre-cookie onboarding window
+is not flipped to a logout. Do not reintroduce a proxy-side gate; the daemon is
+the sole authority (`src/api/auth.ts`).
+
+## Daemon↔web wire contract
+
+The display-transcript shapes served by `GET /brain/messages` are defined once
+in `src/shared/wireContract.ts` and imported type-only by both toolchains: the
+daemon re-exports them from `src/brain/messageView.ts`, the web imports them in
+`web/lib/types.ts`. A type-only import erases at build time, so no daemon
+runtime code reaches the Next bundle; a dependency-cruiser exception allows
+`web → src/shared/` and keeps the "web never imports the backend" rule for
+everything else. Extend the contract there rather than hand-mirroring shapes.
+
+The transcript fold engine (`web/lib/transcript.ts`) is an exception that stays
+a hand-synced copy, because a Turbopack bundle cannot import the daemon's
+NodeNext runtime source. `tests/contract/transcriptFoldParity.test.ts` folds the
+same battery through both the daemon and web engines and asserts identical
+output, so the copy cannot drift silently.
+
 React Query hooks in `web/lib/queries.ts` own server reads and cache keys;
 `web/lib/mutations.ts` owns writes, narrow invalidation, and safe optimistic
 rollbacks. Prefer SSE invalidation to unnecessary polling. The global event

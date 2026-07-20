@@ -193,6 +193,18 @@ spawned subagent) there's nobody to ask, so what happens is your call:
 - **deny** (strict mode) — an `ask` is refused outright. This is a hard safety
   opt-in: **YOLO never overrides a strict denial.**
 
+## Your models and default worker
+
+**Account → Elowen AI** holds two independent model choices:
+
+- **The chat model** — which model your brain conversations run on.
+- **The Default worker** — the executor that runs your tasks when a task does
+  not name one. Any executor you may run is selectable here, including an
+  **Elowen AI** model enabled in [Settings → Models](configuration): the daemon
+  then runs the task in-process as an embedded brain worker, with no external
+  coding CLI installed. The two pickers never overwrite each other — the worker
+  choice sets the task engine, not your chat model.
+
 ## Personality & advisor style
 
 Elowen isn't just capable — it can sound the way you want it to. Each user shapes their

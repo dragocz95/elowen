@@ -73,7 +73,7 @@ Secrets are write-only: the UI can show whether a secret exists but never receiv
 
 Platform plugins adapt inbound messages into the same brain-turn pipeline used by the Web UI and CLI. They map sender identity and role policy to an Elowen user before a turn can run; an unmapped sender does not receive agent access by default.
 
-The cron plugin runs scheduled and one-shot prompts through that same pipeline. The sub-agent plugin delegates a bounded task while preserving the caller's effective scope. These are extensions of the core agent lifecycle, not parallel chat engines.
+The cron plugin runs scheduled and one-shot prompts through that same pipeline. A job's optional check gate runs through the platform's default shell, so jobs fire the same on Linux, macOS, and Windows. The sub-agent plugin delegates a bounded task while preserving the caller's effective scope. These are extensions of the core agent lifecycle, not parallel chat engines.
 
 ### Typed sub-agents
 

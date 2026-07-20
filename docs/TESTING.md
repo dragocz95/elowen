@@ -28,6 +28,11 @@ Tests should exercise behavior through real interfaces with controlled fakes:
 - add regression coverage at the route, service, or CLI boundary where the bug
   occurred.
 
+`tests/contract/` holds cross-stack conformance tests: when a daemon engine is
+deliberately mirrored in the web bundle (for example the transcript fold), the
+contract test runs the same battery through both implementations and asserts
+identical output, so the copy cannot silently drift.
+
 ## Web
 
 Web tests live in `web/tests/` and use Vitest, React Testing Library,
@@ -46,6 +51,29 @@ unit tests.
 For UI changes, cover the interaction that matters: keyboard navigation and
 focus for overlays, selection/search for shared pickers, auto-save state for
 settings, and Czech/English text where applicable.
+
+### Browser E2E (Playwright)
+
+Browser-level E2E tests live in `web/tests/e2e/`, in a `*.e2e.ts` glob that is
+excluded from the Vitest tree, Knip, dependency-cruiser, and ESLint. The app
+under test is the real Next.js server running against a fake Hono daemon that
+serves canned REST responses and a scriptable SSE stream through an out-of-band
+control channel — so the genuine cookie/BFF/EventSource/transcript pipeline is
+exercised while only the nondeterministic agent brain is replaced. The fake
+daemon imports the daemon's wire event types type-only, so a renamed event
+breaks the E2E typecheck.
+
+Page objects (`ShellPage`, `ChatPage`) and fixtures centralize every selector;
+add UI hooks as non-behavioral `data-testid` attributes rather than styling
+selectors.
+
+```bash
+npm --prefix web run e2e        # full suite
+npm --prefix web run e2e:smoke  # fast @smoke subset
+```
+
+CI does not run the browser suite — run it locally after chat-surface, proxy,
+or onboarding changes.
 
 ## Static and production checks
 

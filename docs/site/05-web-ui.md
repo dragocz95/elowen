@@ -18,6 +18,7 @@ Desktop navigation uses one shared spatial rail. Account and Settings use a focu
 | Route | Use it for |
 | --- | --- |
 | `/dash` | A quick view of current agent activity and important signals. |
+| `/chat` | A full-page conversation with the brain, with a distraction-free fullscreen option. |
 | `/tasks` | Creating, filtering, scheduling, and steering task work and missions. |
 | `/kanban` | Seeing task state as a board and organizing work visually. |
 | `/sessions` | Watching live worker sessions and opening a terminal when appropriate. |
@@ -61,7 +62,9 @@ Read [Projects & Workflow](projects-workflow) before enabling PR automation or a
 
 **Memory** is where you inspect, search, categorize, merge, restore, or purge durable facts. It is intentionally a workspace, not a hidden prompt cache: the list and selected-memory drawer keep the current selection and surrounding results visible together.
 
-The chat dock is available across the product. It opens the same server-side brain conversation as the terminal, including streaming activity, tool traces, model selection, queued messages, and permission questions. See [Brain & Chat](brain-chat) for conversation behavior.
+The chat dock is available across the product, and `/chat` expands the same conversation into a full-page view that can go fullscreen; both lay out responsively on small screens. Either surface opens the same server-side brain conversation as the terminal, including streaming activity, tool traces, model selection, queued messages, and permission questions. The transcript mirrors the CLI: tool calls are grouped into collapsible runs, a completed tool's output appears live, and session changes (a model or mode switch) and workflow runs render as inline markers.
+
+Long conversations load lazily — opening one fetches the most recent messages and older ones load as you scroll up, with your reading position preserved; streaming never yanks you back to the newest message. See [Brain & Chat](brain-chat) for conversation behavior.
 
 ## Settings and account
 

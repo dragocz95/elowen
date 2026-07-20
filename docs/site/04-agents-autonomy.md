@@ -36,8 +36,11 @@ you are allowed to run.
 
 The brain uses `elowen:<provider>/<model>` specs (for example
 `elowen:relay/ollama/kimi-k2.7-code`) and is bounded by your configured brain
-providers rather than the CLI allow-list. See [Brain & Chat](brain-chat) for
-the embedded agent, and [Configuration](configuration) for provider setup.
+providers rather than the CLI allow-list. An enabled Elowen AI model can also be
+your per-user **Default worker** (see [Account & Security](account-security)),
+so tasks with no executor run in the embedded brain. See [Brain &
+Chat](brain-chat) for the embedded agent, and [Configuration](configuration)
+for provider setup.
 
 ## Executor resolution
 

@@ -91,7 +91,8 @@ elowen status   # check they're running and healthy
 ```
 
 Open `http://localhost:4500` in your browser and log in with the admin account
-you just created.
+you just created. (On a completely fresh install with no admin yet, the browser
+offers a short first-run onboarding wizard instead of the login form.)
 
 ## Talk to your agent
 

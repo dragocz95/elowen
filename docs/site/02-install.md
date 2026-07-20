@@ -287,6 +287,10 @@ How you start the daemon the first time decides its auth mode:
 
 - **Local, no auth** — start with `ELOWEN_ALLOW_OPEN=1`. Good for a single-user
   machine where nothing else can reach the port.
+- **Browser onboarding** — while no user exists, the web UI lands on a first-run
+  wizard instead of the login form: it creates the first admin and walks through
+  the initial configuration (detecting tooling, connecting a provider, saving
+  config), no CLI needed.
 - **Production** — seed an admin account once via bootstrap variables:
 
 ```bash
@@ -295,9 +299,10 @@ ELOWEN_BOOTSTRAP_PASS=secure-pass \
 node dist/daemon/index.js
 ```
 
-The admin user is seeded only once. If no users exist and you skip the bootstrap
-variables, the daemon logs a warning and login stays impossible until a user is
-created via the API.
+The admin user is seeded only once. If no users exist and you skip both the
+browser wizard and the bootstrap variables, the daemon logs a warning and login
+stays impossible until a user is created through the wizard, `elowen setup`, or
+the API.
 
 That first admin unlocks Elowen's **RBAC**. Roles are **admin** and **member**,
 and — this is the headline — each user can carry a **different set of tools and
