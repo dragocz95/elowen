@@ -92,23 +92,13 @@ export interface ManagedSession { id: string; title: string; model: string; upda
 export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker' | 'mode' | 'prompt'; adminOnly?: boolean; prompt?: string }
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
-/** A stored brain turn shaped for display. */
-export interface ToolOutputView {
-  title: string;
-  kind: 'console' | 'result';
-  text: string;
-  fullText?: string;
-  command?: string;
-  status?: string;
-  tone?: 'normal' | 'success' | 'warning' | 'danger';
-}
-type BrainSegment =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: {
-      sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string;
-      tools: number; tokens?: number; seconds: number; model?: string;
-    } };
-export interface BrainMessage { id?: string; role: string; text: string; segments?: BrainSegment[] }
+/** The display-transcript shapes are the daemon↔web wire contract, defined once in src/shared and
+ *  imported (type-only, so nothing bundles) rather than re-declared — the web mirror can no longer drift
+ *  from what the daemon serves over GET /brain/messages. `BrainMessage` is the web's name for the
+ *  daemon's `BrainMessageView`. */
+import type { ToolOutputView, BrainMessageView } from '../../src/shared/wireContract.js';
+export type { ToolOutputView };
+export type BrainMessage = BrainMessageView;
 
 /** One backwards page of chat history (lazy-load). `nextBefore` is the cursor for the next older page —
  *  null once the oldest turn has been loaded, which is also when `hasMore` is false. */

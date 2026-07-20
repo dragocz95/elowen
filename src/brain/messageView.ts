@@ -4,70 +4,12 @@
  *  a module cycle. `BrainMessageRow` satisfies this structurally, so callers pass their rows unchanged. */
 type StoredTurnRow = { id?: string; role: string; content: string; created_at?: string };
 
-export interface ToolOutputView {
-  title: string;
-  kind: 'console' | 'result';
-  text: string;
-  fullText?: string;
-  command?: string;
-  status?: string;
-  tone?: 'normal' | 'success' | 'warning' | 'danger';
-  /** Hook-appended annotations lifted off `result.details.notes` (the `tools.call.after` contract —
-   *  e.g. "formatted a.ts with prettier"). Rendered as faint suffix lines under the output body. */
-  notes?: string[];
-}
-
-/** Durable latest state attached to a delegated tool call. Kept structural so BrainStore can pass its
- *  validated sidecar rows without a store↔messageView import cycle. */
-export interface BrainSubagentView {
-  sessionId: string;
-  status: 'running' | 'done' | 'error';
-  task: string;
-  detail?: string;
-  tools: number;
-  tokens?: number;
-  seconds: number;
-  model?: string;
-  background?: boolean;
-  autoDeliver?: boolean;
-  resultDelivery?: 'pending' | 'acknowledged';
-}
-
-/** Durable latest state of a workflow DAG attached to its `WorkflowStart` call. Structural for the same
- *  reason as BrainSubagentView — events.ts imports this file, so importing WorkflowUpdate back would form
- *  a cycle. Mirrors that type field for field; BrainStore passes its validated rows straight through. */
-export interface BrainWorkflowView {
-  id: string;
-  toolCallId: string;
-  title?: string;
-  status: 'running' | 'done' | 'error' | 'cancelled';
-  nodes: {
-    id: string;
-    task: string;
-    status: 'pending' | 'running' | 'done' | 'error';
-    deps: string[];
-    sessionId?: string;
-    detail?: string;
-    tokens?: number;
-    seconds?: number;
-    model?: string;
-  }[];
-}
-
-/** One display piece of an assistant turn, in the order it happened: a text block, or a tool call
- *  (with a short argument summary and, for edits, the display diff). The call id stays on the wire so
- *  a post-parent-idle background update can patch the already-settled row. */
-type BrainSegment =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView; wf?: BrainWorkflowView };
-
-/** A stored turn shaped for display (the `GET /brain/messages` payload consumed by channels).
- *  `text` is the flat reply (title derivation, plain clients); `segments` preserve the true order. */
-/** A durable display row. `id` is the SQLite message UUID when the source is a real store row (the only
- * case served over HTTP); structural callers without a store row may omit it. Reconnect consumers use it
- * as identity, never a text/JSON fingerprint — compaction can delete an old identical reply and delegate
- * progress can mutate one row's rendered segments without turning it into a new terminal line. */
-export interface BrainMessageView { id?: string; role: string; text: string; segments?: BrainSegment[]; kind?: string; detail?: string }
+// The display-transcript shapes are the daemon↔web wire contract — defined once in src/shared and
+// re-exported here for daemon callers (BrainStore passes its validated rows straight through). See
+// wireContract.ts for why they live outside src/brain.
+import type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainSegment, BrainMessageView } from '../shared/wireContract.js';
+export type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageView };
+// BrainSegment is imported for the shaping code below; daemon consumers that need it import from wireContract.
 
 const TOOL_DETAIL_MAX = 60;
 

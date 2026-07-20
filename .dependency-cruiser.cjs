@@ -41,9 +41,10 @@ module.exports = {
     {
       name: 'web-not-to-backend',
       severity: 'error',
-      comment: 'The web app (web) talks to the daemon over HTTP — it must never import src/ directly.',
+      comment: 'The web app (web) talks to the daemon over HTTP — it must never import src/ directly, '
+        + 'except src/shared/ which is the framework-neutral daemon↔web wire contract (types only).',
       from: { path: '^web/' },
-      to: { path: '^src/' },
+      to: { path: '^src/', pathNot: '^src/shared/' },
     },
     {
       name: 'no-test-in-prod',
