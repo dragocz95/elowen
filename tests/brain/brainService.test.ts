@@ -135,6 +135,29 @@ describe('BrainService', () => {
     expect(svc.history(1).find((row) => row.role === 'user')?.text).toContain('1× image');
   });
 
+  it('drains a plugin reload a tool requested mid-turn once the turn settles, and coalesces repeats', async () => {
+    // Regression: a skill created mid-turn (CreateSkill → ctx.requestReload) must be applied live. The
+    // brain cannot reload while the turn that asked for it is still running (it would dispose that very
+    // session), so the request is coalesced onto a flag and drained after the turn settles.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const reload = vi.spyOn(svc, 'reloadPlugins').mockResolvedValue();
+    await svc.start(1);
+
+    // A turn with no request must not reload.
+    await svc.send({ userId: 1, text: 'nothing created', mode: 'build', session: 'brain-1' });
+    expect(reload).not.toHaveBeenCalled();
+
+    // A tool asked for a live apply during this turn → drained exactly once when the turn settles.
+    svc.requestPluginReload();
+    await svc.send({ userId: 1, text: 'made a skill', mode: 'build', session: 'brain-1' });
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // The flag was cleared: a later turn with no new request does not reload again.
+    await svc.send({ userId: 1, text: 'later', mode: 'build', session: 'brain-1' });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('splices the workflow-mode instruction ahead of a workflow-mode turn, and nothing for build', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

@@ -65,6 +65,9 @@ interface TurnRunnerDeps {
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   sendDelegatedCustom?(userId: number, sessionId: string, customType: string, content: string, resultId: string): Promise<void>;
+  /** Fired once a turn has fully settled (outside the per-conversation send lock). Lets the brain drain
+   *  deferred, session-disposing work a tool requested mid-turn — currently a pending plugin reload. */
+  afterTurnSettled?(userId: number): void;
 }
 
 /** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
@@ -413,6 +416,9 @@ export class BrainTurnRunner {
       if (this.d.store.pendingSubagentResults(completedSessionId).length > 0) {
         void this.drainPendingSubagentResults(userId, completedSessionId);
       }
+      // Apply any plugin reload a tool requested during this turn (e.g. CreateSkill): the send lock is
+      // released, so respawning this session no longer races the turn that asked for it.
+      this.d.afterTurnSettled?.(userId);
     }
     if (internal?.kind !== 'systemNudge') this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
   }

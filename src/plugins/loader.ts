@@ -98,6 +98,9 @@ export interface LoadPluginsOptions {
   /** The typed sub-agent catalog exposed to plugins as ctx.subagentTypes() (built-in explore/plan + user
    *  `.md` types). Read at plugin register time to compose the Delegate tool description. */
   subagentTypes?: () => { name: string; description: string }[];
+  /** Host reloader exposed to plugins as ctx.requestReload() — a plugin that writes a skill/agent to disk
+   *  asks the host to re-scan + apply it live (deferred to the end of the current turn). */
+  requestReload?: () => void;
   logger: PluginLogger;
 }
 
@@ -138,7 +141,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // `toolNames` deliberately closes over the MERGED registry, not this plugin's staging one: a plugin
         // asks it at tool-execute time, long after every plugin has merged, and needs the whole live
         // toolset (the subagent plugin validates a caller's `tools` allow-list against it).
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone, opts.subagentTypes);
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone, opts.subagentTypes, opts.requestReload);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest

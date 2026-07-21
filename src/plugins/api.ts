@@ -278,6 +278,11 @@ export interface TurnContextContribution {
 export interface PluginContext {
   registerTool(tool: ToolDefinition): void;
   registerSkill(skill: PluginSkill): void;
+  /** Ask the host to reload the plugin set so a runtime change a tool just made to disk (e.g. the skills
+   *  plugin's CreateSkill/DeleteSkill writing to its data dir) is applied live. Deferred + coalesced: the
+   *  host re-scans and respawns sessions once the current turn settles, so the new/removed skill is in
+   *  the model's available-skills block on the next message. No-op when the host wires no reloader. */
+  requestReload(): void;
   /** Register an admin/runtime control surface for this plugin. Unlike tools, controls are called by
    *  daemon routes and operate on the LIVE loaded plugin instance. */
   registerControl(name: string, control: PluginControl): void;

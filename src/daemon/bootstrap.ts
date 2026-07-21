@@ -637,6 +637,9 @@ export async function buildApp(opts: BuildOpts) {
         return typeof configured === 'string' && configured.trim() ? configured.trim() : '';
       },
       notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
+      // A plugin that writes a skill to disk (skills plugin's CreateSkill) asks for a live apply; the brain
+      // coalesces it and reloads once the current turn settles, so the new skill reaches the next message.
+      requestReload: () => brain?.requestPluginReload(),
       // Interactive transports (Discord) hand a parked AskUserQuestion's answer straight back in-process.
       answerQuestion: (id, answers) => brain?.answerQuestion(id, answers) ?? false,
       // The Discord /model picker is an operator-shared channel setting, so it offers the platform

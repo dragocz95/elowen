@@ -104,6 +104,10 @@ export class BrainService {
   private turnRunner: BrainTurnRunner;
   /** Read-only views: status, session lists, history, search, readiness. */
   private statusView: BrainStatusService;
+  /** A plugin (e.g. the skills plugin's CreateSkill) asked for a plugin reload from INSIDE a running
+   *  turn. Reloading there would dispose the very session executing the tool, so the request is coalesced
+   *  onto this flag and drained once the turn settles (see drainDeferredPluginReload). */
+  private pendingPluginReload = false;
   constructor(private d: BrainDeps) {
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
@@ -190,6 +194,7 @@ export class BrainService {
       get projectPath() { return d.projectPath; },
       sendDelegatedCustom: (userId, sessionId, customType, content, resultId) =>
         this.sendDelegated(userId, sessionId, content, { customType, resultId }),
+      afterTurnSettled: () => this.drainDeferredPluginReload(),
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
@@ -1161,6 +1166,22 @@ export class BrainService {
       const after = await this.d.plugins?.get();
       if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
     });
+  }
+
+  /** A plugin's request (from inside a turn) to apply a plugin-set change live — the skills plugin calls
+   *  it after CreateSkill/DeleteSkill writes to disk. Coalesced onto a flag and drained when the turn
+   *  settles; reloading synchronously here would tear down the session running the tool. */
+  requestPluginReload(): void {
+    this.pendingPluginReload = true;
+  }
+
+  /** Post-turn hook (fired from the turn runner once a turn has fully settled): if a plugin requested a
+   *  reload mid-turn, apply it now on the freed session. reloadPlugins is idempotent + serialized, so a
+   *  concurrent turn draining the same flag just no-ops here (the flag is cleared before the reload). */
+  private drainDeferredPluginReload(): void {
+    if (!this.pendingPluginReload) return;
+    this.pendingPluginReload = false;
+    void this.reloadPlugins().catch((e) => logger('brain').error(`deferred plugin reload failed: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   /** Push a proactive message out through the platform adapters (cron/tick echoes). */

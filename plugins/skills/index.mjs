@@ -38,7 +38,7 @@ export function register(ctx) {
   // `/skill:name` on its own. This plugin only LOADS skills and offers the admin write tools below.
   ctx.registerTool(defineTool({
     name: 'CreateSkill', label: 'Create skill',
-    description: 'Create (or overwrite) a reusable markdown skill. It becomes part of your system prompt for NEW conversations after a brain restart. Admin only.',
+    description: 'Create (or overwrite) a reusable markdown skill. It is applied live: available in your system prompt from the next message onward. Admin only.',
     parameters: Type.Object({
       name: Type.String({ description: 'kebab-case identifier, e.g. deploy-checklist' }),
       description: Type.String({ description: 'One line: when to use this skill' }),
@@ -50,7 +50,10 @@ export function register(ctx) {
         if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
         const body = `---\nname: ${p.name}\ndescription: ${p.description.replaceAll('\n', ' ')}\n---\n\n${p.content}\n`;
         writeFileSync(join(userDir, `${p.name}.md`), body, 'utf-8');
-        return ok(`Skill "${p.name}" saved. It loads into new conversations after the plugins reload (Settings → Plugins toggle, or daemon restart).`);
+        // Apply live: the host reloads plugins once the current turn settles (respawning the session), so
+        // the new skill is in the available-skills block from the next message — no restart needed.
+        ctx.requestReload?.();
+        return ok(`Skill "${p.name}" saved. It is available from your next message.`);
       } catch (e) { return fail(e); }
     },
   }));
@@ -97,6 +100,7 @@ export function register(ctx) {
         if (abs === base) return ok('Error: refusing to delete the skills root.');
         if (isDirForm && statSync(abs).isDirectory()) rmSync(abs, { recursive: true, force: true });
         else unlinkSync(abs);
+        ctx.requestReload?.(); // apply live, same as CreateSkill — the skill leaves the prompt next message
         return ok(`Skill "${p.name}" deleted.`);
       } catch (e) { return fail(e); }
     },

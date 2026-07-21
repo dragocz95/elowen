@@ -26,6 +26,32 @@ describe('bundled skills plugin', () => {
     expect(formatSkillsForPrompt(reg.skills).length).toBeGreaterThan(0);
   });
 
+  it('CreateSkill writes the skill AND asks the host to apply it live (no restart)', async () => {
+    // Regression: before the fix, CreateSkill wrote the file but never triggered a reload, so a freshly
+    // created skill only reached the model after a daemon restart / plugins toggle. It must now request a
+    // live reload (drained by the brain once the turn settles) so the skill is available next message.
+    const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-skills-'));
+    let reloads = 0;
+    const reg = await loadPlugins({ dirs: [resolve(repoRoot, 'plugins')], enabled: ['skills'], logger: log, dataRoot, requestReload: () => { reloads += 1; } });
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'CreateSkill', { name: 'ship-it', description: 'how to ship a release', content: 'do the thing' }), { identity: admin });
+    expect(res.content[0].text).toContain('next message'); // the message no longer says "after a restart"
+    expect(reloads).toBe(1); // the missing link: the tool now requests a live apply
+    // A fresh load (what the reload performs) picks the new skill up from the data dir.
+    const reloaded = await loadPlugins({ dirs: [resolve(repoRoot, 'plugins')], enabled: ['skills'], logger: log, dataRoot });
+    expect(reloaded.skills.map((s) => s.name)).toContain('ship-it');
+  });
+
+  it('DeleteSkill also asks the host to apply the removal live', async () => {
+    const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-skills-'));
+    mkdirSync(join(dataRoot, 'skills'), { recursive: true });
+    writeFileSync(join(dataRoot, 'skills', 'temp-skill.md'), '---\nname: temp-skill\ndescription: throwaway\n---\n\nbody\n');
+    let reloads = 0;
+    const reg = await loadPlugins({ dirs: [resolve(repoRoot, 'plugins')], enabled: ['skills'], logger: log, dataRoot, requestReload: () => { reloads += 1; } });
+    const del = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'DeleteSkill', { name: 'temp-skill' }), { identity: admin });
+    expect(del.content[0].text).toContain('deleted');
+    expect(reloads).toBe(1);
+  });
+
   it('lists AND deletes a directory-form <name>/SKILL.md user skill, not just flat .md', async () => {
     // ctx.dataDir() resolves to <dataRoot>/skills — seed a directory-form skill there (PI treats a dir
     // with a SKILL.md as a skill root). The old flat-*.md readdir catalog would miss it entirely.
