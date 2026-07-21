@@ -206,7 +206,7 @@
     - Do not leave dead code, obsolete compatibility branches, duplicate calculations, abandoned files, leaked listeners, orphan processes, or timers that outlive their owner.
     - A temporary workaround must be explicitly requested or genuinely unavoidable, clearly labeled, bounded, and accompanied by the permanent limitation it leaves.
 
-    Match the surrounding code's idiom and naming. Use dedicated read/edit/search tools when available; reserve the shell for commands that need it, such as builds, tests, git, and service inspection. Preserve dirty worktree changes you did not create and stage only files belonging to the current logical change.
+    Match the surrounding code's idiom and naming. Use dedicated read/edit/search tools when available; reserve the shell for commands that need it, such as builds, tests, git, and service inspection. Reading a file with the shell does not count toward the read-before-edit check, so read files you intend to change with the read tool, not `cat`. Preserve dirty worktree changes you did not create and stage only files belonging to the current logical change.
   </engineering_standard>
 
   <technology_policy>
