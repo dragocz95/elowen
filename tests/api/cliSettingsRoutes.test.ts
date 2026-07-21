@@ -58,6 +58,31 @@ describe('cli-settings routes', () => {
     expect(restart).not.toHaveBeenCalled(); // applyPersonalityChange already restarts owner chat — no double restart
   });
 
+  it('PATCH returns as soon as the setting is persisted, without blocking on the live brain re-apply', async () => {
+    // Regression: applyPersonalityChange/restart respawns the brain and waits for any in-flight turn to
+    // settle, so awaiting it in the request stalled the PATCH (and the web "saving" indicator) for as long
+    // as the turn ran. A never-settling re-apply must not hang the response — the persist already happened.
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const users = new UserStore(db);
+    const amy = users.create('amy', 'pw');
+    const config = new ConfigStore(db);
+    config.update({ autopilot: { model: 'claude-opus-4-8' } });
+    const applyPersonalityChange = vi.fn(() => new Promise<void>(() => {})); // never resolves
+    const app = createServer({
+      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      userSettings: new UserSettingStore(db),
+      brain: { restart: vi.fn(async () => {}), applyPersonalityChange } as never,
+    });
+    const res = await app.request('/auth/me/cli-settings', patch(users.issueToken(amy.id), { personalityBody: 'Be concise.' }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).personalityBody).toBe('Be concise.'); // persisted, even though the re-apply is still pending
+    expect(applyPersonalityChange).toHaveBeenCalledTimes(1); // fired, just not awaited
+  });
+
   it('PATCH accepts any configured brain model for a non-admin, but a personal allow-list still narrows it', async () => {
     const { app, users } = setup();
     const bob = users.create('bob', 'pw');

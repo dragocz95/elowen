@@ -174,13 +174,19 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
       throw e;
     }
-    // Apply live: a running brain restarts with the new settings (history rehydrates from SQLite),
-    // so a model change takes effect immediately instead of on the next daemon/chat restart. A changed
-    // personality body feeds the global persona on EVERY platform, so it also drops the shared channel
-    // sessions (Discord) via applyPersonalityChange — which itself restarts owner chat, so we don't also
-    // call restart. An unrelated save keeps the lighter owner-chat-only restart.
-    if (patch.personalityBody !== undefined) await d.brain?.applyPersonalityChange(u.id);
-    else await d.brain?.restart(u.id);
+    // Apply live in the BACKGROUND: a running brain respawns with the new settings (history rehydrates
+    // from SQLite) so a model/persona change takes effect immediately instead of on the next chat restart.
+    // A changed personality body feeds the global persona on EVERY platform, so it also drops the shared
+    // channel sessions (Discord) via applyPersonalityChange — which itself restarts owner chat, so we don't
+    // also call restart. An unrelated save keeps the lighter owner-chat-only restart.
+    //
+    // The persist above is what this save confirms, so the response must NOT block on the respawn: restart
+    // waits for any in-flight turn to settle before disposing the session, so an owner mid-turn (or a stuck
+    // turn retrying against a flaky model relay) would otherwise stall the PATCH for minutes and leave the
+    // web "saving" indicator hung. Fire-and-forget with error logging; both re-apply paths are serialized
+    // in the brain, so overlapping saves queue safely.
+    const reapply = patch.personalityBody !== undefined ? d.brain?.applyPersonalityChange(u.id) : d.brain?.restart(u.id);
+    void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
     return c.json({ ...d.userSettings.cliSettings(u.id), serverDefault: serverDefaultModel() });
   });
   // Per-user web-terminal appearance (xterm palette/font/cursor) — self-service, kept separate from
