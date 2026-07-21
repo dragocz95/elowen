@@ -8,6 +8,7 @@ import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
 import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
+import { isSteered } from '../../_shared/turnResult.mjs';
 
 const API = 'https://discord.com/api/v10';
 const GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
@@ -485,7 +486,7 @@ export class DiscordAdapter {
       if (reply && this.voiceEnabled(m.channel_id) && this.voiceCreds()) {
         await this.speakReply(m.channel_id, reply, m.id).catch((e) => this.log.error(`TTS failed: ${e?.message ?? e}`));
       }
-      if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); void this.react(m.channel_id, m.id, '✅').catch(() => {}); }
+      if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); if (!isSteered(reply)) void this.react(m.channel_id, m.id, '✅').catch(() => {}); }
     } catch (e) {
       clearInterval(typing);
       if (stream) await stream.fail(e?.message ?? e); // settle live tools before the error reply lands below them

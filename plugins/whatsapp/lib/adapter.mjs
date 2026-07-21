@@ -13,6 +13,7 @@ import { sameId, isGroup, numberOf, toJid, senderIsAdmin } from './jid.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage } from './stream.mjs';
 import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
+import { isSteered } from '../../_shared/turnResult.mjs';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger inbound images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
@@ -386,7 +387,7 @@ export class WhatsAppAdapter {
       void this.sock.sendPresenceUpdate('paused', chatJid).catch(() => {});
       if (stream) await stream.finalize(reply);
       else if (reply) await this.sendText(chatJid, stripThinking(reply), m);
-      if (reactions) void this.react(m.key, '✅').catch(() => {});
+      if (reactions && !isSteered(reply)) void this.react(m.key, '✅').catch(() => {});
     } catch (e) {
       clearInterval(typing);
       stream?.abandon(); // the stall-hint timer must not edit the dead progress bubble after the error reply

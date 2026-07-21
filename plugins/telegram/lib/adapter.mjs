@@ -11,6 +11,7 @@ import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
 import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
+import { isSteered } from '../../_shared/turnResult.mjs';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
@@ -351,7 +352,7 @@ export class TelegramAdapter {
       if (replyText && this.voiceEnabled(String(chatId)) && this.voiceCreds()) {
         await this.speakReply(chatId, replyText, m.message_id).catch((e) => this.log.error(`TTS failed: ${e?.message ?? e}`));
       }
-      if (reactions) void this.react(chatId, m.message_id, '👍').catch(() => {});
+      if (reactions && !isSteered(replyText)) void this.react(chatId, m.message_id, '👍').catch(() => {});
     } catch (e) {
       clearInterval(typing);
       if (stream) await stream.fail(e?.message ?? e); // settle live tools before the error reply lands below them
