@@ -46,8 +46,8 @@ The Settings surface follows one stable order. It is administrator-controlled; u
 
 | Section | What it controls |
 | --- | --- |
-| **System** | Version/readiness, service controls, automatic updates, login-token lifetime, and optional stale-conversation cleanup. |
-| **Elowen AI** | Agent name, provider accounts, model context windows, max steps, and runtime limits. |
+| **System** | Version/readiness, service controls, automatic updates, and login-token lifetime. |
+| **Elowen AI** | Agent name, provider accounts, model context windows, max steps, runtime limits, and stale-conversation auto-cleanup. |
 | **Models** | Enabled executor presets, custom entries, and model notes for planning. |
 | **CLI Agents** | External coding CLI binary, arguments, permission behavior, and resume behavior. |
 | **Data** | Explicit administrative maintenance and destructive cleanup. |

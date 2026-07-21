@@ -29,6 +29,7 @@ Only one turn runs in a conversation at a time. If you send a message while the 
 Long conversations are managed in three complementary ways:
 
 - **Compaction** summarizes older history while retaining the useful tail. The compaction marker and summary are persisted, so the saved tokens are not lost on a later reload.
+- **Image pruning** strips historical image attachments from the model context once they are no longer in the active window, curbing token bloat without losing the surrounding text.
 - **Idle rollover** can start a fresh session after a configured idle period, when continuing an old prompt cache would be wasteful. The previous conversation stays available to browse.
 - **Limits** bound agent steps, tool-output previews, memory recall, goal turns, elicitation waits, and channel-session capacity. Instance owners configure these in **Settings → Elowen AI**.
 

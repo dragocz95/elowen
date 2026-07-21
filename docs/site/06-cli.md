@@ -41,7 +41,7 @@ The terminal chat streams assistant text, tool calls, diffs, approvals, todos, a
 - Use **`/model`**, **`/theme`**, and **`/keybinds`** for the corresponding pickers and preferences.
 - Use **`/statusline`** for a checkbox overlay (like `/keybinds`) that picks which segments the status bar shows — context usage, total tokens, and cost. It edits the shared statusline config, so the choice also applies to the web chat dock.
 
-While Elowen is working, the CLI shows live activity and elapsed time. A tool call that takes longer to compose shows a temporary writing indicator. **`Ctrl+B`** moves a running foreground sub-agent or `Bash` command into the background without cancelling it; its result returns to the conversation when it completes.
+While Elowen is working, the CLI shows live activity and elapsed time. A tool call that takes longer to compose shows a localized action label describing what the tool is doing. **`Ctrl+B`** moves a running foreground sub-agent or `Bash` command into the background without cancelling it; its result returns to the conversation when it completes.
 
 The exact command menu is served by the daemon, so built-in and plugin commands remain aligned across surfaces. Type `/` in chat to browse it.
 

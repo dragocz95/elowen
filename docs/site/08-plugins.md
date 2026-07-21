@@ -74,7 +74,7 @@ Secrets are write-only: the UI can show whether a secret exists but never receiv
 
 Platform plugins adapt inbound messages into the same brain-turn pipeline used by the Web UI and CLI. They map sender identity and role policy to an Elowen user before a turn can run; an unmapped sender does not receive agent access by default.
 
-The cron plugin runs scheduled and one-shot prompts through that same pipeline. A job's optional check gate runs through the platform's default shell, so jobs fire the same on Linux, macOS, and Windows. The sub-agent plugin delegates a bounded task while preserving the caller's effective scope. These are extensions of the core agent lifecycle, not parallel chat engines.
+The cron plugin runs scheduled and one-shot prompts through that same pipeline. A job's optional check gate runs through the platform's default shell, so jobs fire the same on Linux, macOS, and Windows. A one-shot wake-up keeps its originating conversation alive until it fires, so the follow-up lands in the same thread with full context. The sub-agent plugin delegates a bounded task while preserving the caller's effective scope. These are extensions of the core agent lifecycle, not parallel chat engines.
 
 ### Typed sub-agents
 
@@ -87,5 +87,7 @@ The sub-agent plugin's detail card in **Settings → Plugins** lists the built-i
 ## Reload behavior
 
 Changing plugin enablement or configuration reloads the registry so future turns use the current contributions. Existing live work is not rewritten retroactively. Keep plugin work inside the plugin directory; shared transport, policy, and runtime behavior belongs in `src/`.
+
+Skills are applied live: creating or deleting a skill through the `CreateSkill` / `DeleteSkill` tools takes effect from the next message onward without a daemon restart. The same is true for sub-agent type definitions edited through the plugin detail card.
 
 [Next: Projects & Workflow](projects-workflow)
