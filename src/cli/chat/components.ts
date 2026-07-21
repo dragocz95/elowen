@@ -731,7 +731,7 @@ const BLOCK_HEADER_INDENT = '    ';
 const BLOCK_BODY_INDENT = '      ';
 
 function simpleBlock(title: string, lines: string[], width: number, footer?: string): string[] {
-  const inner = Math.max(24, width - 8);
+  const inner = Math.max(24, width - 6);
   // An empty title renders a bare `<` connector — the console block does this: the `$ command` line right
   // below already says "shell output", so a "console output" label was just noise. Named blocks (diff,
   // search result, browser observation) keep their label since it isn't otherwise obvious.
@@ -753,7 +753,7 @@ function simpleBlock(title: string, lines: string[], width: number, footer?: str
 export function framedDiffBlock(
   diff: string, width: number, title = 'diff', expanded = false, lang?: string | null,
 ): { lines: string[]; expandable: boolean } {
-  const inner = Math.max(24, width - 12);
+  const inner = Math.max(24, width - 10);
   const previewLines = 18;
   const rows = parseDiffRows(diff);
   const expandable = rows.length > previewLines;
@@ -810,5 +810,5 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   // Console output drops its title (bare `<` connector) — the `$ command` echo already identifies it;
   // other kinds (search result, browser observation, tool result) keep the label.
   const title = output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim();
-  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 12))), width);
+  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 6))), width);
 }

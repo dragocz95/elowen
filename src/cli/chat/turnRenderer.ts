@@ -322,7 +322,7 @@ export class TurnRenderer {
   }
 
   private planBlock(markdown: string, width: number): string[] {
-    const inner = Math.max(12, Math.max(28, width) - 6);
+    const inner = Math.max(12, Math.max(28, width) - 4);
     const border = color.faint;
     const title = ` ${color.bold(color.text('Proposed plan'))} ${color.faint('ready to implement')} `;
     const rule = Math.max(0, inner - visibleWidth(title));

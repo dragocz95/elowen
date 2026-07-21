@@ -345,7 +345,7 @@ export class ChatViewport implements Component {
     this.frameLayoutVisits = 0;
     const height = Math.max(1, this.getRows());
     const chatWidth = Math.max(1, Math.min(width, this.getWidth()));
-    const contentWidth = Math.max(1, chatWidth - 5);
+    const contentWidth = Math.max(1, chatWidth - 2);
     this.prepareLayout(contentWidth);
     this.currentExtraRows = this.extraRows();
     this.viewportHeight = height;
