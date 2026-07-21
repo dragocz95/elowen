@@ -132,6 +132,153 @@ function describeEvent(e: { type: string } & Record<string, unknown>): string {
   }
 }
 
+/** After a user-triggered `/restart` re-park: once the platforms are back up, echo "back online" — but
+ *  ONLY for a restart that's actually RECENT. A stale marker (a failed restart whose cleanup didn't run,
+ *  or a very old crash) must not make an ordinary later deploy falsely announce recovery. The marker holds
+ *  the request timestamp. Best-effort throughout; always clears the marker so an ordinary boot stays quiet. */
+async function announceBackOnlineIfPending(brain: BrainService | undefined, restartMarker: string | undefined): Promise<void> {
+  if (!(restartMarker && existsSync(restartMarker))) return;
+  let fresh = false;
+  try { fresh = Date.now() - Number(readFileSync(restartMarker, 'utf8')) < 5 * 60_000; } catch { /* unreadable → treat as stale */ }
+  if (fresh) await brain?.notify('✅ **Back online** — Elowen restarted and is ready.').catch(() => { /* best-effort */ });
+  try { unlinkSync(restartMarker); } catch { /* already gone */ }
+}
+
+/** Janitor tick: reap finished agents' zombie tmux sessions. Log what it reaps so the trail shows when a
+ *  session was cleaned up (and that the janitor is alive). Fire-and-forget — a sweep failure only logs. */
+function runJanitorSweep(d: { tmux: TmuxDriver; taskForSession: (session: string) => Pick<Task, 'status'> | null }): void {
+  void sweepFinishedSessions({ tmux: d.tmux, taskForSession: d.taskForSession })
+    .then((reaped) => { if (reaped.length) log.info(`janitor reaped ${reaped.length} finished session(s): ${reaped.join(', ')}`); })
+    .catch((e) => log.error('janitor sweep failed', e));
+}
+
+/** Stuck-detector tick: an agent that died without `elowen close` leaves its task in_progress with a dead
+ *  session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace covers the
+ *  spawn→session window; relaunch at most twice before escalating to a human. `now` is read per tick. */
+function runStuckSweep(d: {
+  liveSessions: { list(): Promise<string[]> };
+  tasks: TaskStore; bus: EventBus; now: number;
+  usagePathFor: (task: { project_id: number; parent_id: string | null }) => string;
+  resumeFallback: { program: string; model: string };
+}): void {
+  void sweepStuckTasks({ tmux: d.liveSessions, tasks: d.tasks, bus: d.bus, now: d.now, graceMs: 120000, maxRelaunch: 2,
+    // Stamp the dead agent's session for resume so the relaunch continues it (best-effort).
+    onReap: (t) => { try { captureResumeLabel({ tasks: d.tasks, pathFor: d.usagePathFor, fallback: d.resumeFallback }, t); } catch (e) { log.warn(`resume capture failed for stuck task ${t.id}`, e); } } })
+    .then(({ reverted, escalated }) => {
+      if (reverted.length) log.warn(`stuck detector reverted ${reverted.length} dead-agent task(s) to open: ${reverted.join(', ')}`);
+      if (escalated.length) log.error(`stuck detector escalated ${escalated.length} task(s) to blocked after max relaunches: ${escalated.join(', ')}`);
+    })
+    .catch((e) => log.error('stuck sweep failed', e));
+}
+
+// Everything the agent-liveness sweep and its worker-action helpers read. Bundled once (in startLoops) so
+// the persistent per-sweep state (deadSince/inflightChecks/progressLastAt/paneTracker) is created ONCE and
+// threaded, not re-created each tick, and every store/service is read live exactly as before.
+interface LivenessDeps {
+  tmux: TmuxDriver;
+  tasks: TaskStore;
+  missions: MissionStore;
+  bus: EventBus;
+  config: ConfigStore;
+  agents: AgentStore;
+  decisionQueue: DecisionQueue;
+  taskForSession: (session: string) => Task | null;
+  missionIdForSession: (session: string) => string | null;
+  usagePathFor: (task: { project_id: number; parent_id: string | null }) => string;
+  resumeFallback: { program: string; model: string };
+  clock: SystemClock;
+  paneTracker: PaneActivityTracker;
+  decisionDeadSince: Map<string, number>;
+  inflightChecks: Set<string>;
+  progressLastAt: Map<string, number>;
+}
+
+const NUDGE_MAX = 2;
+
+/** Escalate a wedged worker to a human — but never if its mission was torn down meanwhile (drain race). */
+function escalateWorker(taskId: string, d: LivenessDeps): void {
+  const task = d.tasks.get(taskId);
+  if (!task || task.status === 'blocked') return;
+  if (task.parent_id && !d.missions.activeForEpic(task.parent_id)) return; // mission gone → no-op
+  d.tasks.setStatus(taskId, 'blocked');
+  d.bus.publish({ type: 'task', taskId, status: 'blocked' });
+}
+
+/** Restart a wedged worker: kill its session and revert the task so the scheduler respawns it, resuming
+ *  its session. Reuses the dead-agent stuck path (shared `stuck:<n>` budget bounds total churn). */
+async function restartWorker(task: Task, d: LivenessDeps): Promise<void> {
+  const name = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
+  if (name) {
+    try { captureResumeLabel({ tasks: d.tasks, pathFor: d.usagePathFor, fallback: d.resumeFallback }, task); } catch (e) { log.warn(`resume capture failed for ${task.id}`, e); }
+    await d.tmux.kill(`elowen-${name}`).catch(() => { /* already gone */ });
+  }
+  if (d.tasks.bumpStuck(task.id) > 2) {
+    d.tasks.setStatus(task.id, 'blocked');
+    d.bus.publish({ type: 'task', taskId: task.id, status: 'blocked' });
+  } else {
+    d.tasks.setResumeNote(task.id, 'Your previous run stalled and was relaunched — re-check the current state (git status, build/tests) and carry the task to completion.');
+    d.tasks.setStatus(task.id, 'open');
+    d.bus.publish({ type: 'task', taskId: task.id, status: 'open' });
+  }
+}
+
+/** Wake the overseer about a worker whose screen has gone static and act on its verdict. Mirrors the
+ *  askService 'message' path: enqueue per-mission, fall straight to a human when there's no overseer. */
+async function checkWorker(session: string, taskId: string, snapshot: string, idleMin: number, reason: 'idle' | 'progress', d: LivenessDeps): Promise<void> {
+  const task = d.tasks.get(taskId);
+  if (!task) return;
+  const missionId = d.missionIdForSession(session);
+  // No overseer to ask: a wedged worker escalates to a human; a routine progress glance just no-ops —
+  // never block a healthy, working agent just because nobody happens to be watching.
+  if (!missionId || !(d.missions.get(missionId)?.overseer_exec || d.config.get().autopilot.overseerExec)) { if (reason === 'idle') escalateWorker(taskId, d); return; }
+  let verdict: DecisionResult;
+  try { verdict = await d.decisionQueue.enqueue(missionId, 'check', { taskId, session, paneSnapshot: snapshot, idleMin, reason }); }
+  catch (e) { log.error(`check enqueue failed for ${session}`, e); return; }
+  const m = d.missions.get(missionId);
+  const fresh = d.tasks.get(taskId) ?? task;
+  const nudges = Number(fresh.labels.find((l) => l.startsWith('nudge:'))?.slice('nudge:'.length)) || 0;
+  const action = checkAction(verdict, { reason, missionLive: !!m && (m.state === 'active' || m.state === 'stalled'), nudges, nudgeMax: NUDGE_MAX });
+  switch (action.type) {
+    case 'noop': return;
+    case 'nudge':
+      await d.tmux.sendRaw(session, action.text);
+      await d.tmux.sendKeys(session, ['Enter']);
+      d.tasks.bumpNudge(taskId);
+      return;
+    case 'steer':
+      // Proactive course-correction to a working agent — delivered like a nudge but NOT counted against
+      // the wedge nudge budget (it isn't a "this agent is stuck" poke).
+      await d.tmux.sendRaw(session, action.text);
+      await d.tmux.sendKeys(session, ['Enter']);
+      return;
+    case 'restart': await restartWorker(fresh, d); return;
+    case 'escalate': escalateWorker(taskId, d); return;
+  }
+}
+
+/** One liveness sweep tick: one signal — did the agent's tmux pane change since last look? — decides
+ *  everything, so it works the same for any CLI tool (no timer/keyword parsing). A live but STATIC worker
+ *  is woken via the overseer ('check'); a parked decision escalates only when its overseer is genuinely
+ *  unsupervised. `deadSince`/`inflightChecks`/`paneTracker` (in deps) persist across sweeps. */
+function runLivenessSweep(d: LivenessDeps): void {
+  void sweepAgentLiveness({
+    tmux: d.tmux, queue: d.decisionQueue, tracker: d.paneTracker, now: d.clock.now(),
+    deadSince: d.decisionDeadSince, inflightChecks: d.inflightChecks, lastProgressAt: d.progressLastAt,
+    sessionTaskId: (s) => d.taskForSession(s)?.id ?? null,
+    programFor: (s) => d.agents.programFor(s.replace(/^elowen-/, '')),
+    hasPrompt: (content, program) => detectAgentPrompt(content, program) !== null,
+    checkWorker: (session, taskId, snapshot, idleMin, reason) => checkWorker(session, taskId, snapshot, idleMin, reason, d),
+    workerIdleMs: WORKER_IDLE_MS, overseerIdleMs: OVERSEER_IDLE_MS, graceMs: DECISION_GRACE_MS, hardMs: DECISION_HARD_MS,
+    // Routine progress checks only make sense when there's an overseer to do them (0 disables).
+    progressReviewMs: (d.config.get().autopilot.overseerExec || d.missions.live().some((m) => m.overseer_exec)) ? PROGRESS_REVIEW_MS : 0,
+  })
+    .then(({ escalated, checked }) => {
+      if (escalated.length) log.warn(`liveness sweep escalated ${escalated.length} unanswered decision(s) to a human: ${escalated.join(', ')}`);
+      if (checked.length) log.info(`liveness sweep woke the overseer about ${checked.length} idle worker(s): ${checked.join(', ')}`);
+    })
+    .catch((e) => log.error('liveness sweep failed', e));
+}
+
 export interface BuildOpts {
   dbPath: string;
   project: { id: number; slug: string; path: string };
@@ -737,17 +884,9 @@ export async function buildApp(opts: BuildOpts) {
     // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. If this boot follows an
     // operator `/restart`, announce "back online" once the platforms are connected, then clear the marker
     // (so ordinary restarts/deploys stay quiet — only a user-triggered restart is echoed).
-    void brain?.startPlatforms(log).then(async () => {
-      if (restartMarker && existsSync(restartMarker)) {
-        // Only echo "back online" for a restart that's actually RECENT. A stale marker (e.g. a failed
-        // restart whose cleanup didn't run, or a very old crash) must not make an ordinary later deploy
-        // falsely announce recovery. The marker holds the request timestamp.
-        let fresh = false;
-        try { fresh = Date.now() - Number(readFileSync(restartMarker, 'utf8')) < 5 * 60_000; } catch { /* unreadable → treat as stale */ }
-        if (fresh) await brain?.notify('✅ **Back online** — Elowen restarted and is ready.').catch(() => { /* best-effort */ });
-        try { unlinkSync(restartMarker); } catch { /* already gone */ }
-      }
-    }).catch((e) => log.error('startPlatforms failed', e));
+    void brain?.startPlatforms(log)
+      .then(() => announceBackOnlineIfPending(brain, restartMarker))
+      .catch((e) => log.error('startPlatforms failed', e));
     void reconcileOverseers().catch((e) => log.error('reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
     // Self-heal the agent-workflow skill: (re)install the bundled `elowen-workflow` SKILL.md into every
     // present provider on boot. Best-effort — installAll catches its own per-provider errors and never
@@ -760,26 +899,10 @@ export async function buildApp(opts: BuildOpts) {
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.live()) void engine.tick(m.id); }, 90000);
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
-    // Janitor: reap finished agents' zombie tmux sessions. Log what it reaps so the trail shows when
-    // a session was cleaned up (and that the janitor is alive).
-    const stopJanitor = clock.setInterval(() => {
-      void sweepFinishedSessions({ tmux, taskForSession })
-        .then((reaped) => { if (reaped.length) log.info(`janitor reaped ${reaped.length} finished session(s): ${reaped.join(', ')}`); })
-        .catch((e) => log.error('janitor sweep failed', e));
-    }, 60000);
-    // Stuck detector: an agent that died without `elowen close` leaves its task in_progress with a
-    // dead session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace
-    // covers the spawn→session window; relaunch at most twice before escalating to a human.
-    const stopStuck = clock.setInterval(() => {
-      void sweepStuckTasks({ tmux: liveSessions, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2,
-        // Stamp the dead agent's session for resume so the relaunch continues it (best-effort).
-        onReap: (t) => { try { captureResumeLabel({ tasks, pathFor: usagePathFor, fallback: resumeFallback }, t); } catch (e) { log.warn(`resume capture failed for stuck task ${t.id}`, e); } } })
-        .then(({ reverted, escalated }) => {
-          if (reverted.length) log.warn(`stuck detector reverted ${reverted.length} dead-agent task(s) to open: ${reverted.join(', ')}`);
-          if (escalated.length) log.error(`stuck detector escalated ${escalated.length} task(s) to blocked after max relaunches: ${escalated.join(', ')}`);
-        })
-        .catch((e) => log.error('stuck sweep failed', e));
-    }, 60000);
+    // Janitor: reap finished agents' zombie tmux sessions (body: runJanitorSweep).
+    const stopJanitor = clock.setInterval(() => runJanitorSweep({ tmux, taskForSession }), 60000);
+    // Stuck detector: revert/escalate tasks whose agent died without `elowen close` (body: runStuckSweep).
+    const stopStuck = clock.setInterval(() => runStuckSweep({ liveSessions, tasks, bus, now: clock.now(), usagePathFor, resumeFallback }), 60000);
     // Overseer watchdog: a parked overseer can die mid-mission (TUI crash, OOM) and would otherwise
     // leave the mission running unsupervised until the next daemon restart. reconcileOverseers is
     // idempotent — it re-parks a missing overseer for each active mission and kills orphans — so run
@@ -790,87 +913,18 @@ export async function buildApp(opts: BuildOpts) {
     // STATIC worker is woken via the overseer ('check'); a parked decision escalates only when its
     // overseer is genuinely unsupervised (session dead past grace, or its OWN pane static past the bar),
     // never just because it's thinking. `deadSince`/`inflightChecks`/`paneTracker` persist across sweeps.
+    // Persistent per-sweep state — created ONCE here and threaded through livenessDeps so it survives
+    // across ticks (re-creating it each tick would forget every worker's last-seen pane / dead-since).
     const decisionDeadSince = new Map<string, number>();
     const inflightChecks = new Set<string>();
     const progressLastAt = new Map<string, number>();
     const paneTracker = new PaneActivityTracker();
-    const NUDGE_MAX = 2;
-    // Escalate a wedged worker to a human — but never if its mission was torn down meanwhile (drain race).
-    const escalateWorker = (taskId: string): void => {
-      const task = tasks.get(taskId);
-      if (!task || task.status === 'blocked') return;
-      if (task.parent_id && !missions.activeForEpic(task.parent_id)) return; // mission gone → no-op
-      tasks.setStatus(taskId, 'blocked');
-      bus.publish({ type: 'task', taskId, status: 'blocked' });
+    const livenessDeps: LivenessDeps = {
+      tmux, tasks, missions, bus, config, agents, decisionQueue,
+      taskForSession, missionIdForSession, usagePathFor, resumeFallback,
+      clock, paneTracker, decisionDeadSince, inflightChecks, progressLastAt,
     };
-    // Restart a wedged worker: kill its session and revert the task so the scheduler respawns it, resuming
-    // its session. Reuses the dead-agent stuck path (shared `stuck:<n>` budget bounds total churn).
-    const restartWorker = async (task: Task): Promise<void> => {
-      const name = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
-      if (name) {
-        try { captureResumeLabel({ tasks, pathFor: usagePathFor, fallback: resumeFallback }, task); } catch (e) { log.warn(`resume capture failed for ${task.id}`, e); }
-        await tmux.kill(`elowen-${name}`).catch(() => { /* already gone */ });
-      }
-      if (tasks.bumpStuck(task.id) > 2) {
-        tasks.setStatus(task.id, 'blocked');
-        bus.publish({ type: 'task', taskId: task.id, status: 'blocked' });
-      } else {
-        tasks.setResumeNote(task.id, 'Your previous run stalled and was relaunched — re-check the current state (git status, build/tests) and carry the task to completion.');
-        tasks.setStatus(task.id, 'open');
-        bus.publish({ type: 'task', taskId: task.id, status: 'open' });
-      }
-    };
-    // Wake the overseer about a worker whose screen has gone static and act on its verdict. Mirrors the
-    // askService 'message' path: enqueue per-mission, fall straight to a human when there's no overseer.
-    const checkWorker = async (session: string, taskId: string, snapshot: string, idleMin: number, reason: 'idle' | 'progress'): Promise<void> => {
-      const task = tasks.get(taskId);
-      if (!task) return;
-      const missionId = missionIdForSession(session);
-      // No overseer to ask: a wedged worker escalates to a human; a routine progress glance just no-ops —
-      // never block a healthy, working agent just because nobody happens to be watching.
-      if (!missionId || !(missions.get(missionId)?.overseer_exec || config.get().autopilot.overseerExec)) { if (reason === 'idle') escalateWorker(taskId); return; }
-      let verdict: DecisionResult;
-      try { verdict = await decisionQueue.enqueue(missionId, 'check', { taskId, session, paneSnapshot: snapshot, idleMin, reason }); }
-      catch (e) { log.error(`check enqueue failed for ${session}`, e); return; }
-      const m = missions.get(missionId);
-      const fresh = tasks.get(taskId) ?? task;
-      const nudges = Number(fresh.labels.find((l) => l.startsWith('nudge:'))?.slice('nudge:'.length)) || 0;
-      const action = checkAction(verdict, { reason, missionLive: !!m && (m.state === 'active' || m.state === 'stalled'), nudges, nudgeMax: NUDGE_MAX });
-      switch (action.type) {
-        case 'noop': return;
-        case 'nudge':
-          await tmux.sendRaw(session, action.text);
-          await tmux.sendKeys(session, ['Enter']);
-          tasks.bumpNudge(taskId);
-          return;
-        case 'steer':
-          // Proactive course-correction to a working agent — delivered like a nudge but NOT counted against
-          // the wedge nudge budget (it isn't a "this agent is stuck" poke).
-          await tmux.sendRaw(session, action.text);
-          await tmux.sendKeys(session, ['Enter']);
-          return;
-        case 'restart': await restartWorker(fresh); return;
-        case 'escalate': escalateWorker(taskId); return;
-      }
-    };
-    const stopDecisionSweep = clock.setInterval(() => {
-      void sweepAgentLiveness({
-        tmux, queue: decisionQueue, tracker: paneTracker, now: clock.now(),
-        deadSince: decisionDeadSince, inflightChecks, lastProgressAt: progressLastAt,
-        sessionTaskId: (s) => taskForSession(s)?.id ?? null,
-        programFor: (s) => agents.programFor(s.replace(/^elowen-/, '')),
-        hasPrompt: (content, program) => detectAgentPrompt(content, program) !== null,
-        checkWorker,
-        workerIdleMs: WORKER_IDLE_MS, overseerIdleMs: OVERSEER_IDLE_MS, graceMs: DECISION_GRACE_MS, hardMs: DECISION_HARD_MS,
-        // Routine progress checks only make sense when there's an overseer to do them (0 disables).
-        progressReviewMs: (config.get().autopilot.overseerExec || missions.live().some((m) => m.overseer_exec)) ? PROGRESS_REVIEW_MS : 0,
-      })
-        .then(({ escalated, checked }) => {
-          if (escalated.length) log.warn(`liveness sweep escalated ${escalated.length} unanswered decision(s) to a human: ${escalated.join(', ')}`);
-          if (checked.length) log.info(`liveness sweep woke the overseer about ${checked.length} idle worker(s): ${checked.join(', ')}`);
-        })
-        .catch((e) => log.error('liveness sweep failed', e));
-    }, DECISION_SWEEP_MS);
+    const stopDecisionSweep = clock.setInterval(() => runLivenessSweep(livenessDeps), DECISION_SWEEP_MS);
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
     purgeTokens();
