@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Sparkles, Pencil, Plus } from 'lucide-react';
+import { Sparkles, Pencil } from 'lucide-react';
 import { useMyCliSettings } from '../../lib/queries';
 import { useSaveMyCliSettings } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -9,13 +9,11 @@ import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { useConstellation } from '../../components/ui/Constellation';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalFooter } from '../../components/ui/Modal';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Button } from '../../components/ui/Button';
-import { Pill } from './pills';
 
 const EDIT_OPTIONS = {
   fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true,
@@ -64,72 +62,30 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
   ];
 
   const hasBody = personalityBody.trim().length > 0;
-  // PROTOTYPE(constellation): in the orbital layout the style pills and the instruction body become
-  // two pods in ONE cosmos — the body pod shows a snippet chip and its orb opens the Monaco modal.
-  const cosmos = useConstellation();
-
-  const styleRow = (
-    <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
-      {/* PROTOTYPE(constellation): the pill strip reads noisy inside a pod — the pod shows the
-          current style as a chip and picks in the shared drawer picker instead. */}
-      {cosmos ? (
-        <ChoiceField title={t.personality.styleLabel} options={styleOptions} value={advisorStyle} onChange={setAdvisorStyle} />
-      ) : (
-        <div className="flex flex-wrap justify-center gap-1.5" role="group" aria-label={t.personality.styleLabel}>
-          {styleOptions.map((o) => (
-            <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
-          ))}
-        </div>
-      )}
-    </SpatialRow>
-  );
 
   return (
     <div className="flex flex-col gap-4">
-      {cosmos ? (
-        <SpatialGroup>
-          {styleRow}
-          <SpatialRow title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Pencil}>
-            <SelectionSummary
-              countText=""
-              samples={hasBody ? [{ label: personalityBody.trim().slice(0, 42) }] : []}
-              moreCount={0}
-              onManage={() => setEditing(true)}
-              manageLabel={hasBody ? t.personality.bodyEdit : t.personality.bodyAdd}
-              manageAriaLabel={t.personality.bodyLabel}
-            />
-          </SpatialRow>
-        </SpatialGroup>
-      ) : (
-      <>
-      {/* Communication style pills (applied everywhere, on top of the global body) */}
       <SpatialGroup>
-        {styleRow}
-      </SpatialGroup>
-
-      {/* Global personality instructions — edited in a Monaco modal, shown as a compact preview when set */}
-      <SpatialGroup>
-        <SpatialRow title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles}>
-          <Button variant="default" icon={hasBody ? Pencil : Plus} onClick={() => setEditing(true)}>
-            {hasBody ? t.personality.bodyEdit : t.personality.bodyAdd}
-          </Button>
+        {/* The pill strip reads noisy inside a pod — the pod shows the current style as a chip and
+            picks in the shared drawer picker instead. */}
+        <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
+          <ChoiceField title={t.personality.styleLabel} options={styleOptions} value={advisorStyle} onChange={setAdvisorStyle} />
         </SpatialRow>
-        {hasBody ? (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="mt-2.5 block w-full rounded-md border border-border bg-elevated/20 px-3.5 py-3 text-left transition-colors hover:border-border-strong"
-            aria-label={t.personality.bodyEdit}
-          >
-            <span className="line-clamp-4 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-muted">{personalityBody}</span>
-          </button>
-        ) : null}
+        {/* Global personality instructions — a snippet chip; the orb opens the Monaco drawer. */}
+        <SpatialRow title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Pencil}>
+          <SelectionSummary
+            countText=""
+            samples={hasBody ? [{ label: personalityBody.trim().slice(0, 42) }] : []}
+            moreCount={0}
+            onManage={() => setEditing(true)}
+            manageLabel={hasBody ? t.personality.bodyEdit : t.personality.bodyAdd}
+            manageAriaLabel={t.personality.bodyLabel}
+          />
+        </SpatialRow>
       </SpatialGroup>
-      </>
-      )}
 
       {editing ? (
-        <Modal title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles} size="lg" presentation={cosmos ? 'drawer' : 'center'} onClose={() => setEditing(false)}>
+        <Modal title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles} size="lg" presentation="drawer" onClose={() => setEditing(false)}>
           <div className="min-h-0 flex-1 overflow-hidden">
             <MonacoEditor
               language="markdown"

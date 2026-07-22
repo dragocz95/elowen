@@ -2,11 +2,11 @@
 
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 
-/** PROTOTYPE — "constellation" layout for account sections. Inside a ConstellationScope the shared
+/** The "constellation" layout for settings-like sections. Inside a ConstellationScope the shared
  *  SpatialGroup/SpatialRow primitives render as an orbital field instead of stacked rows: the group
  *  becomes a cosmos with a glowing core, and each row becomes a floating pod tied to the core by a
- *  filament. Everything is additive — removing the scope wrapper (or flipping the flag in
- *  AccountView) restores the classic layout untouched. */
+ *  filament. Outside a scope (and inside a ClassicScope) the same primitives render their classic
+ *  stacked-row layout, which catalog/list sections still use. */
 
 interface ConstellationValue { core: string }
 

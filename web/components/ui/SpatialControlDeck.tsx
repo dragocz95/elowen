@@ -4,7 +4,6 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { AutoSaveStatus } from './AutoSaveStatus';
-import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
 
 export interface SpatialDeckSection {
   id: string;
@@ -12,29 +11,6 @@ export interface SpatialDeckSection {
   icon: LucideIcon;
   description?: string;
   count?: number;
-}
-
-function mascotState(status: SaveStatus): SpatialMascotState {
-  if (status === 'saving') return 'saving';
-  if (status === 'saved') return 'success';
-  if (status === 'error') return 'error';
-  return 'idle';
-}
-
-function SpatialSectionHero({ status = 'idle', onRetry, children }: {
-  status?: SaveStatus;
-  onRetry?: () => void;
-  children?: ReactNode;
-}) {
-  return (
-    <section className="spatial-deck-hero">
-      <div className="spatial-deck-hero__mascot" data-testid="spatial-hero-mascot">
-        <SpatialMascot state={mascotState(status)} />
-      </div>
-      <div className="spatial-deck-hero__content">{children}</div>
-      <div className="spatial-deck-hero__save"><AutoSaveStatus status={status} onRetry={onRetry} /></div>
-    </section>
-  );
 }
 
 export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
@@ -103,11 +79,11 @@ export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   );
 }
 
-function SpatialContentSurface({ bare = false, children }: { bare?: boolean; children: ReactNode }) {
-  return <section data-testid="spatial-content-surface" className={`spatial-content-surface ${bare ? 'spatial-content-surface--bare' : ''}`}>{children}</section>;
+function SpatialContentSurface({ children }: { children: ReactNode }) {
+  return <section data-testid="spatial-content-surface" className="spatial-content-surface">{children}</section>;
 }
 
-export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, hero, compact = false, children }: {
+export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, children }: {
   eyebrow: string;
   sections: SpatialDeckSection[];
   value: string;
@@ -115,10 +91,6 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
   ariaLabel: string;
   status?: SaveStatus;
   onRetry?: () => void;
-  hero?: ReactNode;
-  /** PROTOTYPE(constellation): drop the hero band so the content surface starts right under the
-   *  rail; the auto-save status moves into the heading row. */
-  compact?: boolean;
   children: ReactNode;
 }) {
   const active = sections.find((section) => section.id === value) ?? sections[0];
@@ -126,17 +98,16 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
 
   return (
     <div className="spatial-control-deck">
-      <header className={`spatial-deck-heading ${compact ? 'spatial-deck-heading--compact' : ''}`}>
+      <header className="spatial-deck-heading">
         <div className="min-w-0">
           <span className="spatial-deck-heading__eyebrow">{eyebrow}</span>
           <h1>{active.label}</h1>
           {active.description ? <p>{active.description}</p> : null}
         </div>
-        {compact ? <AutoSaveStatus status={status} onRetry={onRetry} /> : null}
+        <AutoSaveStatus status={status} onRetry={onRetry} />
       </header>
-      {compact ? null : <SpatialSectionHero status={status} onRetry={onRetry}>{hero}</SpatialSectionHero>}
       <SpatialSectionRail sections={sections} value={active.id} onChange={onChange} ariaLabel={ariaLabel} />
-      <SpatialContentSurface bare={compact}>{children}</SpatialContentSurface>
+      <SpatialContentSurface>{children}</SpatialContentSurface>
     </div>
   );
 }

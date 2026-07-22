@@ -38,15 +38,6 @@ import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
-import { AccountDeckHero } from './AccountDeckHero';
-
-/** PROTOTYPE(constellation): the AI-centric account sections (Elowen AI, Memory) render as an
- *  orbital constellation instead of stacked rows. Flip to false to restore the classic layout —
- *  no other change needed. */
-const ACCOUNT_CONSTELLATION = true;
-function ConstellationMaybe({ core, children }: { core: string; children: ReactNode }) {
-  return ACCOUNT_CONSTELLATION ? <ConstellationScope core={core}>{children}</ConstellationScope> : <>{children}</>;
-}
 
 type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
 
@@ -61,9 +52,8 @@ function AccountPanel({ id, active, visited, children }: {
   if (id !== active && !visited.has(id)) return null;
   return (
     <Activity mode={id === active ? 'visible' : 'hidden'}>
-      {/* PROTOTYPE(constellation): data-constellation drops the card frame so sections float on the
-          page background. */}
-      <MotionReveal data-account-panel={id} data-constellation={ACCOUNT_CONSTELLATION ? '' : undefined}>{children}</MotionReveal>
+      {/* data-constellation drops the card frame so sections float on the page background. */}
+      <MotionReveal data-account-panel={id} data-constellation="">{children}</MotionReveal>
     </Activity>
   );
 }
@@ -167,7 +157,7 @@ export function AccountView() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  // PROTOTYPE(constellation): the password form lives in a side drawer opened via the pod's orb.
+  // The password form lives in a side drawer opened via the pod's orb.
   const [passwordOpen, setPasswordOpen] = useState(false);
   // Phone push is a per-device preference (like UI scale): reflect this device's current state.
   const [pushSupported, setPushSupported] = useState(true);
@@ -327,7 +317,6 @@ export function AccountView() {
     { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
   );
   const activeFeedback = section === 'profile' ? profileFeedback : (sectionFeedback[section] ?? { status: 'idle' as const });
-  const activeSection = spatialSections.find((item) => item.id === section) ?? spatialSections[0]!;
 
   return (
     /* Match the settings workspace width so account controls have the same calm, useful measure. */
@@ -342,30 +331,26 @@ export function AccountView() {
         onChange={(v) => setSection(v as typeof section)}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
-        compact={ACCOUNT_CONSTELLATION}
-        hero={ACCOUNT_CONSTELLATION ? undefined : <AccountDeckHero section={activeSection} user={u} adminLabel={t.users.admin} />}
       >
       <AccountPanel id="memory" active={section} visited={visitedSections}>
-        <ConstellationMaybe core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationMaybe>
+        <ConstellationScope core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
       <AccountPanel id="personality" active={section} visited={visitedSections}>
-        <ConstellationMaybe core={t.account.tabPersonality}><PersonalitySection onSaveState={reportSaveState} /></ConstellationMaybe>
+        <ConstellationScope core={t.account.tabPersonality}><PersonalitySection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
       <AccountPanel id="terminal" active={section} visited={visitedSections}>
-        <ConstellationMaybe core={t.account.tabTerminal}><TerminalSection onSaveState={reportSaveState} /></ConstellationMaybe>
+        <ConstellationScope core={t.account.tabTerminal}><TerminalSection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
 
       {/* Elowen AI runtime controls. Default models live at the top of the profile workspace, where
           users see their most consequential personal preference immediately. */}
       <AccountPanel id="cli" active={section} visited={visitedSections}>
-        <ConstellationMaybe core={t.account.tabCli}><CliSection onSaveState={reportSaveState} /></ConstellationMaybe>
+        <ConstellationScope core={t.account.tabCli}><CliSection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
-      <ConstellationMaybe core={t.account.tabProfile}>
+      <ConstellationScope core={t.account.tabProfile}>
       {(() => {
-        // PROTOTYPE(constellation): the same rows feed both layouts — one merged orbit in cosmos
-        // mode, the original four themed groups in the classic layout.
         const rowWorker = workerExecs.length > 0 ? (
           <SpatialRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
             <WorkerField
@@ -464,36 +449,17 @@ export function AccountView() {
             </div>
             </SpatialIdentity>
 
-            {ACCOUNT_CONSTELLATION ? (
-              <SpatialGroup>
-                {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}
-              </SpatialGroup>
-            ) : (
-              <>
-                <SpatialGroup
-                  title={t.account.defaultModel}
-                  icon={Cpu}
-                  description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}
-                >
-                  {rowWorker}
-                  {rowElowen}
-                  {workerExecs.length === 0 && elowenModels.length === 0 ? (
-                    <p className="py-4 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
-                  ) : null}
-                </SpatialGroup>
-                <SpatialGroup>{rowName}{rowEmail}</SpatialGroup>
-                <SpatialGroup>{rowUiScale}{rowEffects}</SpatialGroup>
-                <SpatialGroup>{rowDiscord}{rowWhatsapp}</SpatialGroup>
-              </>
-            )}
+            <SpatialGroup>
+              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}
+            </SpatialGroup>
           </div>
         );
       })()}
-      </ConstellationMaybe>
+      </ConstellationScope>
       </AccountPanel>
 
       <AccountPanel id="security" active={section} visited={visitedSections}>
-      <ConstellationMaybe core={t.account.tabSecurity}>
+      <ConstellationScope core={t.account.tabSecurity}>
       {(() => {
         // Password change — verified server-side against the current password.
         const passwordForm = (
@@ -538,15 +504,7 @@ export function AccountView() {
             </div>
           </form>
         );
-        if (!ACCOUNT_CONSTELLATION) {
-          return (
-            <SpatialGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
-              {passwordForm}
-            </SpatialGroup>
-          );
-        }
-        // PROTOTYPE(constellation): the pod shows a masked hint; the form opens in a side drawer
-        // via the pod's orb.
+        // The pod shows a masked hint; the form opens in a side drawer via the pod's orb.
         return (
           <>
             <SpatialGroup>
@@ -564,7 +522,7 @@ export function AccountView() {
           </>
         );
       })()}
-      </ConstellationMaybe>
+      </ConstellationScope>
       </AccountPanel>
 
       <AccountPanel id="notifications" active={section} visited={visitedSections}>
@@ -572,7 +530,7 @@ export function AccountView() {
            Rendered as an inline toggle row (like the other account settings) instead of a detached
            right-aligned button, so the control reads as a setting, not a submit form. */}
         {pushSupported ? (
-          <ConstellationMaybe core={t.account.tabNotifications}>
+          <ConstellationScope core={t.account.tabNotifications}>
           <SpatialGroup>
           <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <label className="flex items-center gap-3 text-sm text-text">
@@ -581,7 +539,7 @@ export function AccountView() {
             </label>
           </SpatialRow>
           </SpatialGroup>
-          </ConstellationMaybe>
+          </ConstellationScope>
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
       </SpatialControlDeck>

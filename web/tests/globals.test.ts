@@ -30,7 +30,7 @@ describe('design tokens', () => {
   });
 
   it('uses component width for spatial deck layout changes', () => {
-    expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-deck-hero/);
+    expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
     expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-form-row/);
   });
 

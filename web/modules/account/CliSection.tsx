@@ -2,14 +2,10 @@
 import { useState, useEffect } from 'react';
 import { Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
-import { SelectionSummary } from '../../components/ui/SelectionSummary';
-import { ModelIcon } from '../../components/ui/ModelIcon';
 import { CompactThresholdsDrawer } from './CompactThresholdsDrawer';
 import { Segmented } from '../../components/ui/Segmented';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { useConstellation } from '../../components/ui/Constellation';
 import { Toggle } from '../../components/ui/Toggle';
-import { Slider } from '../../components/ui/Slider';
 import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -27,9 +23,6 @@ const NO_REASONING_LEVELS: string[] = [];
  *  section in AccountView. Communication style lives in Personality. Its own load/save + autosave. */
 export function CliSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { data, isLoading } = useMyCliSettings();
-  // PROTOTYPE(constellation): inside the orbital layout the auto-compact pod stays minimal (toggle +
-  // current threshold) and the full controls live in the side drawer, opened via the pod's orb.
-  const cosmos = useConstellation();
   const models = useBrainModels();
   const save = useSaveMyCliSettings();
   const { toast } = useToast();
@@ -179,46 +172,12 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       </SpatialRow>
 
       <SpatialRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
-        {cosmos ? (
-          <div className="flex items-center gap-3">
-            <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
-            {autoCompact ? <span className="font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span> : null}
-            {/* Hidden manage trigger — the pod's orb forwards its click here to open the drawer. */}
-            <button type="button" data-selection-manage className="hidden" aria-label={t.cli.compactByModelTitle} onClick={() => setThresholdsOpen(true)} />
-          </div>
-        ) : (
-        <div className="flex flex-col gap-4">
-          <label className="flex items-center gap-3 text-sm text-text">
-            <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
-            <span>{t.cli.autoCompactToggle}</span>
-          </label>
-          {autoCompact ? (
-            <>
-              <div className="flex items-center gap-4">
-                <span className="shrink-0 text-xs text-text-muted">{t.cli.autoCompactAt}</span>
-                <Slider value={autoCompactAt} min={30} max={95} step={5} onChange={setAutoCompactAt} aria-label={t.cli.autoCompactAt} />
-                <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span>
-              </div>
-              {(() => {
-                const tuned = (models.data ?? []).filter((m) => compactByModel[`${m.provider}/${m.model}`] != null);
-                return (
-                  <SelectionSummary
-                    countText={t.cli.compactByModelManage}
-                    samples={tuned.slice(0, 3).map((m) => ({
-                      label: `${m.model} · ${compactByModel[`${m.provider}/${m.model}`]}%`,
-                      icon: <ModelIcon name={m.model} size={13} />,
-                    }))}
-                    moreCount={Math.max(0, tuned.length - 3)}
-                    onManage={() => setThresholdsOpen(true)}
-                    manageLabel={t.managePicker.manage}
-                    manageAriaLabel={t.cli.compactByModelTitle}
-                  />
-                );
-              })()}
-            </>
-          ) : null}
+        <div className="flex items-center gap-3">
+          <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
+          {autoCompact ? <span className="font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span> : null}
+          {/* Hidden manage trigger — the pod's orb forwards its click here to open the drawer. */}
+          <button type="button" data-selection-manage className="hidden" aria-label={t.cli.compactByModelTitle} onClick={() => setThresholdsOpen(true)} />
         </div>
-        )}
       </SpatialRow>
 
       <SpatialRow title={t.cli.compactModelLabel} icon={Shrink} description={t.help.cliCompactModel}>
@@ -252,12 +211,9 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           aria-label={t.cli.unattendedTitle}
         />
       </SpatialRow>
-      {/* PROTOTYPE(constellation): permission rules join the orbit as a pod (drawer editor); the
-          classic layout keeps its card below the group. */}
-      {cosmos ? <PermissionRulesCard asPod /> : null}
+      {/* Permission rules join the orbit as a pod (drawer editor). */}
+      <PermissionRulesCard />
       </SpatialGroup>
-
-      {cosmos ? null : <PermissionRulesCard />}
       <ConfirmDialog
         open={confirmYolo}
         title={t.cli.yoloConfirmTitle}
@@ -271,7 +227,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           models={models.data ?? []}
           thresholds={compactByModel}
           defaultPct={autoCompactAt}
-          onDefaultChange={cosmos ? setAutoCompactAt : undefined}
+          onDefaultChange={setAutoCompactAt}
           onChange={(key, pct) => setCompactByModel((prev) => {
             const next = { ...prev };
             if (pct == null) delete next[key];

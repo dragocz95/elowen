@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { Boxes, FlaskConical, Hash, PenLine, RefreshCw, Server, Tags } from 'lucide-react';
-import { useConstellation } from '../../components/ui/Constellation';
 import { Badge } from '../../components/ui/Badge';
 import { Input } from '../../components/ui/Input';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
@@ -34,8 +33,6 @@ function useProviderCatalog(brainModels: BrainModelOption[] | undefined, provide
  *  no separate base URL. Admin-only (the Settings config group is already admin-gated). */
 export function MemorySection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { t } = useTranslation();
-  // PROTOTYPE(constellation): declared with the other hooks (before the loading return).
-  const cosmos = useConstellation();
   const { data: config } = useConfig();
   const { data: embedding } = useEmbeddingSettings();
   const { data: categorization } = useCategorizationSettings();
@@ -140,9 +137,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
     });
   };
 
-  // PROTOTYPE(constellation): the same rows feed both layouts — one merged orbit in cosmos mode
-  // (badges become pod statuses, the test action joins the provider pod), the original two themed
-  // groups in the classic layout.
+  // One merged orbit: badges are pod statuses, the test action joins the provider pod.
   const embBadge = embedding.configured ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge> : <Badge>{t.memory.embeddingUnconfigured}</Badge>;
   const catBadge = categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>;
   const testButton = (
@@ -153,8 +148,8 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
   // In pods a many-provider Segmented strip grows far too tall — show the pick as a chip + drawer.
   const rowEmbProvider = (
     <SettingsRow label={t.memory.embeddingProvider} description={t.help.embeddingProvider} icon={Server}
-      status={cosmos ? embBadge : undefined} actions={cosmos ? testButton : undefined}>
-      {cosmos && embeddingProviders.length > 0
+      status={embBadge} actions={testButton}>
+      {embeddingProviders.length > 0
         ? <ChoiceField title={t.memory.embeddingProvider} options={embeddingProviders.map((p) => ({ value: p.id, label: p.label }))} value={embProvider} onChange={setEmbProvider} picker="always" />
         : <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
     </SettingsRow>
@@ -195,8 +190,8 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
     </SettingsRow>
   );
   const rowCatProvider = (
-    <SettingsRow label={t.categorization.providerLabel} description={t.help.categorizationProvider} icon={Server} status={cosmos ? catBadge : undefined}>
-      {cosmos && providers.length > 0
+    <SettingsRow label={t.categorization.providerLabel} description={t.help.categorizationProvider} icon={Server} status={catBadge}>
+      {providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
         : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}
     </SettingsRow>
@@ -221,41 +216,10 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
 
   return (
     <div className="@container flex flex-col gap-4">
-      {cosmos ? (
-        <SettingsGroup>
-          {rowEmbProvider}{rowEmbModel}{rowEmbCustom}{rowDimensions}{rowReindex}
-          {rowCatProvider}{rowCatModel}{rowReclassify}
-        </SettingsGroup>
-      ) : (
-        <>
-          <SettingsGroup
-            title={t.memory.embeddingHeading}
-            description={t.help.embeddingIntro}
-            icon={FlaskConical}
-            actions={<div className="flex flex-wrap items-center justify-end gap-3">
-              {embBadge}
-              {testButton}
-            </div>}
-          >
-            {rowEmbProvider}
-            {rowEmbModel}
-            {rowEmbCustom}
-            {rowDimensions}
-            {rowReindex}
-          </SettingsGroup>
-
-          <SettingsGroup
-            title={t.categorization.title}
-            description={t.help.categorizationIntro}
-            icon={RefreshCw}
-            actions={catBadge}
-          >
-            {rowCatProvider}
-            {rowCatModel}
-            {rowReclassify}
-          </SettingsGroup>
-        </>
-      )}
+      <SettingsGroup>
+        {rowEmbProvider}{rowEmbModel}{rowEmbCustom}{rowDimensions}{rowReindex}
+        {rowCatProvider}{rowCatModel}{rowReclassify}
+      </SettingsGroup>
 
       <ConfirmDialog
         open={reindexOpen}

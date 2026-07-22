@@ -25,7 +25,6 @@ function Deck({ value = 'system', onChange = vi.fn(), status = 'idle' as const, 
         onChange={onChange}
         status={status}
         onRetry={onRetry}
-        hero={<span>Live runtime topology</span>}
       >
         <div>Active section content</div>
       </SpatialControlDeck>
@@ -34,12 +33,11 @@ function Deck({ value = 'system', onChange = vi.fn(), status = 'idle' as const, 
 }
 
 describe('SpatialControlDeck', () => {
-  it('renders the active section heading, one persistent mascot, rail and content surface', () => {
+  it('renders the active section heading, rail and content surface', () => {
     render(<Deck />);
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     expect(screen.getByText('Runtime and security.')).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
     expect(screen.getByRole('radiogroup', { name: 'Settings sections' })).toBeInTheDocument();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Active section content'));
   });
@@ -85,7 +83,7 @@ describe('SpatialControlDeck', () => {
     expect(active).toHaveFocus();
   });
 
-  it('keeps failed auto-save retry in the hero', () => {
+  it('keeps failed auto-save retry in the heading', () => {
     const retry = vi.fn();
     render(<Deck status="error" onRetry={retry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

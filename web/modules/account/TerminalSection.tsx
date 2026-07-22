@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { Type, TextCursorInput, ScrollText, Palette } from 'lucide-react';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { useConstellation } from '../../components/ui/Constellation';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Segmented } from '../../components/ui/Segmented';
@@ -40,8 +39,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   const [showThoughtsCli, setShowThoughtsCli] = useState(TERMINAL_DEFAULTS.showThoughtsCli ?? true);
 
   const [seeded, setSeeded] = useState(false);
-  // PROTOTYPE(constellation): the palette + live preview open in a side drawer via the pod's orb.
-  const cosmos = useConstellation();
+  // The palette + live preview open in a side drawer via the pod's orb.
   const [colorsOpen, setColorsOpen] = useState(false);
   useEffect(() => {
     if (data && !seeded) {
@@ -124,11 +122,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={label}>{t.terminal.fontFamily}</span>
-            {/* PROTOTYPE(constellation): four options don't fit a pod as a segmented strip — the pod
-                shows the current family as a chip and picks in the shared drawer picker. */}
-            {cosmos
-              ? <ChoiceField title={t.terminal.fontFamily} options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} />
-              : <Segmented options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} aria-label={t.terminal.fontFamily} />}
+            {/* Four options don't fit a pod as a segmented strip — the pod shows the current
+                family as a chip and picks in the shared drawer picker. */}
+            <ChoiceField title={t.terminal.fontFamily} options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} />
           </div>
         </div>
       </SpatialRow>
@@ -185,20 +181,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
 
   return (
     <div className="flex flex-col gap-4">
-      {cosmos ? (
-        <SpatialGroup>
-          {rowColors}{rowFont}{rowCursor}{rowCli}{rowHistory}
-        </SpatialGroup>
-      ) : (
-        <>
-          <SpatialGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
-            {colorsEditor}
-          </SpatialGroup>
-          <SpatialGroup>
-            {rowFont}{rowCursor}{rowCli}{rowHistory}
-          </SpatialGroup>
-        </>
-      )}
+      <SpatialGroup>
+        {rowColors}{rowFont}{rowCursor}{rowCli}{rowHistory}
+      </SpatialGroup>
 
       {colorsOpen ? (
         <WorkspaceDetailRail label={t.terminal.colorsTitle} closeLabel={t.common.close} onClose={() => setColorsOpen(false)}>

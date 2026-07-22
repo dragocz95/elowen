@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
-import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Input } from '../../components/ui/Input';
@@ -66,9 +66,9 @@ function ActionSwitch({ value, onChange, label, labels }: {
  *  main list with an add row; tool-name rules render below only when some exist. Rule order is
  *  precedence (last match wins), so adds append and a duplicate pattern moves to the end. Every
  *  change persists immediately by replacing the scope's whole map — order is the payload.
- *  PROTOTYPE(constellation): `asPod` renders it as an orbital pod instead — sample rule chips on
- *  the page, the full editor in a side drawer opened via the pod's orb. */
-export function PermissionRulesCard({ asPod = false }: { asPod?: boolean } = {}) {
+ *  Renders as an orbital pod — sample rule chips on the page, the full editor in a side drawer
+ *  opened via the pod's orb. */
+export function PermissionRulesCard() {
   const permissions = useMyPermissions();
   const save = useSaveMyPermissions();
   const { toast } = useToast();
@@ -185,36 +185,26 @@ export function PermissionRulesCard({ asPod = false }: { asPod?: boolean } = {})
     />
   );
 
-  if (asPod) {
-    const all = [...bashRules, ...toolsRules];
-    return (
-      <>
-        <SpatialRow title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
-          <SelectionSummary
-            countText=""
-            samples={all.slice(0, 2).map((r) => ({ label: r.pattern }))}
-            moreCount={Math.max(0, all.length - 2)}
-            onManage={() => setDrawerOpen(true)}
-            manageLabel={t.managePicker.manage}
-            manageAriaLabel={t.cli.permTitle}
-          />
-        </SpatialRow>
-        {drawerOpen ? (
-          <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
-            <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.help.cliPermissions}</p>
-            {editor}
-          </WorkspaceDetailRail>
-        ) : null}
-        {confirm}
-      </>
-    );
-  }
-
-  // variant="classic": the rules list is not label/control rows, so it opts out of the constellation.
+  const all = [...bashRules, ...toolsRules];
   return (
-    <SpatialGroup title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions} variant="classic">
-      {editor}
+    <>
+      <SpatialRow title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
+        <SelectionSummary
+          countText=""
+          samples={all.slice(0, 2).map((r) => ({ label: r.pattern }))}
+          moreCount={Math.max(0, all.length - 2)}
+          onManage={() => setDrawerOpen(true)}
+          manageLabel={t.managePicker.manage}
+          manageAriaLabel={t.cli.permTitle}
+        />
+      </SpatialRow>
+      {drawerOpen ? (
+        <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
+          <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.help.cliPermissions}</p>
+          {editor}
+        </WorkspaceDetailRail>
+      ) : null}
       {confirm}
-    </SpatialGroup>
+    </>
   );
 }

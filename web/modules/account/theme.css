@@ -17,5 +17,5 @@
   .account-identity-hero__name { font-size: 1.35rem; }
 }
 
-/* PROTOTYPE(constellation): sections float directly on the page background — no card frame. */
+/* Constellation: sections float directly on the page background — no card frame. */
 [data-module="account"] [data-account-panel][data-constellation] { border: 0; border-radius: 0; background: none; box-shadow: none; padding: 0; overflow: visible; }

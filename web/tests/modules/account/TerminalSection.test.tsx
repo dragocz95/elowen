@@ -32,20 +32,23 @@ describe('TerminalSection', () => {
     expect(colorInputs(container).length).toBe(0);              // theme:'auto' → no swatches
   });
 
-  it('reveals the full 21-colour palette + presets when switching to Custom', () => {
-    const { container } = renderSection();
+  it('reveals the full 21-colour palette + presets when switching to Custom in the drawer', () => {
+    renderSection();
+    // The colors editor lives in the side drawer behind the row's manage button (portalled to body).
+    fireEvent.click(screen.getByRole('button', { name: 'Colors' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
-    expect(colorInputs(container).length).toBe(21);
+    expect(colorInputs(document.body).length).toBe(21);
     expect(screen.getByText('Dracula')).toBeTruthy();           // a preset option
   });
 
-  it('keeps the preview and palette shrinkable inside the mobile account panel', () => {
-    const { container } = renderSection();
+  it('keeps the preview and palette shrinkable inside the drawer', () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: 'Colors' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
 
     expect(screen.getByTestId('terminal-colors-layout')).toHaveClass('min-w-0', 'grid-cols-[minmax(0,1fr)]');
     expect(screen.getByTestId('terminal-preview')).toHaveClass('min-w-0', 'max-w-full');
-    expect(container.querySelector('[data-terminal-palette]')).toHaveClass('grid-cols-2', '@sm:grid-cols-3', '@md:grid-cols-4');
+    expect(document.body.querySelector('[data-terminal-palette]')).toHaveClass('grid-cols-2', '@sm:grid-cols-3', '@md:grid-cols-4');
   });
 
   it('autosaves the patched fields after a change', async () => {

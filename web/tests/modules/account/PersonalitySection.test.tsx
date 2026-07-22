@@ -34,15 +34,15 @@ const server = setupServer(
 beforeAll(() => server.listen()); afterEach(() => { server.resetHandlers(); lastPatch = null; }); afterAll(() => server.close());
 
 describe('PersonalitySection', () => {
-  it('renders the pills and opens the body editor in a modal', async () => {
+  it('shows the current style as a chip and opens the body editor in a drawer', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
 
-    expect(await screen.findByRole('button', { name: 'Professional' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Friendly' })).toBeInTheDocument();
-    // Empty body → no inline editor; the Monaco editor only mounts inside the modal.
+    // The style renders as a chip of the seeded pick; the full choice opens in the shared picker.
+    expect(await screen.findByText('Concise')).toBeInTheDocument();
+    // Empty body → no inline editor; the Monaco editor only mounts inside the drawer.
     expect(screen.queryByLabelText('personality-body')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Add instructions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Personality instructions' }));
     expect(await screen.findByLabelText('personality-body')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
@@ -51,12 +51,15 @@ describe('PersonalitySection', () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
 
-    // The server style is 'concise' — wait for the seed to land (that pill becomes pressed) before
-    // editing, otherwise the seeding effect would overwrite the edits.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Concise' })).toHaveAttribute('aria-pressed', 'true'));
-    fireEvent.click(screen.getByRole('button', { name: 'Friendly' }));
-    // Open the modal to reach the body editor, then edit it.
-    fireEvent.click(screen.getByRole('button', { name: 'Add instructions' }));
+    // The server style is 'concise' — wait for the seed to land (the chip shows it) before editing,
+    // otherwise the seeding effect would overwrite the edits.
+    expect(await screen.findByText('Concise')).toBeInTheDocument();
+    // Pick a new style in the picker (the style row's Manage button; the body row's says Add).
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Friendly' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    // Open the drawer to reach the body editor, then edit it.
+    fireEvent.click(screen.getByRole('button', { name: 'Personality instructions' }));
     fireEvent.change(await screen.findByLabelText('personality-body'), { target: { value: 'Be warm.' } });
 
     await waitFor(() => expect(lastPatch).not.toBeNull());

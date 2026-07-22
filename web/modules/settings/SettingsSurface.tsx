@@ -11,7 +11,7 @@ export function SettingsDocument({ children, className = '' }: { children: React
   return <div data-control-surface data-settings-document className={`control-surface-document settings-document ${className}`}>{children}</div>;
 }
 
-/** PROTOTYPE(constellation): inside a ConstellationScope the group renders as an orbital cosmos
+/** Inside a ConstellationScope the group renders as an orbital cosmos
  *  (mirroring SpatialGroup); `variant="classic"` opts non-row content out. */
 export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', children, className = '', variant }: {
   title?: string;
@@ -61,7 +61,7 @@ export function SettingsRow({ label, description, icon: Icon, status, actions, c
   const cosmos = useConstellation();
   const podRef = useRef<HTMLDivElement>(null);
   if (cosmos) {
-    // PROTOTYPE(constellation): the row renders as a floating pod — the orb is the manage trigger
+    // The row renders as a floating pod — the orb is the manage trigger
     // (it forwards to the control's hidden [data-selection-manage] button when one exists).
     return (
       <div className="cosmos-pod" ref={podRef}>

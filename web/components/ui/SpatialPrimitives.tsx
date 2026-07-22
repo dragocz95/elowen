@@ -23,7 +23,7 @@ function SpatialLabel({ title, description, icon: Icon }: { title: string; descr
 }
 
 /** Open document section used by spatial control surfaces. It deliberately has no card shell.
- *  PROTOTYPE(constellation): inside a ConstellationScope the group renders as an orbital cosmos
+ *  Inside a ConstellationScope the group renders as an orbital cosmos
  *  instead — `variant="classic"` opts a group out (for non-row content like the permission rules). */
 export function SpatialGroup({ title, description, icon, children, className = '', variant }: {
   title?: string;
@@ -50,7 +50,7 @@ export function SpatialGroup({ title, description, icon, children, className = '
 }
 
 /** A responsive label/control row. Controls become horizontal only when the document has room.
- *  PROTOTYPE(constellation): inside a ConstellationScope the row renders as a floating pod. */
+ *  Inside a ConstellationScope the row renders as a floating pod. */
 export function SpatialRow({ title, description, icon: Icon, children, className = '' }: {
   title: string;
   description?: string;

@@ -39,17 +39,18 @@ describe('MemorySection — categorization model picker', () => {
   it('uses the shared settings group and row pattern for both memory model areas', () => {
     const { container } = renderSection();
 
-    expect(container.querySelectorAll('[data-settings-group]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-settings-group]')).toHaveLength(1);
     expect(container.querySelectorAll('.settings-row')).toHaveLength(8);
     expect(container.querySelector('.spatial-group')).toBeNull();
   });
 
   it('picks a provider-scoped model in the modal (rows carry icons) and autosaves it', async () => {
     renderSection();
-    // Two catalog fields render a Manage button each (embedding, categorization) — the categorization
-    // one is the second, scoped to its "anthropic" provider.
+    // The provider chips and both catalog fields render a Manage button each (embedding provider,
+    // embedding model, categorization provider, categorization model) — the categorization MODEL
+    // is the fourth, scoped to its "anthropic" provider.
     const manageButtons = screen.getAllByRole('button', { name: en.managePicker.manage });
-    fireEvent.click(manageButtons[1]);
+    fireEvent.click(manageButtons[3]);
     // The catalog is provider-scoped (anthropic) → the model row shows with its brand icon.
     const row = await screen.findByRole('button', { name: 'claude-haiku' });
     expect(row.querySelector('img')).toBeTruthy();
@@ -63,7 +64,7 @@ describe('MemorySection — categorization model picker', () => {
   it('the pinned "None" row clears the model back to empty', async () => {
     renderSection();
     const manageButtons = screen.getAllByRole('button', { name: en.managePicker.manage });
-    fireEvent.click(manageButtons[1]);
+    fireEvent.click(manageButtons[3]);
     // No model saved → the pinned None row is the current pick.
     expect(await screen.findByRole('button', { name: en.managePicker.none })).toHaveAttribute('aria-pressed', 'true');
   });

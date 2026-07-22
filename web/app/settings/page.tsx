@@ -76,12 +76,9 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
 const CATEGORY_VALUES = SETTINGS_CATEGORY_VALUES;
 type Category = SettingsCategory;
 
-/** PROTOTYPE(constellation): per-category rollout of the orbital layout (mirrors
- *  ACCOUNT_CONSTELLATION in the account view). A category set to true renders its rows as an
- *  orbital field with drawers and drops the document card frame; flip to false to restore the
- *  classic layout — no other change needed. The deck is compact like Account (no hero band); the
- *  version/update/restart controls the hero used to carry live in the System section. */
-const SETTINGS_CONSTELLATION: Partial<Record<Category, boolean>> = { memory: true, github: true, autopilot: true, brain: true, system: true };
+/** Categories rendered as an orbital constellation (rows become pods, composites edit in drawers,
+ *  the document card frame drops). The rest — catalogs, lists and data views — stay classic. */
+const ORBITAL_CATEGORIES: ReadonlySet<Category> = new Set<Category>(['system', 'brain', 'autopilot', 'github', 'memory']);
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
@@ -94,17 +91,14 @@ function SettingsPanel({ id, active, visited, children }: {
   if (id !== active && !visited.has(id)) return null;
   return (
     <Activity mode={id === active ? 'visible' : 'hidden'}>
-      <MotionReveal data-settings-panel={id} data-constellation={SETTINGS_CONSTELLATION[id] ? '' : undefined}>
+      <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
         <SettingsDocument>{children}</SettingsDocument>
       </MotionReveal>
     </Activity>
   );
 }
 
-/** Wraps a category's content in a ConstellationScope when its flag is on. */
-function SettingsScope({ id, core, children }: { id: Category; core: string; children: ReactNode }) {
-  return SETTINGS_CONSTELLATION[id] ? <ConstellationScope core={core}>{children}</ConstellationScope> : <>{children}</>;
-}
+
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -188,9 +182,9 @@ export default function SettingsPage() {
   const [prAutoOpen, setPrAutoOpen] = useState(false);
   const [prVerifyCommand, setPrVerifyCommand] = useState('');
   const [ghToken, setGhToken] = useState('');
-  // PROTOTYPE(constellation): the GitHub text fields edit in one side drawer opened via pod orbs.
+  // The GitHub text fields edit in one side drawer opened via pod orbs.
   const [githubOpen, setGithubOpen] = useState(false);
-  // PROTOTYPE(constellation): same pattern for the Autopilot free-text fields (models/endpoint/notes).
+  // Same pattern for the Autopilot free-text fields (models/endpoint/notes).
   const [autopilotOpen, setAutopilotOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -457,7 +451,6 @@ export default function SettingsPage() {
         onChange={(value) => setCategory(value as Category)}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
-        compact
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
@@ -626,12 +619,9 @@ export default function SettingsPage() {
         )}
 
         <SettingsPanel id="autopilot" active={category} visited={visitedCategories}>
-          <SettingsScope id="autopilot" core={t.settings.autopilot}>
+          <ConstellationScope core={t.settings.autopilot}>
             {(() => {
-              // PROTOTYPE(constellation): the same rows feed both layouts — one merged orbit in
-              // cosmos mode (free-text fields become chips editing in one shared drawer), the
-              // original three groups in the classic layout.
-              const ap = SETTINGS_CONSTELLATION.autopilot;
+              // One merged orbit — the free-text fields become chips editing in one shared drawer.
               const apProviders = (config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }));
               const openDrawer = (label: string) => (
                 <button type="button" data-selection-manage className="hidden" aria-label={label} onClick={() => setAutopilotOpen(true)} />
@@ -654,14 +644,13 @@ export default function SettingsPage() {
                         { value: 'agents', label: t.settings.modeAgents, icon: Bot },
                       ]}
                     />
-                    {ap ? null : <p className="text-xs text-text-muted">{reasoningMode === 'relay' ? t.settings.modeRelayDesc : t.settings.modeAgentsDesc}</p>}
                   </div>
                 </SettingsRow>
               );
               // In pods a many-provider Segmented strip grows too tall — pick as a chip + drawer.
               const rowApProvider = (
                 <SettingsRow label={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound}>
-                  {ap && apProviders.length > 0
+                  {apProviders.length > 0
                     ? <ChoiceField title={t.settings.apProvider} options={apProviders.map((p) => ({ value: p.id, label: p.label }))} value={apProviderId} onChange={setApProviderId} picker="always" />
                     : <ProviderPicker providers={apProviders} value={apProviderId} onChange={setApProviderId} label={t.settings.apProvider} emptyText={t.settings.apNoProviders} />}
                 </SettingsRow>
@@ -680,16 +669,14 @@ export default function SettingsPage() {
                 <SettingsRow label={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                   {relayHasCatalog
                     ? <ModelCatalogField value={model} onChange={setModel} catalog={apCatalog} title={t.settings.plannerModel} subtitle={t.help.plannerModel} />
-                    : ap ? relayModelChip(model, t.settings.plannerModel)
-                    : <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />}
+                    : relayModelChip(model, t.settings.plannerModel)}
                 </SettingsRow>
               );
               const rowOverseerRelay = (
                 <SettingsRow label={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                   {relayHasCatalog
                     ? <ModelCatalogField value={overseerModel} onChange={setOverseerModel} catalog={apCatalog} title={t.settings.overseerModel} subtitle={t.help.overseerModel} />
-                    : ap ? relayModelChip(overseerModel, t.settings.overseerModel)
-                    : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
+                    : relayModelChip(overseerModel, t.settings.overseerModel)}
                 </SettingsRow>
               );
               const apiUrlInput = <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} aria-label={t.settings.apiUrl} />;
@@ -698,12 +685,12 @@ export default function SettingsPage() {
               // so these fields simply don't render (no redundant "inherited" note).
               const rowApiUrl = (
                 <SettingsRow label={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
-                  {ap ? <><span className="max-w-full truncate font-mono text-sm text-text-muted">{apiUrl || '—'}</span>{openDrawer(t.settings.apiUrl)}</> : apiUrlInput}
+                  <span className="max-w-full truncate font-mono text-sm text-text-muted">{apiUrl || '—'}</span>{openDrawer(t.settings.apiUrl)}
                 </SettingsRow>
               );
               const rowApiKey = (
                 <SettingsRow label={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
-                  {ap ? <><span className="font-mono text-sm tracking-widest text-text-muted">{apiKeySet || apiKey ? '••••••••' : '—'}</span>{openDrawer(t.settings.apiKey)}</> : apiKeyInput}
+                  <span className="font-mono text-sm tracking-widest text-text-muted">{apiKeySet || apiKey ? '••••••••' : '—'}</span>{openDrawer(t.settings.apiKey)}
                 </SettingsRow>
               );
               const rowPlannerAgents = (
@@ -724,7 +711,7 @@ export default function SettingsPage() {
               const notesTextarea = <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} aria-label={t.settings.notes} />;
               const rowNotes = (
                 <SettingsRow label={t.settings.notes} description={t.help.notes} icon={FileText}>
-                  {ap ? <><span className="block max-w-full truncate text-sm text-text-muted">{notes.trim() || '—'}</span>{openDrawer(t.settings.notes)}</> : notesTextarea}
+                  <span className="block max-w-full truncate text-sm text-text-muted">{notes.trim() || '—'}</span>{openDrawer(t.settings.notes)}
                 </SettingsRow>
               );
               const rowExecutor = (
@@ -739,11 +726,6 @@ export default function SettingsPage() {
                 <SettingsRow label={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
                   <div>
                   <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
-                  {ap ? null : (
-                    <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                      {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
-                    </p>
-                  )}
                   </div>
                 </SettingsRow>
               );
@@ -768,7 +750,7 @@ export default function SettingsPage() {
                 </>
               );
               const agentRows = <>{rowPlannerAgents}{rowOverseerAgents}{rowReviewOnDone}</>;
-              const drawer = ap && autopilotOpen ? (
+              const drawer = autopilotOpen ? (
                 <WorkspaceDetailRail label={t.settings.autopilot} closeLabel={t.common.close} onClose={() => setAutopilotOpen(false)}>
                   <div className="flex flex-col gap-5 py-2">
                     {reasoningMode === 'relay' && !relayHasCatalog ? (
@@ -787,7 +769,7 @@ export default function SettingsPage() {
                   </div>
                 </WorkspaceDetailRail>
               ) : null;
-              return ap ? (
+              return (
                 <>
                   <SettingsGroup>
                     {rowMode}
@@ -800,73 +782,38 @@ export default function SettingsPage() {
                   </SettingsGroup>
                   {drawer}
                 </>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  <SettingsGroup>{rowMode}</SettingsGroup>
-                  <SettingsGroup>
-                    {reasoningMode === 'relay' ? relayRows : agentRows}
-                    {rowNotes}
-                  </SettingsGroup>
-                  {/* Default mission run — what the pilot actually launches: the worker executor, the
-                      autonomy level and how many agents run in parallel. These apply in both reasoning
-                      modes, so they live below the relay/agents split. */}
-                  <SettingsGroup title={t.settings.runDefaults} icon={Cpu}>
-                    {rowExecutor}
-                    {rowAutonomy}
-                    {rowMaxSessions}
-                    {rowTdd}
-                  </SettingsGroup>
-                </div>
               );
             })()}
-          </SettingsScope>
+          </ConstellationScope>
         </SettingsPanel>
 
         <SettingsPanel id="github" active={category} visited={visitedCategories}>
-          <SettingsScope id="github" core={t.settings.github}>
+          <ConstellationScope core={t.settings.github}>
             {/* variant="classic": the status banner is not a label/control row. */}
             <SettingsGroup variant="classic"><GithubStatusBanner /></SettingsGroup>
             <SettingsGroup>
-            {/* PROTOTYPE(constellation): the three text fields show as chips in the orbit and edit
-                together in one side drawer (opened via any of their pod orbs); toggles stay inline. */}
+            {/* The three text fields show as chips in the orbit and edit together in one side
+                drawer (opened via any of their pod orbs); toggles stay inline. */}
             <SettingsRow label={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
-              {SETTINGS_CONSTELLATION.github ? (
-                <>
-                  <span className="font-mono text-sm tracking-widest text-text-muted">{ghTokenSet || ghToken ? '••••••••' : '—'}</span>
-                  <button type="button" data-selection-manage className="hidden" aria-label={t.settings.ghToken} onClick={() => setGithubOpen(true)} />
-                </>
-              ) : (
-                <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} />
-              )}
+              <span className="font-mono text-sm tracking-widest text-text-muted">{ghTokenSet || ghToken ? '••••••••' : '—'}</span>
+              <button type="button" data-selection-manage className="hidden" aria-label={t.settings.ghToken} onClick={() => setGithubOpen(true)} />
             </SettingsRow>
             <SettingsRow label={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
               <Toggle checked={prEnabled} onChange={setPrEnabled} label={t.settings.prEnabled} />
             </SettingsRow>
             <SettingsRow label={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
-              {SETTINGS_CONSTELLATION.github ? (
-                <>
-                  <span className="max-w-full truncate font-mono text-sm text-text-muted">{prBaseBranch || t.settings.prBaseBranchPlaceholder}</span>
-                  <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prBaseBranch} onClick={() => setGithubOpen(true)} />
-                </>
-              ) : (
-                <input value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} placeholder={t.settings.prBaseBranchPlaceholder} className={inputClass} />
-              )}
+              <span className="max-w-full truncate font-mono text-sm text-text-muted">{prBaseBranch || t.settings.prBaseBranchPlaceholder}</span>
+              <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prBaseBranch} onClick={() => setGithubOpen(true)} />
             </SettingsRow>
             <SettingsRow label={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
               <Toggle checked={prAutoOpen} onChange={setPrAutoOpen} label={t.settings.prAutoOpen} />
             </SettingsRow>
             <SettingsRow label={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
-              {SETTINGS_CONSTELLATION.github ? (
-                <>
-                  <span className="max-w-full truncate font-mono text-sm text-text-muted">{prVerifyCommand || '—'}</span>
-                  <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prVerifyCommand} onClick={() => setGithubOpen(true)} />
-                </>
-              ) : (
-                <input value={prVerifyCommand} onChange={(e) => setPrVerifyCommand(e.target.value)} placeholder={t.settings.prVerifyCommandPlaceholder} className={`${inputClass} font-mono text-xs`} />
-              )}
+              <span className="max-w-full truncate font-mono text-sm text-text-muted">{prVerifyCommand || '—'}</span>
+              <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prVerifyCommand} onClick={() => setGithubOpen(true)} />
             </SettingsRow>
             </SettingsGroup>
-            {SETTINGS_CONSTELLATION.github && githubOpen ? (
+            {githubOpen ? (
               <WorkspaceDetailRail label={t.settings.github} closeLabel={t.common.close} onClose={() => setGithubOpen(false)}>
                 <div className="flex flex-col gap-5 py-2">
                   <div className="flex flex-col gap-1.5">
@@ -884,7 +831,7 @@ export default function SettingsPage() {
                 </div>
               </WorkspaceDetailRail>
             ) : null}
-          </SettingsScope>
+          </ConstellationScope>
         </SettingsPanel>
 
         <SettingsPanel id="providers" active={category} visited={visitedCategories}>
@@ -979,12 +926,9 @@ export default function SettingsPage() {
 
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
-          <SettingsScope id="system" core={t.settings.system}>
+          <ConstellationScope core={t.settings.system}>
             {(() => {
-              // PROTOTYPE(constellation): the same rows feed both layouts — one merged orbit +
-              // classic diagnostics widget in cosmos mode, the original two-column grid otherwise.
-              // The version/update controls lived in the deck hero before it went compact.
-              const sys = SETTINGS_CONSTELLATION.system;
+              // One merged orbit + the classic diagnostics widget below it.
               const updateBadge = system.data?.updateAvailable
                 ? <Badge tone="warning">{t.settings.updateAvailable.replace('{v}', system.data?.latest ?? '')}</Badge>
                 : <Badge tone="success">{t.settings.upToDate}</Badge>;
@@ -1020,9 +964,7 @@ export default function SettingsPage() {
               ));
               const rowAutoUpdate = (
                 <SettingsRow label={t.settings.autoUpdate} icon={RefreshCw}>
-                  {sys
-                    ? <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
-                    : <span className="settings-control-row__control"><Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} /><span>{autoUpdate ? t.settings.on : t.settings.off}</span></span>}
+                  <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
                 </SettingsRow>
               );
               const rowTokenTtl = (
@@ -1068,7 +1010,7 @@ export default function SettingsPage() {
                   </div>
                 </SettingsGroup>
               );
-              return sys ? (
+              return (
                 <div className="flex flex-col gap-4">
                   <SettingsGroup>
                     {rowVersion}
@@ -1079,26 +1021,13 @@ export default function SettingsPage() {
                   </SettingsGroup>
                   {diagnosticsGroup}
                 </div>
-              ) : (
-                <div className="settings-system-content">
-                  <SettingsGroup title={t.settings.servicesAndUpdates} icon={Server} density="compact" className="settings-system-services">
-                    {rowVersion}
-                    {serviceRows}
-                    {rowAutoUpdate}
-                  </SettingsGroup>
-                  <SettingsGroup title={t.settings.sessionsAndSecurity} icon={KeyRound} className="settings-system-security">
-                    {rowTokenTtl}
-                    {rowRetention}
-                  </SettingsGroup>
-                  {diagnosticsGroup}
-                </div>
               );
             })()}
-          </SettingsScope>
+          </ConstellationScope>
         </SettingsPanel>
 
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
-          <SettingsScope id="brain" core={t.settings.brain}>
+          <ConstellationScope core={t.settings.brain}>
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
             <SettingsToolbar>
               <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
@@ -1106,11 +1035,11 @@ export default function SettingsPage() {
               </button>
             </SettingsToolbar>
             <BrainSection onSaveState={reportSaveState} />
-          </SettingsScope>
+          </ConstellationScope>
         </SettingsPanel>
 
         <SettingsPanel id="memory" active={category} visited={visitedCategories}>
-          <SettingsScope id="memory" core={t.settings.memory}><MemorySection onSaveState={reportSaveState} /></SettingsScope>
+          <ConstellationScope core={t.settings.memory}><MemorySection onSaveState={reportSaveState} /></ConstellationScope>
         </SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>

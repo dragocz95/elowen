@@ -155,7 +155,7 @@ function ManageSelectionModalBody({
     }
   };
 
-  // PROTOTYPE(constellation): pickers opened from an orbital pod slide in as right-side drawers so
+  // Pickers opened from an orbital pod slide in as right-side drawers so
   // every pod-launched surface shares one presentation; elsewhere they stay centered windows.
   const cosmos = useConstellation();
   return (

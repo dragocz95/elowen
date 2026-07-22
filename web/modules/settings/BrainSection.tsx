@@ -24,7 +24,6 @@ import { useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutati
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderType, OAuthFlowState, BrainLimits } from '../../lib/types';
 import { SettingsGroup, SettingsRow, SettingsState } from './SettingsSurface';
-import { useConstellation } from '../../components/ui/Constellation';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
 // /brain/oauth/status), never icons — so the enumeration is derived from that runtime data (a newly
@@ -263,9 +262,6 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
 
 /** Settings → Brain: the model providers behind `elowen chat` (custom endpoints + OAuth accounts). */
 export function BrainSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
-  // PROTOTYPE(constellation): identity/limits rows orbit; the account + provider LISTS stay classic
-  // (variant="classic" below) — a connect/edit list doesn't read as pods.
-  const cosmos = useConstellation();
   const { data: config } = useConfig();
   const oauth = useBrainOauthStatus();
   const rateLimits = useBrainRateLimitsAll();
@@ -422,7 +418,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
               limits={limits}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
-              presentation={cosmos ? 'drawer' : 'center'}
+              presentation="drawer"
             />
       ) : null}
 
