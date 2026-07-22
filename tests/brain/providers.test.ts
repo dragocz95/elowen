@@ -78,6 +78,49 @@ describe('brain providers', () => {
     expect(route.compactionFallback).toBeUndefined();
   });
 
+  describe("user-chosen compaction model (Account → Auto-compact)", () => {
+    const oauth: BrainRuntimeConfig = { providers: [
+      { id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5', 'gpt-5.6-luna'], apiKey: null },
+      { id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: ['claude-x'], apiKey: 'k' },
+    ] };
+
+    it('routes compaction to a user pick on a DIFFERENT provider', () => {
+      const registry = buildBrainRegistry(cfg, runtime);
+      const route = resolveBrainModelRoute(registry, cfg, { provider: 'relay', model: 'gpt-x' }, { provider: 'ant', model: 'claude-x' });
+      expect(route.model.provider).toBe('elowen-relay');
+      expect(route.compactionFallback?.id).toBe('claude-x');
+      expect(route.compactionFallback?.provider).toBe('elowen-ant');
+    });
+
+    it('lets the user pick win over the ChatGPT OAuth compaction default', () => {
+      const registry = buildBrainRegistry(oauth, runtime);
+      // Without a pick this luna session would compact on gpt-5.5 (the codex default).
+      const route = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-luna' }, { provider: 'ant', model: 'claude-x' });
+      expect(route.model.id).toBe('gpt-5.6-luna');
+      expect(route.compactionFallback?.id).toBe('claude-x');
+    });
+
+    it('routes nothing when the explicit pick equals the chat model — suppressing the codex default', () => {
+      const registry = buildBrainRegistry(oauth, runtime);
+      const route = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-luna' }, { provider: 'codex', model: 'gpt-5.6-luna' });
+      expect(route.model.id).toBe('gpt-5.6-luna');
+      expect(route.compactionFallback).toBeUndefined();
+    });
+
+    it('falls through to the provider default when the pick is stale (removed provider)', () => {
+      const registry = buildBrainRegistry(oauth, runtime);
+      const route = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-luna' }, { provider: 'gone', model: 'whatever' });
+      expect(route.compactionFallback?.id).toBe('gpt-5.5');
+    });
+
+    it('registers a hand-typed compaction model id on the fly for a custom endpoint', () => {
+      const registry = buildBrainRegistry(cfg, runtime);
+      const route = resolveBrainModelRoute(registry, cfg, { provider: 'relay', model: 'gpt-x' }, { provider: 'relay', model: 'typed-summary-model' });
+      expect(route.compactionFallback?.id).toBe('typed-summary-model');
+      expect(route.compactionFallback?.provider).toBe('elowen-relay');
+    });
+  });
+
   it('does not advertise speculative reasoning controls for an unknown custom model', () => {
     const reg = buildBrainRegistry(cfg, runtime);
     const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' });

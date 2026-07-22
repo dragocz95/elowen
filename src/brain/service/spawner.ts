@@ -63,7 +63,14 @@ export class LiveSessionSpawner {
 
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.runtime);
-    const route = resolveBrainModelRoute(registry, cfg, opts.selection);
+    // The owner's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
+    // session model (or the provider's stable default). Validated at save time; resolved defensively here
+    // so a since-revoked/removed pick never blocks the session.
+    const settings = this.d.userSettings?.(ownerUserId);
+    const compactSel = settings?.compactModel && settings.compactModelProvider
+      ? { provider: settings.compactModelProvider, model: settings.compactModel }
+      : undefined;
+    const route = resolveBrainModelRoute(registry, cfg, opts.selection, compactSel);
     const { model } = route;
     const capabilities = modelCapabilities(model);
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and

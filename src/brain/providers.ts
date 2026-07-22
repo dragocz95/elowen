@@ -272,9 +272,10 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
 export interface BrainModelSelection { provider?: string; model?: string }
 
 /** One authoritative provider/model route for a live PI session. `model` is always the user's exact
- * selection (or the provider default). `compactionFallback`, when present, is the same configured
- * provider's distinct default model and is used for ChatGPT OAuth compaction only. It never replaces
- * the chat/session model or causes a reactive retry. */
+ * selection (or the provider default). `compactionFallback`, when present, is a DISTINCT model used only
+ * for PI-owned compaction requests — the user's chosen compaction model (which may be on a different
+ * provider) or, absent that, ChatGPT OAuth's configured default. It never replaces the chat/session model
+ * or causes a reactive retry. */
 export interface BrainModelRoute {
   providerId: string;
   model: Model<Api>;
@@ -327,7 +328,7 @@ function resolveEntryModel(
 }
 
 export function resolveBrainModelRoute(
-  registry: ModelRegistry, cfg: BrainRuntimeConfig, sel?: BrainModelSelection,
+  registry: ModelRegistry, cfg: BrainRuntimeConfig, sel?: BrainModelSelection, compactSel?: BrainModelSelection,
 ): BrainModelRoute {
   const entry = (sel?.provider ? cfg.providers.find((p) => p.id === sel.provider) : undefined) ?? cfg.providers[0];
   if (!entry) throw new Error('no brain provider configured');
@@ -336,19 +337,38 @@ export function resolveBrainModelRoute(
   const modelId = sel?.model || defaultId;
   if (!modelId) throw new Error(`brain provider '${entry.id}' has no models configured`);
   const model = resolveEntryModel(registry, cfg, entry, modelId);
-
-  // ChatGPT OAuth's configured provider default is the stable model for context summarization. Resolve
-  // that route before the session starts so compaction never depends on parsing a provider error or
-  // issuing a second request; custom proxies and every other provider keep PI's selected model.
-  let compactionFallback: Model<Api> | undefined;
-  if (model.provider === 'openai-codex' && defaultId && defaultId !== model.id) {
-    // Routing is optional: a stale configured default must never make a valid explicit chat selection
-    // unstartable. If it is absent from the live OAuth catalog, native PI compaction uses the selected
-    // descriptor and surfaces its own provider result.
-    const candidate = registry.find(providerName, defaultId);
-    if (candidate?.provider === model.provider) compactionFallback = candidate;
-  }
+  const compactionFallback = resolveCompactionFallback(registry, cfg, model, providerName, defaultId, compactSel);
   return { providerId: entry.id, model, ...(compactionFallback ? { compactionFallback } : {}) };
+}
+
+/** The DISTINCT model that runs PI-owned compaction, or undefined to compact on the chat model itself.
+ *  Precedence: (1) the user's chosen compaction model (Account → Auto-compact) wins and may sit on a
+ *  DIFFERENT provider — the route's stream wrapper swaps in that provider's own auth; an explicit pick
+ *  equal to the chat model routes nothing. (2) Absent a user pick, ChatGPT OAuth still routes compaction
+ *  to its configured default model, so summarization never runs on a preview/alias chat descriptor; every
+ *  other provider compacts on the selected model. Resolved before the session starts so compaction never
+ *  depends on parsing a provider error. Routing is optional AT RESOLUTION: a stale/removed pick or default
+ *  must never make a valid chat selection unstartable, so a start-time resolve failure leaves compaction on
+ *  the session model. (A fallback that resolves but whose auth fails at compaction time still surfaces PI's
+ *  "Summarization failed" — the same failure class as chatting on that provider — it is not caught here.) */
+function resolveCompactionFallback(
+  registry: ModelRegistry, cfg: BrainRuntimeConfig, model: Model<Api>,
+  providerName: string, defaultId: string | undefined, compactSel?: BrainModelSelection,
+): Model<Api> | undefined {
+  if (compactSel?.provider && compactSel.model) {
+    const entry = cfg.providers.find((p) => p.id === compactSel.provider);
+    if (entry) {
+      try {
+        const picked = resolveEntryModel(registry, cfg, entry, compactSel.model);
+        return picked.provider === model.provider && picked.id === model.id ? undefined : picked;
+      } catch { /* stale pick (provider/model gone) — fall through to the provider default below */ }
+    }
+  }
+  if (model.provider === 'openai-codex' && defaultId && defaultId !== model.id) {
+    const candidate = registry.find(providerName, defaultId);
+    if (candidate?.provider === model.provider) return candidate;
+  }
+  return undefined;
 }
 
 export function resolveBrainModel(

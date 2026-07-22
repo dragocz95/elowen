@@ -7,10 +7,10 @@ import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -109,6 +109,8 @@ export class UserSettingStore {
       modelProvider: all.modelProvider ?? CLI_DEFAULTS.modelProvider,
       visionModel: all.visionModel ?? CLI_DEFAULTS.visionModel,
       visionModelProvider: all.visionModelProvider ?? CLI_DEFAULTS.visionModelProvider,
+      compactModel: all.compactModel ?? CLI_DEFAULTS.compactModel,
+      compactModelProvider: all.compactModelProvider ?? CLI_DEFAULTS.compactModelProvider,
       thinkingLevel: isCanonicalThinkingLevel(all.thinkingLevel ?? '') ? (all.thinkingLevel as string) : CLI_DEFAULTS.thinkingLevel,
       autoCompact: all.autoCompact !== undefined ? all.autoCompact === 'true' : CLI_DEFAULTS.autoCompact,
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
@@ -132,6 +134,8 @@ export class UserSettingStore {
       if (patch.modelProvider !== undefined) this.set(userId, 'modelProvider', patch.modelProvider);
       if (patch.visionModel !== undefined) this.set(userId, 'visionModel', patch.visionModel);
       if (patch.visionModelProvider !== undefined) this.set(userId, 'visionModelProvider', patch.visionModelProvider);
+      if (patch.compactModel !== undefined) this.set(userId, 'compactModel', patch.compactModel);
+      if (patch.compactModelProvider !== undefined) this.set(userId, 'compactModelProvider', patch.compactModelProvider);
       // Empty clears the override (model default); anything else must be a known level.
       if (patch.thinkingLevel !== undefined) {
         if (patch.thinkingLevel === '') this.remove(userId, 'thinkingLevel');
