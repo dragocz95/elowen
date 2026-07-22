@@ -108,7 +108,7 @@ export function WorkspaceMetric({ label, value, icon: Icon }: { label: string; v
   );
 }
 
-export function WorkspaceDetailRail({ label, closeLabel, onClose, children, fitContent = false }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode; fitContent?: boolean }) {
+export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
   const drawer = useRef<HTMLElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const [portal, setPortal] = useState<HTMLElement | null>(null);
@@ -119,7 +119,7 @@ export function WorkspaceDetailRail({ label, closeLabel, onClose, children, fitC
   const content = (
     <div ref={layer} className="overlay-layer-drawer workspace-detail-layer">
       <div data-testid="workspace-detail-backdrop" className="workspace-detail-backdrop" aria-hidden onMouseDown={onClose} />
-      <aside ref={drawer} role="dialog" aria-modal="true" tabIndex={-1} className={`workspace-detail-rail workspace-detail-drawer${fitContent ? ' workspace-detail-rail--fit' : ''}`} aria-label={label}>
+      <aside ref={drawer} role="dialog" aria-modal="true" tabIndex={-1} className="workspace-detail-rail workspace-detail-drawer" aria-label={label}>
       <header className="workspace-detail-rail__header">
         <span>{label}</span>
         <button type="button" onClick={onClose} aria-label={closeLabel} className="workspace-detail-rail__close">×</button>

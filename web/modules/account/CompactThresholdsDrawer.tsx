@@ -24,7 +24,7 @@ export function CompactThresholdsDrawer({ models, thresholds, defaultPct, onChan
 }) {
   const { t } = useTranslation();
   return (
-    <WorkspaceDetailRail label={t.cli.compactByModelTitle} closeLabel={t.common.close} onClose={onClose} fitContent>
+    <WorkspaceDetailRail label={t.cli.compactByModelTitle} closeLabel={t.common.close} onClose={onClose}>
       <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.help.cliCompactByModel}</p>
       <div className="flex flex-col divide-y divide-border">
         {models.map((m) => {
