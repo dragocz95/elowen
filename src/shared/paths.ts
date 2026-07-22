@@ -22,7 +22,12 @@ export function runFile(env: NodeJS.ProcessEnv): string {
 
 /** Where a session's cleared tool results are spilled before the context placeholder replaces them.
  *  One directory per session, so pathGuard can scope read access to the OWNING session and session
- *  deletion can remove the whole directory. */
+ *  deletion can remove the whole directory. The id is URI-encoded (and dot-segments prefixed): it
+ *  becomes a filesystem path in a security check, so a future platform minting `/`, `%` or `..`
+ *  into its channel ids must not smuggle the allowance outside `tool-results/`. Encoding is
+ *  injective, so two distinct ids can never collide into one directory. */
 export function toolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: string): string {
-  return join(dataDir(env), 'tool-results', sessionId);
+  const encoded = encodeURIComponent(sessionId);
+  const safe = encoded === '' || encoded === '.' || encoded === '..' ? `_${encoded}` : encoded;
+  return join(dataDir(env), 'tool-results', safe);
 }

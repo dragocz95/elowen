@@ -254,8 +254,30 @@ describe('installToolResultClearing', () => {
     });
     const kept = await foreign.transform(messages);
     expect(JSON.stringify(kept[1])).toContain('xxxx');
-    await foreign.transform(messages); // same epoch — no retry spin either
+    await foreign.transform(messages); // same epoch — no retry spin
     expect(calls).toBe(1);
+    // `wx` can never overwrite the foreign file, so retrying is pointless even at the NEXT epoch:
+    // the id is skipped permanently (one warn at detection, no log spam every idle).
+    const turn4: PiAgentMessage[] = [...messages, assistant('ok', T0 + IDLE + 4_000), user('four', T0 + IDLE + 5_000)];
+    await foreign.transform(turn4); // gate closes
+    const turn5: PiAgentMessage[] = [...turn4, assistant('ok2', T0 + IDLE + 6_000), user('five', T0 + 2 * IDLE + 7_000)];
+    const reopened = await foreign.transform(turn5); // gate re-opens
+    expect(calls).toBe(1);
+    expect(JSON.stringify(reopened[1])).toContain('xxxx'); // still full content, still not cleared
+  });
+
+  it('a throwing readSpill is treated as a mismatch (mismatch handling must never take the turn down)', async () => {
+    const h = harness({
+      writeSpill: async () => { throw Object.assign(new Error('exists'), { code: 'EEXIST' }); },
+      readSpill: async () => { throw new Error('disk on fire'); },
+    });
+    const messages: PiAgentMessage[] = [
+      user('one', T0), toolResult('old-big', big, T0 + 1_000),
+      user('two', T0 + 2_000),
+      user('three', T0 + IDLE + 3_000),
+    ];
+    const result = await h.transform(messages);
+    expect(JSON.stringify(result[1])).toContain('xxxx'); // full content kept, no rejection
   });
 
   it('clears nothing when the cut lands on the first message (exactly two user turns)', async () => {

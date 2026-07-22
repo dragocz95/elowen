@@ -1032,4 +1032,35 @@ describe('BrainStore', () => {
       }
     });
   });
+
+  describe('reassignSession', () => {
+    it('moves the tool-result spill dir along with the re-keyed conversation', async () => {
+      const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      const home = mkdtempSync(join(tmpdir(), 'elowen-spill-move-'));
+      vi.stubEnv('HOME', home);
+      try {
+        store.createSession({ id: 'chan-x', userId: 7, model: 'm' });
+        const oldDir = join(home, '.config/elowen/tool-results/chan-x');
+        const newDir = join(home, '.config/elowen/tool-results/arch-1');
+        mkdirSync(oldDir, { recursive: true });
+        writeFileSync(join(oldDir, 'call-1.txt'), 'spilled');
+        store.reassignSession('chan-x', 'arch-1');
+        expect(existsSync(oldDir)).toBe(false);
+        expect(readFileSync(join(newDir, 'call-1.txt'), 'utf8')).toBe('spilled');
+        // …so a later delete of the archived conversation actually cleans its spills up.
+        store.deleteSession('arch-1');
+        expect(existsSync(newDir)).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('reassign without any spills on disk is fine', () => {
+      store.createSession({ id: 'a', userId: 7, model: 'm' });
+      expect(() => store.reassignSession('a', 'b')).not.toThrow();
+      expect(store.getSession('b')).toBeDefined();
+    });
+  });
 });

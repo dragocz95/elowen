@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { renameSync, rmSync } from 'node:fs';
 import type { Db } from './db.js';
 import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
@@ -578,6 +578,15 @@ export class BrainStore {
       // so a node can never be `oldId`. getWorkflowRuns re-validates them on read regardless.
       this.db.prepare('UPDATE brain_workflows SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
     })();
+    // Tool-result spills are keyed by session id too — move them with the conversation, or they stay
+    // under the freed old id: orphaned forever (nothing would ever delete them) and readable by the
+    // NEXT session minted onto that id. Best-effort: ENOENT just means there was nothing to move.
+    try { renameSync(toolResultSpillDir(process.env, oldId), toolResultSpillDir(process.env, newId)); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger('brain-store').warn(`failed to move tool-result spills ${oldId} → ${newId}`, e);
+      }
+    }
   }
 
   /** Fold a context compaction into the store, atomically (ONE transaction — never a partial state):

@@ -195,6 +195,9 @@ export function installToolResultClearing(
    *  retrying on the next pass would clear right after THIS pass paid a full re-cache — a warm-prefix
    *  rewrite, the one thing this module must never do. Retries wait for the next gate OPENING. */
   const failedSpills = new Set<string>();
+  /** toolCallIds whose spill path is occupied by a DIFFERENT file. `wx` can never overwrite it, so
+   *  retrying could only ever warn again — skip permanently (for this session's lifetime). */
+  const foreignSpills = new Set<string>();
   let gateWasOpen = false;
   const previous = agent.transformContext;
   agent.transformContext = async (messages, signal) => {
@@ -205,7 +208,7 @@ export function installToolResultClearing(
     if (gateOpen) {
       const fresh = selectClearableToolResults(base, new Set(latched.keys()));
       for (const item of fresh) {
-        if (failedSpills.has(item.toolCallId)) continue;
+        if (failedSpills.has(item.toolCallId) || foreignSpills.has(item.toolCallId)) continue;
         const message = base[item.index] as ToolResultMessage;
         const text = (Array.isArray(message.content) ? message.content : [])
           .filter((block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
@@ -216,12 +219,20 @@ export function installToolResultClearing(
           await writeSpill(spillPath, text);
           latched.set(item.toolCallId, item.bytes);
         } catch (error) {
-          // EEXIST means SOMETHING already sits at the path: a pre-respawn spill of this same output,
-          // or a file the session itself wrote (its own spill dir is inside its allowed paths). Latch
-          // only when the on-disk bytes are exactly what we would have written — otherwise the
-          // placeholder would point at text that was never the tool's output.
-          if ((error as NodeJS.ErrnoException).code === 'EEXIST' && (await readSpill(spillPath)) === text) {
-            latched.set(item.toolCallId, item.bytes);
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+            // SOMETHING already sits at the path: a pre-respawn spill of this same output, or a file
+            // the session itself wrote (its own spill dir is inside its allowed paths). Latch only
+            // when the on-disk bytes are exactly what we would have written — otherwise the
+            // placeholder would point at text that was never the tool's output.
+            let onDisk: string | null = null;
+            try { onDisk = await readSpill(spillPath); }
+            catch { onDisk = null; } // a throwing readSpill must not take the whole turn down
+            if (onDisk === text) {
+              latched.set(item.toolCallId, item.bytes);
+              continue;
+            }
+            foreignSpills.add(item.toolCallId);
+            log.warn(`tool result spill for ${item.toolCallId} conflicts with a different file on disk — leaving the result in context`);
             continue;
           }
           failedSpills.add(item.toolCallId);
