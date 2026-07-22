@@ -14,6 +14,7 @@ import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
 import { BrainChatProvider } from '../../modules/advisor/BrainChatProvider';
 import { ImpersonationBanner } from './ImpersonationBanner';
+import { EmberFall } from './EmberFall';
 import { useDockState } from '../../lib/useDockState';
 import { useElementWidth } from '../../lib/useElementWidth';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -124,6 +125,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
   return (
     <BrainChatProvider>
+      <EmberFall />
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}

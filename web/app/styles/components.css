@@ -446,3 +446,14 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .cosmos[data-mode='stack'] .cosmos-pod:nth-child(odd) { margin-left: -2rem; }
 .cosmos[data-mode='stack'] .cosmos-pod:nth-child(even) { margin-right: -2rem; }
 .cosmos[data-mode='stack'] .cosmos-pod__inner { background: radial-gradient(ellipse at 50% 25%, rgb(255 255 255 / 0.03), transparent 78%); }
+
+/* ambient ember drizzle behind the whole app (rendered only in effects mode 'full') */
+.ember-fall { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+
+/* switches inside pods: bigger, glowing when on, with a warm knob that reads on OLED black */
+.cosmos-pod__control label { justify-content: center; }
+.cosmos-pod__control label > span:last-child { max-width: 10.5rem; font-size: 0.72rem; color: var(--color-text-muted); text-align: left; }
+.cosmos-pod [role='switch'] { transform: scale(1.15); transform-origin: center; }
+.cosmos-pod [role='switch'][aria-checked='true'] { border-color: rgb(255 82 54 / 0.6); box-shadow: 0 0 14px rgb(255 82 54 / 0.4), inset 0 0 6px rgb(0 0 0 / 0.3); }
+.cosmos-pod [role='switch'][aria-checked='true'] > span { background: #ffe0d0; box-shadow: 0 0 6px rgb(255 154 98 / 0.8); }
+.cosmos-pod [role='switch'][aria-checked='false'] { border-color: rgb(255 255 255 / 0.16); }

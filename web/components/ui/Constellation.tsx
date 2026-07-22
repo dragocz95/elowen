@@ -71,16 +71,55 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       ring.style.width = `${rx * 2 + 140}px`;
       ring.style.height = `${Math.min(ry * 2 + 110, height - 16)}px`;
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-      pods.forEach((pod, i) => {
+      // Phase 1 — ideal spots on the ellipse. Pods have very different heights (a lone toggle vs.
+      // the auto-compact composite), so ideal spots can collide.
+      const placed = pods.map((pod, i) => {
         const angle = ((-90 + (i * 360) / pods.length) * Math.PI) / 180;
         // Alternate the radius slightly so the arrangement doesn't read as a mechanical circle.
         const wobble = 1 + (i % 2 ? 0.05 : -0.04);
-        const px = cx + rx * wobble * Math.cos(angle);
-        const idealY = cy + ry * wobble * Math.sin(angle);
-        // Pods have very different heights (a toggle vs. the auto-compact composite) — clamp so the
-        // tallest ones stay inside the fixed-height surface instead of overflowing it.
-        const half = pod.offsetHeight / 2;
-        const py = Math.min(Math.max(idealY, half + 8), height - half - 8);
+        return {
+          pod,
+          x: cx + rx * wobble * Math.cos(angle),
+          y: cy + ry * wobble * Math.sin(angle),
+          w: pod.offsetWidth,
+          h: pod.offsetHeight,
+        };
+      });
+      // Phase 2 — relax overlaps: push colliding pairs apart along the axis of least overlap, then
+      // clamp everything back inside the surface. A few iterations settle real layouts.
+      const gap = 14;
+      const clampAll = () => {
+        for (const p of placed) {
+          p.x = Math.min(Math.max(p.x, p.w / 2 + 8), width - p.w / 2 - 8);
+          p.y = Math.min(Math.max(p.y, p.h / 2 + 8), height - p.h / 2 - 8);
+        }
+      };
+      clampAll();
+      for (let iter = 0; iter < 4; iter++) {
+        let moved = false;
+        for (let a = 0; a < placed.length; a++) {
+          for (let b = a + 1; b < placed.length; b++) {
+            const A = placed[a], B = placed[b];
+            const ox = (A.w + B.w) / 2 + gap - Math.abs(A.x - B.x);
+            const oy = (A.h + B.h) / 2 + gap - Math.abs(A.y - B.y);
+            if (ox <= 0 || oy <= 0) continue;
+            moved = true;
+            if (oy <= ox) {
+              const dir = A.y <= B.y ? -1 : 1;
+              A.y += (dir * oy) / 2;
+              B.y -= (dir * oy) / 2;
+            } else {
+              const dir = A.x <= B.x ? -1 : 1;
+              A.x += (dir * ox) / 2;
+              B.x -= (dir * ox) / 2;
+            }
+          }
+        }
+        clampAll();
+        if (!moved) break;
+      }
+      // Phase 3 — apply the settled positions and draw the filaments to them.
+      placed.forEach(({ pod, x: px, y: py }, i) => {
         pod.style.left = `${px}px`;
         pod.style.top = `${py}px`;
         pod.style.setProperty('--fx', `${cx - px}px`);
