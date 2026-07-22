@@ -123,13 +123,13 @@ describe('message_update → assistant stream events', () => {
       },
     } as unknown as AgentSessionEvent, now);
     // Reason streams first (before any path); it rides the hint verbatim, in the user's language.
-    expect(delta({ reason: 'Píšu ' }, 5_000)).toEqual({ type: 'tool_authoring', name: 'Write', reason: 'Píšu ' });
+    expect(delta({ _reason: 'Píšu ' }, 5_000)).toEqual({ type: 'tool_authoring', name: 'Write', reason: 'Píšu ' });
     // Reason grew while the derived detail is unchanged (still none) → must NOT be deduped away, past window.
-    expect(delta({ reason: 'Píšu soubor' }, 5_300)).toEqual({ type: 'tool_authoring', name: 'Write', reason: 'Píšu soubor' });
+    expect(delta({ _reason: 'Píšu soubor' }, 5_300)).toEqual({ type: 'tool_authoring', name: 'Write', reason: 'Píšu soubor' });
     // Nothing changed → dropped.
-    expect(delta({ reason: 'Píšu soubor' }, 5_600)).toBeNull();
+    expect(delta({ _reason: 'Píšu soubor' }, 5_600)).toBeNull();
     // Reason plus a real path: both ride the hint.
-    expect(delta({ reason: 'Píšu soubor', path: 'a.ts' }, 5_900)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
+    expect(delta({ _reason: 'Píšu soubor', path: 'a.ts' }, 5_900)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
   });
 
   it('lets the first reason-bearing delta through even inside the throttle window', () => {
@@ -143,7 +143,8 @@ describe('message_update → assistant stream events', () => {
     // A path streams first (no reason yet) → emits and arms the throttle.
     expect(delta({ path: 'a.ts' }, 8_000)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts' });
     // 50ms later — INSIDE the 250ms window — the reason first appears; it must NOT be throttled away, so a
-    // late-burst provider still surfaces it before the tool starts executing.
+    // late-burst provider still surfaces it before the tool starts executing. The legacy `reason` key (a
+    // pre-rename session, or a model copying it from its history) must keep working too — pinned here.
     expect(delta({ path: 'a.ts', reason: 'Píšu soubor' }, 8_050))
       .toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
   });

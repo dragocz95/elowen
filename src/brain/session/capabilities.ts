@@ -166,9 +166,9 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // actually defers tools; otherwise the list is empty and the composed set is byte-identical to before.
   const toolSearchTools = spec.kind !== 'task-worker' ? (spec.toolSearch?.() ?? []) : [];
   const pluginTools = spec.pluginTools.map((t) => gateToolAccess(t, spec.onToolResult));
-  // Every composed tool gains an optional leading `reason` (withReason augments the schema; excluded tools
+  // Every composed tool gains an optional leading `_reason` (withReason augments the schema; excluded tools
   // — ToolSearch, mcp__* — pass through), then the whole set takes the permission gate, then stripReason
-  // wraps OUTERMOST so `reason` is removed from the arguments before any inner wrapper or handler sees it.
+  // wraps OUTERMOST so `_reason` is removed from the arguments before any inner wrapper or handler sees it.
   return [...elowenTools, ...memoryTools, ...toolSearchTools, ...pluginTools]
     .map(withReason).map(gatePermissions).map(stripReason);
 }
