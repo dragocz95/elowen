@@ -140,9 +140,10 @@ export class TurnRenderer {
             // ensureLang kicks the async grammar load so the NEXT render highlights this language.
             const diffLang = langForPath(item.detail);
             if (diffLang) ensureLang(diffLang);
+            const diffSpec = toolRowSpec(item.name, item.detail);
             const { lines: block, expandable } = framedDiffBlock(
-              item.diff, width, toolRowSpec(item.name, item.detail).title,
-              options.expandedTools.has(diffKey), diffLang,
+              item.diff, width, diffSpec.title,
+              options.expandedTools.has(diffKey), diffLang, diffSpec.glyph,
             );
             for (const [index, line] of block.entries()) {
               const toggle = expandable && index === block.length - 1;
@@ -181,7 +182,12 @@ export class TurnRenderer {
             }
           } else if (item.output) {
             const before = rows.length;
-            for (const line of toolOutputBlock(item.output, width, options.expandedTools.has(key))) add(line);
+            // Header the output block with the tool's own name, like the diff block — the unified look for
+            // every shown-output tool. Console tools pass the name ONLY: their `$ command` echo already
+            // carries the detail, so folding it into the header too would just repeat it.
+            const outSpec = toolRowSpec(item.name, item.detail);
+            const outHeading = item.output.kind === 'console' ? toolRowSpec(item.name).title : outSpec.title;
+            for (const line of toolOutputBlock(item.output, width, options.expandedTools.has(key), outHeading, outSpec.glyph)) add(line);
             if (item.output.fullText && item.output.fullText !== item.output.text) {
               for (let index = before; index < rows.length; index++) {
                 rows[index] = { ...rows[index]!, kind: 'expandable', key, turnIndex };

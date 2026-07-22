@@ -286,12 +286,25 @@ describe('chat layout components', () => {
       () => 72,
     );
     const rendered = viewport.render(72).join('\n');
-    // The console block drops its "console output" label (bare `<` connector) — the `$ npm test` echo
-    // right below already identifies it.
+    // A shown-output tool is headed by its own name (the unified look, like Write/Edit) — here "Bash" —
+    // never the generic "console output" category label. The `$ npm test` echo still carries the command.
     expect(rendered).not.toContain('console output');
+    expect(rendered).toContain('Bash');
     expect(rendered).toContain('npm test');
     expect(rendered).toContain('Tests 4 passed');
-    expect(rendered).not.toContain('Bash');
+  });
+
+  it('headers a non-console shown-output tool with its tool name + detail, not the category', () => {
+    const view = transcriptWith([], [
+      { type: 'tool', name: 'LspDiagnostics', detail: 'src/x.ts' },
+      { type: 'tool_output', output: { title: 'LSP diagnostics', kind: 'result', text: 'no problems', tone: 'success' } },
+    ]);
+    const viewport = new ChatViewport(viewportState(view), getMarkdownTheme(), () => 12, () => 1, () => 72);
+    const rendered = viewport.render(72).join('\n');
+    // Headed by the tool name + detail (like "Write a.ts"), not the generic category title.
+    expect(rendered).toContain('LspDiagnostics src/x.ts');
+    expect(rendered).not.toContain('LSP diagnostics');
+    expect(rendered).toContain('no problems');
   });
 
   it('marks the last silent command row · running… while streaming and · done once settled', () => {
@@ -317,7 +330,7 @@ describe('chat layout components', () => {
     expect(settled).not.toContain('running…');
   });
 
-  it('renders expandable tool output previews without a tool-name chip', () => {
+  it('renders expandable tool output previews headed by the tool name', () => {
     const view = transcriptWith([], [
       { type: 'tool', id: 'cmd-1', name: 'Bash', detail: 'npm test' },
       {
@@ -337,7 +350,7 @@ describe('chat layout components', () => {
     expect(rendered).toContain('Click to expand');
     expect(rendered).toContain('line 10');
     expect(rendered).not.toContain('line 2');
-    expect(rendered).not.toContain('Bash');
+    expect(rendered).toContain('Bash'); // the output block is headed by the tool name (unified look)
   });
 
   it('collapses a run of the same bare tool into one indented row with a ×N counter', () => {
@@ -381,7 +394,8 @@ describe('chat layout components', () => {
       () => 72,
     ).render(72).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
     expect(rendered).not.toContain('×'); // the output-bearing read broke the run → nothing folded
-    expect(rendered).toContain('tool result');
+    expect(rendered).toContain('Read a.ts'); // its block is headed by the tool name, not the category label
+    expect(rendered).not.toContain('tool result');
   });
 
   // This used to also assert the raw tool name never reaches the screen (the tool was `edit_file`).

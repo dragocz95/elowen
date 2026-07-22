@@ -730,12 +730,12 @@ export function diffBlock(diff: string, maxLines = 60, rowWidth?: number, lang?:
 const BLOCK_HEADER_INDENT = '    ';
 const BLOCK_BODY_INDENT = '      ';
 
-function simpleBlock(title: string, lines: string[], width: number, footer?: string): string[] {
+function simpleBlock(title: string, lines: string[], width: number, footer?: string, connector = '<'): string[] {
   const inner = Math.max(24, width - 6);
-  // An empty title renders a bare `<` connector — the console block does this: the `$ command` line right
-  // below already says "shell output", so a "console output" label was just noise. Named blocks (diff,
-  // search result, browser observation) keep their label since it isn't otherwise obvious.
-  const out = [`${BLOCK_HEADER_INDENT}${title ? `${color.faint('<')} ${color.text(title)}` : color.faint('<')}`];
+  // The header connector is the tool's own marker glyph (← edit, → read, ✱ search, ⚙ other) when the caller
+  // supplies one, so a block header reads exactly like the marker rows of tools we don't expand — one visual
+  // language. Defaults to `<` for a bare/unlabelled block. An empty title renders just the connector.
+  const out = [`${BLOCK_HEADER_INDENT}${title ? `${color.faint(connector)} ${color.text(title)}` : color.faint(connector)}`];
   for (const line of lines) {
     // diffBlock/toolOutputBlock already allocate and pad nested rows. Re-running ANSI-aware truncation on
     // every exact row dominated burst frames; retain it only as the defensive overflow path.
@@ -751,7 +751,7 @@ function simpleBlock(title: string, lines: string[], width: number, footer?: str
  *  expand/collapse toggle iff `expandable` is true. When collapsed, `renderDiffRows` already emits the
  *  `… +N more lines` note as that trailing row, so no redundant replacement is needed. */
 export function framedDiffBlock(
-  diff: string, width: number, title = 'diff', expanded = false, lang?: string | null,
+  diff: string, width: number, title = 'diff', expanded = false, lang?: string | null, connector = '<',
 ): { lines: string[]; expandable: boolean } {
   const inner = Math.max(24, width - 10);
   const previewLines = 18;
@@ -761,12 +761,14 @@ export function framedDiffBlock(
   // Expanded shows every row, so append the collapse affordance; collapsed already carries the
   // more-lines note as its last row.
   if (expandable && expanded) lines.push(`    ${color.faint('▴ Click to collapse')}`);
-  return { lines: simpleBlock(title, lines, width), expandable };
+  return { lines: simpleBlock(title, lines, width, undefined, connector), expandable };
 }
 
 /** Console/tool output preview. The daemon already decides which tool results are worth showing;
- *  this renderer keeps them compact and visually separate from assistant prose. */
-export function toolOutputBlock(output: ToolOutputView, width: number, expanded = false): string[] {
+ *  this renderer keeps them compact and visually separate from assistant prose. `heading`, when supplied,
+ *  is the tool's own name (as the diff block uses) so a shown-output tool reads with its identity — the
+ *  same way a Write/Edit does — rather than a generic category label. */
+export function toolOutputBlock(output: ToolOutputView, width: number, expanded = false, heading?: string, connector = '<'): string[] {
   const theme = chatTheme();
   const lines: string[] = [];
   // Muted, not full-bright: the command echo is context, not content (matches the dim tool rows).
@@ -807,8 +809,11 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
     lines.push('');
     lines.push(` ${color.faint(expanded ? 'Click to collapse' : 'Click to expand')}`);
   }
-  // Console output drops its title (bare `<` connector) — the `$ command` echo already identifies it;
-  // other kinds (search result, browser observation, tool result) keep the label.
-  const title = output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim();
-  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 6))), width);
+  // Header: with a `heading` (the tool name), a shown-output tool reads with its own identity, exactly like
+  // a Write/Edit — that is the unified look. Without one, fall back to the old rule (console drops its title
+  // to the bare `<` connector, since the `$ command` echo identifies it; other kinds keep the category label).
+  const title = heading !== undefined
+    ? terminalPlainText(heading).replace(/\s+/g, ' ').trim()
+    : (output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim());
+  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 6))), width, undefined, connector);
 }

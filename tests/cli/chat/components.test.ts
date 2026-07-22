@@ -221,6 +221,16 @@ describe('chat components', () => {
     expect(rendered).toContain('[exit 2]');
   });
 
+  it('headers the output block with the tool name + marker glyph when supplied (unified look)', () => {
+    const plain = toolOutputBlock(
+      { title: 'LSP diagnostics', kind: 'result', text: 'no problems', tone: 'success' },
+      60, false, 'LspDiagnostics src/x.ts', '⚙',
+    ).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    // The block reads like a marker row (glyph + tool name), not the generic category label.
+    expect(plain).toContain('⚙ LspDiagnostics src/x.ts');
+    expect(plain).not.toContain('LSP diagnostics');
+  });
+
   it('keeps already fitted styled tool rows on the nested-block fast path', () => {
     const output = {
       title: 'console output',
