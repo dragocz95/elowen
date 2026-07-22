@@ -400,7 +400,11 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
       if (!id) return (detail || reason) ? { type: 'tool_authoring', ...(name ? { name } : {}), detail, ...(reason ? { reason } : {}) } : null;
       const last = lastAuthoringAt.get(id);
       if (last && last.detail === detail && last.reason === reason) return null; // unchanged → nothing new
-      if (last && now - last.at < AUTHORING_THROTTLE_MS) return null;            // changed but within window → drop
+      // The delta that FIRST carries a reason bypasses the throttle window: a provider that still delivers
+      // arguments in a late burst emits only one reason-bearing delta before the tool starts executing, and
+      // the window must not swallow it. Subsequent reason growth stays throttled (a smooth ~4fps label).
+      const reasonFirstAppeared = reason !== undefined && (!last || last.reason === undefined);
+      if (last && now - last.at < AUTHORING_THROTTLE_MS && !reasonFirstAppeared) return null; // else throttle
       capSet(lastAuthoringAt, id, { detail, reason, at: now });
       return { type: 'tool_authoring', ...(name ? { name } : {}), detail, ...(reason ? { reason } : {}) };
     }

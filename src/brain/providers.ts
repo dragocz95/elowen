@@ -327,6 +327,21 @@ function resolveEntryModel(
   throw new Error(`brain model '${modelId}' not found for provider '${entry.id}'`);
 }
 
+/** Claude's OAuth / claude-code endpoint buffers a tool call's input and delivers every `input_json_delta`
+ *  in a single burst at the END unless the `fine-grained-tool-streaming` beta is on — and pi-ai only sends
+ *  that beta when eager tool streaming is marked UNSUPPORTED (getAnthropicCompat →
+ *  shouldUseFineGrainedToolStreamingBeta in the anthropic-messages adapter). With the default (eager = true)
+ *  the arguments arrive too late for the authoring spinner, so the model-authored `reason` never shows.
+ *  Force eager off for every anthropic-messages model so tool arguments stream incrementally during
+ *  authoring. Returns a shallow clone — never mutates the shared registry model. */
+function withIncrementalToolStreaming(model: Model<Api>): Model<Api> {
+  if (model.api !== 'anthropic-messages') return model;
+  // `api === 'anthropic-messages'` doesn't narrow the compat UNION for TS, so read the one flag structurally.
+  const compat = model.compat as { supportsEagerToolInputStreaming?: boolean } | undefined;
+  if (compat?.supportsEagerToolInputStreaming === false) return model;
+  return { ...model, compat: { ...compat, supportsEagerToolInputStreaming: false } } as Model<Api>;
+}
+
 export function resolveBrainModelRoute(
   registry: ModelRegistry, cfg: BrainRuntimeConfig, sel?: BrainModelSelection, compactSel?: BrainModelSelection,
 ): BrainModelRoute {
@@ -336,7 +351,7 @@ export function resolveBrainModelRoute(
   const defaultId = entry.models[0] || defaultCatalogModel(registry, providerName);
   const modelId = sel?.model || defaultId;
   if (!modelId) throw new Error(`brain provider '${entry.id}' has no models configured`);
-  const model = resolveEntryModel(registry, cfg, entry, modelId);
+  const model = withIncrementalToolStreaming(resolveEntryModel(registry, cfg, entry, modelId));
   const compactionFallback = resolveCompactionFallback(registry, cfg, model, providerName, defaultId, compactSel);
   return { providerId: entry.id, model, ...(compactionFallback ? { compactionFallback } : {}) };
 }

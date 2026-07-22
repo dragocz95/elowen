@@ -132,6 +132,22 @@ describe('message_update → assistant stream events', () => {
     expect(delta({ reason: 'Píšu soubor', path: 'a.ts' }, 5_900)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
   });
 
+  it('lets the first reason-bearing delta through even inside the throttle window', () => {
+    const delta = (args: Record<string, unknown>, now: number) => toBrainEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_delta', contentIndex: 0,
+        partial: { content: [{ type: 'toolCall', id: 'r2', name: 'Write', arguments: args }] },
+      },
+    } as unknown as AgentSessionEvent, now);
+    // A path streams first (no reason yet) → emits and arms the throttle.
+    expect(delta({ path: 'a.ts' }, 8_000)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts' });
+    // 50ms later — INSIDE the 250ms window — the reason first appears; it must NOT be throttled away, so a
+    // late-burst provider still surfaces it before the tool starts executing.
+    expect(delta({ path: 'a.ts', reason: 'Píšu soubor' }, 8_050))
+      .toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
+  });
+
   it('still maps text and thinking deltas as before', () => {
     expect(ev({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'hi' } }))
       .toEqual({ type: 'text', delta: 'hi' });
