@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, Zap } from 'lucide-react';
+import { Eye, Gauge, MoonStar, Shrink, SlidersHorizontal, SlidersVertical, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
+import { CompactThresholdsDrawer } from './CompactThresholdsDrawer';
 import { Segmented } from '../../components/ui/Segmented';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
@@ -34,6 +35,9 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
+  // Per-model threshold overrides (key `provider/model` → percent). Empty = every model uses the global.
+  const [compactByModel, setCompactByModel] = useState<Record<string, number>>({});
+  const [thresholdsOpen, setThresholdsOpen] = useState(false);
   const [confirmYolo, setConfirmYolo] = useState(false);
 
   const [seeded, setSeeded] = useState(false);
@@ -47,6 +51,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       setThinkingLevel(data.thinkingLevel ?? '');
       setAutoCompact(data.autoCompact);
       setAutoCompactAt(data.autoCompactAt);
+      setCompactByModel(data.autoCompactAtByModel ?? {});
       setSeeded(true);
     }
   }, [data, seeded]);
@@ -106,14 +111,14 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
 
   // Auto-persist shortly after any change. Sends only the fields this section owns — the PATCH merges,
   // so the Personality/default-model picks stay untouched.
-  const { status: settingsStatus, retry: retrySettings } = useAutoSaveStatus([visionSelection, compactSelection, thinkingLevel, autoCompact, autoCompactAt], async () => {
+  const { status: settingsStatus, retry: retrySettings } = useAutoSaveStatus([visionSelection, compactSelection, thinkingLevel, autoCompact, autoCompactAt, JSON.stringify(compactByModel)], async () => {
     const [vProvider, ...vRest] = visionSelection.split('::');
     const [cProvider, ...cRest] = compactSelection.split('::');
     try {
       await save.mutateAsync({
         visionModel: visionSelection ? vRest.join('::') : '', visionModelProvider: visionSelection ? (vProvider ?? '') : '',
         compactModel: compactSelection ? cRest.join('::') : '', compactModelProvider: compactSelection ? (cProvider ?? '') : '',
-        thinkingLevel, autoCompact, autoCompactAt,
+        thinkingLevel, autoCompact, autoCompactAt, autoCompactAtByModel: compactByModel,
       });
     } catch (error) {
       toast(t.cli.saveError, 'error');
@@ -174,11 +179,22 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
             <span>{t.cli.autoCompactToggle}</span>
           </label>
           {autoCompact ? (
-            <div className="flex items-center gap-4">
-              <span className="shrink-0 text-xs text-text-muted">{t.cli.autoCompactAt}</span>
-              <Slider value={autoCompactAt} min={30} max={95} step={5} onChange={setAutoCompactAt} aria-label={t.cli.autoCompactAt} />
-              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span>
-            </div>
+            <>
+              <div className="flex items-center gap-4">
+                <span className="shrink-0 text-xs text-text-muted">{t.cli.autoCompactAt}</span>
+                <Slider value={autoCompactAt} min={30} max={95} step={5} onChange={setAutoCompactAt} aria-label={t.cli.autoCompactAt} />
+                <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setThresholdsOpen(true)}
+                className="inline-flex w-fit items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text"
+              >
+                <SlidersVertical size={13} aria-hidden />
+                {t.cli.compactByModelManage}
+                {Object.keys(compactByModel).length ? <span className="text-accent">({Object.keys(compactByModel).length})</span> : null}
+              </button>
+            </>
           ) : null}
         </div>
       </SpatialRow>
@@ -225,6 +241,20 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
         onConfirm={() => { setConfirmYolo(false); setYolo(true); }}
         onClose={() => setConfirmYolo(false)}
       />
+      {thresholdsOpen ? (
+        <CompactThresholdsDrawer
+          models={models.data ?? []}
+          thresholds={compactByModel}
+          defaultPct={autoCompactAt}
+          onChange={(key, pct) => setCompactByModel((prev) => {
+            const next = { ...prev };
+            if (pct == null) delete next[key];
+            else next[key] = pct;
+            return next;
+          })}
+          onClose={() => setThresholdsOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

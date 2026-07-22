@@ -91,7 +91,7 @@ describe('AccountView', () => {
       http.get('*/api/brain/models', () => HttpResponse.json([])),
       http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
         model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '',
-        autoCompact: false, autoCompactAt: 80, advisorStyle: 'concise', personalityBody: '',
+        autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '',
         discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true,
       })),
       http.patch('*/api/auth/me/cli-settings', () => HttpResponse.json({})),

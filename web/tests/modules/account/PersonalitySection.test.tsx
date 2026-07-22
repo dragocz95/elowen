@@ -18,7 +18,7 @@ vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
 
 const settings: CliSettings = {
   model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: 'medium',
-  autoCompact: true, autoCompactAt: 0, advisorStyle: 'concise', personalityBody: '',
+  autoCompact: true, autoCompactAt: 0, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '',
   discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true,
 };
 

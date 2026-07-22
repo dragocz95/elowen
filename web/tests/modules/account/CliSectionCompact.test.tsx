@@ -14,7 +14,7 @@ vi.mock('../../../lib/mutations', () => ({
 
 const CLI: CliSettings = {
   model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '',
-  autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '',
+  autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '',
   autoRecall: true, autoSave: true,
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };
