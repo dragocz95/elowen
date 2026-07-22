@@ -120,14 +120,14 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', autoRecall: true, autoSave: true };
+    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', autoRecall: true, autoSave: true };
     return c.json({ ...s, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoSave?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoSave?: boolean } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoSave?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoSave?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -138,6 +138,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
 
     if (typeof b.autoCompact === 'boolean') patch.autoCompact = b.autoCompact;
     if (typeof b.autoCompactAt === 'number') patch.autoCompactAt = b.autoCompactAt;
+    // Per-model threshold map (key `providerId/model` → percent). The store cleans/clamps every entry, so
+    // the route only gates on it being a plain object; a non-object (or array) is ignored.
+    if (b.autoCompactAtByModel && typeof b.autoCompactAtByModel === 'object' && !Array.isArray(b.autoCompactAtByModel)) patch.autoCompactAtByModel = b.autoCompactAtByModel as Record<string, number>;
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
     if (typeof b.discordUserId === 'string') patch.discordUserId = b.discordUserId.trim(); // store validates the snowflake shape

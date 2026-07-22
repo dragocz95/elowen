@@ -7,10 +7,10 @@ import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -51,6 +51,22 @@ function isUniqueViolation(err: unknown): boolean {
 function clampPercent(n: number): number {
   if (!Number.isFinite(n)) return CLI_DEFAULTS.autoCompactAt;
   return Math.min(95, Math.max(30, Math.round(n)));
+}
+
+/** Clean a per-model auto-compact threshold map (key `providerId/model` → percent): keep only entries with
+ *  a non-empty key and a finite number, each clamped into the same 30–95 band as the global threshold.
+ *  Shared by the reader (post-JSON.parse) and the writer so stored and incoming maps validate identically. */
+function cleanThresholdMap(parsed: unknown): Record<string, number> {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).flatMap(([key, value]) => {
+    const n = Number(value);
+    return key && Number.isFinite(n) ? [[key, clampPercent(n)]] : [];
+  }));
+}
+
+function autoCompactThresholds(raw: string | null): Record<string, number> {
+  if (!raw) return {};
+  try { return cleanThresholdMap(JSON.parse(raw)); } catch { return {}; }
 }
 
 function projectModelPreferences(raw: string | null): Record<string, ProjectModelPreference> {
@@ -114,6 +130,7 @@ export class UserSettingStore {
       thinkingLevel: isCanonicalThinkingLevel(all.thinkingLevel ?? '') ? (all.thinkingLevel as string) : CLI_DEFAULTS.thinkingLevel,
       autoCompact: all.autoCompact !== undefined ? all.autoCompact === 'true' : CLI_DEFAULTS.autoCompact,
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
+      autoCompactAtByModel: autoCompactThresholds(all.autoCompactAtByModel ?? null),
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       personalityBody: all.personalityBody ?? CLI_DEFAULTS.personalityBody,
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
@@ -143,6 +160,9 @@ export class UserSettingStore {
       }
       if (patch.autoCompact !== undefined) this.set(userId, 'autoCompact', String(patch.autoCompact));
       if (patch.autoCompactAt !== undefined) this.set(userId, 'autoCompactAt', String(clampPercent(patch.autoCompactAt)));
+      // The per-model threshold map replaces the stored one wholesale (cleaned + clamped); an empty map
+      // clears every override so all models fall back to the global threshold.
+      if (patch.autoCompactAtByModel !== undefined) this.set(userId, 'autoCompactAtByModel', JSON.stringify(cleanThresholdMap(patch.autoCompactAtByModel)));
       if (patch.autoRecall !== undefined) this.set(userId, 'autoRecall', String(patch.autoRecall));
       if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));
       if (patch.advisorStyle !== undefined && isAdvisorStyle(patch.advisorStyle)) this.set(userId, 'advisorStyle', patch.advisorStyle);

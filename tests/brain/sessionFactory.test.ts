@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { compactionReserveTokens } from '../../src/brain/session/factory.js';
+import { compactionReserveTokens, resolveAutoCompactPct } from '../../src/brain/session/factory.js';
+
+describe('per-model auto-compact threshold', () => {
+  it('uses the per-model override when set, else the global default', () => {
+    const byModel = { 'relay/gpt-x': 65, 'ant/claude-x': 90 };
+    // Override present for this provider/model → wins over the global.
+    expect(resolveAutoCompactPct(byModel, 'relay', 'gpt-x', 80)).toBe(65);
+    expect(resolveAutoCompactPct(byModel, 'ant', 'claude-x', 80)).toBe(90);
+    // No override for this model → the global default applies.
+    expect(resolveAutoCompactPct(byModel, 'relay', 'other', 80)).toBe(80);
+    // No map at all → the global default.
+    expect(resolveAutoCompactPct(undefined, 'relay', 'gpt-x', 75)).toBe(75);
+  });
+
+  it('keys per-model overrides by providerId/model, matching the context-window convention', () => {
+    // The key is the config providerId (not the elowen- registry name) joined with the model id.
+    expect(resolveAutoCompactPct({ 'relay/gpt-x': 50 }, 'relay', 'gpt-x', 80)).toBe(50);
+    // A registry-style provider name must NOT match the config-keyed map.
+    expect(resolveAutoCompactPct({ 'relay/gpt-x': 50 }, 'elowen-relay', 'gpt-x', 80)).toBe(80);
+  });
+});
 
 describe('BrainSessionFactory compaction budget', () => {
   it('keeps a positive emergency summary budget when proactive compaction is disabled', () => {

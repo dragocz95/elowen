@@ -39,13 +39,13 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
     const { app, restart, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'professional', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
   });
 
@@ -112,6 +112,14 @@ describe('cli-settings routes', () => {
     expect((await app.request('/auth/me/cli-settings', patch(bobTok, { compactModel: 'kimi', compactModelProvider: 'relay' }))).status).toBe(400);
     // Clearing the override is always fine.
     expect((await app.request('/auth/me/cli-settings', patch(bobTok, { compactModel: '', compactModelProvider: '' }))).status).toBe(200);
+  });
+
+  it('PATCH persists the per-model auto-compact threshold map (clamped)', async () => {
+    const { app, amyTok } = setup();
+    const res = await app.request('/auth/me/cli-settings', patch(amyTok, { autoCompactAtByModel: { 'relay/gpt-x': 65, 'ant/claude-x': 200 } }));
+    expect(res.status).toBe(200);
+    // Stored and echoed back, with each value clamped into the 30–95 band.
+    expect((await res.json()).autoCompactAtByModel).toEqual({ 'relay/gpt-x': 65, 'ant/claude-x': 95 });
   });
 
   it('PATCH refuses a Discord id already linked to another user (409, no override)', async () => {

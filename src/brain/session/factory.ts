@@ -105,6 +105,16 @@ export function compactionReserveTokens(contextWindow: number, proactive: boolea
   return Math.max(256, Math.min(4_096, Math.round(contextWindow * 0.05)));
 }
 
+/** The effective auto-compact percentage for one model: the user's per-model override (keyed
+ *  `providerId/model`, the same convention as the operator context-window map) when set, else the global
+ *  default. Each model has its own context window, so the same percentage yields a different absolute
+ *  reserve — letting a user compact a 32k model earlier than a 200k one. */
+export function resolveAutoCompactPct(
+  byModel: Record<string, number> | undefined, providerId: string, modelId: string, globalPct: number,
+): number {
+  return byModel?.[`${providerId}/${modelId}`] ?? globalPct;
+}
+
 /** The ChatGPT (Codex) backend returns reasoning-summary text ONLY for `reasoning.summary:"concise"`
  *  — with pi's default "auto" (and even "detailed") the reasoning item comes back EMPTY, so the UI
  *  never sees the model's thinking. Verified empirically against gpt-5.5 (auto/detailed → 0 summary

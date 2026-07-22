@@ -10,6 +10,7 @@ import { buildPromptTemplates } from '../slashCommands.js';
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { personalityText } from '../personality.js';
 import type { BrainSessionFactory } from '../session/factory.js';
+import { resolveAutoCompactPct } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts, QueuedMsg, TurnContextBlocks } from '../session/liveBrain.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -72,6 +73,10 @@ export class LiveSessionSpawner {
       : undefined;
     const route = resolveBrainModelRoute(registry, cfg, opts.selection, compactSel);
     const { model } = route;
+    // Per-model auto-compact threshold: the user's override for THIS model (keyed providerId/model) wins
+    // over the global percentage carried in opts. Each model's own contextWindow then turns the percentage
+    // into the right absolute reserve down in the factory.
+    const autoCompactAtPct = resolveAutoCompactPct(settings?.autoCompactAtByModel, route.providerId, model.id, opts.autoCompactAtPct);
     const capabilities = modelCapabilities(model);
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
@@ -178,7 +183,7 @@ export class LiveSessionSpawner {
       runtime: this.d.runtime, model, compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, thinkingLevel: opts.thinkingLevel, requestProfile,
-      autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,
+      autoCompact: opts.autoCompact, autoCompactAtPct,
       pendingCompactionMessages,
       // Project AGENTS.md/CLAUDE.md ride the system prompt for an ADMIN's own chat only. Two guards,
       // both required: (1) not a shared channel (foreign senders must never see instruction files);
