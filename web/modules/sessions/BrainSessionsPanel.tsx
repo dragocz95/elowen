@@ -172,8 +172,9 @@ export function BrainSessionsPanel() {
             </MotionPresence>
           </EntityList>
         )}
-      </ControlSurfaceRegister>
 
+      {/* Inside the register so the pager shares the card's horizontal inset (it used to sit as a
+          sibling and hug the card edge). */}
       {sessions.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-border/80 pt-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="font-mono text-xs text-text-muted">
@@ -191,6 +192,7 @@ export function BrainSessionsPanel() {
           </div>
         </div>
       ) : null}
+      </ControlSurfaceRegister>
 
       <ConfirmDialog
         open={confirmId !== null}
