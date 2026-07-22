@@ -38,6 +38,18 @@ describe('resolveToolSearch', () => {
     expect(got).toEqual(['mcp__slack__post_message']);
   });
 
+  it('a bare exact tool name fetches that tool directly (no select: needed)', () => {
+    expect(resolveToolSearch('mcp__github__create_issue', CANDIDATES, 5)).toEqual(['mcp__github__create_issue']);
+    // Case-insensitive.
+    expect(resolveToolSearch('MCP__GITHUB__CREATE_ISSUE', CANDIDATES, 5)).toEqual(['mcp__github__create_issue']);
+  });
+
+  it('an mcp__<server> prefix fetches that server\'s whole deferred toolset', () => {
+    expect(resolveToolSearch('mcp__github', CANDIDATES, 5)).toEqual(['mcp__github__create_issue', 'mcp__github__list_issues']);
+    // Still capped.
+    expect(resolveToolSearch('mcp__github', CANDIDATES, 1)).toEqual(['mcp__github__create_issue']);
+  });
+
   it('+term makes a term required (excludes tools that lack it, even if other terms match)', () => {
     // "+slack issue" requires slack: the github tools match "issue" but lack "slack" → excluded; only the
     // slack tool qualifies.

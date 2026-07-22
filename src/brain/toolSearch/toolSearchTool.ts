@@ -112,7 +112,19 @@ export function resolveToolSearch(
     return candidates.filter((c) => wanted.includes(c.name.toLowerCase())).map((c) => c.name).slice(0, maxResults);
   }
 
-  const rawTerms = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+  const q = trimmed.toLowerCase();
+  // Exact-name fast path: the model typed a bare deferred-tool name instead of `select:` — fetch it
+  // directly rather than running it through keyword scoring (which might rank a sibling higher).
+  const exact = candidates.find((c) => c.name.toLowerCase() === q);
+  if (exact) return [exact.name];
+  // MCP namespace prefix: "mcp__github" → every deferred tool under that server, up to the cap. Lets the
+  // model pull a whole server's toolset when it knows the integration but not the exact tool names.
+  if (q.startsWith('mcp__') && q.length > 5) {
+    const byPrefix = candidates.filter((c) => c.name.toLowerCase().startsWith(q)).map((c) => c.name).slice(0, maxResults);
+    if (byPrefix.length > 0) return byPrefix;
+  }
+
+  const rawTerms = q.split(/\s+/).filter(Boolean);
   if (rawTerms.length === 0) return [];
   // `+term` marks a term as REQUIRED: a candidate must match it (in name parts or description) to qualify.
   const required = rawTerms.filter((t) => t.startsWith('+') && t.length > 1).map((t) => t.slice(1));
@@ -173,13 +185,15 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
     name: 'ToolSearch',
     label: 'Search tools',
     description: [
-      'Fetch and activate deferred tools so you can call them. Some tools (bridged external MCP tools)',
-      'are advertised by NAME ONLY in a <available_tools_deferred> block — their full parameter schema is',
-      'withheld until you fetch it here, and until then they cannot be invoked. Give a query; matching',
-      'tools become callable ON YOUR NEXT TURN (their schemas are added to the prompt).',
-      'Query forms: "select:mcp__github__create_issue,mcp__github__list_issues" fetches those exact tools;',
-      '"github issue" keyword-searches names and descriptions; "+github create" requires "github" and ranks',
-      'by "create". If nothing is deferred this tool is a no-op.',
+      'Fetch full parameter schemas for deferred tools so you can call them. Some tools (bridged external',
+      'MCP tools) are advertised by NAME ONLY in the <available_tools_deferred> block: until fetched, only',
+      'the name is known — there is no parameter schema, so the tool cannot be invoked. This tool matches a',
+      'query against the deferred list and activates the matches; they become callable ON YOUR NEXT TURN.',
+      'Query forms:',
+      '"select:mcp__github__create_issue,mcp__github__list_issues" — fetch these exact tools by name (a bare',
+      'exact name works too); "mcp__github" — every deferred tool under that server; "github issue" —',
+      'keyword search over names and descriptions, best matches up to max_results; "+github create" —',
+      'require "github", rank by "create". If nothing is deferred this tool is a no-op.',
     ].join(' '),
     parameters: Type.Object({
       query: Type.String({ description: 'Keywords, or "select:<name>[,<name>...]" for an exact fetch, or "+term" to require a term.' }),
