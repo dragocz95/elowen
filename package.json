@@ -1,6 +1,6 @@
 {
   "name": "elowen",
-  "version": "0.27.74",
+  "version": "0.27.75",
   "description": "Elowen is a self-hosted personal AI agent you talk to: chat, act, automate and extend from the CLI, web, Discord or WhatsApp.",
   "license": "MIT",
   "type": "module",
