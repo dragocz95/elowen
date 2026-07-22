@@ -644,11 +644,12 @@ const GIT_ADD_BG = ansi.bg(0, 95, 0);
 const GIT_ADD_FG = ansi.fg(80, 200, 80);
 const GIT_DEL_BG = ansi.bg(95, 0, 0);
 const GIT_DEL_FG = ansi.fg(220, 90, 90);
+// Monokai's default foreground — Claude renders removed-line code in this plain off-white (it never
+// syntax-highlights a delete), so white-on-red stays readable where a dark syntax token would not.
+const OFFWHITE_FG = ansi.fg(248, 248, 242);
 const GIT_ADD = `${GIT_ADD_BG};${GIT_ADD_FG}`;
-const GIT_DEL = `${GIT_DEL_BG};${GIT_DEL_FG}`;
 const CODE_BG = ansi.bg(13, 13, 16);
 const DIFF_ADD = (t: string): string => ansi.sgr(GIT_ADD, t);
-const DIFF_DEL = (t: string): string => ansi.sgr(GIT_DEL, t);
 /** A code/diff row on the block background. Painted, not merely opened: the row's own text resets its
  *  colour (the faint gutter, the dim source), and a bare background would end at the first of those. */
 const CODE_ROW = (t: string, width?: number): string => paintRow(CODE_BG, t, width ?? visibleWidth(t));
@@ -685,19 +686,23 @@ function diffLine(line: string, width?: number, lang?: string | null): string[] 
   const textWidth = width ? Math.max(1, width - visibleWidth(gutter) - 2) : undefined;
   const bg = sign === '+' ? GIT_ADD_BG : sign === '-' ? GIT_DEL_BG : CODE_BG;
   // Syntax path: the background keeps the add/del semantics, the foreground carries the grammar
-  // (VSCode-style). highlightLine is null until the grammar loads — the plain path renders then.
-  const tokens = lang ? highlightLine(text, lang) : null;
+  // (Monokai). Added and context lines are highlighted; removed lines never are (matching Claude), so
+  // they skip this path and render as plain off-white below. highlightLine is null until the grammar
+  // loads — the plain path renders then.
+  const tokens = lang && sign !== '-' ? highlightLine(text, lang) : null;
   if (tokens) {
-    const gutterFg = sign === '+' ? GIT_ADD_FG : sign === '-' ? GIT_DEL_FG : chatTheme().faint;
+    const gutterFg = sign === '+' ? GIT_ADD_FG : chatTheme().faint;
     const rows = textWidth ? wrapTokens(tokens, textWidth) : [tokens];
     return rows.map((toks, i) => paintTokenRow(i === 0 ? gutter : gutterPad, gutterFg, toks, bg, width));
   }
   const segments = textWidth ? wrapTextWithAnsi(text, textWidth) : [text];
   return segments.map((seg, i) => {
     const g = i === 0 ? gutter : gutterPad;
+    // Removed lines: plain off-white code on the red bg, the delete colour only on the gutter marker —
+    // never syntax-highlighted, matching Claude (a dark token would vanish on red).
+    if (sign === '-') return paintTokenRow(g, GIT_DEL_FG, [{ text: seg, fg: OFFWHITE_FG }], GIT_DEL_BG, width);
     const padded = width ? padAnsi(` ${g} ${seg}`, width) : ` ${g} ${seg}`;
     if (sign === '+') return DIFF_ADD(padded);
-    if (sign === '-') return DIFF_DEL(padded);
     return CODE_ROW(`${color.faint(g)} ${color.dim(seg)}`, width);
   });
 }
