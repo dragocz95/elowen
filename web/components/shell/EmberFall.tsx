@@ -28,15 +28,15 @@ export function EmberFall() {
       canvas.height = Math.round(window.innerHeight * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Density scales with viewport area but stays sparse — "a little glitter", not snowfall.
-      const count = Math.max(14, Math.min(44, Math.round((window.innerWidth * window.innerHeight) / 60000)));
+      const count = Math.max(20, Math.min(64, Math.round((window.innerWidth * window.innerHeight) / 42000)));
       embers = Array.from({ length: count }, () => ({
         x: Math.random() * window.innerWidth,
         y: Math.random() * window.innerHeight,
-        r: 0.5 + Math.random() * 0.9,
-        fall: 9 + Math.random() * 16, // px/s — a slow drizzle
+        r: 0.6 + Math.random() * 1.2,
+        fall: 11 + Math.random() * 20, // px/s — a slow drizzle
         sway: 4 + Math.random() * 7,
         phase: Math.random() * Math.PI * 2,
-        opacity: 0.05 + Math.random() * 0.14,
+        opacity: 0.12 + Math.random() * 0.22,
         warm: Math.random() < 0.35,
       }));
     };
@@ -55,7 +55,11 @@ export function EmberFall() {
         ctx.beginPath();
         ctx.arc(e.x + Math.sin(now / 2600 + e.phase) * e.sway, e.y, e.r, 0, Math.PI * 2);
         ctx.fillStyle = e.warm ? `rgb(255 154 98 / ${twinkle.toFixed(3)})` : `rgb(255 82 54 / ${twinkle.toFixed(3)})`;
+        // A whisper of glow so the spark reads as an ember, not a dead pixel.
+        ctx.shadowColor = e.warm ? 'rgb(255 154 98 / 0.5)' : 'rgb(255 82 54 / 0.5)';
+        ctx.shadowBlur = e.r * 3;
         ctx.fill();
+        ctx.shadowBlur = 0;
       }
       raf = requestAnimationFrame(tick);
     };

@@ -448,7 +448,7 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .cosmos[data-mode='stack'] .cosmos-pod__inner { background: radial-gradient(ellipse at 50% 25%, rgb(255 255 255 / 0.03), transparent 78%); }
 
 /* ambient ember drizzle behind the whole app (rendered only in effects mode 'full') */
-.ember-fall { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+.ember-fall { position: fixed; inset: 0; z-index: 1; pointer-events: none; }  /* z:1 — above page surfaces (some are opaque), below overlays/toasts */
 
 /* switches inside pods: bigger, glowing when on, with a warm knob that reads on OLED black */
 .cosmos-pod__control label { justify-content: center; }
