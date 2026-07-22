@@ -634,14 +634,16 @@ export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): str
   return lines;
 }
 
-// Diff colours tuned to match Claude Code's live look: a VIVID, saturated line background (Claude's is
-// bright neon-ish green / red, not the muted olive/maroon of the raw theme tokens) with a LIGHT foreground
-// so the gutter and the plain (grammar-not-yet-loaded) row read with high contrast on top of it — instead
-// of green-on-green mud. When a grammar is loaded the body carries its own syntax colours over this bg.
-const GIT_ADD_BG = ansi.bg(46, 160, 67);
-const GIT_ADD_FG = ansi.fg(220, 255, 224);
-const GIT_DEL_BG = ansi.bg(164, 48, 62);
-const GIT_DEL_FG = ansi.fg(255, 223, 227);
+// Diff colours matched to Claude Code's native (syntax-highlighted) diff renderer: a very DARK line
+// background so the vivid Monokai syntax colours pop on top of it, with a bright decoration foreground for
+// the gutter (the `+`/`-` marker and line number). The dark bg is deliberate — bright syntax tokens are
+// low-contrast on a bright bg, which is why a light green background made the code look uncoloured.
+// Ref Claude Code src/native-ts/color-diff/index.ts:302-331 (addLine rgb(2,40,0), deleteLine rgb(61,1,0),
+// addDecoration rgb(80,200,80), deleteDecoration rgb(220,90,90)).
+const GIT_ADD_BG = ansi.bg(2, 40, 0);
+const GIT_ADD_FG = ansi.fg(80, 200, 80);
+const GIT_DEL_BG = ansi.bg(61, 1, 0);
+const GIT_DEL_FG = ansi.fg(220, 90, 90);
 const GIT_ADD = `${GIT_ADD_BG};${GIT_ADD_FG}`;
 const GIT_DEL = `${GIT_DEL_BG};${GIT_DEL_FG}`;
 const CODE_BG = ansi.bg(13, 13, 16);

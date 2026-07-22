@@ -235,7 +235,7 @@ export class ChatApplication {
     }
     const coordinator = new StreamCoordinator(state, resources, this.actions, flows, hydrator, notices);
     this.coordinator = coordinator;
-    // shiki powers code fences with the same dark-plus palette the diff renderer uses; a fence whose
+    // shiki powers code fences with the same Monokai palette the diff renderer uses; a fence whose
     // grammar has not loaded yet keeps the stock codeBlock styling until the ready-invalidate lands.
     const baseMdTheme = getMarkdownTheme();
     const mdTheme: MarkdownTheme = {

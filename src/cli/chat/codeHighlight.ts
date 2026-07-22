@@ -1,8 +1,9 @@
 /** Syntax highlighting for the terminal chat, shared by the diff renderer and Markdown code blocks.
- *  shiki/core with the JavaScript regex engine (no WASM) and the VSCode dark-plus palette, grammars
- *  lazy-loaded per language so startup cost stays near zero. Rendering is always synchronous: a line
- *  whose grammar is not loaded yet falls back to the unhighlighted path, and the registered listener
- *  triggers one re-render once the grammar lands. */
+ *  shiki/core with the JavaScript regex engine (no WASM) and the Monokai palette — the vivid, saturated
+ *  colours Claude Code uses (pink/cyan/green/purple/yellow on a near-black bg), so highlighted code POPS
+ *  on the dark diff backgrounds. Grammars lazy-loaded per language so startup cost stays near zero.
+ *  Rendering is always synchronous: a line whose grammar is not loaded yet falls back to the
+ *  unhighlighted path, and the registered listener triggers one re-render once the grammar lands. */
 
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { createHighlighterCore } from 'shiki/core';
@@ -16,9 +17,9 @@ export interface CodeToken {
   fg: string;
 }
 
-/** dark-plus' default foreground (#D4D4D4), used when shiki reports no explicit token color. */
-const DEFAULT_FG = '38;2;212;212;212';
-const THEME = 'dark-plus';
+/** Monokai's default foreground (#F8F8F2), used when shiki reports no explicit token color. */
+const DEFAULT_FG = '38;2;248;248;242';
+const THEME = 'monokai';
 
 /** Languages worth loading eagerly at chat start — the ones an agent diff touches every session. */
 const PREWARM_LANGS = ['typescript', 'tsx', 'javascript', 'json', 'bash', 'markdown', 'python', 'css', 'html', 'yaml'] as const;
@@ -142,7 +143,7 @@ function notifyReady(): void {
 function ensureHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighterCore({
-      themes: [import('shiki/dist/themes/dark-plus.mjs')],
+      themes: [import('shiki/dist/themes/monokai.mjs')],
       langs: [],
       engine: createJavaScriptRegexEngine(),
     }).then((h) => {
