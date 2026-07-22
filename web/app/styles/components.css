@@ -441,15 +441,30 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 @keyframes cosmos-fil-in { to { stroke-dashoffset: 0; } }
 @keyframes cosmos-fil-appear { to { opacity: 1; } }
 
-/* stack mode — a vertical stream of pods along an energy beam (phones, narrow panes) */
-.cosmos[data-mode='stack'] { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 1.3rem 0 2rem; }
-.cosmos[data-mode='stack']::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(255 82 54 / 0.26) 12%, rgb(255 82 54 / 0.26) 88%, transparent); filter: blur(1px); }
+/* stack mode — satellites on a left-side energy beam (phones, narrow panes): the beam hugs the
+   left edge, each pod is a full-width row whose shrunken orb docks onto the beam like a station,
+   and the control indents under the title. Dense like a settings list, still constellation. */
+.cosmos[data-mode='stack'] { display: flex; flex-direction: column; align-items: stretch; gap: 0.35rem; padding: 0.9rem 0 1.6rem; }
+.cosmos[data-mode='stack']::before { content: ''; position: absolute; top: 0.4rem; bottom: 0; left: 1.75rem; width: 2px; translate: -50% 0; background: linear-gradient(180deg, transparent, rgb(255 82 54 / 0.26) 7%, rgb(255 82 54 / 0.26) 90%, transparent); filter: blur(1px); }
 .cosmos[data-mode='stack'] .cosmos-filaments, .cosmos[data-mode='stack'] .cosmos-ring { display: none; }
-.cosmos[data-mode='stack'] .cosmos-core { position: relative; left: auto; top: auto; translate: none; order: -1; width: 7.5rem; height: 7.5rem; margin-bottom: 0.4rem; }
+/* The core becomes the head of the line: a small mascot on the beam, the section label beside it. */
+.cosmos[data-mode='stack'] .cosmos-core { position: relative; left: auto; top: auto; translate: none; order: -1; flex-direction: row; justify-content: flex-start; gap: 0.9rem; width: auto; height: auto; margin: 0 0 0.8rem; padding-left: 0.35rem; text-align: left; }
+.cosmos[data-mode='stack'] .cosmos-core::before,
+.cosmos[data-mode='stack'] .cosmos-core::after { inset: auto; left: -0.35rem; top: 50%; width: 4.3rem; height: 4.3rem; translate: 0 -50%; }
+.cosmos[data-mode='stack'] .cosmos-core__mascot { width: 3.6rem; }
+.cosmos[data-mode='stack'] .cosmos-core__label { max-width: none; font-size: 0.62rem; }
 .cosmos[data-mode='stack'] .cosmos-pods { display: contents; }
-.cosmos[data-mode='stack'] .cosmos-pod { position: relative; translate: none; width: min(19rem, 94%); }
-.cosmos[data-mode='stack'] .cosmos-pod:nth-child(odd) { margin-left: -2rem; }
-.cosmos[data-mode='stack'] .cosmos-pod:nth-child(even) { margin-right: -2rem; }
+.cosmos[data-mode='stack'] .cosmos-pod { position: relative; translate: none; width: 100%; }
+/* Row anatomy: orb + title (+ status pushed right) on the first line, the control wraps below and
+   indents past the orb so the beam column stays clear. */
+.cosmos[data-mode='stack'] .cosmos-pod__inner { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 0.45rem 0.8rem; padding: 0.65rem 0.25rem 0.75rem 0.35rem; text-align: left; border-radius: 1rem; }
+.cosmos[data-mode='stack'] .cosmos-pod__inner::before { inset: -2% 0; border-radius: 1rem; }
+.cosmos[data-mode='stack'] .cosmos-pod__orb { width: 2.8rem; height: 2.8rem; box-shadow: 0 0 0 4px #040404, 0 0 14px rgb(255 82 54 / 0.18), inset 0 0 8px rgb(255 82 54 / 0.06); }
+.cosmos[data-mode='stack'] .cosmos-pod__orb::before { inset: -0.4rem; }
+.cosmos[data-mode='stack'] .cosmos-pod__orb svg { width: 15px; height: 15px; }
+.cosmos[data-mode='stack'] .cosmos-pod__title { justify-content: flex-start; }
+.cosmos[data-mode='stack'] .cosmos-pod__status { justify-content: flex-start; margin: 0 0 0 auto; }
+.cosmos[data-mode='stack'] .cosmos-pod__control { justify-content: flex-start; padding-left: 3.6rem; }
 .cosmos[data-mode='stack'] .cosmos-pod__inner { background: radial-gradient(ellipse at 50% 25%, rgb(255 255 255 / 0.03), transparent 78%); }
 
 /* ambient ember drizzle behind the whole app (rendered only in effects mode 'full') */
