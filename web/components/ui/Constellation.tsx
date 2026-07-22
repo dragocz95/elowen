@@ -66,8 +66,8 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       const height = root.clientHeight;
       const cx = width / 2;
       const cy = height / 2;
-      const rx = Math.min(width * 0.36, 26 * 16);
-      const ry = height * 0.32;
+      const rx = Math.min(width * 0.38, 30 * 16);
+      const ry = height * 0.33;
       ring.style.width = `${rx * 2 + 140}px`;
       ring.style.height = `${Math.min(ry * 2 + 110, height - 16)}px`;
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
@@ -218,6 +218,8 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       <svg ref={svgRef} className="cosmos-filaments" aria-hidden="true" />
       <div ref={ringRef} className="cosmos-ring" aria-hidden="true" />
       <div ref={coreRef} className="cosmos-core" aria-hidden="true">
+        {/* eslint-disable-next-line @next/next/no-img-element -- local brand asset is the canonical mascot. */}
+        <img src="/icon.png" alt="" draggable={false} className="cosmos-core__mascot" />
         <span className="cosmos-core__label">{core}</span>
       </div>
       <div ref={podsRef} className="cosmos-pods">{children}</div>

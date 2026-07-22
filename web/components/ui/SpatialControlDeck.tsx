@@ -107,7 +107,7 @@ function SpatialContentSurface({ children }: { children: ReactNode }) {
   return <section data-testid="spatial-content-surface" className="spatial-content-surface">{children}</section>;
 }
 
-export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, hero, children }: {
+export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLabel, status = 'idle', onRetry, hero, compact = false, children }: {
   eyebrow: string;
   sections: SpatialDeckSection[];
   value: string;
@@ -116,6 +116,9 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
   status?: SaveStatus;
   onRetry?: () => void;
   hero?: ReactNode;
+  /** PROTOTYPE(constellation): drop the hero band so the content surface starts right under the
+   *  rail; the auto-save status moves into the heading row. */
+  compact?: boolean;
   children: ReactNode;
 }) {
   const active = sections.find((section) => section.id === value) ?? sections[0];
@@ -123,12 +126,15 @@ export function SpatialControlDeck({ eyebrow, sections, value, onChange, ariaLab
 
   return (
     <div className="spatial-control-deck">
-      <header className="spatial-deck-heading">
-        <span className="spatial-deck-heading__eyebrow">{eyebrow}</span>
-        <h1>{active.label}</h1>
-        {active.description ? <p>{active.description}</p> : null}
+      <header className={`spatial-deck-heading ${compact ? 'spatial-deck-heading--compact' : ''}`}>
+        <div className="min-w-0">
+          <span className="spatial-deck-heading__eyebrow">{eyebrow}</span>
+          <h1>{active.label}</h1>
+          {active.description ? <p>{active.description}</p> : null}
+        </div>
+        {compact ? <AutoSaveStatus status={status} onRetry={onRetry} /> : null}
       </header>
-      <SpatialSectionHero status={status} onRetry={onRetry}>{hero}</SpatialSectionHero>
+      {compact ? null : <SpatialSectionHero status={status} onRetry={onRetry}>{hero}</SpatialSectionHero>}
       <SpatialSectionRail sections={sections} value={active.id} onChange={onChange} ariaLabel={ariaLabel} />
       <SpatialContentSurface>{children}</SpatialContentSurface>
     </div>

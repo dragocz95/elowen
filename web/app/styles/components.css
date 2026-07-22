@@ -379,7 +379,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
    purpose — delete this whole block together with Constellation.tsx and the cosmos branches in
    SpatialPrimitives.tsx to fully remove the experiment. */
 .cosmos { position: relative; }
-.cosmos[data-mode='orbit'] { height: 34rem; }
+.cosmos[data-mode='orbit'] { height: clamp(34rem, calc(100dvh - 19rem), 46rem); }
 .cosmos-filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .cosmos-fil--base { stroke: rgb(255 82 54 / 0.2); transition: opacity var(--motion-base) var(--ease-out), stroke var(--motion-base) var(--ease-out); }
 .cosmos-fil--flow { stroke: rgb(255 154 98 / 0.5); stroke-dasharray: 3 34; transition: opacity var(--motion-base) var(--ease-out); }
@@ -394,12 +394,15 @@ html[data-effects='full'] .cosmos-fil--flow { animation: cosmos-fil-flow 3.2s li
 .cosmos-ring { position: absolute; left: 50%; top: 50%; translate: -50% -50%; border: 1px dashed rgb(255 82 54 / 0.09); border-radius: 50%; pointer-events: none; }
 html[data-effects='full'] .cosmos-ring { animation: cosmos-spin 90s linear infinite; }
 
-.cosmos-core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 1; display: grid; place-items: center; width: 9.5rem; height: 9.5rem; text-align: center; pointer-events: none; }
-.cosmos-core::before { content: ''; position: absolute; inset: 12%; border-radius: 50%; background: radial-gradient(circle at 40% 35%, rgb(255 154 98 / 0.5), rgb(255 82 54 / 0.24) 45%, rgb(255 82 54 / 0.04) 72%, transparent); filter: blur(3px); }
+.cosmos-core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; width: 15rem; height: 15rem; text-align: center; pointer-events: none; }
+.cosmos-core::before { content: ''; position: absolute; inset: 8%; border-radius: 50%; background: radial-gradient(circle at 42% 38%, rgb(255 154 98 / 0.28), rgb(255 82 54 / 0.14) 45%, rgb(255 82 54 / 0.03) 72%, transparent); filter: blur(6px); }
 .cosmos-core::after { content: ''; position: absolute; inset: 0; border: 1px solid rgb(255 82 54 / 0.28); border-radius: 50%; mask: conic-gradient(from 0deg, #000 0 62%, transparent 66% 100%); }
 html[data-effects='full'] .cosmos-core::before { animation: cosmos-breathe 3.4s ease-in-out infinite; }
 html[data-effects='full'] .cosmos-core::after { animation: cosmos-spin 12s linear infinite; }
-.cosmos-core__label { position: relative; z-index: 1; max-width: 8rem; font-family: var(--font-mono); font-size: 0.6rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(255 82 54 / 0.6); }
+.cosmos-core__mascot { position: relative; z-index: 1; width: 8.5rem; height: auto; filter: drop-shadow(0 0.9rem 1.8rem rgb(255 65 35 / 0.28)); }
+html[data-effects='full'] .cosmos-core__mascot { animation: cosmos-mascot-float 6.5s ease-in-out infinite; }
+@keyframes cosmos-mascot-float { 50% { transform: translateY(-6px); } }
+.cosmos-core__label { position: relative; z-index: 1; max-width: 10rem; font-family: var(--font-mono); font-size: 0.6rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(255 82 54 / 0.6); }
 
 .cosmos-pods { position: absolute; inset: 0; }
 .cosmos-pod { position: absolute; translate: -50% -50%; width: 16.5rem; }
@@ -457,3 +460,11 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .cosmos-pod [role='switch'][aria-checked='true'] { border-color: rgb(255 82 54 / 0.6); box-shadow: 0 0 14px rgb(255 82 54 / 0.4), inset 0 0 6px rgb(0 0 0 / 0.3); }
 .cosmos-pod [role='switch'][aria-checked='true'] > span { background: #ffe0d0; box-shadow: 0 0 6px rgb(255 154 98 / 0.8); }
 .cosmos-pod [role='switch'][aria-checked='false'] { border-color: rgb(255 255 255 / 0.16); }
+
+/* compact deck heading (constellation prototype): hero band removed — the title row carries the
+   auto-save status on the right and the surface starts right under the rail */
+.spatial-deck-heading--compact { flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; min-height: 4.6rem; padding: 0.7rem 0; }
+.spatial-deck-heading--compact h1 { font-size: clamp(1.7rem, 1.4rem + 0.8vw, 2.2rem); }
+.spatial-deck-heading--compact p { margin-top: 0.3rem; font-size: 0.78rem; }
+.cosmos[data-mode='stack'] .cosmos-core { width: 9.5rem; height: 9.5rem; }
+.cosmos[data-mode='stack'] .cosmos-core__mascot { width: 5.5rem; }

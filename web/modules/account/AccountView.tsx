@@ -337,7 +337,8 @@ export function AccountView() {
         onChange={(v) => setSection(v as typeof section)}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
-        hero={<AccountDeckHero section={activeSection} user={u} adminLabel={t.users.admin} />}
+        compact={ACCOUNT_CONSTELLATION}
+        hero={ACCOUNT_CONSTELLATION ? undefined : <AccountDeckHero section={activeSection} user={u} adminLabel={t.users.admin} />}
       >
       <AccountPanel id="memory" active={section} visited={visitedSections}>
         <ConstellationMaybe core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationMaybe>

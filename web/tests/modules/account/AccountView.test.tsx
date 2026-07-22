@@ -23,7 +23,7 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => { server
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
 describe('AccountView', () => {
-  it('uses the shared control deck with the approved Account section order and one mascot', async () => {
+  it('uses the compact control deck with the approved Account section order and no hero mascot', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
@@ -38,7 +38,9 @@ describe('AccountView', () => {
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    // PROTOTYPE(constellation): the hero band is gone — the mascot lives inside the cosmos cores
+    // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.
+    expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
   });
 
