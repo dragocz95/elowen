@@ -2,6 +2,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Search } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { useConstellation } from './Constellation';
 import { Button } from './Button';
 import { Checkbox } from './Checkbox';
 import { useTranslation } from '../../lib/i18n';
@@ -154,8 +155,11 @@ function ManageSelectionModalBody({
     }
   };
 
+  // PROTOTYPE(constellation): pickers opened from an orbital pod slide in as right-side drawers so
+  // every pod-launched surface shares one presentation; elsewhere they stay centered windows.
+  const cosmos = useConstellation();
   return (
-    <Modal title={title} description={subtitle} onClose={onClose} size="xl">
+    <Modal title={title} description={subtitle} onClose={onClose} size="xl" presentation={cosmos ? 'drawer' : 'center'}>
       <ModalBody gap={4}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">

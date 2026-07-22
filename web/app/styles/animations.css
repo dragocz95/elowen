@@ -13,6 +13,11 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(2.5rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 @keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
 
 @keyframes skeleton-drift {
@@ -32,6 +37,7 @@
 
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
+.animate-drawer-in { animation: drawer-in var(--motion-base) var(--ease-out) both; }
 
 /* The spatial route rail needs a little more time than ordinary micro-interactions. */
 html[data-effects='reduced'] [data-testid='future-navigation'] [role='listitem'],
@@ -48,7 +54,8 @@ html[data-effects='reduced'] {
 }
 
 html[data-effects='reduced'] .animate-fade-up,
-html[data-effects='reduced'] .animate-pop-in { animation-name: route-fade; }
+html[data-effects='reduced'] .animate-pop-in,
+html[data-effects='reduced'] .animate-drawer-in { animation-name: route-fade; }
 
 html[data-effects='reduced'] .skeleton,
 html[data-effects='reduced'] .live-dot::after,

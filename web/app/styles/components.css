@@ -251,7 +251,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 /* Full-height right rail as a flex column: the top+bottom pinning (inset 0 0 0 auto) sets the height, so
    the header sits fixed and the body flex-fills and scrolls. No 100dvh math — iOS Safari mis-measures dvh
    under a fixed element, which was clipping the last row and stalling the scroll. */
-.workspace-detail-rail { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(30rem, calc(100vw - 3rem)); overflow: hidden; border-block: 0; border-right: 0; border-left: var(--hairline); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--color-document); box-shadow: -2rem 0 5rem rgb(0 0 0 / 0.72); }
+.workspace-detail-rail { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(38rem, calc(100vw - 3rem)); overflow: hidden; border-block: 0; border-right: 0; border-left: var(--hairline); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--color-document); box-shadow: -2rem 0 5rem rgb(0 0 0 / 0.72); }
 .workspace-detail-drawer { animation: workspace-drawer-in var(--motion-slow) var(--ease-out) both; }
 .workspace-detail-rail__header { display: flex; flex-shrink: 0; min-height: 3rem; align-items: center; justify-content: space-between; padding: 0 1rem; border-bottom: var(--hairline); color: var(--color-text); font-size: 0.78rem; font-weight: 570; }
 .workspace-detail-rail__close { display: grid; width: 1.8rem; height: 1.8rem; place-items: center; color: var(--color-text-muted); font-size: 1.15rem; }
@@ -294,7 +294,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 }
 
 @media (max-width: 1100px) {
-  .workspace-detail-rail { position: fixed; inset: 0 0 0 auto; width: min(26rem, calc(100vw - 3rem)); border-block: 0; border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: -2rem 0 5rem rgb(0 0 0 / 0.7); }
+  .workspace-detail-rail { position: fixed; inset: 0 0 0 auto; width: min(30rem, calc(100vw - 3rem)); border-block: 0; border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: -2rem 0 5rem rgb(0 0 0 / 0.7); }
 }
 
 @media (max-width: 720px) {
@@ -483,3 +483,6 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .cosmos-pod:has([data-selection-manage]) .cosmos-pod__orb:hover { transform: scale(1.06); }
 .cosmos-pod__orb:focus-visible { outline: 2px solid var(--color-text); outline-offset: 4px; }
 .cosmos-pod__control input:not([type='range']):not([type='color']) { width: 100%; min-width: 0; }
+
+/* sparse constellations (1–2 pods beside the core) need far less vertical room */
+.cosmos[data-mode='orbit'][data-density='sparse'] { height: clamp(26rem, calc(100dvh - 22rem), 34rem); }

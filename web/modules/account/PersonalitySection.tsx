@@ -122,7 +122,7 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
       )}
 
       {editing ? (
-        <Modal title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles} size="lg" onClose={() => setEditing(false)}>
+        <Modal title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles} size="lg" presentation={cosmos ? 'drawer' : 'center'} onClose={() => setEditing(false)}>
           <div className="min-h-0 flex-1 overflow-hidden">
             <MonacoEditor
               language="markdown"

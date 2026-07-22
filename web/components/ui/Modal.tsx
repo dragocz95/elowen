@@ -14,6 +14,9 @@ interface ModalProps {
   icon?: LucideIcon;
   /** Optional one-line subtitle under the title (e.g. the target id). */
   description?: string;
+  /** 'drawer' renders the dialog as a full-height right-side sheet (the constellation pattern)
+   *  instead of a centered window. Same overlay, focus and close behavior. */
+  presentation?: 'center' | 'drawer';
 }
 
 const SIZES = {
@@ -23,7 +26,8 @@ const SIZES = {
   sm: 'max-h-[80vh] w-full max-w-md',
 };
 
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, presentation = 'center' }: ModalProps) {
+  const drawer = presentation === 'drawer';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -41,7 +45,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
   return createPortal(
     <div
       ref={overlayRef}
-      className="overlay-layer-modal fixed inset-0 flex items-center justify-center bg-black/70 p-4"
+      className={`overlay-layer-modal fixed inset-0 flex bg-black/70 ${drawer ? 'justify-end' : 'items-center justify-center p-4'}`}
       onClick={(event) => {
         if (event.target !== event.currentTarget) return;
         // Portal events still bubble through their React tree. Stop at this backdrop so clicking a
@@ -58,8 +62,10 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         data-elowen-modal
-        className={`animate-pop-in flex flex-col rounded-lg bg-surface border border-border ${SIZES[size]}`}
-        style={{ boxShadow: 'var(--shadow-raised)' }}
+        className={drawer
+          ? 'animate-drawer-in flex h-full w-[min(38rem,calc(100vw-3rem))] flex-col rounded-l-lg border-l border-border bg-surface'
+          : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border ${SIZES[size]}`}
+        style={{ boxShadow: drawer ? '-2rem 0 5rem rgb(0 0 0 / 0.72)' : 'var(--shadow-raised)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-5 py-3">

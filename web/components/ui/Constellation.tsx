@@ -53,6 +53,10 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       const width = root.clientWidth;
       const orbit = width >= ORBIT_MIN_WIDTH_PX && pods.length > 0;
       root.dataset.mode = orbit ? 'orbit' : 'stack';
+      // Sparse constellations (1–2 pods) sit BESIDE the core and get a flatter field — stacking a
+      // lone pair above/below the mascot wastes a wide screen. Set before measuring: the height
+      // rule keys off this attribute.
+      root.dataset.density = pods.length <= 2 ? 'sparse' : 'dense';
       svg.replaceChildren();
       if (!orbit) {
         for (const pod of pods) {
@@ -73,10 +77,13 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
       // Phase 1 — ideal spots on the ellipse. Pods have very different heights (a lone toggle vs.
       // the auto-compact composite), so ideal spots can collide.
+      // 1 pod → east of the core; 2 pods → west & east; 3+ → the full ellipse starting at north.
+      const startDeg = pods.length === 1 ? 0 : pods.length === 2 ? 180 : -90;
       const placed = pods.map((pod, i) => {
-        const angle = ((-90 + (i * 360) / pods.length) * Math.PI) / 180;
-        // Alternate the radius slightly so the arrangement doesn't read as a mechanical circle.
-        const wobble = 1 + (i % 2 ? 0.05 : -0.04);
+        const angle = ((startDeg + (i * 360) / pods.length) * Math.PI) / 180;
+        // Alternate the radius slightly so the arrangement doesn't read as a mechanical circle —
+        // except for sparse pairs, which should mirror each other symmetrically.
+        const wobble = pods.length <= 2 ? 1 : 1 + (i % 2 ? 0.05 : -0.04);
         return {
           pod,
           x: cx + rx * wobble * Math.cos(angle),
