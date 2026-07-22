@@ -26,7 +26,9 @@ export function SettingsDeckHero({ section, system, labels, onCheckUpdates, onRe
   onRestart: (target: 'daemon' | 'web') => void;
 }) {
   if (section.id !== 'system') {
-    return <SectionHeroSummary icon={section.icon} title={section.label} description={section.description} />;
+    // The control-deck header already prints the section label + description; the hero stays an
+    // identity block (icon + label) so it complements the heading instead of echoing its subtitle.
+    return <SectionHeroSummary icon={section.icon} title={section.label} />;
   }
 
   const updateLabel = system?.updateAvailable

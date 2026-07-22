@@ -7,7 +7,7 @@ import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } f
 import { allModels } from '../../lib/execPresets';
 import { taskExec } from '../../lib/agentUtils';
 import { ElowenApiError, elowenClient } from '../../lib/elowenClient';
-import { Modal, ModalBody } from '../../components/ui/Modal';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Checkbox } from '../../components/ui/Checkbox';
@@ -306,12 +306,6 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 {t.tasks.launchImmediately}
               </button>
             )}
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-              <Button variant="accent" icon={editing ? undefined : (launchNow ? Play : undefined)} disabled={busy || !title.trim()} onClick={submitSingle}>
-                {editing ? t.common.save : launchNow ? t.tasks.createAndLaunch : t.tasks.create}
-              </Button>
-            </div>
           </>
         )}
 
@@ -415,12 +409,6 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
-              {manual
-                ? <Button variant="accent" disabled={busy} onClick={createManual}>{t.tasks.createPlan}</Button>
-                : <Button variant="accent" icon={Sparkles} disabled={busy || !goal.trim()} onClick={generate}>{planning ? t.tasks.planning : t.tasks.generatePlan}</Button>}
-            </div>
           </>
         )}
 
@@ -446,12 +434,28 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 );
               })}
             </ul>
-            <div className="flex justify-end">
-              <Button variant="accent" onClick={onClose}>{t.tasks.done}</Button>
-            </div>
           </div>
         )}
       </ModalBody>
+      <ModalFooter>
+        {result ? (
+          <Button variant="accent" onClick={onClose}>{t.tasks.done}</Button>
+        ) : editing || mode === 'single' ? (
+          <>
+            <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+            <Button variant="accent" icon={editing ? undefined : (launchNow ? Play : undefined)} disabled={busy || !title.trim()} onClick={submitSingle}>
+              {editing ? t.common.save : launchNow ? t.tasks.createAndLaunch : t.tasks.create}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+            {manual
+              ? <Button variant="accent" disabled={busy} onClick={createManual}>{t.tasks.createPlan}</Button>
+              : <Button variant="accent" icon={Sparkles} disabled={busy || !goal.trim()} onClick={generate}>{planning ? t.tasks.planning : t.tasks.generatePlan}</Button>}
+          </>
+        )}
+      </ModalFooter>
     </Modal>
   );
 }
