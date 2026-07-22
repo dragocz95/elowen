@@ -291,6 +291,8 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await screen.findByRole('heading', { level: 1, name: 'System' });
 
+    // The days field lives in the retention drawer — open it via the pod's orb first.
+    fireEvent.click(screen.getAllByRole('button', { name: en.settings.retention.label })[0]);
     const days = await screen.findByLabelText(en.settings.retention.olderThan);
     await waitFor(() => expect(days).toHaveValue(30));
 

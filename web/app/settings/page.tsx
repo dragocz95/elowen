@@ -211,6 +211,8 @@ export default function SettingsPage() {
   // independently of the token-TTL defaults autosave.
   const retention = config.data?.sessionRetention ?? { enabled: false, days: 90 };
   const [retentionDaysDraft, setRetentionDaysDraft] = useState('');
+  // The retention composite edits in a side drawer opened via its pod's orb (mirrors auto-compact).
+  const [retentionOpen, setRetentionOpen] = useState(false);
 
   // Add / edit model modal state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -972,28 +974,45 @@ export default function SettingsPage() {
                   <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} aria-label={t.settings.tokenTtl} />
                 </SettingsRow>
               );
+              // The pod stays minimal (toggle + the current threshold); the full composite lives
+              // in the side drawer, opened via the pod's orb.
               const rowRetention = (
                 <SettingsRow label={t.settings.retention.label} description={t.settings.retention.hint} icon={CalendarClock}>
                   <div className="flex items-center gap-3">
                     <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
-                    <label className="flex items-center gap-2 whitespace-nowrap text-xs text-text-muted">
-                      {t.settings.retention.olderThan}
-                      <Input
-                        type="number"
-                        min={1}
-                        value={retentionDaysDraft}
-                        disabled={!retention.enabled}
-                        onChange={(e) => setRetentionDaysDraft(e.target.value)}
-                        onBlur={commitRetentionDays}
-                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                        className="w-16 text-center"
-                        aria-label={t.settings.retention.olderThan}
-                      />
-                      {t.settings.retention.days}
-                    </label>
+                    {retention.enabled ? <span className="whitespace-nowrap font-mono text-sm tabular-nums text-text">{retention.days} {t.settings.retention.days}</span> : null}
+                    <button type="button" data-selection-manage className="hidden" aria-label={t.settings.retention.label} onClick={() => setRetentionOpen(true)} />
                   </div>
                 </SettingsRow>
               );
+              const retentionDrawer = retentionOpen ? (
+                <WorkspaceDetailRail label={t.settings.retention.label} closeLabel={t.common.close} onClose={() => setRetentionOpen(false)}>
+                  <p className="mb-4 text-xs leading-relaxed text-text-muted">{t.settings.retention.hint}</p>
+                  <div className="flex flex-col gap-5 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-text">{t.settings.retention.label}</span>
+                      <Toggle checked={retention.enabled} onChange={(next) => void saveRetention({ enabled: next })} label={t.settings.retention.label} />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.settings.retention.olderThan}</span>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={retentionDaysDraft}
+                          disabled={!retention.enabled}
+                          onChange={(e) => setRetentionDaysDraft(e.target.value)}
+                          onBlur={commitRetentionDays}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                          className="w-24 text-center"
+                          aria-label={t.settings.retention.olderThan}
+                        />
+                        <span className="text-xs text-text-muted">{t.settings.retention.days}</span>
+                      </div>
+                    </div>
+                  </div>
+                </WorkspaceDetailRail>
+              ) : null;
               const diagnosticsGroup = (
                 <SettingsGroup title={t.settings.systemDiagnostics} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics" variant="classic">
                   <div className="settings-diagnostics__metrics" aria-busy={!diagnostics}>
@@ -1020,6 +1039,7 @@ export default function SettingsPage() {
                     {rowRetention}
                   </SettingsGroup>
                   {diagnosticsGroup}
+                  {retentionDrawer}
                 </div>
               );
             })()}
