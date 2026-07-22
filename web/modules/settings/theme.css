@@ -48,7 +48,6 @@
 
 .settings-control-row__status { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--color-success); font-size: 0.7rem; font-weight: 620; }
 .settings-control-row__status--down { color: var(--color-danger); }
-.settings-control-row__control { display: flex; align-items: center; gap: 0.65rem; color: var(--color-text-muted); font-size: 0.72rem; }
 
 .settings-diagnostics__metrics { display: grid; grid-template-columns: repeat(3, minmax(10rem, 1fr)); min-height: 6rem; align-items: center; }
 .settings-diagnostic-metric { display: grid; min-height: 4rem; grid-template-columns: auto 1fr; align-content: center; gap: 0.35rem 0.8rem; padding: 0 1.7rem; border-left: var(--hairline); }

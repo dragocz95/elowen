@@ -23,18 +23,17 @@ function SpatialLabel({ title, description, icon: Icon }: { title: string; descr
 }
 
 /** Open document section used by spatial control surfaces. It deliberately has no card shell.
- *  Inside a ConstellationScope the group renders as an orbital cosmos
- *  instead — `variant="classic"` opts a group out (for non-row content like the permission rules). */
-export function SpatialGroup({ title, description, icon, children, className = '', variant }: {
+ *  Inside a ConstellationScope the group renders as an orbital cosmos instead; outside a scope it
+ *  keeps the classic stacked-row form. */
+export function SpatialGroup({ title, description, icon, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
   children: ReactNode;
   className?: string;
-  variant?: 'classic';
 }) {
   const cosmos = useConstellation();
-  if (cosmos && variant !== 'classic') {
+  if (cosmos) {
     return <CosmosGroup core={title ?? cosmos.core}>{children}</CosmosGroup>;
   }
   return (
