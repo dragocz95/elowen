@@ -39,10 +39,12 @@ describe('SettingsPage', () => {
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     expect(screen.getByText('12%')).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
 
+    // Constellation: the service/security rows orbit as one cosmos; only the diagnostics widget
+    // keeps a classic group frame.
     const systemPanel = screen.getByText('System diagnostics').closest('[data-settings-panel="system"]');
-    expect(systemPanel?.querySelectorAll('[data-settings-group]')).toHaveLength(3);
+    expect(systemPanel?.querySelectorAll('[data-testid="cosmos"]')).toHaveLength(1);
+    expect(systemPanel?.querySelectorAll('[data-settings-group]')).toHaveLength(1);
     expect(screen.getByText('System diagnostics').closest('[data-settings-group]')).toHaveClass('settings-diagnostics');
   });
 
@@ -183,8 +185,10 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Planner model')).toBeTruthy(); // same role labels in both modes
 
     // Auto-persist: nudging any autopilot field saves shortly after (no Save button exists).
+    // The free-text planner model edits in the shared Autopilot drawer — open it via the pod first.
     putBody = null;
-    fireEvent.change(screen.getByPlaceholderText('claude-opus-4-8'), { target: { value: 'relay-model-x' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Planner model' })[0]);
+    fireEvent.change(await screen.findByPlaceholderText('claude-opus-4-8'), { target: { value: 'relay-model-x' } });
     await waitFor(() => {
       const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string } }).autopilot;
       expect(ap.pilotExec).toBe(''); // relay mode clears the agent execs
@@ -217,7 +221,8 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
 
     // The toggle lives with the run defaults (visible in the default relay mode) and starts off.
-    const toggle = screen.getByLabelText('TDD mission mode');
+    // The pod's orb shares the row's accessible name, so target the switch role explicitly.
+    const toggle = screen.getByRole('switch', { name: 'TDD mission mode' });
     expect(toggle).not.toBeChecked();
 
     putBody = null;
@@ -314,10 +319,12 @@ describe('Settings depth', () => {
     await waitFor(() => expect(screen.getAllByRole('switch').length).toBeGreaterThan(0)); // model toggle rows
     unmount();
 
-    // Autopilot section — the notes textarea seeded from config.
+    // Autopilot section — the notes pod shows the saved text; the textarea edits in the drawer.
     localStorage.setItem('elowen.settings.category', 'autopilot');
     const { wrapper: WrapperAp } = createWrapper();
     const ap = render(<WrapperAp><ToastProvider><SettingsPage /></ToastProvider></WrapperAp>);
+    await waitFor(() => expect(screen.getAllByText('mind the guardrails').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: en.settings.notes })[0]);
     await waitFor(() => expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy()); // notes textarea
     ap.unmount();
 

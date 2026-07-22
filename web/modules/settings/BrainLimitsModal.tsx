@@ -29,14 +29,15 @@ const BRAIN_LIMIT_FIELDS: { key: keyof BrainLimits; min: number; max: number; st
 /** Modal editor for the operator-tunable brain limits. Edits flow straight back into the caller's
  *  `limits` state (which auto-saves through the shared status controller), so there is no Save button — Done just closes.
  *  Clearing a field snaps it to the min so the local input matches what the daemon stores. */
-export function BrainLimitsModal({ limits, onChange, onClose }: {
+export function BrainLimitsModal({ limits, onChange, onClose, presentation }: {
   limits: BrainLimits;
   onChange: (next: (cur: BrainLimits) => BrainLimits) => void;
   onClose: () => void;
+  presentation?: 'center' | 'drawer';
 }) {
   const { t } = useTranslation();
   return (
-    <Modal title={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal} size="md" onClose={onClose}>
+    <Modal title={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal} size="md" onClose={onClose} presentation={presentation}>
       <ModalBody>
         <div className="@container">
           <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">

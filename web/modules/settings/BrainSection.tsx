@@ -24,6 +24,7 @@ import { useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutati
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderType, OAuthFlowState, BrainLimits } from '../../lib/types';
 import { SettingsGroup, SettingsRow, SettingsState } from './SettingsSurface';
+import { useConstellation } from '../../components/ui/Constellation';
 
 // UI-only icon slug per OAuth type. The daemon exposes the SUPPORTED type set (the keys of
 // /brain/oauth/status), never icons — so the enumeration is derived from that runtime data (a newly
@@ -262,6 +263,9 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
 
 /** Settings → Brain: the model providers behind `elowen chat` (custom endpoints + OAuth accounts). */
 export function BrainSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
+  // PROTOTYPE(constellation): identity/limits rows orbit; the account + provider LISTS stay classic
+  // (variant="classic" below) — a connect/edit list doesn't read as pods.
+  const cosmos = useConstellation();
   const { data: config } = useConfig();
   const oauth = useBrainOauthStatus();
   const rateLimits = useBrainRateLimitsAll();
@@ -406,7 +410,8 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
         </SettingsRow>
         {limits ? (
           <SettingsRow label={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal}>
-            <button type="button" className="spatial-inline-action" onClick={() => setLimitsOpen(true)}>
+            {/* data-selection-manage: in a pod the button hides and the orb becomes the trigger. */}
+            <button type="button" data-selection-manage className="spatial-inline-action" onClick={() => setLimitsOpen(true)}>
               <SlidersHorizontal size={14} aria-hidden />{t.brain.limits.manage}
             </button>
           </SettingsRow>
@@ -417,6 +422,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
               limits={limits}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
+              presentation={cosmos ? 'drawer' : 'center'}
             />
       ) : null}
 
@@ -425,6 +431,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
       <SettingsGroup
         title={t.brain.accounts}
         density="compact"
+        variant="classic"
         actions={restorableOauth.length > 0 ? (
           <ActionMenu
             align="right"
@@ -471,6 +478,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
       <SettingsGroup
         title={t.brain.providers}
         density="compact"
+        variant="classic"
         actions={(
           <button
             type="button"

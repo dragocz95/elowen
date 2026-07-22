@@ -2,7 +2,7 @@
 import { useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from '../../components/ui/HelpTip';
-import { CosmosGroup, useConstellation } from '../../components/ui/Constellation';
+import { ClassicScope, CosmosGroup, useConstellation } from '../../components/ui/Constellation';
 
 type SettingsTone = 'default' | 'danger';
 type SettingsDensity = 'comfortable' | 'compact';
@@ -28,7 +28,7 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
   if (cosmos && variant !== 'classic') {
     return <CosmosGroup core={title ?? cosmos.core}>{children}</CosmosGroup>;
   }
-  return (
+  const classic = (
     <section data-settings-group data-tone={tone} data-density={density} className={`settings-group ${className}`}>
       {title || description || actions ? (
         <header className="settings-group__header">
@@ -45,6 +45,8 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
       <div className="settings-group__body">{children}</div>
     </section>
   );
+  // A `variant="classic"` group inside an active scope keeps its own rows classic too.
+  return cosmos ? <ClassicScope>{classic}</ClassicScope> : classic;
 }
 
 export function SettingsRow({ label, description, icon: Icon, status, actions, children, className = '' }: {

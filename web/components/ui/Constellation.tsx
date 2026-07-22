@@ -20,6 +20,12 @@ export function ConstellationScope({ core, children }: { core: string; children:
   return <ConstellationContext.Provider value={{ core }}>{children}</ConstellationContext.Provider>;
 }
 
+/** Opts a subtree back OUT of an enclosing scope — hybrid sections keep their list/widget groups
+ *  classic while sibling rows orbit, and the rows inside such a group must not render as pods. */
+export function ClassicScope({ children }: { children: ReactNode }) {
+  return <ConstellationContext.Provider value={null}>{children}</ConstellationContext.Provider>;
+}
+
 /** Below this container width the orbit collapses into a vertical stream (phones, narrow panes). */
 const ORBIT_MIN_WIDTH_PX = 832;
 
