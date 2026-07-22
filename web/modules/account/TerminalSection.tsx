@@ -2,6 +2,9 @@
 import { useState, useEffect } from 'react';
 import { Type, TextCursorInput, ScrollText, Palette } from 'lucide-react';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { useConstellation } from '../../components/ui/Constellation';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Segmented } from '../../components/ui/Segmented';
 import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
@@ -36,6 +39,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   const [showThoughtsCli, setShowThoughtsCli] = useState(TERMINAL_DEFAULTS.showThoughtsCli ?? true);
 
   const [seeded, setSeeded] = useState(false);
+  // PROTOTYPE(constellation): the palette + live preview open in a side drawer via the pod's orb.
+  const cosmos = useConstellation();
+  const [colorsOpen, setColorsOpen] = useState(false);
   useEffect(() => {
     if (data && !seeded) {
       setFontSize(data.fontSize); setFontFamily(data.fontFamily); setCursorStyle(data.cursorStyle);
@@ -59,11 +65,10 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   ];
   const label = 'text-tiny font-semibold uppercase tracking-wide text-text-muted';
 
-  return (
-    <div className="flex flex-col gap-4">
-      <SpatialGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
-        {/* The live preview sits NEXT TO the swatches (right column on wide screens, on top on narrow
-            ones) so a color tweak is visible without scrolling back to a separate preview card. */}
+  // The live preview sits NEXT TO the swatches (right column on wide screens, on top on narrow
+  // ones) so a color tweak is visible without scrolling back to a separate preview card. In the
+  // constellation this whole layout moves into the side drawer (narrow → preview on top).
+  const colorsEditor = (
         <div data-testid="terminal-colors-layout" className="@container grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div className="min-w-0 max-w-full self-start lg:sticky lg:top-4 lg:order-2">
             <TerminalPreview settings={settings} resolvedTheme={resolvedTheme} />
@@ -104,9 +109,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
             ) : null}
           </div>
         </div>
-      </SpatialGroup>
+  );
 
-      <SpatialGroup>
+  const rowFont = (
       <SpatialRow title={t.terminal.fontTitle} icon={Type}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
@@ -122,7 +127,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           </div>
         </div>
       </SpatialRow>
+  );
 
+  const rowCursor = (
       <SpatialRow title={t.terminal.cursorTitle} icon={TextCursorInput}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
@@ -135,14 +142,18 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           </div>
         </div>
       </SpatialRow>
+  );
 
+  const rowCli = (
       <SpatialRow title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={showThoughtsCli} onChange={setShowThoughtsCli} label={t.terminal.showThoughts} />
           <span>{t.terminal.showThoughts}</span>
         </label>
       </SpatialRow>
+  );
 
+  const rowHistory = (
       <SpatialRow title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
         <div className="flex flex-col gap-1.5">
           <span className={label}>{t.terminal.scrollback}</span>
@@ -152,8 +163,44 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           </div>
         </div>
       </SpatialRow>
-      </SpatialGroup>
+  );
 
+  const rowColors = (
+      <SpatialRow title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
+        <SelectionSummary
+          countText=""
+          samples={[{ label: theme === 'custom' ? t.terminal.themeCustom : t.terminal.themeAuto }]}
+          moreCount={0}
+          onManage={() => setColorsOpen(true)}
+          manageLabel={t.terminal.colorsTitle}
+          manageAriaLabel={t.terminal.colorsTitle}
+        />
+      </SpatialRow>
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      {cosmos ? (
+        <SpatialGroup>
+          {rowColors}{rowFont}{rowCursor}{rowCli}{rowHistory}
+        </SpatialGroup>
+      ) : (
+        <>
+          <SpatialGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
+            {colorsEditor}
+          </SpatialGroup>
+          <SpatialGroup>
+            {rowFont}{rowCursor}{rowCli}{rowHistory}
+          </SpatialGroup>
+        </>
+      )}
+
+      {colorsOpen ? (
+        <WorkspaceDetailRail label={t.terminal.colorsTitle} closeLabel={t.common.close} onClose={() => setColorsOpen(false)}>
+          <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.terminal.colorsHelp}</p>
+          {colorsEditor}
+        </WorkspaceDetailRail>
+      ) : null}
     </div>
   );
 }

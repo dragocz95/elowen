@@ -31,6 +31,7 @@ import { ChoiceField } from '../../components/ui/ChoiceField';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { ConstellationScope } from '../../components/ui/Constellation';
+import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
@@ -166,6 +167,8 @@ export function AccountView() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  // PROTOTYPE(constellation): the password form lives in a side drawer opened via the pod's orb.
+  const [passwordOpen, setPasswordOpen] = useState(false);
   // Phone push is a per-device preference (like UI scale): reflect this device's current state.
   const [pushSupported, setPushSupported] = useState(true);
   const [pushOn, setPushOn] = useState(false);
@@ -345,8 +348,12 @@ export function AccountView() {
       <AccountPanel id="memory" active={section} visited={visitedSections}>
         <ConstellationMaybe core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationMaybe>
       </AccountPanel>
-      <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection onSaveState={reportSaveState} /></AccountPanel>
-      <AccountPanel id="terminal" active={section} visited={visitedSections}><TerminalSection onSaveState={reportSaveState} /></AccountPanel>
+      <AccountPanel id="personality" active={section} visited={visitedSections}>
+        <ConstellationMaybe core={t.account.tabPersonality}><PersonalitySection onSaveState={reportSaveState} /></ConstellationMaybe>
+      </AccountPanel>
+      <AccountPanel id="terminal" active={section} visited={visitedSections}>
+        <ConstellationMaybe core={t.account.tabTerminal}><TerminalSection onSaveState={reportSaveState} /></ConstellationMaybe>
+      </AccountPanel>
 
       {/* Elowen AI runtime controls. Default models live at the top of the profile workspace, where
           users see their most consequential personal preference immediately. */}
@@ -355,77 +362,53 @@ export function AccountView() {
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
-      <div className="flex min-w-0 flex-col gap-6">
-        <SpatialIdentity actions={(
-          <button type="button" className="spatial-inline-action" onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>
-            <Upload size={14} aria-hidden />{t.account.uploadAvatar}
-          </button>
-        )}>
-        <div className="flex items-center gap-4">
-          <Avatar user={u} size={72} />
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="flex items-center gap-2">
-              <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
-              {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
-            </span>
-            <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
-          </div>
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
-        </div>
-        </SpatialIdentity>
-
-        <SpatialGroup
-          title={t.account.defaultModel}
-          icon={Cpu}
-          description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}
-        >
-          {workerExecs.length > 0 ? (
-            <SpatialRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
-              <WorkerField
-                value={defaultExec}
-                onChange={setDefaultExec}
-                execs={workerExecs}
-                labelOf={labelOf}
-                defaultLabel={t.account.defaultWorkerNone}
-                title={t.account.defaultWorker}
-              />
-            </SpatialRow>
-          ) : null}
-          {elowenModels.length > 0 ? (
-            <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
-              <BrainModelField
-                value={elowenSel}
-                onChange={applyElowen}
-                models={elowenModels}
-                title={t.account.defaultElowenAi}
-                subtitle={t.account.defaultElowenAiHint}
-                defaultLabel={t.account.defaultElowenAiNone}
-                keyOf={(m) => `${m.provider}::${m.model}`}
-                manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
-              />
-            </SpatialRow>
-          ) : null}
-          {workerExecs.length === 0 && elowenModels.length === 0 ? (
-            <p className="py-4 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
-          ) : null}
-        </SpatialGroup>
-
-        <SpatialGroup>
+      <ConstellationMaybe core={t.account.tabProfile}>
+      {(() => {
+        // PROTOTYPE(constellation): the same rows feed both layouts — one merged orbit in cosmos
+        // mode, the original four themed groups in the classic layout.
+        const rowWorker = workerExecs.length > 0 ? (
+          <SpatialRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
+            <WorkerField
+              value={defaultExec}
+              onChange={setDefaultExec}
+              execs={workerExecs}
+              labelOf={labelOf}
+              defaultLabel={t.account.defaultWorkerNone}
+              title={t.account.defaultWorker}
+            />
+          </SpatialRow>
+        ) : null;
+        const rowElowen = elowenModels.length > 0 ? (
+          <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
+            <BrainModelField
+              value={elowenSel}
+              onChange={applyElowen}
+              models={elowenModels}
+              title={t.account.defaultElowenAi}
+              subtitle={t.account.defaultElowenAiHint}
+              defaultLabel={t.account.defaultElowenAiNone}
+              keyOf={(m) => `${m.provider}::${m.model}`}
+              manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
+            />
+          </SpatialRow>
+        ) : null;
+        const rowName = (
           <SpatialRow title={t.account.name} icon={UserIcon}>
             <Input value={name} onChange={(e) => setName(e.target.value)} className="sm:w-72" />
           </SpatialRow>
+        );
+        const rowEmail = (
           <SpatialRow title={t.account.email} icon={Mail}>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:w-72" />
           </SpatialRow>
-        </SpatialGroup>
-
-        <SpatialGroup>
-          {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. The
-              slider sets the personal factor; the window width supplies an automatic base underneath it, so
-              the applied zoom is shown alongside whenever the two disagree — otherwise a slider reading
-              100% on a visibly shrunken app looks like a bug. */}
+        );
+        // Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. The
+        // slider sets the personal factor; the window width supplies an automatic base underneath it, so
+        // the applied zoom is shown alongside whenever the two disagree — otherwise a slider reading
+        // 100% on a visibly shrunken app looks like a bug.
+        const rowUiScale = (
           <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-center justify-center gap-3">
               <Slider value={prefPct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setPreference(v / 100)} aria-label={t.account.uiScale} />
               <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{prefPct}%</span>
               {appliedPct !== prefPct && (
@@ -434,6 +417,8 @@ export function AccountView() {
               <button type="button" className="spatial-inline-action" onClick={() => setPreference(DEFAULT_SCALE)} disabled={prefPct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
             </div>
           </SpatialRow>
+        );
+        const rowEffects = (
           <SpatialRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
             <ChoiceField
               title={t.account.effectsTitle}
@@ -447,24 +432,71 @@ export function AccountView() {
               ]}
             />
           </SpatialRow>
-        </SpatialGroup>
-
-        <SpatialGroup>
-          {/* Discord account link — maps your Discord user to this Elowen account (owner persona on Discord). */}
+        );
+        // Discord / WhatsApp account links — map the platform identity to this Elowen account.
+        const rowDiscord = (
           <SpatialRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
             <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="font-mono sm:w-72" aria-label={t.account.discordId} />
           </SpatialRow>
-          {/* WhatsApp account link — maps your WhatsApp number to this Elowen account (owner persona on WhatsApp). */}
+        );
+        const rowWhatsapp = (
           <SpatialRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
             <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="font-mono sm:w-72" aria-label={t.account.whatsappNumber} />
           </SpatialRow>
-        </SpatialGroup>
-      </div>
+        );
+        return (
+          <div className="flex min-w-0 flex-col gap-6">
+            <SpatialIdentity actions={(
+              <button type="button" className="spatial-inline-action" onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>
+                <Upload size={14} aria-hidden />{t.account.uploadAvatar}
+              </button>
+            )}>
+            <div className="flex items-center gap-4">
+              <Avatar user={u} size={72} />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="flex items-center gap-2">
+                  <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
+                  {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
+                </span>
+                <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
+              </div>
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
+            </div>
+            </SpatialIdentity>
+
+            {ACCOUNT_CONSTELLATION ? (
+              <SpatialGroup>
+                {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}
+              </SpatialGroup>
+            ) : (
+              <>
+                <SpatialGroup
+                  title={t.account.defaultModel}
+                  icon={Cpu}
+                  description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}
+                >
+                  {rowWorker}
+                  {rowElowen}
+                  {workerExecs.length === 0 && elowenModels.length === 0 ? (
+                    <p className="py-4 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
+                  ) : null}
+                </SpatialGroup>
+                <SpatialGroup>{rowName}{rowEmail}</SpatialGroup>
+                <SpatialGroup>{rowUiScale}{rowEffects}</SpatialGroup>
+                <SpatialGroup>{rowDiscord}{rowWhatsapp}</SpatialGroup>
+              </>
+            )}
+          </div>
+        );
+      })()}
+      </ConstellationMaybe>
       </AccountPanel>
 
       <AccountPanel id="security" active={section} visited={visitedSections}>
-        {/* Password change — verified server-side against the current password. */}
-        <SpatialGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
+      <ConstellationMaybe core={t.account.tabSecurity}>
+      {(() => {
+        // Password change — verified server-side against the current password.
+        const passwordForm = (
           <form
             className="flex flex-col gap-3 py-4"
             onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
@@ -505,7 +537,34 @@ export function AccountView() {
               </Button>
             </div>
           </form>
-        </SpatialGroup>
+        );
+        if (!ACCOUNT_CONSTELLATION) {
+          return (
+            <SpatialGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
+              {passwordForm}
+            </SpatialGroup>
+          );
+        }
+        // PROTOTYPE(constellation): the pod shows a masked hint; the form opens in a side drawer
+        // via the pod's orb.
+        return (
+          <>
+            <SpatialGroup>
+              <SpatialRow title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
+                <span className="font-mono text-sm tracking-widest text-text-muted" aria-hidden>••••••••</span>
+                <button type="button" data-selection-manage className="hidden" aria-label={t.account.changePassword} onClick={() => setPasswordOpen(true)} />
+              </SpatialRow>
+            </SpatialGroup>
+            {passwordOpen ? (
+              <WorkspaceDetailRail label={t.account.password} closeLabel={t.common.close} onClose={() => setPasswordOpen(false)}>
+                <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.account.passwordHint}</p>
+                {passwordForm}
+              </WorkspaceDetailRail>
+            ) : null}
+          </>
+        );
+      })()}
+      </ConstellationMaybe>
       </AccountPanel>
 
       <AccountPanel id="notifications" active={section} visited={visitedSections}>
@@ -513,6 +572,7 @@ export function AccountView() {
            Rendered as an inline toggle row (like the other account settings) instead of a detached
            right-aligned button, so the control reads as a setting, not a submit form. */}
         {pushSupported ? (
+          <ConstellationMaybe core={t.account.tabNotifications}>
           <SpatialGroup>
           <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <label className="flex items-center gap-3 text-sm text-text">
@@ -521,6 +581,7 @@ export function AccountView() {
             </label>
           </SpatialRow>
           </SpatialGroup>
+          </ConstellationMaybe>
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
       </SpatialControlDeck>

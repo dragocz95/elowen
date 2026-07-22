@@ -482,3 +482,4 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .cosmos-pod:has([data-selection-manage]) .cosmos-pod__orb { cursor: pointer; }
 .cosmos-pod:has([data-selection-manage]) .cosmos-pod__orb:hover { transform: scale(1.06); }
 .cosmos-pod__orb:focus-visible { outline: 2px solid var(--color-text); outline-offset: 4px; }
+.cosmos-pod__control input:not([type='range']):not([type='color']) { width: 100%; min-width: 0; }

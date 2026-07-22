@@ -9,6 +9,8 @@ import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { useConstellation } from '../../components/ui/Constellation';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalFooter } from '../../components/ui/Modal';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Button } from '../../components/ui/Button';
@@ -61,18 +63,41 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
   ];
 
   const hasBody = personalityBody.trim().length > 0;
+  // PROTOTYPE(constellation): in the orbital layout the style pills and the instruction body become
+  // two pods in ONE cosmos — the body pod shows a snippet chip and its orb opens the Monaco modal.
+  const cosmos = useConstellation();
+
+  const styleRow = (
+    <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
+      <div className="flex flex-wrap justify-center gap-1.5" role="group" aria-label={t.personality.styleLabel}>
+        {styleOptions.map((o) => (
+          <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
+        ))}
+      </div>
+    </SpatialRow>
+  );
 
   return (
     <div className="flex flex-col gap-4">
+      {cosmos ? (
+        <SpatialGroup>
+          {styleRow}
+          <SpatialRow title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Pencil}>
+            <SelectionSummary
+              countText=""
+              samples={hasBody ? [{ label: personalityBody.trim().slice(0, 42) }] : []}
+              moreCount={0}
+              onManage={() => setEditing(true)}
+              manageLabel={hasBody ? t.personality.bodyEdit : t.personality.bodyAdd}
+              manageAriaLabel={t.personality.bodyLabel}
+            />
+          </SpatialRow>
+        </SpatialGroup>
+      ) : (
+      <>
       {/* Communication style pills (applied everywhere, on top of the global body) */}
       <SpatialGroup>
-        <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label={t.personality.styleLabel}>
-            {styleOptions.map((o) => (
-              <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
-            ))}
-          </div>
-        </SpatialRow>
+        {styleRow}
       </SpatialGroup>
 
       {/* Global personality instructions — edited in a Monaco modal, shown as a compact preview when set */}
@@ -93,6 +118,8 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
           </button>
         ) : null}
       </SpatialGroup>
+      </>
+      )}
 
       {editing ? (
         <Modal title={t.personality.bodyLabel} description={t.personality.bodyHint} icon={Sparkles} size="lg" onClose={() => setEditing(false)}>
