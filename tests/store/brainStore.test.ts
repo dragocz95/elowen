@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 
@@ -1004,6 +1004,32 @@ describe('BrainStore', () => {
       store.reassignSession('old', 'archived');
       expect(store.getSessionEvents('old')).toEqual([]);
       expect(store.getSessionEvents('archived')).toEqual([{ id: event.id, kind: 'reasoning', detail: 'high', at: event.at }]);
+    });
+  });
+
+  describe('deleteSession', () => {
+    it('removes the session\'s tool-result spill dir along with its rows', async () => {
+      const { mkdtempSync, mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      const home = mkdtempSync(join(tmpdir(), 'elowen-spill-purge-'));
+      vi.stubEnv('HOME', home);
+      try {
+        store.createSession({ id: 's1', userId: 7, model: 'm' });
+        store.createSession({ id: 's2', userId: 7, model: 'm' });
+        const spill1 = join(home, '.config/elowen/tool-results/s1');
+        const spill2 = join(home, '.config/elowen/tool-results/s2');
+        mkdirSync(spill1, { recursive: true });
+        mkdirSync(spill2, { recursive: true });
+        writeFileSync(join(spill1, 'call-1.txt'), 'x');
+        writeFileSync(join(spill2, 'call-2.txt'), 'y');
+        store.deleteSession('s1');
+        expect(existsSync(spill1)).toBe(false);
+        expect(existsSync(spill2)).toBe(true); // the other session's spills are untouched
+        expect(store.getSession('s1')).toBeUndefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
   });
 });

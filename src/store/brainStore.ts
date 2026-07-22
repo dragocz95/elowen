@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import type { Db } from './db.js';
 import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
+import { toolResultSpillDir } from '../shared/paths.js';
+import { logger } from '../shared/logger.js';
 import { CHANNEL_PREFIX, TASK_PREFIX } from '../brain/sessionId.js';
 import {
   normalizeDelegatedExecutionScope,
@@ -546,6 +549,10 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
+    // Cleared tool-result spills live outside the DB, one directory per session — remove them with
+    // their conversation. Best-effort: a missing or unwritable spill dir must not fail the delete.
+    try { rmSync(toolResultSpillDir(process.env, id), { recursive: true, force: true }); }
+    catch (e) { logger('brain-store').warn(`failed to remove tool-result spills for ${id}`, e); }
   }
 
   /** Re-key a session — its row, messages and goal — to a new id, atomically (a crash mid-move would
