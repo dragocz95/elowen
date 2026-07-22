@@ -634,15 +634,15 @@ export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): str
   return lines;
 }
 
-// Diff colours matched to Claude Code's native (syntax-highlighted) diff renderer: a very DARK line
-// background so the vivid Monokai syntax colours pop on top of it, with a bright decoration foreground for
-// the gutter (the `+`/`-` marker and line number). The dark bg is deliberate — bright syntax tokens are
-// low-contrast on a bright bg, which is why a light green background made the code look uncoloured.
-// Ref Claude Code src/native-ts/color-diff/index.ts:302-331 (addLine rgb(2,40,0), deleteLine rgb(61,1,0),
-// addDecoration rgb(80,200,80), deleteDecoration rgb(220,90,90)).
-const GIT_ADD_BG = ansi.bg(2, 40, 0);
+// Diff colours matched to what Claude Code actually renders (sampled from a real screenshot): a saturated
+// medium-green line background — ANSI-256 index 22 = rgb(0,95,0) — with the vivid Monokai syntax palette on
+// top, and a bright decoration foreground for the gutter (the `+`/`-` marker and line number). Claude emits
+// the 256-colour value, not its truecolor rgb(2,40,0) branch (that renders near-black on a 256 terminal),
+// which is why an earlier near-black background looked nothing like Claude. Remove is the red counterpart,
+// ANSI-256 index 52 = rgb(95,0,0). Monokai keeps every token high-contrast on the green.
+const GIT_ADD_BG = ansi.bg(0, 95, 0);
 const GIT_ADD_FG = ansi.fg(80, 200, 80);
-const GIT_DEL_BG = ansi.bg(61, 1, 0);
+const GIT_DEL_BG = ansi.bg(95, 0, 0);
 const GIT_DEL_FG = ansi.fg(220, 90, 90);
 const GIT_ADD = `${GIT_ADD_BG};${GIT_ADD_FG}`;
 const GIT_DEL = `${GIT_DEL_BG};${GIT_DEL_FG}`;
