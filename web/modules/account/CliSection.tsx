@@ -188,11 +188,13 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
               <button
                 type="button"
                 onClick={() => setThresholdsOpen(true)}
-                className="inline-flex w-fit items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text"
+                className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-elevated hover:text-text"
               >
                 <SlidersVertical size={13} aria-hidden />
                 {t.cli.compactByModelManage}
-                {Object.keys(compactByModel).length ? <span className="text-accent">({Object.keys(compactByModel).length})</span> : null}
+                {Object.keys(compactByModel).length ? (
+                  <span className="rounded bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-accent">{Object.keys(compactByModel).length}</span>
+                ) : null}
               </button>
             </>
           ) : null}
