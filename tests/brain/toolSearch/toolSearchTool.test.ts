@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveToolSearch,
+  requestedExactNames,
   formatDeferredToolsBlock,
   createToolSearchHandle,
   seedActivatedFromHistory,
@@ -62,14 +63,43 @@ describe('resolveToolSearch', () => {
     expect(resolveToolSearch('github', CANDIDATES, 1)).toEqual(['mcp__github__create_issue']);
   });
 
-  it('select: also respects max_results (cannot bypass the activation cap)', () => {
+  it('select: fetches every explicitly named tool (not limited by the keyword max_results)', () => {
+    // The model named 3 tools explicitly; a low max_results (5-ish keyword default) must not truncate them.
     const got = resolveToolSearch('select:mcp__github__create_issue,mcp__github__list_issues,mcp__slack__post_message', CANDIDATES, 2);
-    expect(got).toHaveLength(2);
+    expect(got).toHaveLength(3);
+  });
+
+  it('select: is still bounded by the hard ceiling (25) against a pathological list', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `mcp__s__op_${i}`, description: `op ${i}` }));
+    const names = many.map((t) => t.name).join(',');
+    expect(resolveToolSearch(`select:${names}`, many, 5)).toHaveLength(25);
+  });
+
+  it('description matching is word-boundary, not substring (no false positives)', () => {
+    const cands = [
+      { name: 'mcp__x__alpha', description: 'spread the update to every thread' }, // has "read" only as a substring
+      { name: 'mcp__x__beta', description: 'read a file from disk' },              // has "read" as a word
+    ];
+    // "read" must match beta (word) but never alpha (substring inside spread/thread).
+    expect(resolveToolSearch('read', cands, 5)).toEqual(['mcp__x__beta']);
   });
 
   it('empty / non-matching query yields nothing', () => {
     expect(resolveToolSearch('   ', CANDIDATES, 5)).toEqual([]);
     expect(resolveToolSearch('zzzznomatch', CANDIDATES, 5)).toEqual([]);
+  });
+});
+
+describe('requestedExactNames', () => {
+  it('extracts the select: list', () => {
+    expect(requestedExactNames('select:mcp__a__x, mcp__b__y')).toEqual(['mcp__a__x', 'mcp__b__y']);
+  });
+  it('treats a bare single token as an exact name', () => {
+    expect(requestedExactNames('Read')).toEqual(['read']);
+  });
+  it('returns nothing for a multi-word keyword query (that is a search, not a name)', () => {
+    expect(requestedExactNames('github create issue')).toEqual([]);
+    expect(requestedExactNames('   ')).toEqual([]);
   });
 });
 
@@ -184,6 +214,23 @@ describe('toolSearchTool.execute', () => {
     const res = await run(toolSearchTool(handle), 'zzzznomatch');
     expect((handle.session as ReturnType<typeof fakeSession>).calls).toHaveLength(0);
     expect(res.content[0].text).toMatch(/matched nothing/i);
+  });
+
+  it('reports an already-active tool re-selected post-respawn instead of "matched nothing"', async () => {
+    const deferred = new Set(CANDIDATES.map((c) => c.name)); // only MCP tools are deferred
+    const handle = createToolSearchHandle(deferred);
+    // Registry also holds an ACTIVE, non-deferred tool the model might re-select from its own history.
+    const session: ToolActivationTarget & { calls: string[][] } = {
+      calls: [],
+      getAllTools: () => [...CANDIDATES, { name: 'Read', description: 'read a file' }],
+      getActiveToolNames: () => ['Read', 'ToolSearch'],
+      setActiveToolsByName: () => { /* not expected to be called */ },
+    };
+    handle.session = session;
+    const res = await run(toolSearchTool(handle), 'select:Read');
+    expect(res.content[0].text).toMatch(/already active/i);
+    expect((res.details as { alreadyActive: string[] }).alreadyActive).toEqual(['Read']);
+    expect(session.calls).toHaveLength(0); // nothing (re)activated
   });
 
   it('never activates a matched tool the acting sender is forbidden (policy filter)', async () => {

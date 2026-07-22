@@ -81,16 +81,35 @@ function nameParts(name: string): string[] {
 
 interface Candidate { name: string; description: string }
 
+/** Escape a model-supplied term so it can be embedded in a RegExp literal (an unescaped `c++` would throw). */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Pre-compile a word-boundary matcher (`\bterm\b`) per term, once per search. Word boundaries — not raw
+ *  substring — for the DESCRIPTION channel: MCP descriptions are long prose, and a short query term as a
+ *  substring produces false positives (`read`→"already"/"thread", `git`→"digit", `list`→"playlist") that,
+ *  at the weight-2 tiebreak level, pick the wrong tool exactly when the name gave no signal. Matches Claude
+ *  Code's compileTermPatterns. The known cost is missing inflections (`issue`≠"issues"), an accepted trade. */
+function compileTermPatterns(terms: readonly string[]): Map<string, RegExp> {
+  const patterns = new Map<string, RegExp>();
+  for (const term of terms) {
+    if (!patterns.has(term)) patterns.set(term, new RegExp(`\\b${escapeRegExp(term)}\\b`));
+  }
+  return patterns;
+}
+
 /** Score one candidate against the query terms. Exact name-part hit weighs most, then partial name-part,
- *  then a description substring — the same ordering Claude Code's ToolSearch uses, trimmed to what we need. */
-function scoreCandidate(cand: Candidate, terms: string[]): number {
+ *  then a word-boundary DESCRIPTION hit — the same ordering Claude Code's ToolSearch uses, trimmed to what
+ *  we need (no MCP-vs-non weighting: every deferred tool here is MCP; no searchHint: PI tools have none). */
+function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map<string, RegExp>): number {
   const parts = nameParts(cand.name);
   const desc = cand.description.toLowerCase();
   let score = 0;
   for (const term of terms) {
     if (parts.includes(term)) score += 10;
     else if (parts.some((p) => p.includes(term))) score += 5;
-    if (desc.includes(term)) score += 2;
+    if (patterns.get(term)?.test(desc)) score += 2;
   }
   return score;
 }
@@ -104,12 +123,13 @@ export function resolveToolSearch(
 ): string[] {
   const trimmed = query.trim();
 
-  // `select:A,B,C` — activate these exact deferred tools by name (case-insensitive). Capped at maxResults
-  // like the keyword branch, so `select:` with a huge list cannot bypass the activation limit.
+  // `select:A,B,C` — activate these exact deferred tools by name (case-insensitive). The model named them
+  // explicitly, so this uses the hard safety bound (MAX_MAX_RESULTS), not the keyword default — a normal
+  // hand-listed set is never silently truncated; only a pathological list past the ceiling is capped.
   const select = /^select:(.+)$/i.exec(trimmed);
   if (select) {
     const wanted = (select[1] ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    return candidates.filter((c) => wanted.includes(c.name.toLowerCase())).map((c) => c.name).slice(0, maxResults);
+    return candidates.filter((c) => wanted.includes(c.name.toLowerCase())).map((c) => c.name).slice(0, MAX_MAX_RESULTS);
   }
 
   const q = trimmed.toLowerCase();
@@ -129,16 +149,17 @@ export function resolveToolSearch(
   // `+term` marks a term as REQUIRED: a candidate must match it (in name parts or description) to qualify.
   const required = rawTerms.filter((t) => t.startsWith('+') && t.length > 1).map((t) => t.slice(1));
   const scoringTerms = rawTerms.map((t) => (t.startsWith('+') && t.length > 1 ? t.slice(1) : t));
+  const patterns = compileTermPatterns(scoringTerms);
 
   const eligible = candidates.filter((c) => {
     if (required.length === 0) return true;
     const parts = nameParts(c.name);
     const desc = c.description.toLowerCase();
-    return required.every((term) => parts.some((p) => p.includes(term)) || desc.includes(term));
+    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(desc));
   });
 
   return eligible
-    .map((c) => ({ name: c.name, score: scoreCandidate(c, scoringTerms) }))
+    .map((c) => ({ name: c.name, score: scoreCandidate(c, scoringTerms, patterns) }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, maxResults)
@@ -173,6 +194,17 @@ export function formatDeferredToolsBlock(
     ...lines,
     '</available_tools_deferred>',
   ].join('\n');
+}
+
+/** The exact tool names a query TARGETS by name (not by fuzzy search): the `select:` list, or a bare
+ *  single-token query. Empty for a multi-word keyword query (that is a search, not a name request). Used to
+ *  detect a re-selection of an already-active tool. Lowercased. */
+export function requestedExactNames(query: string): string[] {
+  const trimmed = query.trim();
+  const select = /^select:(.+)$/i.exec(trimmed);
+  if (select) return (select[1] ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const q = trimmed.toLowerCase();
+  return q && !/\s/.test(q) ? [q] : [];
 }
 
 const ok = (text: string, details: Record<string, unknown> = {}) => ({ content: [{ type: 'text' as const, text }], details });
@@ -219,6 +251,20 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       const tp = currentToolPolicy();
       const matched = tp ? found.filter((name) => toolPermitted(name, tp)) : found;
       if (matched.length === 0) {
+        // The model may have re-selected a tool that is ALREADY active (common after compaction/respawn,
+        // where its own history says "Activated …"). That name is not in the deferred set, so the search
+        // finds nothing — but it is callable right now. Report that instead of a misleading "matched
+        // nothing" that invites retry churn (mirrors Claude Code's fall-back-to-full-set behaviour).
+        if (found.length === 0) {
+          const wanted = requestedExactNames(p.query);
+          const alreadyActive = wanted.length
+            ? session.getAllTools().filter((t) => wanted.includes(t.name.toLowerCase()) && !handle.deferred.has(t.name)).map((t) => t.name)
+            : [];
+          if (alreadyActive.length) {
+            const one = alreadyActive.length === 1;
+            return ok(`${alreadyActive.join(', ')} ${one ? 'is' : 'are'} already active — call ${one ? 'it' : 'them'} directly; no ToolSearch needed.`, { matched: [], alreadyActive });
+          }
+        }
         const why = found.length > 0
           ? `matched ${found.length} tool(s) but your permissions allow none of them`
           : `matched nothing`;
