@@ -492,10 +492,10 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
    keyframes above (cosmos-fil--*, cosmos-pod-in, cosmos-fil-in, cosmos-fil-appear,
    cosmos-pod-in-stack); positions come from HeroCosmos.tsx. */
 .hero-cosmos { position: relative; width: 100%; }
-.hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 25rem; }
+.hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 28rem; }
 .hero-cosmos__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 /* Core capped below the presence's native 25rem so the pods orbit OUTSIDE its aura and rings. */
-.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 21rem); pointer-events: none; }
+.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 24rem); pointer-events: none; }
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
@@ -524,6 +524,14 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
    reads as one atmosphere instead of an admin panel of hairline-ruled boxes. */
 .dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(255 82 54 / 0.5); }
 .dash-beam { background: linear-gradient(180deg, rgb(255 82 54 / 0.3), rgb(255 82 54 / 0.12) 70%, transparent); }
+/* The trunk: one continuous filament flowing from the mascot's core down into the journal spine,
+   docking every activity event and task on the way (JournalTrunk.tsx draws it). While it is drawn,
+   the per-row beam segments hide — the trunk IS the spine. */
+.dashboard-trunk { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+/* The single page-spanning filament earns a touch more presence than the short pod filaments. */
+.dashboard-trunk .cosmos-fil--base { stroke: rgb(255 82 54 / 0.34); }
+.dashboard-trunk .cosmos-fil--flow { stroke: rgb(255 154 98 / 0.7); }
+.dashboard-field--trunk .dash-beam { display: none; }
 
 /* entrance — same reduced-motion gate as the constellation block above */
 @media (prefers-reduced-motion: no-preference) {

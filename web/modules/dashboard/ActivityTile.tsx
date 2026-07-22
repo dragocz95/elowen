@@ -35,7 +35,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
   return (
     <li className="group relative grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-3 py-2.5">
       {!last ? <span aria-hidden className="dash-beam absolute bottom-[-0.625rem] left-[0.59375rem] top-[1.75rem] w-px" /> : null}
-      <span className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60">
+      <span data-trunk-dot className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60">
         <Icon size={11} className="text-text-muted" aria-hidden />
       </span>
       <span className="min-w-0 truncate text-[13px] leading-5">

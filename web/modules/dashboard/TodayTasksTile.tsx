@@ -44,7 +44,7 @@ export function TodayTasksTile({ now }: { now: number }) {
             const running = task.status === 'in_progress';
             return (
               <div key={task.id} className="group flex items-center gap-3 py-2.5">
-                <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border transition-colors ${closed ? 'border-accent bg-accent text-bg' : running ? 'border-accent/70' : 'border-border-strong group-hover:border-text-muted'}`}>
+                <span data-trunk-dot className={`relative z-[1] grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border transition-colors ${closed ? 'border-accent bg-accent text-bg' : running ? 'border-accent/70 bg-bg' : 'border-border-strong bg-bg group-hover:border-text-muted'}`}>
                   {closed && <Check size={11} strokeWidth={3} aria-hidden />}
                 </span>
                 <span className={`flex-1 truncate text-[13.5px] ${closed ? 'text-text-muted line-through decoration-text-muted/50' : 'text-text'}`}>{task.title}</span>
