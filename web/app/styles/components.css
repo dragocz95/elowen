@@ -495,7 +495,7 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .hero-cosmos[data-mode='orbit'] { flex: 1 1 auto; min-height: 25rem; }
 .hero-cosmos__filaments { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 /* Core capped below the presence's native 25rem so the pods orbit OUTSIDE its aura and rings. */
-.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 17rem); pointer-events: none; }
+.hero-cosmos[data-mode='orbit'] .hero-cosmos__core { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(58%, 21rem); pointer-events: none; }
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
@@ -520,6 +520,11 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .hero-cosmos[data-mode='stack'] .hero-cosmos__pod:hover { transform: none; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__orb { width: 2.2rem; height: 2.2rem; }
 .hero-cosmos[data-mode='stack'] .hero-cosmos__body { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 0.6rem; }
+/* Dashboard journal typography & spine — the same glowing vocabulary as the cosmos, so the page
+   reads as one atmosphere instead of an admin panel of hairline-ruled boxes. */
+.dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(255 82 54 / 0.5); }
+.dash-beam { background: linear-gradient(180deg, rgb(255 82 54 / 0.3), rgb(255 82 54 / 0.12) 70%, transparent); }
+
 /* entrance — same reduced-motion gate as the constellation block above */
 @media (prefers-reduced-motion: no-preference) {
   .hero-cosmos--enter[data-mode='orbit'] .hero-cosmos__pod { opacity: 0; animation: cosmos-pod-in 0.75s var(--ease-out) forwards; animation-delay: calc(var(--i) * 90ms + 100ms); }

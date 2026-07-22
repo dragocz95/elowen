@@ -44,10 +44,11 @@ export function DashboardView() {
         <HeroNowTile now={nowMs} />
       </m.div>
 
-      {/* One continuous journal below the hero. Activity and today's work form the story; the
-          operational signals orbit the mascot in the hero cosmos above. */}
+      {/* One continuous journal below the hero — open sections in the cosmos atmosphere (glowing
+          labels, an ember spine) instead of hairline-ruled boxes; the operational signals orbit the
+          mascot in the hero cosmos above. */}
       <MotionReveal delay={0.06} className="@container">
-        <div className="divide-y divide-border/80 overflow-hidden border-y border-border/80">
+        <div className="flex max-w-[46rem] flex-col gap-2">
           <ActivityTile />
           <TodayTasksTile now={nowMs} />
         </div>

@@ -34,8 +34,8 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
   const ts = parseTs(event.ts);
   return (
     <li className="group relative grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-3 py-2.5">
-      {!last ? <span aria-hidden className="absolute bottom-[-0.625rem] left-[0.59375rem] top-[1.75rem] w-px bg-border" /> : null}
-      <span className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-border bg-bg transition-colors group-hover:border-border-strong">
+      {!last ? <span aria-hidden className="dash-beam absolute bottom-[-0.625rem] left-[0.59375rem] top-[1.75rem] w-px" /> : null}
+      <span className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60">
         <Icon size={11} className="text-text-muted" aria-hidden />
       </span>
       <span className="min-w-0 truncate text-[13px] leading-5">
@@ -55,7 +55,7 @@ export function ActivityTile({ limit = 5 }: { limit?: number }) {
   return (
     <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">
       <header className="mb-3 flex items-center justify-between gap-3">
-        <h2 id="dashboard-activity" className="text-sm font-semibold text-text">{t.dashboard.eventStream}</h2>
+        <h2 id="dashboard-activity" className="dash-label">{t.dashboard.eventStream}</h2>
         <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tabular-nums text-text-muted">
           <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-success" />{t.dashboard.live}
         </span>

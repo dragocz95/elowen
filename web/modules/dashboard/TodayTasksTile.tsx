@@ -32,18 +32,18 @@ export function TodayTasksTile({ now }: { now: number }) {
   return (
     <section aria-labelledby="dashboard-tasks" className="px-1 py-6 @sm:px-3 @2xl:px-5">
       <header className="mb-3 flex items-center justify-between gap-3">
-        <h2 id="dashboard-tasks" className="text-sm font-semibold text-text">{t.dashboard.todayTasks}</h2>
+        <h2 id="dashboard-tasks" className="dash-label">{t.dashboard.todayTasks}</h2>
         {rows.length > 0 ? <span className="font-mono text-[10px] tabular-nums text-text-muted">{t.dashboard.todayTasksCount.replace('{done}', String(done)).replace('{total}', String(rows.length))}</span> : null}
       </header>
       {rows.length === 0 ? (
         <p className="py-5 text-sm text-text-muted">{t.dashboard.todayTasksEmpty}</p>
       ) : (
-        <div className="divide-y divide-border/70">
+        <div>
           {rows.map((task) => {
             const closed = task.status === 'closed';
             const running = task.status === 'in_progress';
             return (
-              <div key={task.id} className="group flex items-center gap-3 py-3">
+              <div key={task.id} className="group flex items-center gap-3 py-2.5">
                 <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border transition-colors ${closed ? 'border-accent bg-accent text-bg' : running ? 'border-accent/70' : 'border-border-strong group-hover:border-text-muted'}`}>
                   {closed && <Check size={11} strokeWidth={3} aria-hidden />}
                 </span>
