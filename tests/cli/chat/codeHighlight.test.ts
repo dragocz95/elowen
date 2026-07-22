@@ -166,7 +166,7 @@ describe('diff rows with a grammar loaded', () => {
   it('composites token foregrounds over the add background, padding included', async () => {
     await ensureLang('javascript');
     const [row] = diffBlock(JS_ROW, 10, 60, 'javascript').filter((l) => l.includes('const'));
-    expect(row).toContain('48;2;3;58;22'); // add background survives around tokens…
+    expect(row).toContain('48;2;2;40;0'); // add background survives around tokens…
     expect(row).toContain('38;2;86;156;214'); // …while the keyword carries its dark-plus blue
     expect(row).toContain('\x1b[0m');
     expect(visibleWidth(row)).toBe(60 + 4); // block indent + padded row
@@ -192,6 +192,6 @@ describe('diff rows with a grammar loaded', () => {
   it('threads the language through framedDiffBlock', async () => {
     await ensureLang('javascript');
     const { lines } = framedDiffBlock(JS_ROW, 80, 'diff', false, 'javascript');
-    expect(lines.find((l) => l.includes('const'))).toContain('48;2;3;58;22');
+    expect(lines.find((l) => l.includes('const'))).toContain('48;2;2;40;0');
   });
 });
