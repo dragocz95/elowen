@@ -1,7 +1,9 @@
 'use client';
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
-import { SpatialGroup } from '../../components/ui/SpatialPrimitives';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
@@ -63,8 +65,10 @@ function ActionSwitch({ value, onChange, label, labels }: {
  *  to, so patterns granted there show up here automatically). Bash rules (command patterns) are the
  *  main list with an add row; tool-name rules render below only when some exist. Rule order is
  *  precedence (last match wins), so adds append and a duplicate pattern moves to the end. Every
- *  change persists immediately by replacing the scope's whole map — order is the payload. */
-export function PermissionRulesCard() {
+ *  change persists immediately by replacing the scope's whole map — order is the payload.
+ *  PROTOTYPE(constellation): `asPod` renders it as an orbital pod instead — sample rule chips on
+ *  the page, the full editor in a side drawer opened via the pod's orb. */
+export function PermissionRulesCard({ asPod = false }: { asPod?: boolean } = {}) {
   const permissions = useMyPermissions();
   const save = useSaveMyPermissions();
   const { toast } = useToast();
@@ -75,6 +79,7 @@ export function PermissionRulesCard() {
   const [draft, setDraft] = useState('');
   const [draftAction, setDraftAction] = useState<PermissionAction>('allow');
   const [pendingDelete, setPendingDelete] = useState<{ scope: Scope; index: number; pattern: string } | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (permissions.data) {
@@ -134,49 +139,82 @@ export function PermissionRulesCard() {
     </li>
   );
 
+  const editor = (
+    <div className="flex flex-col gap-4 py-4">
+      {bashRules.length === 0 ? (
+        <p className="text-xs text-text-muted">{t.cli.permEmpty}</p>
+      ) : (
+        <ul className="flex flex-col gap-2">{bashRules.map((r, i) => ruleRow('bash', bashRules, r, i))}</ul>
+      )}
+
+      <form onSubmit={addRule} className="flex flex-wrap items-center gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={t.cli.permPatternPlaceholder}
+          aria-label={t.cli.permPatternPlaceholder}
+          maxLength={200}
+          className="font-mono text-xs"
+        />
+        <ActionSwitch value={draftAction} onChange={setDraftAction} label={t.cli.permNewAction} labels={actionLabels} />
+        <Button type="submit" icon={Plus} disabled={!draft.trim()}>{t.cli.permAdd}</Button>
+      </form>
+
+      {toolsRules.length > 0 ? (
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.cli.permToolsTitle}</span>
+          <ul className="flex flex-col gap-2">{toolsRules.map((r, i) => ruleRow('tools', toolsRules, r, i))}</ul>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const confirm = (
+    <ConfirmDialog
+      open={pendingDelete !== null}
+      title={`${t.cli.permDelete}?`}
+      description={pendingDelete?.pattern}
+      confirmLabel={t.cli.permDelete}
+      onConfirm={() => {
+        if (!pendingDelete) return;
+        const rules = pendingDelete.scope === 'bash' ? bashRules : toolsRules;
+        persist(pendingDelete.scope, rules.filter((_, index) => index !== pendingDelete.index));
+        setPendingDelete(null);
+      }}
+      onClose={() => setPendingDelete(null)}
+    />
+  );
+
+  if (asPod) {
+    const all = [...bashRules, ...toolsRules];
+    return (
+      <>
+        <SpatialRow title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
+          <SelectionSummary
+            countText=""
+            samples={all.slice(0, 2).map((r) => ({ label: r.pattern }))}
+            moreCount={Math.max(0, all.length - 2)}
+            onManage={() => setDrawerOpen(true)}
+            manageLabel={t.managePicker.manage}
+            manageAriaLabel={t.cli.permTitle}
+          />
+        </SpatialRow>
+        {drawerOpen ? (
+          <WorkspaceDetailRail label={t.cli.permTitle} closeLabel={t.common.close} onClose={() => setDrawerOpen(false)}>
+            <p className="mb-2 text-xs leading-relaxed text-text-muted">{t.help.cliPermissions}</p>
+            {editor}
+          </WorkspaceDetailRail>
+        ) : null}
+        {confirm}
+      </>
+    );
+  }
+
   // variant="classic": the rules list is not label/control rows, so it opts out of the constellation.
   return (
     <SpatialGroup title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions} variant="classic">
-      <div className="flex flex-col gap-4 py-4">
-        {bashRules.length === 0 ? (
-          <p className="text-xs text-text-muted">{t.cli.permEmpty}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">{bashRules.map((r, i) => ruleRow('bash', bashRules, r, i))}</ul>
-        )}
-
-        <form onSubmit={addRule} className="flex items-center gap-2">
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={t.cli.permPatternPlaceholder}
-            aria-label={t.cli.permPatternPlaceholder}
-            maxLength={200}
-            className="font-mono text-xs"
-          />
-          <ActionSwitch value={draftAction} onChange={setDraftAction} label={t.cli.permNewAction} labels={actionLabels} />
-          <Button type="submit" icon={Plus} disabled={!draft.trim()}>{t.cli.permAdd}</Button>
-        </form>
-
-        {toolsRules.length > 0 ? (
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.cli.permToolsTitle}</span>
-            <ul className="flex flex-col gap-2">{toolsRules.map((r, i) => ruleRow('tools', toolsRules, r, i))}</ul>
-          </div>
-        ) : null}
-      </div>
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        title={`${t.cli.permDelete}?`}
-        description={pendingDelete?.pattern}
-        confirmLabel={t.cli.permDelete}
-        onConfirm={() => {
-          if (!pendingDelete) return;
-          const rules = pendingDelete.scope === 'bash' ? bashRules : toolsRules;
-          persist(pendingDelete.scope, rules.filter((_, index) => index !== pendingDelete.index));
-          setPendingDelete(null);
-        }}
-        onClose={() => setPendingDelete(null)}
-      />
+      {editor}
+      {confirm}
     </SpatialGroup>
   );
 }

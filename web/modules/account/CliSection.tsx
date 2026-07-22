@@ -252,9 +252,12 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           aria-label={t.cli.unattendedTitle}
         />
       </SpatialRow>
+      {/* PROTOTYPE(constellation): permission rules join the orbit as a pod (drawer editor); the
+          classic layout keeps its card below the group. */}
+      {cosmos ? <PermissionRulesCard asPod /> : null}
       </SpatialGroup>
 
-      <PermissionRulesCard />
+      {cosmos ? null : <PermissionRulesCard />}
       <ConfirmDialog
         open={confirmYolo}
         title={t.cli.yoloConfirmTitle}
