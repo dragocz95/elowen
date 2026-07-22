@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { withReason, stripReason, extractReason, isReasonExcluded, REASON_DESC } from '../../src/brain/toolReason.js';
