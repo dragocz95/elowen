@@ -112,6 +112,12 @@ export interface LiveBrain {
   /** Queue entries removed by PI immediately before their matching user `message_start`. Explicit queue
    * removal/abort clears this staging area, preventing a late callback from resurrecting a deleted row. */
   deliveringUserEchoes?: QueuedMsg[];
+  /** Display-only chips for user messages typed while a MANUAL /compact runs. That compaction owns the
+   *  session lock and ends idle, and PI's steer/follow-up queue only delivers inside a running turn — so the
+   *  send below the compaction blocks on the lock with no PI queue entry and no chip. These surface the
+   *  waiting message as a pending chip; each clears the instant its blocked turn starts. They are never in
+   *  PI's native queue, so they stay distinct from the queuedSteer/queuedFollowUp mirrors above. */
+  pendingCompactionEchoes?: { id: string; text: string }[];
   /** The session's resolved working directory (validated client cwd → policy root → primary project).
    *  Reused as the per-turn workDir fallback for sends that carry no client cwd (goal kickoff/continue)
    *  and re-passed on respawns (model switch, vision hop, restart) so the session cwd never silently

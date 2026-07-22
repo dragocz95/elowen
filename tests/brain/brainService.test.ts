@@ -42,7 +42,7 @@ function fakeDeps() {
     sendCustomMessage: vi.fn(async () => {
       messages.push({ role: 'assistant', content: 'processed sub-agent result', stopReason: 'stop' } as never);
     }),
-    abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
+    abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false, isCompacting: false,
     _checkCompaction: nativeCheck,
     // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
     // delivers it between steps; the fake just records it so tests can assert it landed), and the
@@ -746,6 +746,31 @@ describe('BrainService', () => {
     expect(seen.filter((event) => event.type === 'user')).toEqual([
       expect.objectContaining({ type: 'user', text: 'queued during compaction' }),
     ]);
+  });
+
+  it('shows a message typed during a manual /compact as a pending chip, then delivers it as a normal turn', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const order: string[] = [];
+    svc.subscribe(1, (event) => {
+      if (event.type === 'queue') order.push(`queue:${event.items.map((item) => item.text).join(',') || '∅'}`);
+      if (event.type === 'user') order.push(`user:${event.text}`);
+    });
+
+    // A manual /compact summary is running: isStreaming stays false and no native check is active, so the
+    // send is NOT steered — it blocks under the compaction and would otherwise show no chip.
+    d.session.isCompacting = true;
+    await svc.send({ userId: 1, text: 'typed during compact', display: 'typed during compact' });
+
+    // Chip surfaced while compaction ran, cleared the moment the turn started, then the message was
+    // delivered as a normal prompt (never parked in PI's steer/follow-up queue).
+    expect(order).toEqual(['queue:typed during compact', 'queue:∅', 'user:typed during compact']);
+    expect(d.session.steer).not.toHaveBeenCalled();
+    expect(d.session.prompt).toHaveBeenCalled();
+    expect(d.store.getMessages(sessionId).map((row) => JSON.parse(row.content).content)).toContain('typed during compact');
+    // Nothing left waiting once it delivered.
+    expect(svc.queueList(1)).toEqual([]);
   });
 
   it('rejects a concurrent send while Esc is aborting a native compaction check', async () => {

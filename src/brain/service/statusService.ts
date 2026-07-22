@@ -8,7 +8,7 @@ import { sessionUsageSnapshot } from '../events.js';
 import type { AskQuestion, BrainCard, BrainUsage } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
-import { queueDisplayItems } from '../session/queueMirror.js';
+import { queuedWithPending } from '../session/queueMirror.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import { isNonUserSession, isChannelSession, isTaskSession, channelIdOf, defaultUserSessionId } from '../sessionId.js';
@@ -237,9 +237,10 @@ export class BrainStatusService {
       // CONVERSATION, not the live session: reopening a chat the user closed has no live brain yet, and
       // that is exactly when the todo checklist has to come back rather than show up empty.
       cards: activeId ? this.d.cards.forSession(activeId) : [],
-      // PI's transient pending backlog (steered + follow-up) so a reconnecting/booting client restores its
-      // pending chips — kept in step with the live `queue` event mapped from PI's `queue_update`.
-      queued: b ? queueDisplayItems(b.queuedSteer, b.queuedFollowUp, b.session) : [],
+      // PI's transient pending backlog (steered + follow-up) plus any message waiting under a manual
+      // /compact, so a reconnecting/booting client restores its pending chips — kept in step with the live
+      // `queue` event mapped from PI's `queue_update` and the compaction-pending publishes.
+      queued: b ? queuedWithPending(b) : [],
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),

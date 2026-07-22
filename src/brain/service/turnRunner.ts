@@ -20,7 +20,9 @@ import { TurnContextBuilder } from './turnContextBuilder.js';
 import { flushReasoningMarker, recordSessionEvent } from './sessionEvents.js';
 import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
+import { queuedWithPending } from '../session/queueMirror.js';
 import type { SubagentCompletion } from '../events.js';
+import { randomUUID } from 'node:crypto';
 import { isNonUserSession } from '../sessionId.js';
 import { xmlEscape } from '../../shared/xml.js';
 import { logger } from '../../shared/logger.js';
@@ -235,6 +237,15 @@ export class BrainTurnRunner {
    *  behavior, unchanged); with `session` (a bound CLI) it targets exactly that conversation, wherever
    *  the active pointer points, and never moves the pointer. A bound target that is not live (daemon
    *  restart between turns) is respawned in place first. */
+  /** Remove a display-only compaction chip and re-publish the queue so it disappears. Called when the
+   *  blocked turn finally starts (its message is no longer waiting) and as a safety net if it never runs. */
+  private dropPendingCompactionEcho(live: LiveBrain, id: string): void {
+    const echoes = live.pendingCompactionEchoes;
+    const index = echoes?.findIndex((echo) => echo.id === id) ?? -1;
+    if (echoes && index >= 0) echoes.splice(index, 1);
+    live.replay.publish({ type: 'queue', items: queuedWithPending(live) });
+  }
+
   async send(request: TurnRequest): Promise<void> {
     const {
       userId, text, images, internal, clientCwd, session, display, client,
@@ -294,6 +305,16 @@ export class BrainTurnRunner {
       await admission.steer();
       return;
     }
+    // A manual /compact owns the session lock and ends idle (PI's steer/follow-up queue only delivers inside
+    // a running turn), so a message sent underneath it blocks on runTurn's inner lock with no chip. Surface
+    // it as a pending queue chip for the compaction's duration; the blocked turn still delivers it right
+    // after. Cleared when that turn starts (below) or by the finally net if it never does. Never internal.
+    let pendingCompactionEchoId: string | undefined;
+    if (!internal && active.session.isCompacting) {
+      pendingCompactionEchoId = randomUUID();
+      (active.pendingCompactionEchoes ??= []).push({ id: pendingCompactionEchoId, text: display ?? text });
+      active.replay.publish({ type: 'queue', items: queuedWithPending(active) });
+    }
     // Run ONE user turn on `live`. Refactored out of send() so the flush loop below can replay it for the
     // drained queue with the same idle-rollover-safe serialization. `isUserTurn` marks a turn the DAEMON
     // must render as a 'you' bubble — a normal send AND a drained queued delivery, but never an internal
@@ -303,6 +324,12 @@ export class BrainTurnRunner {
       // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
       await this.serial(live.sessionId, async () => {
       assertClientCurrent(live.sessionId);
+      // Lock acquired means the compaction that was blocking this turn has released: the message is running
+      // now, not waiting, so drop its pending chip before the turn's own user echo lands.
+      if (pendingCompactionEchoId) {
+        this.dropPendingCompactionEcho(active, pendingCompactionEchoId);
+        pendingCompactionEchoId = undefined;
+      }
       const turnRequest: TurnRequest = {
         ...request,
         text: turnText,
@@ -410,6 +437,9 @@ export class BrainTurnRunner {
         await runTurn(b, text, images, mode, !internal, display);
       });
     } finally {
+      // Safety net: if the turn threw before it started (rollover/preflight rejection), its pending
+      // compaction chip is still up — drop it so a rejected send never leaves a phantom waiting chip.
+      if (pendingCompactionEchoId) this.dropPendingCompactionEcho(active, pendingCompactionEchoId);
       // A sub-agent result that arrived while this turn was streaming was DEFERRED (ParentTurnBusyError) and
       // left durable + pending. Now that the turn has settled, re-drain it — this post-turn hook is the ONLY
       // re-trigger for a streaming-deferred result. The drain never calls send(), so there is no recursion.

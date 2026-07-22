@@ -21,6 +21,15 @@ export function queueDisplayItems(
   );
 }
 
+/** Prepend the display-only compaction chips (a message typed while a manual /compact holds the session
+ *  lock — see LiveBrain.pendingCompactionEchoes) ahead of PI's native queue chips, so every surface — the
+ *  live `queue` event, status().queued and queueList — shows the waiting message identically. They carry
+ *  their own stable ids and are never in PI's queue, so a positional queue-remove that targets one no-ops. */
+export function queuedWithPending(live: LiveBrain): { id: string; text: string }[] {
+  const pending = (live.pendingCompactionEchoes ?? []).map((echo) => ({ id: echo.id, text: echo.text }));
+  return [...pending, ...queueDisplayItems(live.queuedSteer, live.queuedFollowUp, live.session)];
+}
+
 /** Enqueue a mid-turn message into PI's native queue AND mirror it (text + image attachments) on the live
  *  session. Why the mirror: PI's public queue exposes only text (getSteeringMessages/getFollowUpMessages)
  *  and its clearQueue() drops image attachments (they live on the lower-level agent queue, not the text

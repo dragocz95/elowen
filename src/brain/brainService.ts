@@ -12,7 +12,7 @@ import { abortSessionWork } from './session/abortSessionWork.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain, QueuedMsg } from './session/liveBrain.js';
-import { clearDeliveredUserEchoes, enqueueMirrored, queueDisplayItems } from './session/queueMirror.js';
+import { clearDeliveredUserEchoes, enqueueMirrored, queuedWithPending } from './session/queueMirror.js';
 import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
@@ -592,7 +592,7 @@ export class BrainService {
   queueList(userId: number, session?: string): { id: string; text: string }[] {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
     const live = sessionId ? this.sessions.get(sessionId) : undefined;
-    return live ? queueDisplayItems(live.queuedSteer, live.queuedFollowUp, live.session) : [];
+    return live ? queuedWithPending(live) : [];
   }
 
   /** Remove ONE pending mid-turn message (the CLI ctrl+x / the web × button). PI's steering queue holds

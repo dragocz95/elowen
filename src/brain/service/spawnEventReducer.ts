@@ -11,7 +11,7 @@ import type { LiveBrain, QueuedMsg } from '../session/liveBrain.js';
 import {
   clearDeliveredUserEchoes,
   deliverQueuedUserEcho,
-  queueDisplayItems,
+  queuedWithPending,
   reconcileMirrors,
   stageDeliveredUserEchoes,
 } from '../session/queueMirror.js';
@@ -199,7 +199,9 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
     const be = toBrainEvent(e);
     if (!be) return;
     if (be.type === 'queue') {
-      be.items = queueDisplayItems(queuedSteer, queuedFollowUp);
+      // Image-carrying mirrors are the display source (PI's queue_update text is post-expansion); prepend
+      // any message waiting under a manual /compact so a PI queue_update in that window can't hide its chip.
+      be.items = queuedWithPending(getLive());
     }
     // PI emits this intermediate agent_end before ordinary retry / overflow recovery. It is not a
     // terminal idle: headless must keep waiting and interactive clients must keep their spinner alive.

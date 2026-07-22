@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   deliverQueuedUserEcho,
   enqueueMirrored,
+  queuedWithPending,
   reconcileMirrors,
   stageDeliveredUserEchoes,
 } from '../../src/brain/session/queueMirror.js';
@@ -47,6 +48,26 @@ describe('queueMirror.reconcileMirrors', () => {
       expect.objectContaining({ text: '/skill:test clean', queuedText: '<skill>expanded</skill> clean', echo }),
     ]);
     expect(steer).toEqual([expect.objectContaining({ text: 'later', queuedText: 'later' })]);
+  });
+});
+
+describe('queueMirror.queuedWithPending', () => {
+  it('prepends display-only compaction chips ahead of PI queue items, keeping their own ids', () => {
+    const live = {
+      queuedSteer: [{ text: 'steered' }],
+      queuedFollowUp: [{ text: 'follow' }],
+      pendingCompactionEchoes: [{ id: 'pc-1', text: 'typed during compact' }],
+    } as unknown as LiveBrain;
+    expect(queuedWithPending(live)).toEqual([
+      { id: 'pc-1', text: 'typed during compact' }, // waiting under the manual /compact, shown first
+      { id: '0', text: 'steered' },
+      { id: '1', text: 'follow' },
+    ]);
+  });
+
+  it('is exactly the PI queue when nothing waits under a compaction', () => {
+    const live = { queuedSteer: [{ text: 'x' }], queuedFollowUp: [] } as unknown as LiveBrain;
+    expect(queuedWithPending(live)).toEqual([{ id: '0', text: 'x' }]);
   });
 });
 
