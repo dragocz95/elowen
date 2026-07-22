@@ -61,8 +61,9 @@ export function SpatialRow({ title, description, icon: Icon, children, className
   const cosmos = useConstellation();
   const podRef = useRef<HTMLDivElement>(null);
   if (cosmos) {
-    // Descriptions and inline "manage" buttons stay out of the pod — the orb itself is the manage
-    // trigger (it forwards to the control's hidden [data-selection-manage] button when one exists).
+    // Inline "manage" buttons and toggle captions stay out of the pod — the orb itself is the
+    // manage trigger (it forwards to the control's hidden [data-selection-manage] button when one
+    // exists). The description keeps its HelpTip "?" next to the title.
     return (
       <div className="cosmos-pod" ref={podRef}>
         <div className="cosmos-pod__inner">
@@ -76,7 +77,10 @@ export function SpatialRow({ title, description, icon: Icon, children, className
               <Icon size={17} strokeWidth={1.6} aria-hidden />
             </button>
           ) : null}
-          <span className="cosmos-pod__title">{title}</span>
+          <span className="cosmos-pod__title">
+            {title}
+            {description ? <HelpTip align="left">{description}</HelpTip> : null}
+          </span>
           <div className="cosmos-pod__control">{children}</div>
         </div>
       </div>
