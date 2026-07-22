@@ -43,33 +43,38 @@ describe('BrainSessionFactory compaction budget', () => {
 });
 
 describe('BrainSessionFactory context-saving installers', () => {
-  it('installs tool-result clearing (with spill under the data dir) and subscribes cacheWatch', async () => {
+  async function createWithProvider(provider: string) {
     // Spills resolve through dataDir(HOME) — point HOME at a tmp dir so the test never touches the
-    // real ~/.config/elowen. A 66-minute idle gap exceeds BOTH the short (6m) and long (61m) gate, so
-    // the test is robust regardless of PI_CACHE_RETENTION in the environment.
+    // real ~/.config/elowen.
     const home = mkdtempSync(join(tmpdir(), 'elowen-home-'));
     vi.stubEnv('HOME', home);
-    try {
-      const listeners: ((e: unknown) => void)[] = [];
-      const session = {
-        sessionId: 'sess-clearing',
-        agent: {} as { transformContext?: (m: unknown[]) => Promise<unknown[]> },
-        subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
-        messages: [] as unknown[],
-      };
-      const factory = new BrainSessionFactory({
-        store: new BrainStore(openDb(':memory:')),
-        createSession: vi.fn(async () => ({ session })) as never,
-        resourceLoaderFactory: () => undefined,
-      });
-      await factory.create({
-        sessionId: 'sess-clearing', ownerUserId: 1,
-        runtime: undefined,
-        model: { id: 'test-model', provider: 'anthropic', contextWindow: 200_000 },
-        cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
-        autoCompact: false, autoCompactAtPct: 80,
-      } as never);
+    const listeners: ((e: unknown) => void)[] = [];
+    const session = {
+      sessionId: `sess-${provider}`,
+      agent: {} as { transformContext?: (m: unknown[]) => Promise<unknown[]> },
+      subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
+      messages: [] as unknown[],
+    };
+    const factory = new BrainSessionFactory({
+      store: new BrainStore(openDb(':memory:')),
+      createSession: vi.fn(async () => ({ session })) as never,
+      resourceLoaderFactory: () => undefined,
+    });
+    await factory.create({
+      sessionId: session.sessionId, ownerUserId: 1,
+      runtime: undefined,
+      model: { id: 'test-model', provider, contextWindow: 200_000 },
+      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
+      autoCompact: false, autoCompactAtPct: 80,
+    } as never);
+    return { home, listeners, session };
+  }
 
+  it('installs tool-result clearing (with spill under the data dir) and subscribes cacheWatch', async () => {
+    // A 66-minute idle gap exceeds BOTH the short (6m) and long (61m) gate, so the test is robust
+    // regardless of PI_CACHE_RETENTION in the environment.
+    const { home, listeners, session } = await createWithProvider('anthropic');
+    try {
       const transform = session.agent.transformContext;
       expect(typeof transform).toBe('function');
 
@@ -102,10 +107,21 @@ describe('BrainSessionFactory context-saving installers', () => {
       expect(out[5]).toBe(messages[5]);
       expect(out[8]).toBe(messages[8]);
       // The full text was spilled BEFORE the placeholder replaced it.
-      expect(readFileSync(join(home, '.config/elowen/tool-results/sess-clearing/old-big.txt'), 'utf8')).toBe(big);
+      expect(readFileSync(join(home, '.config/elowen/tool-results/sess-anthropic/old-big.txt'), 'utf8')).toBe(big);
 
       // cacheWatch + the persistence projector both subscribed at create time.
       expect(listeners.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('skips cacheWatch for non-anthropic providers (their cache stats would make it cry wolf)', async () => {
+    const { listeners, session } = await createWithProvider('kimi-coding');
+    try {
+      // Only the persistence projector subscribed; clearing's transformContext is still installed.
+      expect(listeners).toHaveLength(1);
+      expect(typeof session.agent.transformContext).toBe('function');
     } finally {
       vi.unstubAllEnvs();
     }

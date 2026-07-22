@@ -1,6 +1,5 @@
-import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import { logger } from '../../shared/logger.js';
-import { idleThresholdMs } from './toolResultClearing.js';
+import { cacheTtlMs } from './toolResultClearing.js';
 
 /** Prompt-cache observability, modeled on Claude Code's promptCacheBreakDetection. In a healthy
  *  append-only conversation `cacheRead` grows monotonically: each request reads the prefix the
@@ -9,7 +8,8 @@ import { idleThresholdMs } from './toolResultClearing.js';
  *  watcher is its production tripwire. Detection only, never repair.
  *
  *  Two expected drops are suppressed: a REAL compaction (baseline resets) and an idle gap beyond the
- *  cache TTL (the entry expired; re-caching is unavoidable and not a break). */
+ *  cache TTL (the entry expired; re-caching is unavoidable and not a break). Installed for Anthropic
+ *  sessions only — other providers report best-effort cache stats whose drops are routine noise. */
 
 const log = logger('brain-cache');
 
@@ -21,18 +21,19 @@ type SessionEvent = { type?: string; message?: { role?: string; timestamp?: numb
 type Subscribable = { subscribe?: (listener: (event: SessionEvent) => void) => unknown };
 
 export interface CacheWatchOptions {
-  /** Warm window in ms; a drop after a longer gap is TTL expiry, not a break. Defaults to the same
-   *  env-resolved TTL the clearing gate uses. */
+  /** Warm window in ms; a drop after a longer gap is TTL expiry, not a break. Defaults to the cache
+   *  TTL MINUS a 1-minute buffer — the opposite rounding direction from the clearing gate, because a
+   *  drop in the boundary minute (e.g. 60–61 min) is a real expiry and must not cry break. */
   ttlMs?: number;
   now?: () => number;
 }
 
 export function installCacheWatch(
-  session: Subscribable & Pick<AgentSession, 'subscribe'>,
+  session: Subscribable,
   options: CacheWatchOptions = {},
 ): void {
   if (typeof session.subscribe !== 'function') return;
-  const ttlMs = options.ttlMs ?? idleThresholdMs(process.env);
+  const ttlMs = options.ttlMs ?? (cacheTtlMs(process.env) - 60_000);
   const now = options.now ?? Date.now;
   let previous: { cacheRead: number; at: number } | null = null;
   session.subscribe((event) => {

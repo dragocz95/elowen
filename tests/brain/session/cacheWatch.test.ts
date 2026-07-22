@@ -3,6 +3,7 @@ import {
   CACHE_DROP_MIN_TOKENS,
   installCacheWatch,
 } from '../../../src/brain/session/cacheWatch.js';
+import { cacheTtlMs } from '../../../src/brain/session/toolResultClearing.js';
 import { setLogSink } from '../../../src/shared/logger.js';
 
 const T0 = 1_000_000;
@@ -19,11 +20,10 @@ afterEach(() => setLogSink(undefined));
 
 type Listener = (event: unknown) => void;
 
-function harness(): { fire: Listener } {
+function harness(options: { ttlMs?: number } = { ttlMs: TTL }): { fire: Listener } {
   let listener: Listener = () => undefined;
   const session = { subscribe: (fn: Listener) => { listener = fn; } };
-  // The watcher only needs the subscribe seam; the cast mirrors the factory's real AgentSession.
-  installCacheWatch(session as never, { ttlMs: TTL });
+  installCacheWatch(session, options);
   return { fire: (e) => listener(e) };
 }
 
@@ -80,6 +80,18 @@ describe('installCacheWatch', () => {
   });
 
   it('is a no-op without the subscribe seam', () => {
-    expect(() => installCacheWatch({} as never, { ttlMs: TTL })).not.toThrow();
+    expect(() => installCacheWatch({}, { ttlMs: TTL })).not.toThrow();
+  });
+
+  it('defaults the warm window to the env TTL MINUS a minute (boundary drops are expiry, not breaks)', () => {
+    // Short retention (env unset) → TTL 5 min → warm window 4 min.
+    const windowMs = cacheTtlMs(process.env) - 60_000;
+    const { fire } = harness({}); // no ttlMs override — the env default drives
+    fire(assistantUsage(100_000, T0));
+    fire(assistantUsage(80_000, T0 + windowMs - 30_000)); // inside the window → break
+    expect(warnings()).toHaveLength(1);
+    // Measured against the PREVIOUS event: past the window → expiry, silent.
+    fire(assistantUsage(10_000, T0 + 2 * windowMs + 30_000));
+    expect(warnings()).toHaveLength(1);
   });
 });

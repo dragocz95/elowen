@@ -311,10 +311,12 @@ export class BrainSessionFactory {
     // Same egress seam: large tool results that have scrolled two user turns back are swapped for a
     // placeholder + spill-file path, but only once the prompt cache has provably expired (idle gate) —
     // history is never rewritten while a request could still cache-hit, and the per-session latch keeps
-    // a cleared result cleared so the prefix stays byte-stable afterwards. cacheWatch is the tripwire
-    // that would log if this (or anything else) ever did break a warm prefix.
+    // a cleared result cleared so the prefix stays byte-stable afterwards.
     installToolResultClearing(session, spec.sessionId);
-    installCacheWatch(session);
+    // cacheWatch is the tripwire that would log if clearing (or anything else) ever broke a warm
+    // prefix. Anthropic-only: other providers report best-effort cache stats whose warm drops are
+    // routine — the warning would be noise there.
+    if (spec.model.provider === 'anthropic') installCacheWatch(session);
     // Compaction is PI-native: our per-user % maps to PI's absolute reserveTokens (shouldCompact fires
     // once contextTokens > contextWindow − reserveTokens). Applied AFTER create — createAgentSession reads
     // compaction lazily (getCompactionSettings at each check), so an in-memory override here takes effect;
