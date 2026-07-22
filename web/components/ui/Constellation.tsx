@@ -59,6 +59,7 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       root.dataset.density = pods.length <= 2 ? 'sparse' : 'dense';
       svg.replaceChildren();
       if (!orbit) {
+        root.style.height = '';
         for (const pod of pods) {
           pod.style.left = '';
           pod.style.top = '';
@@ -66,6 +67,19 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
           pod.style.removeProperty('--fy');
         }
         return;
+      }
+      // Fit the orbit into the viewport space remaining below its own top edge, so the section
+      // itself never forces the page to scroll (the CSS clamp stays as the pre-measure fallback).
+      // Tiny screens still get the minimum height — a scrollbar beats an unusable field there.
+      const scroller = root.closest('main');
+      if (scroller) {
+        const offset = root.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        // Everything after the cosmos (surface/deck/shell paddings) measured live: total scrollable
+        // content minus what sits above the cosmos and the cosmos itself. Invariant to our height.
+        const below = Math.max(0, scroller.scrollHeight - offset - root.offsetHeight);
+        const minH = (pods.length <= 2 ? 24 : 30) * 16;
+        const desired = Math.round(Math.max(minH, Math.min(scroller.clientHeight - offset - below, 64 * 16)));
+        if (Math.abs(root.offsetHeight - desired) > 1) root.style.height = `${desired}px`;
       }
       const height = root.clientHeight;
       const cx = width / 2;
