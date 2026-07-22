@@ -1,7 +1,7 @@
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { MASCOT_ART } from './mascot.js';
-import { color, glyph } from './theme.js';
+import { chatTheme, color, glyph, paintRow } from './theme.js';
 import { padAnsi, terminalInlineText } from '../ui/text.js';
 
 const inlineText = terminalInlineText;
@@ -32,10 +32,16 @@ export class MainColumn implements Component {
     const safeWidth = Math.max(0, Math.floor(width));
     const reserve = Math.max(0, Math.min(Math.max(0, safeWidth - 1), this.getReserve()));
     const mainWidth = Math.max(0, safeWidth - reserve);
+    // The reserve is the telemetry rail's backdrop: the panel columns plus the gutter to their left. The
+    // rail overlay only repaints its own columns, so the gutter has no other background owner — blank
+    // spaces here fall back to the terminal default and read as a black strip between the scrollbar and
+    // the panel. Painting the whole reserve with the panel background lets the panel colour reach the
+    // scrollbar. reserve is 0 when the rail is hidden, so the empty string keeps that path byte-identical.
+    const rail = reserve > 0 ? paintRow(chatTheme().panelBg, '', reserve) : '';
     const lines: string[] = [];
     for (const child of this.getChildren()) {
       for (const line of child.render(mainWidth)) {
-        lines.push(`${padAnsi(line, mainWidth)}${' '.repeat(reserve)}`);
+        lines.push(`${padAnsi(line, mainWidth)}${rail}`);
       }
     }
     return lines;
