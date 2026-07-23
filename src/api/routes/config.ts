@@ -13,6 +13,7 @@ import type { ElowenEvent } from '../sse.js';
 import type { ConfigPatch } from '../../store/configStore.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import { readSystemDiagnostics } from '../systemDiagnostics.js';
+import { webhookProxyStatus } from '../webhookProxy.js';
 
 /** True when `bin` resolves to an executable on the daemon's PATH — the readiness check for a task exec
  *  that names an external agent CLI (the embedded `elowen:` engine skips this, it's always runnable). */
@@ -108,7 +109,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   // works after `elowen setup`. Read-only, derived purely from config + the BrainService helper (ONE source
   // of truth for "chat is runnable"), never gated behind a running mission. Admin-only (mirrors the
   // admin /system/* routes below).
-  app.get('/system/readiness', (c) => {
+  app.get('/system/readiness', async (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = d.config.get();
     const checks: Array<{ id: string; label: string; ok: boolean; detail: string; hint?: string }> = [];
@@ -138,9 +139,22 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       ...(memoryConfigured ? {} : { hint: 'Optional — enable memory in `elowen setup` or Settings → Brain.' }) });
 
     // platforms — informational: which messaging plugins are enabled.
-    const messaging = ['discord', 'whatsapp', 'telegram'].filter((p) => cfg.plugins.enabled.includes(p));
+    const messaging = ['discord', 'msteams', 'whatsapp', 'telegram'].filter((p) => cfg.plugins.enabled.includes(p));
     checks.push({ id: 'platforms', label: 'Platforms', ok: true, detail: messaging.length ? messaging.join(', ') : 'none',
-      hint: 'Connect Discord, WhatsApp or Telegram in Settings → Plugins.' });
+      hint: 'Connect Discord, Microsoft Teams, WhatsApp or Telegram in Settings → Plugins.' });
+
+    // webhooks — only when an enabled plugin exposes an inbound webhook (/hooks/*): a vhost provisioned
+    // before the route existed never gets it from `elowen update` (the updater runs as the service user
+    // and cannot touch /etc), so verify the managed proxy actually forwards /hooks/ and hand out the fix.
+    const registry = await d.plugins?.get();
+    if (registry && registry.httpRoutes.size > 0) {
+      const proxy = webhookProxyStatus();
+      if (proxy) {
+        checks.push({ id: 'webhooks', label: 'Webhooks', ok: proxy.routesHooks,
+          detail: proxy.routesHooks ? `${proxy.path} routes /hooks/` : `${proxy.path} does not route /hooks/`,
+          ...(proxy.routesHooks ? {} : { hint: 'Add a /hooks/ location proxying to the daemon port (see the Deployment guide), or re-run `sudo elowen setup` to regenerate the vhost.' }) });
+      }
+    }
 
     // plugins — informational: the enabled tool plugins.
     checks.push({ id: 'plugins', label: 'Plugins', ok: true, detail: cfg.plugins.enabled.length ? cfg.plugins.enabled.join(', ') : 'none' });
