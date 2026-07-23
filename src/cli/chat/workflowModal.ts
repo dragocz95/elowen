@@ -1,30 +1,18 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
-import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isPageDownKey, isPageUpKey, isUpKey } from './keys.js';
+import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isLeftKey, isRightKey, isTabKey, isUpKey } from './keys.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText } from '../ui/text.js';
-import { workflowTitle } from './components.js';
+import { spinnerFrame, workflowTitle } from './components.js';
+import { CARD_W, STATUS_GLYPH, STATUS_INK, canvasSize, drawCircuit, layoutCircuit, paintCanvas } from './workflowCanvas.js';
+import type { Placement } from './workflowCanvas.js';
 import type { WorkflowState, WorkflowNode } from '../../brain/transcript.js';
 
 // The workflow modal follows the active chat theme (resolved at CALL time, so a /theme switch recolours
 // it live) instead of owning a fixed palette: it is Elowen's surface and should read as part of the same
 // design language as the pickers behind it, not a detached black plane. Backgrounds come from
-// `chatTheme().modalBg` and are painted per ROW (see paintRow); selection reuses the shared
-// `color.selected` (theme accent background, black text) that every other themed modal already uses.
+// `chatTheme().modalBg` and are painted per ROW (see paintRow).
 const ROW = (t: string, width: number): string => paintRow(chatTheme().modalBg, t, width);
-
-const STATUS_GLYPH: Record<WorkflowNode['status'], string> = { running: '●', done: '✓', error: '✗', pending: '⏸' };
-/** Status → themed ink. These hold the `color.*` helpers (stable references) which resolve the ACTIVE
- *  theme when invoked, so the modal recolours on /theme without a rebuild. */
-const STATUS_INK: Record<WorkflowNode['status'], (t: string) => string> = {
-  running: color.warning,
-  done: color.success,
-  error: color.error,
-  pending: color.faint,
-};
-/** Identity on the selected row (which color.selected inverts whole), the real ink everywhere else. */
-const ink = (selected: boolean, paint: (t: string) => string) =>
-  (t: string): string => (selected ? t : paint(t));
 
 /** Fit text to exactly `width` columns. The explicit '…' is load-bearing: padAnsi's own overflow branch
  *  calls truncateToWidth WITHOUT an ellipsis argument, so it would render ASCII "..." here while every
@@ -32,64 +20,26 @@ const ink = (selected: boolean, paint: (t: string) => string) =>
 const fit = (text: string, width: number): string =>
   padAnsi(truncateToWidth(text, Math.max(0, width), '…'), Math.max(0, width));
 
-const GUTTER = 3;        // ' │ '
-const MIN_LIST = 26;
-const MIN_DETAIL = 30;
-const MIN_TWO_COL = MIN_LIST + GUTTER + MIN_DETAIL;
-const CHROME_ROWS = 6;   // title, summary, column header, rule, blank, footer
+/** title, summary, blank, dock rule, 3 dock rows, footer. */
+const CHROME_ROWS = 8;
+/** Below this body width the canvas cannot seat two columns plus a gutter — fall back to the wave list. */
+const MIN_CANVAS_BODY = 72;
+/** Animation cadence for the energy dots (the braille spinner has its own 120ms clock). */
+const TICK_MS = 150;
 
-/** One source of truth for the modal's geometry. maxHeight used to be hardcoded at the call site and
- *  never reached render(), so the list's capacity and the real row budget disagreed and a long DAG
- *  silently lost its bottom rows. Both sides now compute from the same terminal.
- *
- *  The 12-row floor is a minimum to render INTO, not a promise the terminal can honour: the overlay clamps
- *  the frame to `rows - 4` regardless, so under ~16 rows the modal is taller than its window and gets
- *  trimmed. That is the floor doing its job — a modal squeezed below its chrome has nothing left to show. */
+/** One source of truth for the modal's geometry: near-fullscreen, and both the call-site overlay request
+ *  and render()'s own row budget compute from the same terminal so they can never disagree. The overlay
+ *  re-clamps against the live terminal on every reflow regardless. */
 function modalGeometry(terminal: { columns: number; rows: number }): { width: number; maxHeight: number } {
   return {
-    width: Math.max(64, Math.min(110, Math.floor(terminal.columns * 0.9))),
-    maxHeight: Math.max(12, Math.min(30, terminal.rows - 4)), // margin: 2 top + bottom
+    width: Math.max(64, Math.floor(terminal.columns * 0.95)),
+    maxHeight: Math.max(12, terminal.rows - 4),
   };
 }
 
-/** A node placed in the dependency tree: its row prefix is the branch art leading to it. */
-interface TreeRow { node: WorkflowNode; branch: string }
-
-/** Lay the DAG out as a tree so the list SHOWS what depends on what instead of only saying it.
- *
- *  A DAG is not a tree: a node may depend on several others, and only one of them can hold it in an
- *  indented list. Each node therefore hangs under its FIRST dependency, and the detail column carries the
- *  full dep list — the shape stays readable rather than the layout quietly implying a node has one parent
- *  when it has three.
- *
- *  Total by construction: nodes are emitted at most once (`seen`), and anything the walk cannot reach —
- *  a dangling dependency, or a cycle the engine should have rejected — is emitted as its own root rather
- *  than silently vanishing from the list. */
-function layoutTree(nodes: readonly WorkflowNode[]): TreeRow[] {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const children = new Map<string, string[]>();
-  const roots: string[] = [];
-  for (const node of nodes) {
-    const parent = node.deps.find((dep) => byId.has(dep) && dep !== node.id);
-    if (parent === undefined) roots.push(node.id);
-    else children.set(parent, [...(children.get(parent) ?? []), node.id]);
-  }
-
-  const out: TreeRow[] = [];
-  const seen = new Set<string>();
-  const walk = (id: string, prefix: string, last: boolean, root: boolean): void => {
-    const node = byId.get(id);
-    if (!node || seen.has(id)) return;
-    seen.add(id);
-    out.push({ node, branch: root ? '' : `${prefix}${last ? '└─' : '├─'} ` });
-    const kids = children.get(id) ?? [];
-    const next = root ? '' : `${prefix}${last ? '   ' : '│  '}`;
-    kids.forEach((kid, i) => walk(kid, next, i === kids.length - 1, false));
-  };
-  roots.forEach((id, i) => walk(id, '', i === roots.length - 1, true));
-  for (const node of nodes) walk(node.id, '', true, true); // unreachable (cycle / dangling dep)
-  return out;
-}
+const glyphOf = (node: WorkflowNode, spinner: string): string =>
+  node.status === 'running' ? spinner : STATUS_GLYPH[node.status];
+const firstLine = (s: string): string => terminalInlineText(s.split('\n')[0] ?? '');
 
 interface WorkflowModalOpts {
   tui: TUI;
@@ -102,17 +52,22 @@ interface WorkflowModalOpts {
   onDrill(sessionId: string): void;
 }
 
-/** The navigable workflow modal: nodes on the left, the selected node's detail on the right, with a
- *  summary strip tracking the whole run. Arrows move the selection, Enter opens that node's transcript,
- *  Esc closes. Renders live — each frame reads the current snapshot, so statuses/tokens update in place
- *  while nodes run. A standalone focus-capturing overlay in the same chrome geometry + restore contract
- *  as the pickers, sharing their themed palette. */
+/** The workflow DAG as a navigable spatial canvas: waves become columns, ←→ crosses them, ↑↓ walks a
+ *  column, and the selected/running nodes grow into full cards while the rest stay compact. A dock under
+ *  the canvas carries the selected node's vitals (or, on Tab, a live activity feed), and energy dots flow
+ *  along the edges into running nodes. Renders live — each frame reads the current snapshot — and owns a
+ *  single self-arming timer for the animation while any node runs. On a terminal too narrow for the
+ *  canvas the same DAG renders as a wave-grouped list with identical keys. */
 class WorkflowModal implements Component, Focusable {
   private _focused = false;
-  private selectedIndex = 0;
+  /** Selection is the node ID, not an index: nodes can be appended mid-run (WorkflowAddNodes) and the
+   *  wave layout reorders as statuses change — the id keeps the selection pinned to the same node. */
+  private selectedId: string | null = null;
+  private dock: 'detail' | 'activity' = 'detail';
   /** Transient footer message (e.g. Enter on a node that has not started). Cleared by any navigation, so
-   *  it lives exactly as long as the state it describes — no timer to leak. */
+   *  it lives exactly as long as the state it describes. */
   private notice = '';
+  private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: WorkflowModalOpts) {}
 
@@ -120,113 +75,123 @@ class WorkflowModal implements Component, Focusable {
   set focused(value: boolean) { this._focused = value; }
   invalidate(): void { /* stateless render from the live workflow */ }
 
-  /** The list in VISUAL order — the tree, not the DAG's declaration order — so arrows move down the rows
-   *  the user is actually looking at and `selectedIndex` means the same thing to input and to render. */
-  private rows(): TreeRow[] {
-    const wf = this.opts.getWorkflow();
-    return wf ? layoutTree(wf.nodes) : [];
+  /** Stop the animation timer — the factory calls this from close(), so a hidden modal never keeps
+   *  repainting the app behind it. */
+  dispose(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** One-shot, re-armed per render while anything runs: render → timer → requestRender → render. When
+   *  the workflow settles the chain simply stops re-arming and the last frame stays put. */
+  private syncAnimation(active: boolean): void {
+    if (active && this.timer === null) {
+      this.timer = setTimeout(() => { this.timer = null; this.opts.tui.requestRender(); }, TICK_MS);
+      this.timer.unref?.();
+    }
+    if (!active && this.timer) this.dispose();
+  }
+
+  private nodes(): readonly WorkflowNode[] {
+    return this.opts.getWorkflow()?.nodes ?? [];
+  }
+
+  /** The selected node's id, revalidated against the live snapshot (the node may have gone). */
+  private selection(nodes: readonly WorkflowNode[]): string | null {
+    if (this.selectedId && nodes.some((n) => n.id === this.selectedId)) return this.selectedId;
+    this.selectedId = nodes[0]?.id ?? null;
+    return this.selectedId;
+  }
+
+  private placements(): Placement[] {
+    const nodes = this.nodes();
+    return layoutCircuit(nodes, this.selection(nodes));
   }
 
   private capacity(): number {
     return Math.max(3, modalGeometry(this.opts.tui.terminal).maxHeight - CHROME_ROWS);
   }
 
-  private select(index: number): void {
-    this.selectedIndex = index;
+  private canvasMode(): boolean {
+    return modalGeometry(this.opts.tui.terminal).width - 4 >= MIN_CANVAS_BODY;
+  }
+
+  private select(id: string | undefined): void {
+    if (id !== undefined) this.selectedId = id;
     this.notice = '';
     this.opts.tui.requestRender();
   }
 
-  private move(delta: number): void {
-    const n = this.rows().length;
-    if (n === 0) return;
-    this.select((this.selectedIndex + delta + n) % n); // wraps: ↑ on the first node lands on the last
+  /** ↑↓: the column's stack in canvas mode, the flat wave order in list mode. Clamped, not wrapped —
+   *  the canvas is a space, and falling off the top onto the bottom reads as teleporting. */
+  private moveVertical(delta: number): void {
+    const placements = this.placements();
+    const current = placements.find((p) => p.node.id === this.selectedId);
+    if (!current) { this.select(placements[0]?.node.id); return; }
+    const lane = this.canvasMode() ? placements.filter((p) => p.col === current.col) : placements;
+    const index = lane.findIndex((p) => p.node.id === current.node.id);
+    this.select(lane[Math.max(0, Math.min(lane.length - 1, index + delta))]?.node.id);
   }
 
-  /** Paging clamps where the arrows wrap — jumping a page should stop at the ends, not teleport across. */
-  private page(delta: number): void {
-    const n = this.rows().length;
-    if (n === 0) return;
-    this.select(Math.max(0, Math.min(n - 1, this.selectedIndex + delta)));
+  /** ←→: the neighbouring wave, landing on the node closest to the current row so the selection moves
+   *  the way the eye does — sideways, not to an arbitrary list position. */
+  private moveHorizontal(delta: number): void {
+    const placements = this.placements();
+    const current = placements.find((p) => p.node.id === this.selectedId);
+    if (!current) { this.select(placements[0]?.node.id); return; }
+    const cols = [...new Set(placements.map((p) => p.col))].sort((a, b) => a - b);
+    const at = cols.indexOf(current.col);
+    const target = cols[Math.max(0, Math.min(cols.length - 1, at + delta))];
+    if (target === undefined || target === current.col) return;
+    const nearest = placements.filter((p) => p.col === target)
+      .reduce((best, p) => (Math.abs(p.y - current.y) < Math.abs(best.y - current.y) ? p : best));
+    this.select(nearest.node.id);
   }
 
   handleInput(data: string): void {
     if (isKeyRelease(data)) return; // Kitty release edge — navigate/open on the press only
     if (isEscapeKey(data)) { this.opts.onClose(); return; }
-    if (isUpKey(data)) { this.move(-1); return; }
-    if (isDownKey(data)) { this.move(1); return; }
-    if (isPageUpKey(data)) { this.page(-this.capacity()); return; }
-    if (isPageDownKey(data)) { this.page(this.capacity()); return; }
+    if (isUpKey(data)) { this.moveVertical(-1); return; }
+    if (isDownKey(data)) { this.moveVertical(1); return; }
+    if (isLeftKey(data)) { this.moveHorizontal(-1); return; }
+    if (isRightKey(data)) { this.moveHorizontal(1); return; }
+    if (isTabKey(data)) {
+      this.dock = this.dock === 'detail' ? 'activity' : 'detail';
+      this.opts.tui.requestRender();
+      return;
+    }
     if (isEnterKey(data)) {
-      const node = this.rows()[this.selectedIndex]?.node;
+      const node = this.nodes().find((n) => n.id === this.selectedId);
       if (node?.sessionId) { this.opts.onDrill(node.sessionId); return; }
       // Pressing Enter here used to do nothing at all, which reads as a broken key rather than as "there
       // is nothing to open yet".
-      this.notice = node ? `${node.id} has not started yet — no transcript to open` : 'no node selected';
+      this.notice = node ? `${terminalInlineText(node.id)} has not started yet — no transcript to open` : 'no node selected';
       this.opts.tui.requestRender();
       return;
     }
   }
 
-  /** One list row: branch art + status glyph + id, with tokens right-aligned. Built plain when selected
-   *  so color.selected can invert the whole cell as one accent-background block. */
-  private listCell(row: TreeRow, selected: boolean, width: number): string {
-    const { node } = row;
-    const meta = node.tokens ? `${formatK(node.tokens)} tok` : '';
-    const idRoom = Math.max(4, width - visibleWidth(row.branch) - 2 - (meta ? visibleWidth(meta) + 1 : 0));
-    const head = `${ink(selected, color.faint)(row.branch)}${ink(selected, STATUS_INK[node.status])(STATUS_GLYPH[node.status])} `
-      + `${ink(selected, color.text)(truncateToWidth(terminalInlineText(node.id), idRoom, '…'))}`;
-    const tail = meta ? ink(selected, color.faint)(meta) : '';
-    const gap = Math.max(1, width - visibleWidth(head) - visibleWidth(tail));
-    return fit(`${head}${' '.repeat(gap)}${tail}`, width);
+  /** Live elapsed seconds: a running node ticks from its startedAt between snapshots, everything else
+   *  shows what the engine last reported. */
+  private seconds(node: WorkflowNode, now: number): number | undefined {
+    if (node.status === 'running' && node.startedAt !== undefined) {
+      return Math.max(node.seconds ?? 0, Math.round((now - node.startedAt) / 1000));
+    }
+    return node.seconds;
   }
 
-  /** The selected node's detail column: a bold id header, its vitals as aligned key/value rows, the task
-   *  body, and its current tool. The FULL dep list belongs here — the tree can only draw one parent per
-   *  node, so this is where a node that waits on several stops being a half-truth. */
-  private detailBlock(node: WorkflowNode, width: number, maxRows: number): string[] {
-    const rows: string[] = [];
-    rows.push(`${STATUS_INK[node.status](STATUS_GLYPH[node.status])} ${color.bold(color.text(terminalInlineText(node.id)))}`);
-    const label = (key: string): string => `  ${color.faint(key.padEnd(8))}`;
-    rows.push(`${label('status')}${STATUS_INK[node.status](terminalInlineText(node.status))}`);
-    if (node.model) rows.push(`${label('model')}${color.text(terminalInlineText(node.model))}`);
-    if (node.tokens != null) {
-      const dur = node.seconds !== undefined ? color.faint(` · ${formatDuration(node.seconds)}`) : '';
-      rows.push(`${label('tokens')}${color.text(formatK(node.tokens))}${color.faint(' tok')}${dur}`);
-    }
-    rows.push(`${label('deps')}${node.deps.length ? color.text(terminalInlineText(node.deps.join(', '))) : color.faint('root')}`);
-    rows.push(`  ${color.faint('─'.repeat(Math.max(4, Math.min(16, width - 4))))}`);
-    const headerCount = rows.length;
-
-    const task = wrapTextWithAnsi(color.text(terminalInlineText(node.task)), width);
-    const detailReserve = node.detail ? 2 : 0;
-    const room = Math.max(1, maxRows - headerCount - detailReserve);
-    // The "+N more" line costs a row of `room` itself. Counting it as free overran maxRows by one, and the
-    // overlay trims from the BOTTOM — so a long task silently ate the footer's keybind hint.
-    if (task.length > room) rows.push(...task.slice(0, room - 1), color.faint(`… +${task.length - room + 1} more`));
-    else rows.push(...task);
-    if (node.detail) {
-      rows.push('');
-      rows.push(color.accent(`▸ ${terminalInlineText(node.detail)}`));
-    }
-    // The header has no upper bound of its own, so on a very short budget it alone can outgrow maxRows.
-    // Cede the overflow here rather than at the caller: the overlay trims from the bottom, and losing the
-    // tail of a detail beats losing the footer that says which keys work.
-    return rows.slice(0, Math.max(1, maxRows));
-  }
-
-  /** The whole-run strip under the title: a progress bar, per-status counts, and the run's totals. Gives
-   *  the DAG a headline — "how far along is this?" — without reading a single row. */
-  private summaryLine(wf: WorkflowState): string {
-    const total = wf.nodes.length;
+  /** The whole-run strip under the title: a progress bar, per-status counts, the run's totals and the
+   *  scroll affordances. Gives the DAG a headline without reading a single card. */
+  private summaryLine(wf: WorkflowState, now: number, clipped: { h: boolean; v: boolean }): string {
     const countOf = (s: WorkflowNode['status']): number => wf.nodes.reduce((n, x) => n + (x.status === s ? 1 : 0), 0);
     const done = countOf('done');
     const running = countOf('running');
     const error = countOf('error');
     const pending = countOf('pending');
     const finished = done + error;
+    const total = wf.nodes.length;
 
-    const barW = 8;
+    const barW = 10;
     const filled = total ? Math.round((finished / total) * barW) : 0;
     const bar = color.accent('▰'.repeat(filled)) + color.faint('▱'.repeat(barW - filled));
     const counts = [
@@ -236,14 +201,91 @@ class WorkflowModal implements Component, Focusable {
       pending ? color.faint(`⏸${pending}`) : '',
     ].filter(Boolean).join(' ');
     const totalTok = wf.nodes.reduce((s, n) => s + (n.tokens ?? 0), 0);
-    const maxSec = wf.nodes.reduce((m, n) => Math.max(m, n.seconds ?? 0), 0);
+    const maxSec = wf.nodes.reduce((m, n) => Math.max(m, this.seconds(n, now) ?? 0), 0);
     const extras = [
       totalTok ? `${color.text(formatK(totalTok))}${color.faint(' tok')}` : '',
       maxSec ? color.text(formatDuration(maxSec)) : '',
     ].filter(Boolean).join(color.faint(' · '));
+    const scroll = [clipped.h ? '↔' : '', clipped.v ? '↕' : ''].filter(Boolean).join(' ');
     return `  ${bar} ${color.text(`${finished}/${total}`)}`
       + (counts ? ` ${color.faint('·')} ${counts}` : '')
-      + (extras ? ` ${color.faint('·')} ${extras}` : '');
+      + (extras ? ` ${color.faint('·')} ${extras}` : '')
+      + (scroll ? ` ${color.faint('·')} ${color.faint(scroll)}` : '');
+  }
+
+  /** The wave-grouped list a narrow terminal falls back to: `─ wave N ─` rules with the same nodes,
+   *  selection and keys as the canvas — only the geometry is gone, never the information. */
+  private listRows(placements: readonly Placement[], bodyWidth: number, spinner: string, now: number): string[] {
+    const rows: string[] = [];
+    let selectedRow = 0;
+    let lastCol = -1;
+    for (const p of placements) {
+      if (p.col !== lastCol) {
+        lastCol = p.col;
+        const label = `─ wave ${p.col + 1} `;
+        rows.push(color.faint(`${label}${'─'.repeat(Math.max(0, bodyWidth - label.length))}`));
+      }
+      const { node } = p;
+      const selected = node.id === this.selectedId;
+      if (selected) selectedRow = rows.length;
+      const meta = [
+        node.tokens !== undefined ? `${formatK(node.tokens)} tok` : '',
+        this.seconds(node, now) !== undefined ? formatDuration(this.seconds(node, now)!) : '',
+      ].filter(Boolean).join(' · ');
+      const mid = node.status === 'running' ? (node.detail ?? '') : node.status === 'pending' ? `waits: ${node.deps.join(', ') || '—'}` : '';
+      const idW = 16;
+      const midW = Math.max(0, bodyWidth - idW - 3 - (meta ? visibleWidth(meta) + 1 : 0));
+      if (selected) {
+        rows.push(color.selected(fit(` ${glyphOf(node, spinner)} ${fit(terminalInlineText(node.id), idW)} ${fit(terminalInlineText(mid), midW)}${meta ? ` ${meta}` : ''}`, bodyWidth)));
+      } else {
+        const midInk = node.status === 'running' ? color.accentSoft : color.faint;
+        rows.push(fit(` ${STATUS_INK[node.status](glyphOf(node, spinner))} ${color.text(fit(terminalInlineText(node.id), idW))} ${midInk(fit(terminalInlineText(mid), midW))}${meta ? ` ${color.faint(meta)}` : ''}`, bodyWidth));
+      }
+    }
+    const cap = this.capacity();
+    if (rows.length <= cap) return rows;
+    const start = Math.max(0, Math.min(selectedRow - Math.floor(cap / 2), rows.length - cap));
+    return rows.slice(start, start + cap);
+  }
+
+  /** The dock's three content rows for the selected node: vitals, the task, and the outcome line that
+   *  the new snapshot fields exist for — the live tool while running, the result/error once terminal. */
+  private detailDock(node: WorkflowNode, width: number, spinner: string, now: number): string[] {
+    const secs = this.seconds(node, now);
+    const vitals = [
+      `${STATUS_INK[node.status](glyphOf(node, spinner))} ${STATUS_INK[node.status](node.status)}`,
+      node.model ? `${color.faint('model ')}${color.text(terminalInlineText(node.model))}` : '',
+      node.tokens !== undefined ? `${color.text(formatK(node.tokens))}${color.faint(' tok')}` : '',
+      secs !== undefined ? color.text(formatDuration(secs)) : '',
+      `${color.faint('deps ')}${color.text(terminalInlineText(node.deps.join(', ')) || 'root')}`,
+    ].filter(Boolean).join(color.faint('  ·  '));
+    const outcome = node.status === 'running' ? color.accent(`▸ ${terminalInlineText(node.detail ?? 'working…')}`)
+      : node.status === 'done' ? color.dim(`▸ ${firstLine(node.result ?? '') || 'no output reported'}`)
+        : node.status === 'error' ? color.error(`✗ ${firstLine(node.error ?? '') || 'failed'}`)
+          : color.faint('not started yet');
+    return [
+      fit(vitals, width),
+      fit(color.dim(terminalInlineText(node.task)), width),
+      fit(outcome, width),
+    ];
+  }
+
+  /** The dock's activity mode: every running node's live tool line, then the freshest finished nodes —
+   *  a whole-run pulse that needs no navigation. */
+  private activityDock(nodes: readonly WorkflowNode[], width: number, spinner: string): string[] {
+    const rows: string[] = [];
+    for (const n of nodes.filter((x) => x.status === 'running')) {
+      rows.push(fit(`${color.warning(spinner)} ${color.text(fit(terminalInlineText(n.id), 16))} ${color.accentSoft(terminalInlineText(n.detail ?? '…'))}`, width));
+    }
+    for (const n of [...nodes].reverse().filter((x) => x.status === 'done' || x.status === 'error')) {
+      if (rows.length >= 3) break;
+      const glyphed = n.status === 'done'
+        ? `${color.success('✓')} ${color.text(fit(terminalInlineText(n.id), 16))} ${color.faint(firstLine(n.result ?? '') || 'done')}`
+        : `${color.error('✗')} ${color.text(fit(terminalInlineText(n.id), 16))} ${color.error(firstLine(n.error ?? '') || 'failed')}`;
+      rows.push(fit(glyphed, width));
+    }
+    while (rows.length < 3) rows.push(fit(color.faint(rows.length === 0 ? 'nothing has run yet' : ''), width));
+    return rows.slice(0, 3);
   }
 
   /** Full-chrome message frame — an empty modal should still read as this modal, not a broken one. */
@@ -259,27 +301,42 @@ class WorkflowModal implements Component, Focusable {
 
   render(width: number): string[] {
     const wf = this.opts.getWorkflow();
-    if (!wf) return this.messageFrame(width, 'workflow is no longer in the live view — press esc');
+    if (!wf) { this.syncAnimation(false); return this.messageFrame(width, 'workflow is no longer in the live view — press esc'); }
     if (wf.nodes.length === 0) return this.messageFrame(width, 'no nodes yet — the plan is still being built');
 
-    const tree = layoutTree(wf.nodes);
-    if (this.selectedIndex >= tree.length) this.selectedIndex = tree.length - 1;
-    const bodyWidth = Math.max(1, width - 4);
-    const twoColumn = bodyWidth >= MIN_TWO_COL;
-    const listWidth = twoColumn ? Math.max(MIN_LIST, Math.min(44, Math.floor(bodyWidth * 0.42))) : bodyWidth;
-    const detailWidth = twoColumn ? bodyWidth - listWidth - GUTTER : bodyWidth;
-    const capacity = this.capacity();
-    // Side by side, the columns overlap in the row budget and cost max(list, detail). Stacked, they sit ON
-    // TOP of one another (plus a rule between), so they must SHARE it — billing both the full capacity
-    // overran the frame by a whole column's worth of rows, and the overlay trimmed the detail and footer
-    // away to pay for it.
-    const listRoom = twoColumn ? capacity : Math.max(2, Math.ceil((capacity - 1) / 2));
-    const detailRoom = twoColumn ? capacity : Math.max(1, capacity - listRoom - 1);
+    const now = Date.now();
+    const spinner = spinnerFrame(now);
+    const running = wf.nodes.some((n) => n.status === 'running');
+    this.syncAnimation(running);
 
-    // Window derived from the selection, never stored: the formula is total over every selectedIndex, so
-    // move()'s modulo wrap (last→first) needs no special case and `selectedIndex` stays the only state.
-    const start = Math.max(0, Math.min(this.selectedIndex - listRoom + 1, tree.length - listRoom));
-    const window = tree.slice(start, start + listRoom);
+    const bodyWidth = Math.max(1, width - 4);
+    const selectedId = this.selection(wf.nodes);
+    const placements = layoutCircuit(wf.nodes, selectedId);
+    const selected = placements.find((p) => p.node.id === selectedId) ?? placements[0]!;
+    const capacity = this.capacity();
+
+    let body: string[];
+    let clipped = { h: false, v: false };
+    if (this.canvasMode()) {
+      const grid = drawCircuit(placements, {
+        selectedId,
+        tick: Math.floor(now / TICK_MS),
+        spinner,
+        seconds: (node) => this.seconds(node, now),
+      });
+      const { width: cw, height: ch } = canvasSize(placements);
+      const vh = Math.min(capacity, ch);
+      clipped = { h: cw > bodyWidth, v: ch > capacity };
+      // A canvas smaller than the viewport floats centered (negative offset renders as margin); a larger
+      // one scrolls to keep the selected card in view — derived from the selection, never stored.
+      const vx = cw <= bodyWidth
+        ? -Math.floor((bodyWidth - cw) / 2)
+        : Math.max(0, Math.min(selected.x + Math.floor(CARD_W / 2) - Math.floor(bodyWidth / 2), cw - bodyWidth));
+      const vy = ch <= vh ? 0 : Math.max(0, Math.min(selected.y - Math.floor(vh / 2), ch - vh));
+      body = paintCanvas(grid, { x: vx, y: vy, w: bodyWidth, h: vh });
+    } else {
+      body = this.listRows(placements, bodyWidth, spinner, now);
+    }
 
     const out: string[] = [];
     // Title row: brand · name on the left, the run's status pill and esc hint right-aligned.
@@ -293,45 +350,23 @@ class WorkflowModal implements Component, Focusable {
       + color.text(truncateToWidth(title, Math.max(8, bodyWidth - 34), '…'));
     const titleGap = Math.max(2, width - visibleWidth(left) - visibleWidth(right));
     out.push(ROW(`${left}${' '.repeat(titleGap)}${right}`, width));
-    out.push(ROW(this.summaryLine(wf), width));
-
-    const range = tree.length > listRoom
-      ? `${start + 1}–${Math.min(tree.length, start + listRoom)}/${tree.length} ↕`
-      : `${tree.length}`;
-    const listHeader = `${color.faint('NODES')}  ${color.faint(range)}`;
-    const selected = tree[this.selectedIndex]!;
-    const detail = this.detailBlock(selected.node, detailWidth, detailRoom);
-
-    if (twoColumn) {
-      // ONE paintRow per row, at the OUTER level: painting the columns separately would emit a mid-row
-      // reset and drop the background for the remainder of the line.
-      const join = (leftCell: string, rightCell: string): string =>
-        ROW(`  ${leftCell}${color.faint(' │ ')}${fit(rightCell, detailWidth)}  `, width);
-      out.push(join(fit(listHeader, listWidth), color.faint(terminalInlineText(selected.node.id))));
-      out.push(ROW(`  ${color.faint(`${'─'.repeat(listWidth)}─┼─${'─'.repeat(detailWidth)}`)}  `, width));
-      const rows = Math.max(window.length, detail.length);
-      for (let i = 0; i < rows; i += 1) {
-        const row = window[i];
-        const isSelected = row !== undefined && start + i === this.selectedIndex;
-        const cell = row ? this.listCell(row, isSelected, listWidth) : ' '.repeat(listWidth);
-        out.push(join(isSelected ? color.selected(cell) : cell, detail[i] ?? ''));
-      }
-    } else {
-      out.push(ROW(`  ${fit(listHeader, bodyWidth)}  `, width));
-      for (const [i, row] of window.entries()) {
-        const isSelected = start + i === this.selectedIndex;
-        const cell = this.listCell(row, isSelected, bodyWidth);
-        out.push(ROW(`  ${isSelected ? color.selected(cell) : cell}  `, width));
-      }
-      out.push(ROW(`  ${color.faint('─'.repeat(bodyWidth))}  `, width));
-      for (const line of detail) out.push(ROW(`  ${fit(line, bodyWidth)}  `, width));
-    }
-
+    out.push(ROW(this.summaryLine(wf, now, clipped), width));
     out.push(ROW('', width));
+    for (const row of body) out.push(ROW(`  ${fit(row, bodyWidth)}  `, width));
+
+    // Dock: a titled rule, then the selected node's detail or the run's activity feed.
+    const dockTitle = this.dock === 'detail' ? ` ${terminalInlineText(selected.node.id)} ` : ' activity ';
+    const rule = `─${color.accentSoft(dockTitle)}`;
+    out.push(ROW(`  ${color.faint('─')}${color.accentSoft(dockTitle)}${color.faint('─'.repeat(Math.max(0, bodyWidth - visibleWidth(rule))))}  `, width));
+    const dockRows = this.dock === 'detail'
+      ? this.detailDock(selected.node, bodyWidth, spinner, now)
+      : this.activityDock(wf.nodes, bodyWidth, spinner);
+    for (const row of dockRows) out.push(ROW(`  ${row}  `, width));
+
     const hint = selected.node.sessionId
-      ? 'enter open node transcript · ↑↓ move · esc close'
-      : '↑↓ move · esc close (node not started)';
-    out.push(ROW(`  ${this.notice ? color.warning(this.notice) : color.faint(hint)}`, width));
+      ? `enter open node transcript · ←→↑↓ move · tab ${this.dock === 'detail' ? 'activity' : 'detail'} · esc close`
+      : '←→↑↓ move · esc close (node not started)';
+    out.push(ROW(`  ${this.notice ? color.warning(terminalInlineText(this.notice)) : color.faint(hint)}`, width));
     return out;
   }
 }
@@ -346,8 +381,9 @@ export function openWorkflowModal(o: {
 }): void {
   const restore = (): void => { o.tui.setFocus(o.editor); o.tui.requestRender(); };
   let handle: ReturnType<TUI['showOverlay']> | null = null;
-  const close = (): void => { handle?.hide(); handle = null; restore(); };
-  const modal = new WorkflowModal({
+  let modal: WorkflowModal | null = null;
+  const close = (): void => { modal?.dispose(); handle?.hide(); handle = null; restore(); };
+  modal = new WorkflowModal({
     tui: o.tui,
     getWorkflow: o.getWorkflow,
     onClose: close,

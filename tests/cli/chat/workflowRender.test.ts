@@ -4,6 +4,7 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { setChatTheme } from '../../../src/cli/chat/theme.js';
 import { WorkflowPanel, workflowTitle } from '../../../src/cli/chat/components.js';
 import { openWorkflowModal } from '../../../src/cli/chat/workflowModal.js';
+import { layoutWaves } from '../../../src/cli/chat/workflowCanvas.js';
 import { TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import type { WorkflowState } from '../../../src/brain/transcript.js';
@@ -16,14 +17,35 @@ const show = (label: string, lines: string[]): void => {
   for (const line of lines) console.log(strip(line));
 };
 
+const SPIN = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/;
+const UP = '\x1b[A';
+const DOWN = '\x1b[B';
+const RIGHT = '\x1b[C';
+const LEFT = '\x1b[D';
+
 const WF: WorkflowState = {
   id: 'wf-1', toolCallId: 'call-1', title: 'ship the parser', status: 'running',
   nodes: [
-    { id: 'gather', task: 'Read the parser sources and summarize the token grammar', status: 'done', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, model: 'claude-opus-4-8' },
+    { id: 'gather', task: 'Read the parser sources and summarize the token grammar', status: 'done', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, model: 'claude-opus-4-8', result: 'grammar has 14 token kinds' },
     { id: 'analyze', task: 'Find every edge case the grammar misses', status: 'running', deps: ['gather'], sessionId: 's-analyze', tokens: 1800, seconds: 5, detail: 'Read src/lexer.ts', model: 'claude-opus-4-8' },
     { id: 'write', task: 'Write the fix and a regression test', status: 'pending', deps: ['analyze'] },
   ],
 };
+
+interface ModalHandle { render(w: number): string[]; handleInput(d: string): void }
+function openModal(getWorkflow: () => WorkflowState | undefined, terminal = { columns: 100, rows: 40 }): { modal: ModalHandle; onDrill: ReturnType<typeof vi.fn> } {
+  let captured: ModalHandle | null = null;
+  const onDrill = vi.fn();
+  openWorkflowModal({
+    tui: {
+      showOverlay: (component: ModalHandle) => { captured = component; return { hide: vi.fn(), focus: vi.fn() }; },
+      setFocus: vi.fn(), requestRender: vi.fn(), terminal,
+    } as never,
+    editor: {} as never, getWorkflow, onDrill,
+  });
+  expect(captured).not.toBeNull();
+  return { modal: captured!, onDrill };
+}
 
 describe('workflowTitle', () => {
   it('appends one ellipsis to the model-authored label, stripping trailing punctuation first', () => {
@@ -76,99 +98,141 @@ describe('workflow CLI rendering', () => {
     // one workflow row, clickable
     expect(lines.some((l) => strip(l).includes('⛓'))).toBe(true);
   });
+});
 
-  it('renders the navigable modal and moves selection on arrow keys', () => {
-    let captured: { render(w: number): string[]; handleInput(d: string): void } | null = null;
-    const tui = {
-      showOverlay: (component: typeof captured) => { captured = component; return { hide: vi.fn(), focus: vi.fn() }; },
-      setFocus: vi.fn(),
-      requestRender: vi.fn(),
-      terminal: { columns: 100, rows: 40 },
+describe('workflow canvas layout', () => {
+  it('layers nodes into topological waves without losing malformed ones', () => {
+    // A diamond plus a second root: waves are longest-path layers, so both branches share a column.
+    const waves = layoutWaves([
+      { id: 'gather', task: 't', status: 'done', deps: [] },
+      { id: 'audit', task: 't', status: 'pending', deps: [] },
+      { id: 'lex', task: 't', status: 'done', deps: ['gather'] },
+      { id: 'parse', task: 't', status: 'running', deps: ['gather'] },
+      { id: 'report', task: 't', status: 'pending', deps: ['lex', 'parse'] },
+    ]);
+    expect(waves.map((w) => w.map((n) => n.id))).toEqual([['gather', 'audit'], ['lex', 'parse'], ['report']]);
+
+    // A cycle breaks at re-entry and a dangling dep reads as a root — every node keeps a place.
+    const malformed = layoutWaves([
+      { id: 'a', task: 'a', status: 'pending', deps: ['b'] },
+      { id: 'b', task: 'b', status: 'pending', deps: ['a'] },
+      { id: 'orphan', task: 'o', status: 'pending', deps: ['ghost'] },
+    ]);
+    expect(malformed.flat().map((n) => n.id).sort()).toEqual(['a', 'b', 'orphan']);
+  });
+});
+
+describe('workflow canvas modal', () => {
+  it('renders the DAG as wave columns with cards, edges and a live dock', () => {
+    const { modal } = openModal(() => WF);
+    const frame = modal.render(96);
+    show('modal — circuit canvas', frame);
+    const flat = frame.map(strip).join('\n');
+    expect(flat).toContain('WORKFLOW');
+    for (const id of ['gather', 'analyze', 'write']) expect(flat).toContain(id);
+    expect(flat).toMatch(/╭ [✓✗⏸⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .+─+╮/); // the selected/running nodes draw as titled cards
+    expect(flat).toContain('▶');    // dependency edges end in an arrowhead
+    expect(flat).toMatch(SPIN);     // a running node spins
+    // The first node starts selected: its dock names it, calls it a root, and offers the drill-in.
+    expect(flat).toMatch(/─ gather ─/);
+    expect(flat).toMatch(/deps\s+root/);
+    expect(flat).toContain('enter open node transcript');
+  });
+
+  it('navigates waves with ←→ and the column with ↑↓, clamped at the edges', () => {
+    const diamond: WorkflowState = {
+      id: 'wf-d', toolCallId: 'call-d', title: 'diamond', status: 'running',
+      nodes: [
+        { id: 'gather', task: 'gather', status: 'done', deps: [], sessionId: 's-gather' },
+        { id: 'audit', task: 'audit', status: 'pending', deps: [] },
+        { id: 'lex', task: 'lex', status: 'done', deps: ['gather'], sessionId: 's-lex' },
+        { id: 'parse', task: 'parse', status: 'running', deps: ['gather'], sessionId: 's-parse' },
+        { id: 'report', task: 'report', status: 'pending', deps: ['lex', 'parse'] },
+      ],
     };
-    const onDrill = vi.fn();
-    openWorkflowModal({
-      tui: tui as never,
-      editor: {} as never,
-      getWorkflow: () => WF,
-      onDrill,
-    });
-    expect(captured).not.toBeNull();
-    const modal = captured!;
+    const { modal } = openModal(() => diamond, { columns: 130, rows: 40 });
+    const dockOf = (): string => strip(modal.render(110).join('\n'));
+    show('modal — diamond canvas', modal.render(110));
 
-    const frame0 = modal.render(90);
-    show('modal — node "gather" selected', frame0);
-    const flat0 = frame0.map(strip).join('\n');
-    expect(flat0).toContain('WORKFLOW');
-    expect(flat0).toContain('gather');
-    expect(flat0).toContain('root'); // gather has no deps — its detail column says so
-    expect(flat0).toContain('enter open node transcript'); // selected node has a session
+    modal.handleInput(DOWN);                       // column 1: gather → audit
+    expect(dockOf()).toMatch(/─ audit ─/);
+    modal.handleInput(DOWN);                       // bottom of the column: clamps, no wrap
+    expect(dockOf()).toMatch(/─ audit ─/);
+    modal.handleInput(UP);
+    expect(dockOf()).toMatch(/─ gather ─/);
+    modal.handleInput(LEFT);                       // left edge: clamps
+    expect(dockOf()).toMatch(/─ gather ─/);
+    modal.handleInput(RIGHT);                      // wave 2, nearest row to gather
+    expect(dockOf()).toMatch(/─ lex ─/);
+    modal.handleInput(DOWN);
+    expect(dockOf()).toMatch(/─ parse ─/);
+    modal.handleInput(RIGHT);                      // wave 3
+    expect(dockOf()).toMatch(/─ report ─/);
+    // The tree could only ever draw one parent — the dock carries the whole truth.
+    expect(dockOf()).toMatch(/deps\s+lex, parse/);
+    modal.handleInput(RIGHT);                      // right edge: clamps
+    expect(dockOf()).toMatch(/─ report ─/);
+  });
 
-    // Deps are per-selected-node data and now live in the detail column, so they show while their node
-    // is selected rather than on every list row.
-    modal.handleInput('\x1b[B');
-    const frame1 = modal.render(90);
-    show('modal — node "analyze" selected', frame1);
-    expect(frame1.map(strip).join('\n')).toMatch(/deps\s+gather/);
-
-    // Arrow down again → the pending 'write' node (no session) → the hint changes.
-    modal.handleInput('\x1b[B');
-    const frame2 = modal.render(90);
-    show('modal — node "write" selected (pending)', frame2);
-    expect(frame2.map(strip).join('\n')).toContain('node not started');
-
-    // Enter on a node that has not started says so, instead of silently doing nothing.
+  it('drills into a started node and explains an unstarted one', () => {
+    const { modal, onDrill } = openModal(() => WF);
+    modal.handleInput(RIGHT);
+    modal.handleInput(RIGHT);                      // 'write', pending, no session
+    const flat = strip(modal.render(96).join('\n'));
+    expect(flat).toContain('node not started');
     modal.handleInput('\r');
     expect(onDrill).not.toHaveBeenCalled();
-    expect(modal.render(90).map(strip).join('\n')).toContain('has not started yet');
-
-    // Enter on a started node drills into its session.
-    modal.handleInput('\x1b[A'); // back up to 'analyze' (has a session)
+    expect(strip(modal.render(96).join('\n'))).toContain('has not started yet');
+    modal.handleInput(LEFT);                       // back to 'analyze' (has a session)
     modal.handleInput('\r');
     expect(onDrill).toHaveBeenCalledWith('s-analyze');
   });
 
-  it('lays the node list out as a dependency tree', () => {
-    // A diamond: `report` waits on BOTH branches, which is exactly where a DAG stops being a tree.
-    const diamond: WorkflowState = {
-      id: 'wf-d', toolCallId: 'call-d', title: 'diamond', status: 'running',
+  it('keeps the selection pinned to its node when the snapshot grows mid-run', () => {
+    let wf: WorkflowState = WF;
+    const { modal } = openModal(() => wf);
+    modal.handleInput(RIGHT);                      // select 'analyze'
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ analyze ─/);
+    // WorkflowAddNodes prepends nothing in practice, but the selection must survive any reshuffle.
+    wf = { ...WF, nodes: [{ id: 'extra', task: 'later', status: 'pending', deps: [] }, ...WF.nodes] };
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ analyze ─/);
+  });
+
+  it('previews result, error and live elapsed time in the dock', () => {
+    const outcome: WorkflowState = {
+      id: 'wf-o', toolCallId: 'call-o', status: 'running',
       nodes: [
-        { id: 'gather', task: 'gather', status: 'done', deps: [] },
-        { id: 'lex', task: 'lex', status: 'done', deps: ['gather'] },
-        { id: 'parse', task: 'parse', status: 'running', deps: ['gather'] },
-        { id: 'report', task: 'report', status: 'pending', deps: ['lex', 'parse'] },
-        { id: 'audit', task: 'audit', status: 'pending', deps: [] },
+        { id: 'fetched', task: 'fetch pages', status: 'done', deps: [], sessionId: 's-f', tokens: 1200, seconds: 38, result: '31 pages fetched\nsecond line stays out of the dock' },
+        { id: 'broken', task: 'explode', status: 'error', deps: [], sessionId: 's-b', error: 'boom exploded' },
+        { id: 'live', task: 'analyze pages', status: 'running', deps: [], sessionId: 's-l', detail: 'Read src/a.ts', startedAt: Date.now() - 65_000 },
       ],
     };
-    let captured: { render(w: number): string[]; handleInput(d: string): void } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 120, rows: 40 },
-      } as never,
-      editor: {} as never, getWorkflow: () => diamond, onDrill: vi.fn(),
-    });
-    const frame = captured!.render(110);
-    show('modal — dependency tree (diamond)', frame);
-    const list = frame.map((l) => strip(l).slice(0, 48));
+    const { modal } = openModal(() => outcome);
+    const flat = (): string => strip(modal.render(96).join('\n'));
+    expect(flat()).toContain('▸ 31 pages fetched');
+    expect(flat()).not.toContain('second line');
+    modal.handleInput(DOWN);
+    expect(flat()).toContain('✗ boom exploded');
+    modal.handleInput(DOWN);
+    show('modal — running node dock', modal.render(96));
+    expect(flat()).toContain('▸ Read src/a.ts');
+    expect(flat()).toMatch(/1m \d+s/); // ticks live from startedAt, not the stale snapshot seconds
+  });
 
-    // Children hang under their first dependency; `report` sits under `lex` and both roots stay at the
-    // left margin. The tree draws ONE parent per node — `report` also waits on `parse`, which is why the
-    // detail column carries the full list rather than the layout pretending otherwise.
-    expect(list.some((l) => /^\s+✓ gather/.test(l))).toBe(true);
-    expect(list.some((l) => /├─ ✓ lex/.test(l))).toBe(true);
-    expect(list.some((l) => /│\s+└─ ⏸ report/.test(l))).toBe(true);
-    expect(list.some((l) => /└─ ● parse/.test(l))).toBe(true);
-    expect(list.some((l) => /^\s+⏸ audit/.test(l))).toBe(true); // a second root, not nested
-
-    // Arrows walk VISUAL order: two rows down from `gather` is `report` — the third row on screen, not
-    // the third node declared. Its detail carries the whole truth the tree can only half-draw.
-    captured!.handleInput('\x1b[B');
-    captured!.handleInput('\x1b[B');
-    expect(strip(captured!.render(110).join('\n'))).toMatch(/deps\s+lex, parse/);
+  it('toggles the dock between the selected node and the activity feed on tab', () => {
+    const { modal } = openModal(() => WF);
+    modal.handleInput('\t');
+    const activity = strip(modal.render(96).join('\n'));
+    show('modal — activity dock', modal.render(96));
+    expect(activity).toMatch(/─ activity ─/);
+    expect(activity).toContain('Read src/lexer.ts');            // the running node's live tool
+    expect(activity).toContain('grammar has 14 token kinds');   // the finished node's result
+    modal.handleInput('\t');
+    expect(strip(modal.render(96).join('\n'))).toMatch(/─ gather ─/);
   });
 
   it('lists every node even when the DAG is malformed', () => {
-    // A cycle should never reach the modal (the engine rejects it), but a node vanishing from the list
+    // A cycle should never reach the modal (the engine rejects it), but a node vanishing from the canvas
     // would be a silent lie about what is running — so unreachable nodes are emitted as their own roots.
     const cyclic: WorkflowState = {
       id: 'wf-c', toolCallId: 'call-c', status: 'running',
@@ -178,76 +242,9 @@ describe('workflow CLI rendering', () => {
         { id: 'orphan', task: 'orphan', status: 'pending', deps: ['ghost'] },
       ],
     };
-    let captured: { render(w: number): string[] } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 40 },
-      } as never,
-      editor: {} as never, getWorkflow: () => cyclic, onDrill: vi.fn(),
-    });
-    const flat = strip(captured!.render(90).join('\n'));
-    for (const id of ['a', 'b', 'orphan']) expect(flat).toMatch(new RegExp(`[✓●⏸✗] ${id}\\b`));
-  });
-
-  it('keeps the footer when a long task overflows the detail column', () => {
-    // The overlay trims a too-tall modal from the BOTTOM, so any row the detail column overspends is paid
-    // for by the footer — the one row telling the user which keys work. A short terminal is where this
-    // bites: the task is store-bounded to 600 chars, which only outgrows the detail column once the row
-    // budget is small.
-    const wordy: WorkflowState = {
-      id: 'wf-w', toolCallId: 'call-w', title: 'wordy', status: 'running',
-      nodes: [{
-        id: 'gather', task: 'summarize the token grammar '.repeat(21).slice(0, 600),
-        status: 'running', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, detail: 'Read src/lexer.ts',
-      }],
-    };
-    let captured: { render(w: number): string[] } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 120, rows: 20 },
-      } as never,
-      editor: {} as never, getWorkflow: () => wordy, onDrill: vi.fn(),
-    });
-    const frame = captured!.render(108);
-    show('modal — long task on a short terminal', frame);
-
-    expect(frame.length).toBeLessThanOrEqual(16); // modalGeometry's maxHeight at rows: 20
-    const flat = frame.map(strip).join('\n');
-    expect(flat).toContain('enter open node transcript'); // the row an overrun used to eat
-    expect(flat).toMatch(/… \+\d+ more/);                 // the task is elided, not dropped
-  });
-
-  it('shares the row budget between list and detail when stacked on a narrow terminal', () => {
-    // Below MIN_TWO_COL the detail stacks UNDER the list instead of beside it, so the two stop overlapping
-    // in the row budget and start adding up. Billing each the full capacity overflowed the frame, and the
-    // overlay pays for an overrun out of the bottom rows — the detail block and the footer.
-    const many: WorkflowState = {
-      id: 'wf-n', toolCallId: 'call-n', title: 'wide dag', status: 'running',
-      nodes: [
-        { id: 'root', task: 'root task', status: 'done', deps: [], sessionId: 's-root' },
-        ...Array.from({ length: 29 }, (_, i) => ({
-          id: `node-${i}`, task: `task ${i}`, status: 'pending' as const, deps: ['root'],
-        })),
-      ],
-    };
-    let captured: { render(w: number): string[] } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 66, rows: 34 },
-      } as never,
-      editor: {} as never, getWorkflow: () => many, onDrill: vi.fn(),
-    });
-    const frame = captured!.render(62); // what the overlay constrains 66 columns down to
-    show('modal — stacked on a narrow terminal', frame);
-
-    const flat = frame.map(strip).join('\n');
-    expect(flat).not.toContain('┼');                       // stacked, not two-column
-    expect(frame.length).toBeLessThanOrEqual(30);          // modalGeometry's maxHeight at rows: 34
-    expect(flat).toContain('enter open node transcript');  // footer survives
-    expect(flat).toContain('root');                        // and so does the detail block
+    const { modal } = openModal(() => cyclic);
+    const flat = strip(modal.render(90).join('\n'));
+    for (const id of ['a', 'b', 'orphan']) expect(flat).toContain(id);
   });
 
   it('strips control sequences out of a model-authored dep id', () => {
@@ -260,36 +257,47 @@ describe('workflow CLI rendering', () => {
         { id: 'b', task: 'b', status: 'running', deps: ['a', '\x1b[31mghost'] },
       ],
     };
-    let captured: { render(w: number): string[]; handleInput(d: string): void } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 40 },
-      } as never,
-      editor: {} as never, getWorkflow: () => hostile, onDrill: vi.fn(),
-    });
-    captured!.handleInput('\x1b[B'); // select `b`, whose deps render in the detail column
-    const frame = captured!.render(90);
+    const { modal } = openModal(() => hostile);
+    modal.handleInput(RIGHT); // select `b`, whose deps render in the dock
+    const frame = modal.render(90);
     expect(frame.join('\n')).not.toContain('\x1b[31m');
     expect(strip(frame.join('\n'))).toMatch(/deps\s+a, ghost/);
   });
 
-  it('follows the active chat theme instead of owning a fixed palette', () => {
-    const frame = (): string[] => {
-      let captured: { render(w: number): string[] } | null = null;
-      openWorkflowModal({
-        tui: {
-          showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-          setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 40 },
-        } as never,
-        editor: {} as never, getWorkflow: () => WF, onDrill: vi.fn(),
-      });
-      return captured!.render(90);
+  it('falls back to a wave-grouped list on a narrow terminal, same keys included', () => {
+    const { modal } = openModal(() => WF, { columns: 66, rows: 34 });
+    const frame = modal.render(62);
+    show('modal — narrow wave list', frame);
+    const flat = frame.map(strip).join('\n');
+    expect(flat).toContain('wave 1');
+    expect(flat).toContain('wave 2');
+    expect(flat).not.toContain('╭'); // no canvas cards
+    expect(flat).not.toContain('│'); // no card borders either
+    modal.handleInput(RIGHT);        // ←→ still navigates: jumps to the next wave
+    expect(strip(modal.render(62).join('\n'))).toMatch(/─ analyze ─/);
+  });
+
+  it('keeps the footer inside the row budget on a short terminal', () => {
+    const wordy: WorkflowState = {
+      id: 'wf-w', toolCallId: 'call-w', title: 'wordy', status: 'running',
+      nodes: [{
+        id: 'gather', task: 'summarize the token grammar '.repeat(21).slice(0, 600),
+        status: 'running', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, detail: 'Read src/lexer.ts',
+      }],
     };
+    const { modal } = openModal(() => wordy, { columns: 120, rows: 20 });
+    const frame = modal.render(108);
+    show('modal — long task on a short terminal', frame);
+    expect(frame.length).toBeLessThanOrEqual(16);  // modalGeometry's maxHeight at rows: 20
+    const flat = frame.map(strip).join('\n');
+    expect(flat).toContain('enter open node transcript'); // the footer survives
+  });
+
+  it('follows the active chat theme instead of owning a fixed palette', () => {
     setChatTheme('matrix');
-    const onMatrix = frame();
+    const onMatrix = openModal(() => WF).modal.render(90);
     setChatTheme('elowen');
-    const onElowen = frame();
+    const onElowen = openModal(() => WF).modal.render(90);
     setChatTheme('elowen');
     // The modal is an Elowen surface, so /theme recolours it — the two frames must differ.
     expect(onMatrix).not.toEqual(onElowen);
@@ -299,66 +307,37 @@ describe('workflow CLI rendering', () => {
   });
 
   it('renders every row at exactly the frame width, in both layouts', () => {
-    let captured: { render(w: number): string[] } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 120, rows: 40 },
-      } as never,
-      editor: {} as never, getWorkflow: () => WF, onDrill: vi.fn(),
-    });
-    // The one invariant that guards the whole column-join recipe: a cell padded with String.padEnd or an
-    // un-truncated wrap would drift the row and tear the background.
+    const { modal } = openModal(() => WF, { columns: 120, rows: 40 });
+    // The one invariant that guards the whole canvas-window recipe: a cell padded with String.padEnd or
+    // an un-truncated wrap would drift the row and tear the background.
     for (const width of [110, 90, 64, 56]) {
-      for (const row of captured!.render(width)) {
+      for (const row of modal.render(width)) {
         expect(visibleWidth(row)).toBe(width);
       }
     }
-    show('modal — narrow fallback (56)', captured!.render(56));
-    expect(captured!.render(56).map(strip).join('\n')).not.toContain('│'); // stacked, no divider
   });
 
-  it('scrolls the list to keep the selection visible', () => {
+  it('scrolls the canvas to keep the selection visible', () => {
     const big: WorkflowState = {
       id: 'wf-big', toolCallId: 'call-9', status: 'running',
       nodes: Array.from({ length: 30 }, (_, i) => ({
         id: `node-${i}`, task: `task ${i}`, status: 'pending' as const, deps: [],
       })),
     };
-    let captured: { render(w: number): string[]; handleInput(d: string): void } | null = null;
-    openWorkflowModal({
-      tui: {
-        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 24 },
-      } as never,
-      editor: {} as never, getWorkflow: () => big, onDrill: vi.fn(),
-    });
-    const modal = captured!;
-    for (let i = 0; i < 25; i += 1) modal.handleInput('\x1b[B');
+    const { modal } = openModal(() => big, { columns: 100, rows: 24 });
+    for (let i = 0; i < 25; i += 1) modal.handleInput(DOWN);
     const flat = modal.render(90).map(strip).join('\n');
     expect(flat).toContain('node-25');
     expect(flat).not.toContain('node-0\n');
-    expect(flat).toContain('↕'); // the range affordance appears once the list scrolls
+    expect(flat).toContain('↕'); // the scroll affordance appears once the canvas clips
 
-    // ↑ from the first node wraps to the last — the window must follow that jump in one step.
-    for (let i = 0; i < 25; i += 1) modal.handleInput('\x1b[A');
-    modal.handleInput('\x1b[A');
-    expect(modal.render(90).map(strip).join('\n')).toContain('node-29');
+    // ↑ clamps at the top — the selection is a position in space, not a wrapping list index.
+    for (let i = 0; i < 30; i += 1) modal.handleInput(UP);
+    expect(modal.render(90).map(strip).join('\n')).toMatch(/─ node-0 ─/);
   });
 
   it('shows a full frame, not a broken one, when there is nothing to show', () => {
-    const open = (getWorkflow: () => WorkflowState | undefined): string => {
-      let captured: { render(w: number): string[] } | null = null;
-      openWorkflowModal({
-        tui: {
-          showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
-          setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 40 },
-        } as never,
-        editor: {} as never, getWorkflow, onDrill: vi.fn(),
-      });
-      return captured!.render(90).map(strip).join('\n');
-    };
-    expect(open(() => undefined)).toContain('no longer in the live view');
-    expect(open(() => ({ ...WF, nodes: [] }))).toContain('still being built');
+    expect(openModal(() => undefined).modal.render(90).map(strip).join('\n')).toContain('no longer in the live view');
+    expect(openModal(() => ({ ...WF, nodes: [] })).modal.render(90).map(strip).join('\n')).toContain('still being built');
   });
 });
