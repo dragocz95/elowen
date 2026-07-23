@@ -61,7 +61,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={() => cycle(1)}
-            aria-label={t.common.back}
+            aria-label={t.common.forward}
             className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text"
           >
             <ChevronRight size={16} aria-hidden />
@@ -94,7 +94,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
 
             {/* Model row */}
             <div className="flex items-center justify-between rounded-md border border-border bg-elevated px-3 py-2">
-              <span className="text-xs text-text-muted">{t.stats.costByModel}</span>
+              <span className="text-xs text-text-muted">{t.stats.model}</span>
               <span className="text-sm font-mono text-text">{currentModel || '—'}</span>
             </div>
 
