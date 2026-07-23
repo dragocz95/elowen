@@ -106,6 +106,10 @@ export interface SessionSource {
     permissionBoundary?: NoninteractivePermissionBoundary | null;
     /** Delegated channel session's durable parent conversation. Host validates owner + existence. */
     parentSessionId?: string;
+    /** The delegating turn's resolved working directory (from `ctx.currentWorkDir()`), inherited by the
+     *  child so its tools and "Current working directory" advertise the SAME project the parent runs in —
+     *  not the daemon's `/`. Validated against the child's policy at spawn like any client-reported cwd. */
+    cwd?: string;
     /** Chosen built-in/custom sub-agent type (a `subagent_type` on the delegate call). The host resolves
      *  it against the agent registry into the child's role prompt, tool allow-list and (for a read-only
      *  type) a minted read-only permission boundary — see brain/platforms.ts. */

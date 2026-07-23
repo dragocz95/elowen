@@ -109,6 +109,25 @@ describe('delegate — the access handed to the child', () => {
     expect(seen.access?.toolPolicy).toBeUndefined();
   });
 
+  it('inherits the delegating turn\'s working directory and reasoning effort by default', async () => {
+    // The child must run in the SAME project the parent runs in (not the daemon's `/`) and think just as
+    // hard by default — both are read off the parent turn scope (currentWorkDir / currentModel).
+    const tool = reg.tools.find((t) => t.name === 'Delegate')!;
+    await runWithPolicy(
+      adminPolicy,
+      () => (tool as unknown as { execute: (id: string, p: unknown) => Promise<unknown> }).execute('call', { task: 'inherit' }),
+      { identity: owner, sessionId: 'brain-1', workDir: '/var/www/project', model: { provider: 'anthropic', model: 'claude-opus', thinkingLevel: 'high' } },
+    );
+    expect(seen.access?.cwd).toBe('/var/www/project');
+    expect(seen.access?.thinkingLevel).toBe('high');
+  });
+
+  it('omits cwd and reasoning effort when the parent turn carries none', async () => {
+    await delegate({ task: 'no inheritance' });
+    expect(seen.access?.cwd).toBeUndefined();
+    expect(seen.access?.thinkingLevel).toBeUndefined();
+  });
+
   it('flags read_only as the host-side read-only MODE, not a plugin toolset', async () => {
     // The plugin no longer materializes a read-only allow-list; it forwards the mode and the host applies
     // the READ_ONLY_AGENT_TOOLS preset + minted boundary (so the child gets read-only shell too).

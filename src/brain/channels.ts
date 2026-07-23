@@ -49,6 +49,11 @@ export interface ChannelSendOpts {
   parentSessionId?: string;
   /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** The delegating turn's working directory, inherited by a delegated child session so its tools resolve
+   *  relative paths against — and it advertises — the SAME project the parent runs in, not the daemon's
+   *  `/`. Validated against the child's policy in the spawner like any client-reported cwd. Only set for a
+   *  subagent send; ordinary platform channels resolve their cwd from the policy root. */
+  clientCwd?: string;
   /** The sender's effective tool access for THIS turn (see ToolPolicy). Sourced by the orchestrator
    *  from the linked Elowen account (deny-list) or the platform role (allow-list). Enforced at
    *  execute time by the plugin-tool gate. Undefined → no restriction. */
@@ -285,6 +290,9 @@ export class ChannelSessionService {
           fast: opts.fast,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAtPct: DEFAULT_AUTO_COMPACT_PCT,
+          // A delegated child inherits its parent's working directory (set only for subagent sends); an
+          // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
+          clientCwd: opts.clientCwd,
         });
         if (this.d.registry.consumePendingAbort(sessionId)) {
           ch.session.dispose();
@@ -404,7 +412,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, toolPolicy: effectiveToolPolicy, permissions, sessionId, workDir: ch.workDir, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({ type: 'idle', model: ch.model, usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId) });
         } finally { detach?.(); }

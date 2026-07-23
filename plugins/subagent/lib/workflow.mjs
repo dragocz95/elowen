@@ -107,13 +107,16 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   /** Build one node's access from the captured parent scope + the node's own model/tool narrowing —
    *  mirrors the `delegate` access assembly exactly (can only ever narrow the parent). May reject. */
   const buildNodeAccess = async (wf, node) => {
-    let model = wf.parentModel ?? undefined;
+    let model = wf.parentModel ? { provider: wf.parentModel.provider, model: wf.parentModel.model } : undefined;
     if (node.model) {
       const list = await ctx.listModels().catch(() => []);
       const hit = list.find((m) => `${m.provider}/${m.model}` === node.model || m.model === node.model);
       if (!hit) throw new Error(`model "${node.model}" is not available for node "${node.id}"`);
       model = { provider: hit.provider, model: hit.model };
     }
+    // Nodes inherit the workflow origin's reasoning effort by default (the host drops it if a node's own
+    // model has no such level), mirroring the delegate tool.
+    const thinkingLevel = wf.parentModel?.thinkingLevel;
     // A named sub-agent TYPE, validated against the live catalog exactly as the delegate tool does — the
     // host resolves the name into the node's role prompt, toolset and (for a read-only type) boundary.
     let agentType;
@@ -145,6 +148,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ...(toolPolicy ? { toolPolicy } : {}),
       model,
       parentSessionId: wf.originSessionId,
+      ...(wf.parentCwd ? { cwd: wf.parentCwd } : {}),
+      ...(thinkingLevel ? { thinkingLevel } : {}),
       // Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip (Infinity would
       // serialize to null) — keeps the node transcript pinned to this workflow instead of rolling over
       // mid-run, even though this object stays host-in-memory today.
@@ -262,6 +267,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         state: new Map(nodes.map((n) => [n.id, freshNodeState()])),
         parentAccess: ctx.currentAccess(),
         parentModel: ctx.currentModel() ?? undefined,
+        // The origin turn's working directory, inherited by every node so a node's tools resolve against
+        // the SAME project the workflow was launched in, never the daemon's `/`.
+        parentCwd: ctx.currentWorkDir?.(),
         emit: ctx.workflowEmitter(),
         sharedContext: typeof p.context === 'string' && p.context.trim() ? p.context.trim() : undefined,
         originSessionId,

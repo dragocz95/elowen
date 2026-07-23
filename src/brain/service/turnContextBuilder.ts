@@ -142,7 +142,7 @@ export class TurnContextBuilder {
       permissions,
       workDir,
       sessionId: live.sessionId,
-      model: { provider: live.providerId, model: live.model },
+      model: { provider: live.providerId, model: live.model, thinkingLevel: live.thinkingLevel },
     };
   }
 

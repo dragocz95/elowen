@@ -21,8 +21,10 @@ export type SubagentCompletionEmitter = (completion: SubagentCompletion) => void
  *  workflow engine before it schedules nodes, since node turns run in their own scope. */
 export type WorkflowEmitter = (update: WorkflowUpdate) => void;
 
-/** The provider entry + model the current turn's session runs on (see `ctx.currentModel`). */
-export interface TurnModel { provider?: string; model: string }
+/** The provider entry + model the current turn's session runs on (see `ctx.currentModel`). `thinkingLevel`
+ *  is the turn's effective reasoning effort (empty/undefined when the model has no reasoning ladder), so a
+ *  delegating plugin can default its child to the SAME reasoning effort as the parent, not the model default. */
+export interface TurnModel { provider?: string; model: string; thinkingLevel?: string }
 
 /** Who is driving the current prompt turn. Plugins that persist per-user state (long-term memory)
  *  key it on this: a linked platform sender resolves to their Elowen username, an unknown sender to

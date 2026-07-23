@@ -279,7 +279,8 @@ export function register(ctx) {
       // Default: the child runs on the SAME model as the delegating conversation. An explicit `model`
       // must match a configured one — on a miss the error lists what IS available so the agent can
       // self-correct (or relay the list to the user).
-      let model = ctx.currentModel() ?? undefined;
+      const parentTurn = ctx.currentModel() ?? undefined;
+      let model = parentTurn ? { provider: parentTurn.provider, model: parentTurn.model } : undefined;
       if (p.model) {
         const list = await ctx.listModels().catch(() => []);
         const want = p.model.trim();
@@ -289,6 +290,10 @@ export function register(ctx) {
         }
         model = { provider: hit.provider, model: hit.model };
       }
+      // The child inherits the delegating turn's reasoning effort too, so a sub-agent spawned from a
+      // high-reasoning conversation thinks just as hard by default instead of dropping to the model
+      // default. The host drops it if the (possibly different) child model has no such level.
+      const thinkingLevel = parentTurn?.thinkingLevel;
 
       // Capture every PARENT turn accessor before the child is scheduled. Child callbacks run in their
       // own turn scope. `parentSessionId` is persisted by the host so delegated usage rolls up to the
@@ -303,11 +308,16 @@ export function register(ctx) {
       const toolPolicy = restricted.allow
         ? { ...(parentAccess.toolPolicy?.deny ? { deny: parentAccess.toolPolicy.deny } : {}), allow: restricted.allow }
         : parentAccess.toolPolicy;
+      // The child inherits the delegating turn's working directory, so its tools resolve relative paths
+      // against — and it advertises — the SAME project the parent runs in, never the daemon's `/`.
+      const parentCwd = ctx.currentWorkDir?.();
       const access = {
         ...parentAccess,
         ...(toolPolicy ? { toolPolicy } : {}),
         model,
         parentSessionId: ctx.currentSessionId(),
+        ...(parentCwd ? { cwd: parentCwd } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}),
         // The delegate transcript belongs to THIS delegation and to no earlier one — never roll it over
         // into a fresh session mid-flight (rolloverDue never fires for a real elapsed time below this
         // threshold). Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip

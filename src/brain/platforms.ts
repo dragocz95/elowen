@@ -208,6 +208,10 @@ export class PlatformOrchestrator {
             fast: src.access.fast,
             parentSessionId,
             delegatedAccess,
+            // A delegated child inherits the delegating turn's working directory so its tools run in — and
+            // it advertises — the SAME project as the parent, not the daemon's `/`. Only subagent sends
+            // carry it; ordinary platform channels resolve their cwd from the policy root.
+            clientCwd: src.platform === 'subagent' ? src.access.cwd : undefined,
             // Surface-tuned idle cutoff (cron passes a shorter one; Discord omits it → host default).
             idleRolloverMs: src.access.sessionIdleMs,
             toolPolicy,
