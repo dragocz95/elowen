@@ -3,7 +3,7 @@ import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems, failureSignature } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
-import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts } from './components.js';
+import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts, workflowTitle } from './components.js';
 import { ensureLang, langForPath } from './codeHighlight.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
@@ -300,7 +300,7 @@ export class TurnRenderer {
       ? color.warning('⛓')
       : wf.status === 'done' ? color.success('⛓') : color.error('⛓');
     const counts = workflowCounts(wf);
-    const title = terminalInlineText(wf.title || `${wf.nodes.length}-node workflow`);
+    const title = terminalInlineText(workflowTitle(wf));
     const tally = [
       color.success(`${counts.done}✓`),
       color.warning(`${counts.running}●`),

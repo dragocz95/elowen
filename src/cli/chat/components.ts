@@ -300,6 +300,14 @@ export class SubagentPanel implements Component {
   private clampScroll(): void { this.scrollOffset = Math.min(this.scrollOffset, this.maxScrollOffset()); }
 }
 
+/** The display title of a workflow: the model-authored label with an ellipsis appended (it names running
+ *  work, like the composing labels; trailing punctuation is stripped so the ellipsis never doubles), or
+ *  the node-count fallback. Shared by the rail, the transcript marker and the modal header. */
+export function workflowTitle(wf: WorkflowState): string {
+  const t = wf.title?.trim().replace(/[.…\s]+$/u, '');
+  return t ? `${t}…` : `${wf.nodes.length}-node workflow`;
+}
+
 /** Count a workflow's node statuses into the `✓done ●running ⏸pending ✗error` summary shown on its row.
  *  Shared by the telemetry rail and the transcript marker so one workflow never tallies two ways. */
 export function workflowCounts(w: WorkflowState): { done: number; running: number; pending: number; error: number; tokens: number } {
@@ -361,8 +369,7 @@ export class WorkflowPanel implements Component {
         ...(c.error ? [color.error(`${c.error}✗`)] : []),
       ].join(' ');
       const meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
-      const label = w.title || `${w.nodes.length}-node workflow`;
-      const title = DIM(truncateToWidth(inlineText(label), Math.max(10, width - visibleWidth(meta) - 12), '…'));
+      const title = DIM(truncateToWidth(inlineText(workflowTitle(w)), Math.max(10, width - visibleWidth(meta) - 12), '…'));
       const row = `    ${color.accent('⛓')} ${title} ${FAINTC('click')}`;
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(meta) - 2);
       this.rowTargets.set(lines.length, w.id);

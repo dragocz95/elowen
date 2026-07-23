@@ -3,6 +3,7 @@ import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isPageDownKey, isPageUpKey, isUpKey } from './keys.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText } from '../ui/text.js';
+import { workflowTitle } from './components.js';
 import type { WorkflowState, WorkflowNode } from '../../brain/transcript.js';
 
 // The workflow modal follows the active chat theme (resolved at CALL time, so a /theme switch recolours
@@ -286,7 +287,7 @@ class WorkflowModal implements Component, Focusable {
       : wf.status === 'done' ? color.success
         : wf.status === 'error' ? color.error : color.faint;
     const wfGlyph = wf.status === 'running' ? '●' : wf.status === 'done' ? '✓' : wf.status === 'error' ? '✗' : '–';
-    const title = terminalInlineText(wf.title || `${wf.nodes.length}-node workflow`);
+    const title = terminalInlineText(workflowTitle(wf));
     const right = `${wfInk(`${wfGlyph} ${wf.status}`)}  ${color.faint('esc')}`;
     const left = `  ${color.accent('⚙ WORKFLOW')} ${color.faint('·')} `
       + color.text(truncateToWidth(title, Math.max(8, bodyWidth - 34), '…'));

@@ -14,7 +14,7 @@ interface Tool { name: string; execute(id: string, p: unknown): Promise<{ conten
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
 function harness(opts: { toolPolicyAllow?: string[] } = {}) {
   const tools = new Map<string, Tool>();
-  const snapshots: { id: string; toolCallId: string; status: string; nodes: { id: string; status: string; deps: string[] }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[] }[] }[] = [];
   const launched: string[] = [];
   const run = async (_source: unknown, task: string, onEvent: (e: unknown) => void) => {
     launched.push(task);
@@ -96,6 +96,17 @@ describe('workflow engine', () => {
     const last = snapshots.at(-1)!;
     expect(last.status).toBe('done');
     expect(last.nodes[0]!.status).toBe('done');
+  });
+
+  // Regression: qwen3.8-max-preview double-escaped non-ASCII in the title argument, so the parsed string
+  // carried a literal backslash-u sequence and the CLI rail showed "Docs update \u2014 write" verbatim.
+  it('decodes double-escaped unicode sequences in the model-authored title', async () => {
+    const { tools, snapshots } = harness();
+    await tools.get('WorkflowStart')!.execute('t-esc', {
+      title: 'Docs \\u2014 p\\u0159epis',
+      nodes: [{ id: 'a', task: 'a' }],
+    });
+    expect(snapshots[0]!.title).toBe('Docs — přepis');
   });
 
   // Every snapshot names the origin's WorkflowStart call: it is the durable anchor that binds the DAG

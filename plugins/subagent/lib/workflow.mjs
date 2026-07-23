@@ -19,6 +19,11 @@ const SNAPSHOT_TASK_PREVIEW = 500;
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const errorText = (e) => (e instanceof Error ? e.message : String(e));
 const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated]`);
+// Some models (seen: Qwen max preview) double-escape non-ASCII in tool-call JSON, so the parsed title
+// still carries literal backslash-u sequences ("Docs \u2014 write" instead of "Docs — write"). The title
+// is pure display, so decoding is always what the model meant; surrogate pairs recombine naturally.
+const decodeUnicodeEscapes = (s) =>
+  (s.includes('\\u') ? s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : s);
 
 // The node-declaration shape shared by WorkflowStart and WorkflowAddNodes.
 const NODE_SHAPE = Type.Object({
@@ -227,7 +232,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       'The call BLOCKS and returns a summary of every node\'s result once the whole workflow finishes. A node whose dependency failed is reported as skipped. Give each node a short unique id and list its dependency ids in deps. Use read_only/tools/model per node exactly as with delegate — you can only ever narrow your own access.',
     ].join(' '),
     parameters: Type.Object({
-      title: Type.Optional(Type.String({ description: 'Short human label for the workflow (shown in the CLI panel).' })),
+      title: Type.Optional(Type.String({ description: 'Human label for the workflow, shown in the CLI panel: AT MOST 4 WORDS, in the user\'s language, no trailing punctuation (the UI appends an ellipsis).' })),
       context: Type.Optional(Type.String({ description: 'Background shared by ALL nodes (added to each node\'s cache-friendly system prefix) — findings, conventions, ids they would otherwise re-derive.' })),
       nodes: Type.Array(NODE_SHAPE, { description: 'The workflow nodes. At least one must have no deps (a root).' }),
     }),
@@ -245,7 +250,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         // THIS call — the origin's WorkflowStart. Every snapshot names it, so the host can persist the
         // DAG against the transcript row this call produced (mirrors delegate's `toolCallId`).
         toolCallId,
-        title: typeof p.title === 'string' ? p.title.trim().slice(0, 200) || undefined : undefined,
+        title: typeof p.title === 'string' ? decodeUnicodeEscapes(p.title.trim()).slice(0, 200) || undefined : undefined,
         status: 'running',
         nodes,
         state: new Map(nodes.map((n) => [n.id, freshNodeState()])),

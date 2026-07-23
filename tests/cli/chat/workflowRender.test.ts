@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { setChatTheme } from '../../../src/cli/chat/theme.js';
-import { WorkflowPanel } from '../../../src/cli/chat/components.js';
+import { WorkflowPanel, workflowTitle } from '../../../src/cli/chat/components.js';
 import { openWorkflowModal } from '../../../src/cli/chat/workflowModal.js';
 import { TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
@@ -24,6 +24,18 @@ const WF: WorkflowState = {
     { id: 'write', task: 'Write the fix and a regression test', status: 'pending', deps: ['analyze'] },
   ],
 };
+
+describe('workflowTitle', () => {
+  it('appends one ellipsis to the model-authored label, stripping trailing punctuation first', () => {
+    expect(workflowTitle(WF)).toBe('ship the parser…');
+    expect(workflowTitle({ ...WF, title: 'ship the parser…' })).toBe('ship the parser…');
+    expect(workflowTitle({ ...WF, title: 'ship the parser. ' })).toBe('ship the parser…');
+  });
+
+  it('falls back to the node count when there is no title', () => {
+    expect(workflowTitle({ ...WF, title: undefined })).toBe('3-node workflow');
+  });
+});
 
 describe('workflow CLI rendering', () => {
   // The durable way back into a workflow: the rail only carries RUNNING ones, so once a DAG finishes this
