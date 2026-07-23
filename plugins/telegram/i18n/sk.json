@@ -1,0 +1,130 @@
+{
+  "description": "Telegram bot (grammY): napíšte mu a odpovie z Elowen AI. Slash príkazy (/model, /reasoning, /display, /new, /help), nastavenie modelu a zobrazenia pre každý chat, živá aktivita nástrojov s nezávislým doručením odpovede, stavové reakcie a proaktívne cron/tick oznámenia. Chat nástroje (admin session): info o chate/členovi, počet členov, pripnutie/odopnutie, mazanie správ, ban/unban, povýšenie, názov/popis chatu, fórum témy (vytvoriť/upraviť/zavrieť) a odoslanie správy do ľubovoľného chatu (prevádzkovateľ). Každé pravidlo roly mapuje Telegram user ID / @username / chat ID na povolené projekty Elowen a prompt roly.",
+  "fields": {
+    "sec_connection": {
+      "label": "Pripojenie",
+      "hint": "Token bota a kde počúva."
+    },
+    "sec_replies": {
+      "label": "Odpovede a správanie",
+      "hint": "Kedy a ako bot odpovedá."
+    },
+    "sec_conversation": {
+      "label": "Konverzácia",
+      "hint": "Smerovanie obrázkov."
+    },
+    "sec_voice": {
+      "label": "Hlas",
+      "hint": "Prepis reči a syntéza hlasu (voliteľné; použije kľúč poskytovateľa hlasu)."
+    },
+    "sec_roles": {
+      "label": "Pravidlá rolí",
+      "hint": "Mapovanie Telegram odosielateľov na povolené projekty, prompt roly a nástroje, ktoré smie bot použiť."
+    },
+    "sec_media": {
+      "label": "Limity médií",
+      "hint": "Limity pre prichádzajúce/odchádzajúce obrázky a ako dlho zostáva otvorená čakajúca otázka."
+    },
+    "botToken": {
+      "label": "Token bota",
+      "hint": "Telegram → @BotFather → /newbot (alebo token existujúceho bota). Aby bot videl všetky správy v skupine, vypnite BotFather → Bot Settings → Group Privacy."
+    },
+    "allowedChatIds": {
+      "label": "Povolené chaty",
+      "hint": "ID chatov oddelené čiarkou (číselné user/group id, napr. 123456789 alebo -1001234567890). Prázdne = odpovedať všade, kde je to povolené. Keď vyplníte, bot odpovedá len v týchto chatoch."
+    },
+    "notifyChatId": {
+      "label": "ID oznamovacieho chatu",
+      "hint": "Kam sa posielajú proaktívne správy (výsledky cronov/tickov, eskalácie) — číselné chat id alebo @channelusername. Prázdne = žiadne proaktívne správy."
+    },
+    "respondWithoutMention": {
+      "label": "Odpovedať bez zmienky",
+      "hint": "Zapnuté: v skupinách bot odpovedá na každú správu od namapovaného odosielateľa. Vypnuté: v skupinách odpovedá len pri @zmienke alebo odpovedi na jeho správu. Priame chaty dostanú odpoveď vždy."
+    },
+    "toolActivity": {
+      "label": "Aktivita nástrojov",
+      "hint": "Vypnuté skryje pracovnú stopu. Živý stav ukazuje spustenie a dokončenie nástrojov. Živý výstup navyše streamuje obmedzený priebeh Bash. Pre chat možno prepísať cez /display.",
+      "options": { "off": "Vypnuté", "status": "Živý stav", "live": "Živý výstup" }
+    },
+    "answerMode": {
+      "label": "Doručenie odpovede",
+      "hint": "Finálna odpoveď pošle jednu kompletnú správu pod živú stopu nástrojov. Živo priebežne upravuje vznikajúcu odpoveď. Pre chat možno prepísať cez /display.",
+      "options": { "final": "Len finálna odpoveď", "live": "Živo streamovať odpoveď" }
+    },
+    "toolOutput": {
+      "label": "Detail výstupu nástrojov",
+      "hint": "Určuje, koľko obmedzeného výstupu sa ukáže pod stavom nástroja. Celý raw výstup sa do Telegramu nikdy nevypisuje.",
+      "options": { "hidden": "Len stav", "summary": "Krátke zhrnutie", "tail": "Priebežný koniec výstupu" }
+    },
+    "toolMessageMode": {
+      "label": "Rozloženie správ nástrojov",
+      "hint": "Jedna živá správa udrží chat prehľadný. Jedna správa na nástroj dá každému volaniu vlastnú upravovanú správu v Telegrame.",
+      "options": { "single": "Jedna živá správa", "per_tool": "Jedna správa na nástroj" }
+    },
+    "reactions": {
+      "label": "Stavové reakcie",
+      "hint": "Reaguje 👀 pri premýšľaní, 👍/👎 po dokončení (Telegram povoľuje len obmedzenú sadu reakčných emoji; nepodporované sa preskočia)."
+    },
+    "runtimeFooter": {
+      "label": "Stavový riadok",
+      "hint": "Pripojiť pod finálnu odpoveď malý riadok „model · % kontextu“."
+    },
+    "showReasoning": {
+      "label": "Zobraziť uvažovanie",
+      "hint": "Streamovať uvažovanie modelu do priebežnej správy (modely s extended thinking). Predvolené = vypnuté — väčšinou je to šum."
+    },
+    "language": {
+      "label": "Jazyk služobných správ",
+      "hint": "Jazyk vlastných správ bota (/new, /model, zástupné texty): en (predvolené), cs alebo sk.",
+      "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenčina" }
+    },
+    "visionModel": {
+      "label": "Model pre obrázky",
+      "hint": "Model pre správy s obrázkovými prílohami (musí vedieť vision). Prázdne = bežný model chatu."
+    },
+    "maxImageBytes": {
+      "label": "Max. veľkosť prichádzajúceho obrázka",
+      "hint": "Najväčšia obrázková príloha (v bajtoch), ktorú bot stiahne pre vision; väčšie len poznamená."
+    },
+    "maxImages": {
+      "label": "Max. obrázkov na správu",
+      "hint": "Koľko obrázkových príloh z jednej prichádzajúcej správy bot pošle vision modelu."
+    },
+    "maxUploadImages": {
+      "label": "Max. obrázkov na odpoveď",
+      "hint": "Koľko vygenerovaných obrázkov bot pripojí k jednej odchádzajúcej odpovedi."
+    },
+    "askTimeoutMs": {
+      "label": "Timeout otázky (ms)",
+      "hint": "Ako dlho zostáva čakajúca AskUserQuestion otvorená pre klik na tlačidlo alebo textovú odpoveď, než ju bot zahodí ako zastaranú."
+    },
+    "voiceProvider": {
+      "label": "Poskytovateľ hlasu",
+      "hint": "Ktorý nakonfigurovaný OpenAI-kompatibilný poskytovateľ poháňa hlas (Whisper STT + TTS) — použije jeho kľúč, žiadny zvlášť. Poskytovateľov pridáte v Nastavenia → Brain. Prázdne = hlas vypnutý."
+    },
+    "stt": {
+      "label": "Prepisovať hlasové správy",
+      "hint": "Prepísať prichádzajúce hlasové správy / audio prílohy cez Whisper, aby im agent rozumel. Vyžaduje OpenAI API kľúč."
+    },
+    "sttModel": {
+      "label": "Model pre prepis reči",
+      "hint": "Whisper model pre prepis (predvolené: whisper-1)."
+    },
+    "tts": {
+      "label": "Mluvené odpovede (predvolené)",
+      "hint": "Predvolené pre chaty: pripojiť mluvenú audio verziu odpovedí ako hlasovú správu. Živo prepínateľné per chat cez /voice. Vyžaduje OpenAI API kľúč."
+    },
+    "ttsModel": {
+      "label": "Model pre syntézu reči",
+      "hint": "TTS model (predvolené: gpt-4o-mini-tts)."
+    },
+    "ttsVoice": {
+      "label": "Hlas TTS",
+      "hint": "Hlas: alloy, echo, fable, onyx, nova alebo shimmer (predvolené: alloy)."
+    },
+    "rolePolicies": {
+      "label": "Pravidlá rolí",
+      "hint": "Vyhráva prvé zodpovedajúce pravidlo; odosielatelia bez namapovaného pravidla sú ignorovaní. ID je Telegram user ID (123456789), @username, alebo celé chat ID (pri skupinách záporné) — chat ID sprístupní bota všetkým v ňom. Pravidlo označené admin môže prepínať model a používať chat nástroje. Každé pravidlo môže navyše obmedziť, ktoré nástroje preň smie bot použiť."
+    }
+  }
+}

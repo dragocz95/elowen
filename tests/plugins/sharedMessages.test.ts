@@ -11,15 +11,18 @@ import { MESSAGES as TELEGRAM } from '../../plugins/telegram/lib/messages.mjs';
 import { MESSAGES as WHATSAPP } from '../../plugins/whatsapp/lib/messages.mjs';
 
 describe('shared plugin service messages', () => {
-  it('SHARED_MESSAGES exposes the same key set in both languages', () => {
-    expect(Object.keys(SHARED_MESSAGES.en).sort()).toEqual(Object.keys(SHARED_MESSAGES.cs).sort());
+  it('SHARED_MESSAGES exposes the same key set in every language', () => {
+    const en = Object.keys(SHARED_MESSAGES.en).sort();
+    expect(Object.keys(SHARED_MESSAGES.cs).sort()).toEqual(en);
+    expect(Object.keys(SHARED_MESSAGES.sk).sort()).toEqual(en);
     expect(SHARED_MESSAGES.en.noModels).toContain('No models configured');
     expect(SHARED_MESSAGES.cs.noModels).toContain('modely');
+    expect(SHARED_MESSAGES.sk.noModels).toContain('modely');
   });
 
   it('every adapter inherits the shared keys with identical values', () => {
     for (const M of [DISCORD, TELEGRAM, WHATSAPP]) {
-      for (const lang of ['en', 'cs'] as const) {
+      for (const lang of ['en', 'cs', 'sk'] as const) {
         expect(M[lang].noModels).toBe(SHARED_MESSAGES[lang].noModels);
         expect(M[lang].restarting).toBe(SHARED_MESSAGES[lang].restarting);
         // The function keys stay referentially shared too (spread copies the reference).
@@ -36,6 +39,14 @@ describe('shared /help renderer', () => {
     });
     expect(modelLine).toBe('/model — výběr AI modelu pro tento kanál');
     expect(contextLine).toBe('/context — navázat v tomto kanálu na jednu ze svých konverzací');
+  });
+
+  it('substitutes the container noun and its Slovak locative case', () => {
+    const [modelLine, contextLine] = renderHelpLines({
+      lang: 'sk', commands: [{ name: 'model' }, { name: 'context' }], mono: (s: string) => s, place: 'kanál', placeLoc: 'kanáli',
+    });
+    expect(modelLine).toBe('/model — výber AI modelu pre tento kanál');
+    expect(contextLine).toBe('/context — nadviazať v tomto kanáli na jednu zo svojich konverzácií');
   });
 
   it('placeLoc defaults to place when omitted (English has no cases)', () => {
@@ -59,8 +70,10 @@ describe('shared /help renderer', () => {
     expect(lines[1]).toBe('/deploy — Ship it to prod');        // plugin: English description verbatim
   });
 
-  it('describes the same commands in both languages', () => {
-    expect(Object.keys(HELP_DESCRIPTIONS.en).sort()).toEqual(Object.keys(HELP_DESCRIPTIONS.cs).sort());
+  it('describes the same commands in every language', () => {
+    const en = Object.keys(HELP_DESCRIPTIONS.en).sort();
+    expect(Object.keys(HELP_DESCRIPTIONS.cs).sort()).toEqual(en);
+    expect(Object.keys(HELP_DESCRIPTIONS.sk).sort()).toEqual(en);
   });
 });
 
@@ -69,19 +82,21 @@ describe('/help renders the passed command list (single-source, no drift)', () =
 
   it('lists /context localized in every surface and language that passes it in', () => {
     // help() renders whatever list it is handed; a surface that exposes /context passes it in, and the
-    // shared renderer localizes it in both languages (the exact Telegram cs drift this design removes).
+    // shared renderer localizes it in every language (the exact Telegram cs drift this design removes).
     for (const M of [DISCORD, TELEGRAM]) {
       expect(M.en.help('Elowen', list(['context']))).toContain('/context');
       expect(M.cs.help('Elowen', list(['context']))).toContain('/context');
+      expect(M.sk.help('Elowen', list(['context']))).toContain('/context');
     }
   });
 
-  it('every text surface that gates /fast has a fastUsage string in both languages', () => {
+  it('every text surface that gates /fast has a fastUsage string in every language', () => {
     // The shared core replies msg.fastUsage on an invalid /fast arg; Telegram + WhatsApp accept free text,
-    // so both languages must carry the key (Telegram cs previously lacked it → a silent, zero-reply path).
+    // so every language must carry the key (Telegram cs previously lacked it → a silent, zero-reply path).
     for (const M of [TELEGRAM, WHATSAPP]) {
       expect(typeof M.en.fastUsage).toBe('string');
       expect(typeof M.cs.fastUsage).toBe('string');
+      expect(typeof M.sk.fastUsage).toBe('string');
     }
   });
 

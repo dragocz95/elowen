@@ -144,6 +144,6 @@ Each instance needs its own port pair and data directory. Set `ELOWEN_PORT` and 
 Everything lives in a single SQLite database file in the data directory (default `~/.elowen/elowen.db`). Conversations, memory, tasks, settings — all in one file. Nothing leaves your machine except provider API calls.
 
 **The bot answered in the wrong language.**
-Set the `language` field in the channel plugin config (`en` or `cs`) for service messages. For the agent's reply language, add an instruction to the role/sender policy's prompt.
+Set the `language` field in the channel plugin config (`en`, `cs` or `sk`) for service messages. For the agent's reply language, add an instruction to the role/sender policy's prompt.
 
 [Back to start](getting-started)

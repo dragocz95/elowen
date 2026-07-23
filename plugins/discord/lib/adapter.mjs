@@ -88,7 +88,7 @@ export class DiscordAdapter {
     this.resumeUrl = null;    // gateway host to RESUME against
     this.awaitingAck = false; // heartbeat sent, ACK (op 11) not yet seen → zombie detection
     this.channelMeta = new Map(); // channel id → { name, topic }; names change rarely, never invalidated
-    this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en']; // gateway service texts
+    this.msg = MESSAGES[cfg.language] ?? MESSAGES.en; // gateway service texts
     // Testability seam: point REST + gateway at a local fake when configured (the E2E suite injects a fake
     // Discord API here). Pure passthrough — unset means the real discord.com endpoints, so production is
     // unchanged. Kept OUT of configSchema (internal-only).

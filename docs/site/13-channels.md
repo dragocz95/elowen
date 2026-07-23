@@ -192,7 +192,7 @@ All channels share these traits:
 - **Runtime footer** — a small "model · context %" line under the final reply (toggle with `runtimeFooter`)
 - **Reasoning** — stream extended-thinking output into the progress bubble (toggle with `showReasoning`, off by default)
 - **AskUserQuestion** — when the agent needs a decision, it posts a prompt and waits for a reply (button click on Discord, Adaptive Card tap on Teams, numbered reply on WhatsApp). `askTimeoutMs` controls how long it stays open.
-- **Language** — service messages (`/new`, `/model`, placeholders) in `en` or `cs`, selectable from a dropdown in the plugin settings.
+- **Language** — service messages (`/new`, `/model`, placeholders) in `en`, `cs` or `sk`, selectable from a dropdown in the plugin settings.
 
 ## Security model
 

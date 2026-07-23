@@ -161,7 +161,8 @@
       "default": "en",
       "options": [
         { "value": "en", "label": "English" },
-        { "value": "cs", "label": "Čeština" }
+        { "value": "cs", "label": "Čeština" },
+        { "value": "sk", "label": "Slovenčina" }
       ],
       "hint": "Language of the bot's own service messages (/new, /model, placeholders)."
     },

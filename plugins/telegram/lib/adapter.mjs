@@ -63,7 +63,7 @@ export class TelegramAdapter {
     this.pendingAsks = new Map();    // token → { id, chatId, messageId, questions, askerId, selected, awaitingText, title, desc, createdAt }
     this.pendingPickers = new Map(); // chatId → { kind:'model', models, messageId, page, createdAt } | { kind:'context', sessions, messageId, page, createdAt }
     this.askSeq = 0;                 // short-token counter for ask callback_data (keeps it under 64 bytes)
-    this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en']; // service texts
+    this.msg = MESSAGES[cfg.language] ?? MESSAGES.en; // service texts
   }
 
   listen(onMessage) { this.handler = onMessage; }

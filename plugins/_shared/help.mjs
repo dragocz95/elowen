@@ -36,6 +36,20 @@ export const HELP_DESCRIPTIONS = {
     restart: 'restart Elowen daemonu (admin)',
     help: 'tato zpráva',
   },
+  sk: {
+    model: 'výber AI modelu pre tento {place}',
+    context: 'nadviazať v tomto {placeLoc} na jednu zo svojich konverzácií',
+    reasoning: 'úroveň uvažovania pre tento {place}',
+    fast: 'prepnúť prioritné spracovanie OpenAI OAuth',
+    voice: 'prepnúť hovorené odpovede tu',
+    display: 'nastaviť živé nástroje a doručenie odpovede',
+    new: 'začať novú konverzáciu',
+    stop: 'zastaviť bežiaceho agenta',
+    status: 'model, kontext a využitie',
+    compact: 'sumarizovať a uvoľniť kontext',
+    restart: 'reštart Elowen daemonu (admin)',
+    help: 'táto správa',
+  },
 };
 
 /** Render the command lines of a `/help` body. `commands` is the ordered list the surface exposes, each
@@ -46,7 +60,7 @@ export const HELP_DESCRIPTIONS = {
  *  on Discord/WhatsApp, identity on plain-text Telegram); `place`/`placeLoc` fill the container-noun
  *  placeholders. */
 export function renderHelpLines({ lang, commands, mono, place, placeLoc = place }) {
-  const desc = HELP_DESCRIPTIONS[lang === 'cs' ? 'cs' : 'en'];
+  const desc = HELP_DESCRIPTIONS[lang] ?? HELP_DESCRIPTIONS.en;
   return commands.map(({ name, description }) => {
     const localized = desc[name];
     const text = localized

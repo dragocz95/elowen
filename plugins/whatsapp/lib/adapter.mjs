@@ -98,7 +98,7 @@ export class WhatsAppAdapter {
     this.sentStore = new Map(); // messageId → sent proto message (for getMessage retries + edits)
     this.pendingAsks = new Map(); // askId → { jid, askerJid, questions, selected, awaitingText, key, createdAt }
     this.pendingMenus = new Map(); // jid → { kind:'model'|'thinking'|'context', title, options, entries, page, createdAt }
-    this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en'];
+    this.msg = MESSAGES[cfg.language] ?? MESSAGES.en;
   }
 
   listen(onMessage) { this.handler = onMessage; }

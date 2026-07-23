@@ -1,0 +1,86 @@
+{
+  "description": "WhatsApp bot (Baileys): napíšte mu a odpovie z Elowen AI. Textové príkazy (/model, /new, /help), výber modelu pre každý chat (číslované textové menu, odpoviete číslom), živé streamované odpovede (úprava správy za behu so stopou nástrojov), stavové reakcie a proaktívne cron/tick oznámenia. Skupinové nástroje (admin session): výpis a info o skupinách, vytvorenie skupiny, pridanie/odoberanie členov a poslanie správy do ľubovoľného chatu (prevádzkovateľ). Každý odosielateľ (telefónne číslo, JID alebo celá skupina) sa mapuje na povolené projekty Elowen a prompt roly. Párovanie naskenovaním QR kódu alebo pomocou párovacieho kódu.",
+  "fields": {
+    "sec_connection": {
+      "label": "Pripojenie",
+      "hint": "Ako sa bot napojí na WhatsApp a kam posiela proaktívne správy. Spárujte naskenovaním QR kódu z logov pluginu, alebo párovacím kódom."
+    },
+    "phoneNumber": {
+      "label": "Telefónne číslo pre párovanie",
+      "hint": "Voliteľné: číslo bota v medzinárodnom formáte BEZ +, medzier a pomlčiek (napr. 420777123456). Keď vyplníte, plugin namiesto QR vypíše do logov 8znakový párovací kód — zadajte ho vo WhatsApp → Prepojené zariadenia → Prepojiť cez číslo. Prázdne = párovanie QR kódom."
+    },
+    "groupIds": {
+      "label": "Povolené skupiny",
+      "hint": "JID skupín oddelené čiarkou (…@g.us). Prázdne = odpovedať v každej skupine, kde píše namapovaný odosielateľ. Keď vyplníte, bot odpovedá len v týchto skupinách. Priame chaty sú pre namapovaných odosielateľov vždy povolené."
+    },
+    "notifyChat": {
+      "label": "Oznamovací chat",
+      "hint": "Kam sa posielajú proaktívne správy (výsledky cronov/tickov, eskalácie, oznámenia o reštarte) — telefónne číslo alebo JID (…@s.whatsapp.net / …@g.us). Prázdne = žiadne proaktívne správy."
+    },
+    "sec_replies": {
+      "label": "Odpovede a správanie",
+      "hint": "Kedy a ako bot odpovedá."
+    },
+    "respondWithoutMention": {
+      "label": "Odpovedať bez zmienky",
+      "hint": "Zapnuté: v skupinách bot odpovedá na každú správu namapovaného odosielateľa. Vypnuté: v skupinách odpovedá len pri @zmienke alebo keď niekto odpovie na jeho správu. Priame chaty dostanú odpoveď vždy."
+    },
+    "streaming": {
+      "label": "Živé streamované odpovede",
+      "hint": "Upravovať odpoveď priebežne, ako prichádza (volania nástrojov + text). Vypnuté = jedna správa na konci."
+    },
+    "reactions": {
+      "label": "Stavové reakcie",
+      "hint": "Reaguje 👀 pri premýšľaní, ✅/❌ po dokončení."
+    },
+    "runtimeFooter": {
+      "label": "Stavový riadok",
+      "hint": "Pripojiť pod finálnu odpoveď malý riadok „model · % kontextu“."
+    },
+    "showReasoning": {
+      "label": "Zobraziť uvažovanie",
+      "hint": "Streamovať uvažovanie modelu do priebežnej správy (modely s extended thinking). Predvolené = vypnuté — väčšinou je to šum."
+    },
+    "language": {
+      "label": "Jazyk služobných správ",
+      "hint": "Jazyk vlastných správ bota (/new, /model, zástupné texty): en (predvolené), cs alebo sk.",
+      "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenčina" }
+    },
+    "sec_conversation": {
+      "label": "Konverzácia",
+      "hint": "Smerovanie obrázkov."
+    },
+    "visionModel": {
+      "label": "Model pre obrázky",
+      "hint": "Model pre správy s obrázkovými prílohami (musí vedieť vision). Prázdne = bežný model chatu."
+    },
+    "sec_media": {
+      "label": "Limity médií",
+      "hint": "Limity pre prichádzajúce/odchádzajúce obrázky a ako dlho zostáva otvorená čakajúca otázka."
+    },
+    "maxImageBytes": {
+      "label": "Max. veľkosť prichádzajúceho obrázka",
+      "hint": "Najväčšia obrázková príloha (v bajtoch), ktorú bot stiahne pre vision; väčšie len poznamená."
+    },
+    "maxImages": {
+      "label": "Max. obrázkov na správu",
+      "hint": "Koľko obrázkových príloh z jednej prichádzajúcej správy bot pošle vision modelu."
+    },
+    "maxUploadImages": {
+      "label": "Max. obrázkov na odpoveď",
+      "hint": "Koľko vygenerovaných obrázkov bot pripojí k jednej odchádzajúcej odpovedi."
+    },
+    "askTimeoutMs": {
+      "label": "Timeout otázky (ms)",
+      "hint": "Ako dlho zostáva čakajúca AskUserQuestion otvorená pre číselnú odpoveď alebo voľný text, než ju bot zahodí ako zastaranú."
+    },
+    "sec_senders": {
+      "label": "Pravidlá odosielateľov",
+      "hint": "Mapovanie WhatsApp odosielateľov na povolené projekty, prompt roly a nástroje, ktoré smie bot použiť."
+    },
+    "senderPolicies": {
+      "label": "Pravidlá odosielateľov",
+      "hint": "Vyhráva prvý zodpovedajúci odosielateľ; odosielatelia bez pravidla sú ignorovaní. ID je telefónne číslo (420777123456), JID (…@s.whatsapp.net) alebo celá skupina (…@g.us) — ID skupiny dá prístup všetkým v nej. Pravidlo označené admin smie prepínať model a používať skupinové nástroje. Každé pravidlo môže navyše obmedziť, ktoré nástroje preň smie bot používať."
+    }
+  }
+}
