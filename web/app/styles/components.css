@@ -421,10 +421,15 @@ html[data-effects='full'] .cosmos-core__mascot { animation: cosmos-mascot-float 
 .cosmos-pod__inner::before { content: ''; position: absolute; inset: -6% -2%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 30%, rgb(255 82 54 / 0.09), rgb(255 255 255 / 0.015) 45%, transparent 75%); opacity: 0; filter: blur(6px); transition: opacity var(--motion-base) var(--ease-out); }
 .cosmos-pod:hover .cosmos-pod__inner, .cosmos-pod:focus-within .cosmos-pod__inner { transform: translateY(-3px); }
 .cosmos-pod:hover .cosmos-pod__inner::before, .cosmos-pod:focus-within .cosmos-pod__inner::before { opacity: 1; }
-.cosmos-pod__orb { position: relative; display: grid; place-items: center; width: 3.4rem; height: 3.4rem; flex: none; border-radius: 50%; border: 1px solid rgb(255 82 54 / 0.32); background: radial-gradient(circle at 38% 32%, rgb(255 82 54 / 0.06), #060606 70%); color: var(--color-text-muted); box-shadow: 0 0 0 6px #040404, 0 0 16px rgb(255 82 54 / 0.18), inset 0 0 10px rgb(255 82 54 / 0.06); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
-.cosmos-pod__orb::before { content: ''; position: absolute; inset: -0.55rem; border: 1px solid rgb(255 82 54 / 0.24); border-radius: 50%; mask: conic-gradient(from 180deg, #000 0 40%, transparent 45% 100%); }
-.cosmos-pod:hover .cosmos-pod__orb, .cosmos-pod:focus-within .cosmos-pod__orb { border-color: rgb(255 82 54 / 0.75); color: var(--color-accent); box-shadow: 0 0 0 6px #040404, 0 0 28px rgb(255 82 54 / 0.5), inset 0 0 14px rgb(255 82 54 / 0.16); }
-html[data-effects='full'] .cosmos-pod:hover .cosmos-pod__orb::before { animation: cosmos-spin 5s linear infinite; }
+/* The pod orb mirrors the section rail's active pill (radial core, glow + inset, blurred aura,
+   flickering ember dots) so the orbital field and the deck's top menu read as one design language.
+   `isolation` keeps the negative-z dots above the orb's own background (the rail pill gets the same
+   stacking context from its active transform). */
+.cosmos-pod__orb { position: relative; isolation: isolate; display: grid; place-items: center; width: 3.4rem; height: 3.4rem; flex: none; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 6px #040404, var(--glow-active), inset 0 0 20px rgb(255 82 54 / 0.09); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.cosmos-pod__orb::before { content: ''; position: absolute; inset: -1.35rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(255 82 54 / 0.28), rgb(255 82 54 / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.cosmos-pod__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(255 82 54 / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(255 82 54 / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
+html[data-effects='full'] .cosmos-pod__orb::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; animation-delay: calc(var(--i, 0) * -0.45s); }
+.cosmos-pod:hover .cosmos-pod__orb, .cosmos-pod:focus-within .cosmos-pod__orb { box-shadow: 0 0 0 6px #040404, var(--glow-active), 0 0 34px rgb(255 82 54 / 0.4), inset 0 0 20px rgb(255 82 54 / 0.14); }
 html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod__inner { animation: cosmos-drift 6s ease-in-out infinite; animation-delay: calc(var(--i) * -1.4s); }
 html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-pod__inner { animation-play-state: paused; }
 @keyframes cosmos-drift { 50% { transform: translateY(-4px); } }
@@ -468,8 +473,8 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
    indents past the orb so the beam column stays clear. */
 .cosmos[data-mode='stack'] .cosmos-pod__inner { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 0.45rem 0.8rem; padding: 0.65rem 0.25rem 0.75rem 0.35rem; text-align: left; border-radius: 1rem; }
 .cosmos[data-mode='stack'] .cosmos-pod__inner::before { inset: -2% 0; border-radius: 1rem; }
-.cosmos[data-mode='stack'] .cosmos-pod__orb { width: 2.8rem; height: 2.8rem; box-shadow: 0 0 0 4px #040404, 0 0 14px rgb(255 82 54 / 0.18), inset 0 0 8px rgb(255 82 54 / 0.06); }
-.cosmos[data-mode='stack'] .cosmos-pod__orb::before { inset: -0.4rem; }
+.cosmos[data-mode='stack'] .cosmos-pod__orb { width: 2.8rem; height: 2.8rem; box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(255 82 54 / 0.08); }
+.cosmos[data-mode='stack'] .cosmos-pod__orb::before { inset: -1rem; }
 .cosmos[data-mode='stack'] .cosmos-pod__orb svg { width: 15px; height: 15px; }
 .cosmos[data-mode='stack'] .cosmos-pod__title { justify-content: flex-start; }
 .cosmos[data-mode='stack'] .cosmos-pod__status { justify-content: flex-start; margin: 0 0 0 auto; }
