@@ -5,6 +5,7 @@ import { CronJobsEditor } from './CronJobsEditor';
 import { SkillsEditor } from './SkillsEditor';
 import { SubagentsEditor } from './SubagentsEditor';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
+import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { Badge } from '../../components/ui/Badge';
@@ -552,6 +553,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           const hint = card.section ? fieldHint(card.section) : undefined;
           const isConnCard = card.section?.key === 'sec_connection';
           const showPair = detail.name === 'whatsapp' && isConnCard;
+          const showAppPackage = detail.name === 'msteams' && isConnCard;
           return (
             <SettingsGroup
               key={card.section?.key ?? `lead-${i}`}
@@ -560,9 +562,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
             >
-              {showPair || card.fields.length > 0 ? (
+              {showPair || showAppPackage || card.fields.length > 0 ? (
                 <div className="settings-group__panel flex flex-col gap-4">
                   {showPair ? <WhatsAppPairSection /> : null}
+                  {showAppPackage ? <TeamsAppPackageSection /> : null}
                   {card.fields.length > 0 ? fieldList(card.fields) : null}
                 </div>
               ) : null}

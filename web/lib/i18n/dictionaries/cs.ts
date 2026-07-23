@@ -1478,6 +1478,8 @@ export const cs = {
     waPairError: 'Nepodařilo se spojit s WhatsApp pluginem. Je zapnutý?',
     waUnpairButton: 'Zrušit párování',
     waUnpairConfirm: 'Odpojit tento WhatsApp účet? Bot přestane přijímat zprávy, dokud znovu nespárujete.',
+    teamsAppPackageHint: 'Stáhněte balíček aplikace Teams (manifest + ikony) a nahrajte jej v centru pro správu Teams v části Spravovat aplikace, nebo jej načtěte přímo v týmu. Plugin musí být nejprve zapnutý a nakonfigurovaný.',
+    teamsAppPackageButton: 'Stáhnout balíček aplikace',
   },
   processes: {
     title: 'Procesy na pozadí',

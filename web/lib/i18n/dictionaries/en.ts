@@ -1478,6 +1478,8 @@ export const en = {
     waPairError: 'Could not reach the WhatsApp plugin. Is it enabled?',
     waUnpairButton: 'Unpair device',
     waUnpairConfirm: 'Unlink this WhatsApp account? The bot will stop receiving messages until you pair again.',
+    teamsAppPackageHint: 'Download the Teams app package (manifest + icons) and upload it in the Teams admin center under Manage apps, or sideload it in a team. The plugin must be enabled and configured first.',
+    teamsAppPackageButton: 'Download app package',
   },
   processes: {
     title: 'Background processes',
