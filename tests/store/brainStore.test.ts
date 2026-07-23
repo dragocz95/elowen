@@ -885,6 +885,25 @@ describe('BrainStore', () => {
       expect(store.getWorkflowRuns('root')).toEqual([wf()]);
     });
 
+    // The normalizer is a rebuild whitelist, so a field it does not name is silently dropped on every
+    // persist — this round trip is what pins result/error/startedAt into it.
+    it('round-trips startedAt and bounded result/error previews on nodes', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      const nodes = [
+        { id: 'good', task: 't', status: 'done', deps: [], startedAt: 1700000000000, result: `r${'x'.repeat(700)}` },
+        { id: 'bad', task: 't', status: 'error', deps: [], error: 'boom' },
+      ];
+      expect(store.upsertWorkflowRun('root', wf({ nodes }))).toBe(true);
+      const [run] = store.getWorkflowRuns('root');
+      const good = run!.nodes.find((n) => n.id === 'good')!;
+      expect(good.startedAt).toBe(1700000000000);
+      expect(good.result).toHaveLength(600); // bounded, not the raw 701 chars
+      expect(run!.nodes.find((n) => n.id === 'bad')!.error).toBe('boom');
+      // Malformed variants of the new fields reject the snapshot rather than coercing.
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], startedAt: -5 }] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], result: 42 }] }))).toBe(false);
+    });
+
     it('keeps only the newest snapshot per tool call, and binds a tool call to its first workflow id', () => {
       store.createSession({ id: 'root', userId: 1, model: 'm' });
       store.upsertWorkflowRun('root', wf({ nodes: [] }));

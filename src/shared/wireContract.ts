@@ -58,6 +58,11 @@ export interface BrainWorkflowView {
     tokens?: number;
     seconds?: number;
     model?: string;
+    /** Epoch ms of the node's launch — clients tick live elapsed time from it between snapshots. */
+    startedAt?: number;
+    /** Short preview of a terminal node's outcome (bounded by the engine and again on persist). */
+    result?: string;
+    error?: string;
   }[];
 }
 

@@ -14,7 +14,7 @@ interface Tool { name: string; execute(id: string, p: unknown): Promise<{ conten
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
 function harness(opts: { toolPolicyAllow?: string[] } = {}) {
   const tools = new Map<string, Tool>();
-  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[] }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string }[] }[] = [];
   const launched: string[] = [];
   const run = async (_source: unknown, task: string, onEvent: (e: unknown) => void) => {
     launched.push(task);
@@ -107,6 +107,26 @@ describe('workflow engine', () => {
       nodes: [{ id: 'a', task: 'a' }],
     });
     expect(snapshots[0]!.title).toBe('Docs — přepis');
+  });
+
+  // The dock previews a terminal node's outcome straight from the snapshot, so the emitted nodes must
+  // carry result/error (clipped) and startedAt — the engine tracks them internally either way.
+  it('carries startedAt plus clipped result and error previews in snapshots', async () => {
+    const { tools, snapshots } = harness();
+    await tools.get('WorkflowStart')!.execute('t-prev', {
+      nodes: [
+        { id: 'good', task: `g${'x'.repeat(600)}` },
+        { id: 'bad', task: 'bad FAIL' },
+      ],
+    });
+    const last = snapshots.at(-1)!;
+    const good = last.nodes.find((n) => n.id === 'good')!;
+    const bad = last.nodes.find((n) => n.id === 'bad')!;
+    expect(good.startedAt).toBeTypeOf('number');
+    expect(good.result).toMatch(/^done:gx/);
+    expect(good.result!.length).toBeLessThan(560); // 500-char preview + truncation marker, not the full body
+    expect(good.result).toMatch(/\[truncated\]$/);
+    expect(bad.error).toBe('boom');
   });
 
   // Every snapshot names the origin's WorkflowStart call: it is the durable anchor that binds the DAG

@@ -15,6 +15,9 @@ const MAX_RESULT_CHARS = 8_000;
 // The workflow snapshot re-emits every node on each state change; the UI only previews a node's task, so
 // the snapshot carries at most this many chars of it (the full task still drives the child's turn).
 const SNAPSHOT_TASK_PREVIEW = 500;
+// Same bound for a terminal node's result/error preview: the modal dock shows a line or two, and the
+// full MAX_RESULT_CHARS body already reaches the parent through the blocking WorkflowStart return.
+const SNAPSHOT_RESULT_PREVIEW = 500;
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const errorText = (e) => (e instanceof Error ? e.message : String(e));
@@ -90,6 +93,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ...(s.tokens !== undefined ? { tokens: s.tokens } : {}),
         ...(s.seconds !== undefined ? { seconds: s.seconds } : {}),
         ...(n.model ? { model: n.model } : {}),
+        ...(s.startedAt !== undefined ? { startedAt: s.startedAt } : {}),
+        ...(s.result ? { result: clip(s.result, SNAPSHOT_RESULT_PREVIEW) } : {}),
+        ...(s.error ? { error: clip(s.error, SNAPSHOT_RESULT_PREVIEW) } : {}),
       };
     });
     // Always the ORIGIN's WorkflowStart call, never whatever tool call is executing right now: a node's

@@ -62,6 +62,8 @@ const MAX_WORKFLOW_NODES = 64;
 const MAX_WORKFLOW_ID_CHARS = 64;
 const MAX_WORKFLOW_TASK_CHARS = 600;
 const MAX_WORKFLOW_DETAIL_CHARS = 500;
+// Terminal result/error previews (engine clips to SNAPSHOT_RESULT_PREVIEW + a truncation marker).
+const MAX_WORKFLOW_RESULT_CHARS = 600;
 
 /** One node of a persisted DAG. Rejects rather than coerces: a malformed node means the snapshot came
  *  from something other than the engine, and guessing its intent would put fiction on the user's screen. */
@@ -78,6 +80,9 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
   if (o.seconds !== undefined && (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0)) return undefined;
+  if (o.startedAt !== undefined && (typeof o.startedAt !== 'number' || !Number.isSafeInteger(o.startedAt) || o.startedAt < 0)) return undefined;
+  if (o.result !== undefined && typeof o.result !== 'string') return undefined;
+  if (o.error !== undefined && typeof o.error !== 'string') return undefined;
   return {
     id: o.id,
     task: bounded(o.task, MAX_WORKFLOW_TASK_CHARS),
@@ -88,6 +93,9 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     ...(typeof o.seconds === 'number' ? { seconds: o.seconds } : {}),
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
+    ...(typeof o.startedAt === 'number' ? { startedAt: o.startedAt } : {}),
+    ...(typeof o.result === 'string' ? { result: bounded(o.result, MAX_WORKFLOW_RESULT_CHARS) } : {}),
+    ...(typeof o.error === 'string' ? { error: bounded(o.error, MAX_WORKFLOW_RESULT_CHARS) } : {}),
   };
 }
 

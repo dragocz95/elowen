@@ -152,7 +152,9 @@ export type SubagentUpdate = Omit<Extract<BrainEvent, { type: 'subagent' }>, 'ty
 
 /** One node of a `workflow` snapshot. `sessionId` is set once the node's child agent starts (drill-in
  *  target); `tokens`/`seconds`/`detail` accumulate the child's live progress; `deps` are the node ids
- *  that must finish before it runs. Bounded display data only — no result bodies. */
+ *  that must finish before it runs. Bounded display data only — `result`/`error` carry a short preview
+ *  of a terminal node's outcome (the full body reaches the parent via the WorkflowStart return), and
+ *  `startedAt` (epoch ms) lets a client tick a running node's elapsed time between snapshots. */
 export interface WorkflowNode {
   id: string;
   task: string;
@@ -163,6 +165,9 @@ export interface WorkflowNode {
   tokens?: number;
   seconds?: number;
   model?: string;
+  startedAt?: number;
+  result?: string;
+  error?: string;
 }
 
 /** The payload the workflow engine pushes through `ctx.workflowEmitter()` — the whole `workflow`
