@@ -332,7 +332,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .flow-active { animation: flow-pulse 1.9s ease-in-out infinite; }
 
 /* Orbital navigation nodes stay spatially stable; hover only adds a light trace around the target. */
-.orbit-node { position: relative; isolation: isolate; }
+.orbit-node { position: relative; isolation: isolate; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); }
 .orbit-node::before {
   content: '';
   position: absolute;
@@ -346,12 +346,38 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   transition: opacity var(--motion-base) var(--ease-out), transform var(--motion-slow) var(--ease-out);
 }
 .group:hover .orbit-node::before,
-.group:focus-visible .orbit-node::before,
-.orbit-node-active::before {
+.group:focus-visible .orbit-node::before {
   opacity: 0.72;
   transform: scale(1) rotate(18deg);
 }
-.orbit-node-active::before { border-color: rgb(255 82 54 / 0.32); }
+/* The active destination mirrors the section rail's active pill exactly (radial core, glow + inset,
+   blurred aura, flickering ember dots) so both menus read as one design language. The hover-trace
+   ring is re-purposed as the aura on the active node — same pseudo-element, section-rail visuals. */
+.orbit-node-active {
+  background: radial-gradient(circle, rgb(255 82 54 / 0.14), #050505 68%);
+  box-shadow: 0 0 0 6px #000, var(--glow-active), inset 0 0 20px rgb(255 82 54 / 0.09);
+}
+.orbit-node-active::before {
+  inset: -1.35rem;
+  border: 0;
+  background: radial-gradient(ellipse at 50% 66%, rgb(255 82 54 / 0.28), rgb(255 82 54 / 0.08) 34%, transparent 69%);
+  filter: blur(5px);
+  box-shadow: none;
+  opacity: 0.78;
+  transform: none;
+}
+.orbit-node-active::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 0.16rem;
+  height: 0.16rem;
+  border-radius: 50%;
+  background: var(--color-ember);
+  box-shadow: -1.15rem -0.15rem 0 rgb(255 82 54 / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(255 82 54 / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42);
+  opacity: 0.7;
+}
+html[data-effects='full'] .orbit-node-active::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }
 
 /* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }

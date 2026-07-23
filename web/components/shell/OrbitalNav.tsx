@@ -134,7 +134,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
               >
                 <span className={`flex shrink-0 justify-center ${compact ? 'w-[4.4rem]' : 'w-[5rem]'}`} aria-hidden>
                   <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-black transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
-                    ? `orbit-node-active border-accent shadow-[var(--glow-active)] ${compact ? 'h-[4.35rem] w-[4.35rem]' : 'h-[4.65rem] w-[4.65rem]'}`
+                    ? `orbit-node-active border-accent ${compact ? 'h-[4.35rem] w-[4.35rem]' : 'h-[4.65rem] w-[4.65rem]'}`
                     : `border-border-strong/80 ${compact ? 'h-[2.45rem] w-[2.45rem]' : 'h-[2.65rem] w-[2.65rem]'}`}`}>
                     <Icon size={active ? 24 : 17} strokeWidth={1.45} />
                   </span>
