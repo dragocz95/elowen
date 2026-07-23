@@ -19,6 +19,10 @@ export class ChatEditor extends Editor {
    *  streaming to interrupt) lets Esc fall through to the base Editor instead of being silently swallowed. */
   onEscape?: () => boolean;
 
+  /** Hook for the ↑-recall feature: if this returns non-null text when the editor is empty, the up key
+   *  recalls the last queued message instead of walking prompt history. */
+  onQueueRecall?: () => string | null;
+
   /** The shell owns the physical row budget. `null` restores the normal six-content-row composer cap;
    *  smaller terminal allocations reduce it without cropping blindly from the bottom. */
   setMaxRows(rows: number | null): void {
@@ -65,6 +69,11 @@ export class ChatEditor extends Editor {
 
   override handleInput(data: string): void {
     if (isKeyRelease(data)) return; // Kitty flag-2 release edge — act on the press only (super filters too).
+    // ↑ with empty editor + queued message → recall instead of history walk
+    if (isUpKey(data) && this.getText() === '' && this.onQueueRecall) {
+      const recalled = this.onQueueRecall();
+      if (recalled != null) { this.setText(recalled); return; }
+    }
     if (isEscapeKey(data) && !this.isShowingAutocomplete() && this.onEscape?.()) {
       return;
     }

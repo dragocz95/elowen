@@ -792,7 +792,7 @@ export function createChatComposition(
     subPanel.setSelected(rt.childView?.sessionId ?? null);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
-    queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
+    queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `\u2191 recalls \u00b7 ${removeChord} removes` : null);
   };
   renderOwner = new RenderShell({
     tui,
@@ -1042,6 +1042,21 @@ export function createChatComposition(
       return true;
     }
     return false;
+  };
+
+  // ↑ with an empty composer recalls the most recent queued message (LIFO). Optimistic pop; the
+  // server's queue snapshot reconciles if the item was already delivered in the meantime.
+  editor.onQueueRecall = (): string | null => {
+    const last = rt.queued.at(-1);
+    if (!last) return null;
+    rt.queued = rt.queued.slice(0, -1); // optimistic; the queue_update snapshot reconciles
+    lifetime.runSession(
+      () => client.queueRemove(last.id),
+      () => {},
+      (e) => { rt.notice = color.error(`error: ${e.message}`); render('input:queue-remove-error'); },
+    );
+    render('input:queue-recall');
+    return last.text;
   };
 
   const root = new Container();
