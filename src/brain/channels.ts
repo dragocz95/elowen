@@ -117,6 +117,9 @@ export interface ChannelServiceDeps {
    *  but never wire an approval channel, so only `deny` rules bite here (ask → allow, see send()). */
   permissions?: (userId: number) => PermissionSettings;
   completeSubagent?: (parentSessionId: string, userId: number, completion: SubagentCompletion) => void;
+  /** Stop the workflow engine for an aborted origin session (see BrainService.cancelWorkflowsFor) —
+   *  a channel `/stop` must halt a DAG started from that channel exactly like the owner's Esc-Esc. */
+  cancelWorkflows?: (sessionId: string) => Promise<void>;
 }
 
 const sameScopePolicy = (policy: Policy, scope: DelegatedExecutionScope): boolean => {
@@ -535,6 +538,9 @@ export class ChannelSessionService {
     // Fence before inspecting descendants. A fresh idle-child continuation must not register itself
     // after this snapshot and then get erased by clearChildren() without being aborted.
     this.d.registry.beginParentAbort(sessionId);
+    // Before tearing children down: a workflow ORIGINATING here (including a node's self-expansion)
+    // must stop launching nodes, or it respawns fresh children the moment an aborted one settles.
+    await this.d.cancelWorkflows?.(sessionId);
     try {
       const ch = this.d.registry.channelGet(channelId);
       if (!ch) {

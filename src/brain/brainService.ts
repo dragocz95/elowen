@@ -216,6 +216,7 @@ export class BrainService {
       permissions: d.permissions, // deny rules apply to channel turns too (asks follow unattendedAsks there)
       completeSubagent: (parentSessionId, userId, completion) =>
         this.turnRunner.acceptSubagentCompletion(parentSessionId, userId, completion),
+      cancelWorkflows: (sessionId) => this.cancelWorkflowsFor(sessionId),
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
@@ -429,12 +430,21 @@ export class BrainService {
     );
   }
 
+  /** Stop the workflow engine for an aborted origin BEFORE its children are torn down: the engine would
+   *  otherwise launch every ready node the moment an aborted one settles — fresh child sessions born
+   *  after the abort, which nothing tears down (the user-visible symptom: Esc-Esc, workflow keeps going). */
+  private async cancelWorkflowsFor(sessionId: string): Promise<void> {
+    const registry = await this.d.plugins?.get();
+    registry?.control('workflow')?.cancelForSession({ sessionId });
+  }
+
   /** Shared destructive half of stop and queue-interrupt. Caller owns the parent-abort fence. */
   private async abortLive(b: LiveBrain): Promise<void> {
     this.goals.cancelGoalContinuation(b.sessionId);
     b.session.clearQueue();
     clearDeliveredUserEchoes(b);
     if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
+    await this.cancelWorkflowsFor(b.sessionId);
     // Spare detached/background children; abort only the foreground delegates bound to this turn.
     const spared = this.sparedChildSessionIds(b.sessionId);
     const doomed = this.sessions.childrenOf(b.sessionId).filter((child) => !spared.has(child));

@@ -12,8 +12,16 @@ interface Tool { name: string; execute(id: string, p: unknown): Promise<{ conten
 /** Build a workflow harness: a mock plugin ctx that captures the registered tools + emitted snapshots,
  *  and a controllable fake `run` handler. `run` resolves each node to `done:<task>` unless the task
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
+interface WorkflowControl { cancelForSession(input: { sessionId: string }): { cancelled: number } }
+
+/** When set, the harness `run` parks the matching task on this promise and settles it as an aborted
+ *  child ("Error: interrupted") once released — the cancel test's stand-in for the host's abort tree. */
+let gate: { task: string; promise: Promise<void> } | null = null;
+
 function harness(opts: { toolPolicyAllow?: string[] } = {}) {
+  gate = null;
   const tools = new Map<string, Tool>();
+  const controls = new Map<string, WorkflowControl>();
   const snapshots: { id: string; toolCallId: string; title?: string; status: string; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string }[] }[] = [];
   const launched: string[] = [];
   const run = async (_source: unknown, task: string, onEvent: (e: unknown) => void) => {
@@ -21,10 +29,12 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
     onEvent({ type: 'session', sessionId: `s-${task}` });
     onEvent({ type: 'tool', name: 'Read' });
     onEvent({ type: 'idle', usage: { totalTokens: 100 } });
+    if (gate && task === gate.task) { await gate.promise; return 'Error: interrupted'; }
     return task.includes('FAIL') ? 'Error: boom' : `done:${task}`;
   };
   const ctx = {
     registerTool: (def: Tool) => { tools.set(def.name, def); },
+    registerControl: (name: string, control: WorkflowControl) => { controls.set(name, control); },
     logger: { info() {}, warn() {} },
     currentSessionId: () => 'brain-parent',
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
@@ -41,7 +51,7 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
     delegateContextChunk: (raw: string) => (raw ? `ctx:${raw}` : undefined),
   };
   registerWorkflow(ctx, () => run, helpers);
-  return { tools, snapshots, launched };
+  return { tools, controls, snapshots, launched };
 }
 
 describe('workflow engine', () => {
@@ -152,6 +162,7 @@ describe('workflow engine', () => {
     };
     const ctx = {
       registerTool: (def: Tool) => { tools.set(def.name, def); },
+      registerControl: () => {},
       logger: { info() {}, warn() {} },
       currentSessionId: () => 'brain-parent',
       currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
@@ -204,6 +215,7 @@ describe('workflow engine', () => {
     };
     const ctx = {
       registerTool: (def: Tool) => { tools.set(def.name, def); },
+      registerControl: () => {},
       logger: { info() {}, warn() {} },
       currentSessionId: () => sessionId,
       currentIdentity: () => identity,
@@ -240,6 +252,35 @@ describe('workflow engine', () => {
     const res = await startP;
     expect(launched).toEqual(['root', 'leaf']);
     expect(res.content[0]!.text).toMatch(/status: done/);
+  });
+
+  // The Esc-Esc bug: aborting the parent kills the RUNNING node children, but without a cancel the
+  // engine relaunches every ready node the moment an aborted one settles — fresh children born after
+  // the abort. The control is the host's seam to stop the DAG itself.
+  it('cancelForSession halts the DAG: no post-abort launches, terminal status cancelled', async () => {
+    const { tools, controls, snapshots, launched } = harness();
+    let releaseRoot!: () => void;
+    const rootGate = new Promise<void>((r) => { releaseRoot = r; });
+    gate = { task: 'root', promise: rootGate };
+    const startP = tools.get('WorkflowStart')!.execute('t-cancel', {
+      nodes: [
+        { id: 'root', task: 'root' },
+        { id: 'leaf', task: 'leaf', deps: ['root'] },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 5)); // root launches and parks on the gate
+    // The host aborts: cancel the engine first (as abortLive does), then the running child errors out.
+    expect(controls.get('workflow')!.cancelForSession({ sessionId: 'brain-parent' })).toEqual({ cancelled: 1 });
+    releaseRoot();
+    const res = await startP;
+    await new Promise((r) => setTimeout(r, 5)); // let the aborted root settle its final snapshot
+    expect(launched).toEqual(['root']); // leaf never launched after the cancel
+    const text = res.content[0]!.text;
+    expect(text).toMatch(/status: cancelled/);
+    expect(text).toMatch(/workflow was cancelled/);
+    expect(snapshots.at(-1)!.status).toBe('cancelled');
+    // A different session's abort cancels nothing here.
+    expect(controls.get('workflow')!.cancelForSession({ sessionId: 'someone-else' })).toEqual({ cancelled: 0 });
   });
 
   it('rejects an invalid DAG without launching anything', async () => {

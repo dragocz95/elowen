@@ -269,6 +269,14 @@ export interface PendingWakeupControl {
   pendingWakeupOriginSessionIds(userId: number): string[];
 }
 
+/** The workflow engine's abort seam. Aborting a parent turn tears down the node child sessions that are
+ *  RUNNING (they sit in the abort tree), but the in-plugin engine would otherwise keep launching every
+ *  node whose dependencies had already finished — fresh children born after the abort, which nothing
+ *  tears down. Core calls this with the aborted origin session so the engine stops the DAG instead. */
+export interface WorkflowCancelControl {
+  cancelForSession(input: { sessionId: string }): { cancelled: number };
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -276,6 +284,7 @@ export interface KnownControls {
   subagent: DetachControl;
   terminal: DetachControl;
   cron: PendingWakeupControl;
+  workflow: WorkflowCancelControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`

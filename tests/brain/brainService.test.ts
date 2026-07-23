@@ -1184,6 +1184,26 @@ describe('BrainService', () => {
     expect(d.session.prompt).not.toHaveBeenCalled();
   });
 
+  // The Esc-Esc workflow bug: aborting a turn tears down running node children, but the in-plugin DAG
+  // engine keeps launching nodes whose deps had already finished — so the abort must first tell the
+  // engine (via the `workflow` control) that this origin session is being stopped.
+  it('abort cancels the workflow engine for the stopped session', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    const cancelledFor: string[] = [];
+    ctx.registerControl('workflow', {
+      cancelForSession: ({ sessionId }: { sessionId: string }) => { cancelledFor.push(sessionId); return { cancelled: 1 }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+
+    await svc.abort(1);
+
+    expect(cancelledFor).toEqual([sessionId]);
+  });
+
   it('queueRemove drops the pending echo so a removed prompt can never appear later', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

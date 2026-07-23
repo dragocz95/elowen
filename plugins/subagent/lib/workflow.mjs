@@ -221,7 +221,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       lines.push('', `[${n.id}] ${s.status.toUpperCase()}${n.deps.length ? ` (after ${n.deps.join(', ')})` : ''}`);
       if (s.status === 'done') lines.push(s.result || '(no output)');
       else if (s.status === 'error') lines.push(`Error: ${s.error}`);
-      else lines.push('(did not run — a dependency failed)');
+      else lines.push(wf.status === 'cancelled' ? '(did not run — the workflow was cancelled)' : '(did not run — a dependency failed)');
     }
     return lines.join('\n');
   };
@@ -230,10 +230,34 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     wf.status = 'running';
     snapshot(wf);
     await new Promise((resolve) => { wf.resolveDone = resolve; tick(wf); });
-    wf.status = [...wf.state.values()].some((s) => s.status === 'error') ? 'error' : 'done';
+    // A cancel settles the status itself — the late arithmetic here must not repaint it as done/error
+    // when the aborted node children eventually error out.
+    if (wf.status !== 'cancelled') {
+      wf.status = [...wf.state.values()].some((s) => s.status === 'error') ? 'error' : 'done';
+    }
     snapshot(wf);
     return summarize(wf);
   };
+
+  /** The abort seam core calls when a parent turn is torn down (Esc-Esc, /stop, queue interrupt). The
+   *  abort tree kills the node children that are RUNNING; this stops the engine from launching the rest
+   *  — without it, every node whose deps had already finished would spawn a fresh child AFTER the abort,
+   *  with nothing left alive to tear it down. Running nodes are left to settle: their sessions are being
+   *  aborted by the same cascade, and `tick` no longer relaunches anything once `finished` is set. */
+  const cancelForSession = (sessionId) => {
+    let cancelled = 0;
+    for (const wf of workflows.values()) {
+      if (wf.finished || wf.originSessionId !== sessionId) continue;
+      wf.status = 'cancelled';
+      wf.finished = true;
+      wf.finishedAt = Date.now();
+      cancelled += 1;
+      snapshot(wf);
+      wf.resolveDone?.();
+    }
+    return { cancelled };
+  };
+  ctx.registerControl('workflow', { cancelForSession: ({ sessionId }) => cancelForSession(sessionId) });
 
   ctx.registerTool(defineTool({
     name: 'WorkflowStart', label: 'Run a workflow',

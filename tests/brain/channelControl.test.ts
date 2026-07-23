@@ -85,6 +85,24 @@ describe('ChannelSessionService — channel-scoped slash control (stop/status/co
     expect(order).toEqual(['queue', 'ask', 'abort']);
   });
 
+  // The Esc-Esc workflow bug, channel edition: a `/stop` must first tell the workflow engine to stop
+  // launching nodes for this origin, and only then tear the session down — the reverse order leaves a
+  // window where an aborted node's settle relaunches the rest of the DAG.
+  it('cancels workflows for the channel session before aborting it', async () => {
+    const order: string[] = [];
+    const ch = fakeChannel({ session: {
+      ...fakeChannel().session,
+      abort: vi.fn(async () => { order.push('abort'); }),
+    } });
+    const { svc } = serviceWith(new Map([['discord-c1#0', ch]]), {
+      cancelWorkflows: vi.fn(async (sessionId: string) => { order.push(`wf:${sessionId}`); }),
+    });
+
+    await svc.abort('discord-c1#0');
+
+    expect(order).toEqual(['wf:brain-ch-discord-c1#0', 'abort']);
+  });
+
   it('aborts nested delegated channels depth-first before their parent', async () => {
     const order: string[] = [];
     const grandchild = fakeChannel({ sessionId: 'brain-ch-subagent-grand', session: { ...fakeChannel().session, abort: vi.fn(async () => { order.push('grandchild'); }) } });

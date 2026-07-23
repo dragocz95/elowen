@@ -47,6 +47,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: keyof KnownControls[K
   subagent: 'detachForeground',
   terminal: 'detachForeground',
   cron: 'pendingWakeupOriginSessionIds',
+  workflow: 'cancelForSession',
 };
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
