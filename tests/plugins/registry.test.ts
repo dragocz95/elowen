@@ -189,6 +189,34 @@ describe('PluginRegistry', () => {
     });
   });
 
+  describe('registerTool manifest gating', () => {
+    const U = undefined;
+    const tool = (name: string) => ({ name } as never);
+
+    it('accepts declared names, refuses undeclared ones', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const log = { info() {}, warn: (m: string) => warns.push(m), error() {} };
+      const ctx = reg.contextFor('demo', {}, log, U, U, U, U, U, { tools: ['Read'] });
+      ctx.registerTool(tool('Read'));
+      ctx.registerTool(tool('Write'));
+      expect(reg.tools.map((t) => t.name)).toEqual(['Read']);
+      expect(warns).toEqual(["[plugin:demo] registerTool('Write') refused: not declared in manifest provides.tools"]);
+    });
+
+    it('a `prefix*` declaration covers a dynamic tool surface — the mcp bridge names its tools at runtime', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const log = { info() {}, warn: (m: string) => warns.push(m), error() {} };
+      const ctx = reg.contextFor('mcp', {}, log, U, U, U, U, U, { tools: ['ListMcpResources', 'mcp__*'] });
+      ctx.registerTool(tool('ListMcpResources'));
+      ctx.registerTool(tool('mcp__github__create_issue'));
+      ctx.registerTool(tool('SomethingElse')); // NOT covered — the pattern only widens its own prefix
+      expect(reg.tools.map((t) => t.name)).toEqual(['ListMcpResources', 'mcp__github__create_issue']);
+      expect(warns).toEqual(["[plugin:mcp] registerTool('SomethingElse') refused: not declared in manifest provides.tools"]);
+    });
+  });
+
   describe('registerCommand', () => {
     it('accepts a valid kebab-case prompt command and tracks its owner', () => {
       const reg = new PluginRegistry();

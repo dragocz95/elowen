@@ -74,9 +74,14 @@ describe('plugin manifest / code parity', () => {
     }
     for (const p of discoverPlugins([pluginDir])) {
       const declared = p.manifest.provides?.tools;
-      if (!declared) continue; // an undeclared surface is unconstrained by design (skills, mcp)
-      expect([...declared].sort(), `plugin '${p.manifest.name}'`)
-        .toEqual([...(registered.get(p.manifest.name) ?? [])].sort());
+      if (!declared) continue; // an undeclared surface is unconstrained by design (skills)
+      // A `prefix*` entry declares a DYNAMIC surface (the mcp bridge names its tools per configured
+      // server at runtime) — nothing registers under it in this serverless test env, so patterns are
+      // excluded from the exact-name comparison and pattern-covered registrations are dropped too.
+      const patterns = declared.filter((d) => d.endsWith('*')).map((d) => d.slice(0, -1));
+      const exact = declared.filter((d) => !d.endsWith('*'));
+      const actual = (registered.get(p.manifest.name) ?? []).filter((n) => !patterns.some((pre) => n.startsWith(pre)));
+      expect([...exact].sort(), `plugin '${p.manifest.name}'`).toEqual([...actual].sort());
     }
   });
 });

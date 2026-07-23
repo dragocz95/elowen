@@ -22,6 +22,14 @@ function collectStringValues(value: unknown, into: Set<string>): void {
   if (value && typeof value === 'object') { for (const v of Object.values(value)) collectStringValues(v, into); }
 }
 
+/** Whether a tool name is covered by a manifest's `provides.tools` declaration: an exact entry, or a
+ *  `prefix*` pattern for a DYNAMIC tool surface whose names only exist at runtime — the mcp plugin
+ *  bridges each configured server's tools as `mcp__<server>__<tool>` and cannot enumerate them ahead
+ *  of time, so it declares `mcp__*`. Same `prefix*` convention as `icons`/`showOutput`. */
+function toolDeclared(name: string, declared: readonly string[]): boolean {
+  return declared.some((d) => (d.endsWith('*') ? name.startsWith(d.slice(0, -1)) : name === d));
+}
+
 /** The minimal shape of the SHARED embedder the registry exposes to plugins as `ctx.embeddings` — the
  *  public `embed`/`embedBatch` of the ONE EmbeddingService the memory subsystem uses. Kept structural so
  *  the registry never imports the concrete class; bootstrap passes the live instance. Signatures take a
@@ -242,7 +250,7 @@ export class PluginRegistry {
       // unconstrained — older manifests predate this, and plugins are owner-installed (defense-in-depth,
       // not a fortress): the value is that an honest manifest can't be silently out-registered.
       registerTool: (t) => {
-        if (provides?.tools && !provides.tools.includes(t.name)) {
+        if (provides?.tools && !toolDeclared(t.name, provides.tools)) {
           scoped.warn(`registerTool('${t.name}') refused: not declared in manifest provides.tools`);
           return;
         }
