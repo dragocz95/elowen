@@ -103,6 +103,24 @@ export class ConnectorClient {
     return this.call(serviceUrl, 'GET', `/v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`);
   }
 
+  /** The full conversation roster (all members with name/id/UPN). */
+  async members(serviceUrl, conversationId) {
+    return this.call(serviceUrl, 'GET', `/v3/conversations/${encodeURIComponent(conversationId)}/members`);
+  }
+
+  /** Page through the conversations the bot participates in on this service host. */
+  async conversations(serviceUrl, continuationToken) {
+    const suffix = continuationToken ? `?continuationToken=${encodeURIComponent(continuationToken)}` : '';
+    return this.call(serviceUrl, 'GET', `/v3/conversations${suffix}`);
+  }
+
+  /** Open (or rejoin) a conversation — Teams returns the existing personal chat for a known user pair.
+   *  Returns the conversation id. */
+  async createConversation(serviceUrl, payload) {
+    const out = await this.call(serviceUrl, 'POST', '/v3/conversations', payload);
+    return out?.id;
+  }
+
   /** Download an authenticated attachment (Teams file/image URLs on the connector host need our bearer). */
   async download(url, maxBytes) {
     const res = await fetch(url, { headers: { authorization: `Bearer ${await this.token()}` } });

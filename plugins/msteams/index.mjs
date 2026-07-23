@@ -6,6 +6,7 @@
 import { join } from 'node:path';
 import { StateStore } from './lib/state.mjs';
 import { MsTeamsAdapter } from './lib/adapter.mjs';
+import { registerTools } from './lib/tools.mjs';
 
 export { matchesId, senderIds, senderIsAdmin, displayNameOf } from './lib/ids.mjs';
 export { splitContent, buildReplyContext, footerLine, CHUNK } from './lib/format.mjs';
@@ -33,5 +34,6 @@ export function register(ctx) {
   );
   ctx.registerHttpRoute({ path: 'messages', handler: (req) => adapter.handleWebhook(req) });
   ctx.registerPlatform(adapter);
-  ctx.logger.info('msteams platform registered (webhook /hooks/msteams/messages)');
+  registerTools(ctx, adapter);
+  ctx.logger.info('msteams platform registered (webhook /hooks/msteams/messages + chat tools)');
 }

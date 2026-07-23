@@ -414,5 +414,18 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(await adapter.unpair());
   });
 
+  // ── Teams app package (msteams plugin): the sideloadable ZIP (manifest + icons) the admin uploads
+  // to the org's Teams app catalog. Built by the live adapter from the current config. ──
+  app.get('/plugins/msteams/app-package', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const registry = await d.plugins?.get();
+    const adapter = registry?.platforms.find((p) => p.name === 'msteams') as { appPackage?(): Buffer } | undefined;
+    if (!adapter?.appPackage) return c.json({ error: 'msteams plugin not enabled' }, 503);
+    return c.body(new Uint8Array(adapter.appPackage()), 200, {
+      'content-type': 'application/zip',
+      'content-disposition': 'attachment; filename="elowen-teams-app.zip"',
+    });
+  });
+
   registerBrainOAuthRoutes(app, ctx);
 }

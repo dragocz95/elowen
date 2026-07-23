@@ -13,10 +13,14 @@ const pluginDir = join(repoRoot, 'plugins');
  *  names are minted at runtime from a remote server's own tool list (plugins/mcp), never authored here. */
 const TITLE_CASE = /^[A-Z][A-Za-z0-9]*$/;
 
-/** Discord/Telegram gate their tools behind a configured botToken, so without one they register nothing
- *  and this guard would silently inspect a short list. A fake token registers the full toolset without
- *  connecting — the adapter is only recorded (`registerPlatform` is a stub), never started. */
-const CONFIG = { discord: { botToken: 'tok', rolePolicies: [] }, telegram: { botToken: 'tok' } };
+/** Discord/Telegram/Teams gate their tools behind configured credentials, so without them they register
+ *  nothing and this guard would silently inspect a short list. Fake credentials register the full toolset
+ *  without connecting — the adapter is only recorded (`registerPlatform` is a stub), never started. */
+const CONFIG = {
+  discord: { botToken: 'tok', rolePolicies: [] },
+  telegram: { botToken: 'tok' },
+  msteams: { appId: 'app', appPassword: 'pw', tenantId: 'tenant' },
+};
 
 async function loadEveryBundledPlugin() {
   const names = discoverPlugins([pluginDir]).map((p) => p.manifest.name);

@@ -2,12 +2,23 @@
   "name": "msteams",
   "version": "0.1.0",
   "apiVersion": "1",
-  "description": "Microsoft Teams bot (Azure Bot Framework): message it in a personal chat, group chat or team channel and it answers from Elowen AI. Incoming activities arrive on the daemon webhook /hooks/msteams/messages (validated against Microsoft's JWT); replies, typing indicators and images go out through the Bot Connector REST API. Each rolePolicy maps an Entra object ID / UPN / conversation ID to allowed Elowen projects + a role prompt.",
+  "description": "Microsoft Teams bot (Azure Bot Framework): message it in a personal chat, group chat or team channel and it answers from Elowen AI. Incoming activities arrive on the daemon webhook /hooks/msteams/messages (validated against Microsoft's JWT); replies, typing indicators and images go out through the Bot Connector REST API. Slash commands (/model, /reasoning, /display, /new, /help) with Adaptive Card pickers, AskUserQuestion as tappable cards, live tool activity, proactive cron/tick pushes and a downloadable Teams app package. Chat tools (admin sessions): conversation & member info, member lists, list conversations, plus send a message to any chat and raw connector access (operator). Each rolePolicy maps an Entra object ID / UPN / conversation ID to allowed Elowen projects + a role prompt.",
   "entry": "index.mjs",
   "provides": {
     "platforms": ["msteams"],
-    "httpRoutes": ["messages"]
+    "httpRoutes": ["messages"],
+    "tools": [
+      "TeamsSend",
+      "TeamsChatInfo",
+      "TeamsMembers",
+      "TeamsMemberInfo",
+      "TeamsListConversations",
+      "TeamsApi"
+    ]
   },
+  "icons": { "Teams*": "💼" },
+  "showOutput": ["Teams*"],
+  "planSafe": ["TeamsChatInfo", "TeamsMembers", "TeamsMemberInfo", "TeamsListConversations"],
   "requires": {
     "config": ["appId", "appPassword", "tenantId"]
   },

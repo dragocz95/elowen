@@ -25,6 +25,8 @@ type AdapterModule = {
     isForMe: (m: unknown) => boolean;
     accessFor: (ids: string[], convId: string) => { access?: Record<string, unknown> };
     verifyToken: (h: string | undefined, a: unknown) => Promise<boolean>;
+    notify: (text: string, channelId?: string) => Promise<void>;
+    appPackage: () => Buffer;
     connector: Record<string, unknown>;
     pendingAsks: Map<string, Record<string, unknown>>;
   };
@@ -233,6 +235,73 @@ describe('msteams live trace + cards + commands', () => {
     await adapter.onActivity(activity({ text: '/model' }));
     const texts = calls.filter((c) => c.kind === 'reply').map((c) => (c.args[3] as { text?: string })?.text ?? '');
     expect(texts.some((t) => t.includes('operator'))).toBe(true);
+  });
+});
+
+describe('msteams proactive notify + app package', () => {
+  it('pushes to the configured notification conversation via its stored route', async () => {
+    const { adapter, state, calls } = await makeAdapter({ notifyConversationId: 'a:conv1' });
+    state.patch('a:conv1', { ref: { serviceUrl: 'https://smba.test/emea' } });
+    await adapter.notify('nightly build done');
+    const sent = calls.find((c) => c.kind === 'send');
+    expect(sent?.args[0]).toBe('https://smba.test/emea');
+    expect(sent?.args[2]).toMatchObject({ type: 'message', text: 'nightly build done' });
+  });
+
+  it('opens a personal conversation for an unseen user target and reuses it', async () => {
+    const { adapter, state, calls } = await makeAdapter({});
+    state.patch('_meta', { serviceUrl: 'https://smba.test/emea' });
+    Object.assign(adapter.connector, {
+      createConversation: async (...args: unknown[]) => { calls.push({ kind: 'create', args }); return 'a:new-1'; },
+    });
+    await adapter.notify('ping', 'aad-user-7');
+    await adapter.notify('pong', 'aad-user-7');
+    const creates = calls.filter((c) => c.kind === 'create');
+    expect(creates).toHaveLength(1); // the opened conversation is cached
+    expect(creates[0]!.args[1]).toMatchObject({ bot: { id: '28:app-guid' }, members: [{ id: 'aad-user-7' }], tenantId: 'tenant-guid' });
+    const sends = calls.filter((c) => c.kind === 'send');
+    expect(sends.map((c) => c.args[1])).toEqual(['a:new-1', 'a:new-1']);
+  });
+
+  it('stays silent before the bot has seen any serviceUrl', async () => {
+    const { adapter, calls } = await makeAdapter({ notifyConversationId: 'a:conv1' });
+    await adapter.notify('lost');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('builds a valid stored-ZIP app package with the Teams manifest and icons', async () => {
+    const { adapter } = await makeAdapter({ agentName: 'Elowen' });
+    const zip = adapter.appPackage();
+    // Stored ZIP framing: local header signature, then name and raw (uncompressed) data.
+    expect([...zip.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    const nameLen = zip.readUInt16LE(26);
+    const size = zip.readUInt32LE(18);
+    expect(zip.subarray(30, 30 + nameLen).toString()).toBe('manifest.json');
+    const manifest = JSON.parse(zip.subarray(30 + nameLen, 30 + nameLen + size).toString()) as {
+      id: string; bots: { botId: string; scopes: string[]; commandLists: { commands: { title: string }[] }[] }[];
+      icons: Record<string, string>;
+    };
+    expect(manifest.id).toBe('app-guid');
+    expect(manifest.bots[0]).toMatchObject({ botId: 'app-guid', scopes: ['personal', 'team', 'groupChat'] });
+    expect(manifest.bots[0]!.commandLists[0]!.commands.map((c) => c.title)).toContain('display');
+    expect(manifest.icons).toEqual({ color: 'color.png', outline: 'outline.png' });
+    // Both icons ride along as real PNGs (signature bytes present past the manifest entry).
+    const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    expect(zip.indexOf(pngSig)).toBeGreaterThan(0);
+    expect(zip.indexOf(pngSig, zip.indexOf(pngSig) + 1)).toBeGreaterThan(zip.indexOf(pngSig));
+    // Central directory + end-of-central-directory close the archive.
+    expect(zip.readUInt32LE(zip.length - 22)).toBe(0x06054b50);
+  });
+
+  it('registers the Teams* chat tools when configured', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['msteams'], logger: log,
+      config: { msteams: { ...CREDS, rolePolicies: [] } },
+    });
+    const names = reg.tools.map((t) => t.name);
+    for (const n of ['TeamsSend', 'TeamsChatInfo', 'TeamsMembers', 'TeamsMemberInfo', 'TeamsListConversations', 'TeamsApi']) {
+      expect(names).toContain(n);
+    }
   });
 });
 

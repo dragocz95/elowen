@@ -13,6 +13,7 @@ import { parseModelExec, splitContent } from './format.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { buildAskCard, buildPickerCard, settledCard } from './cards.mjs';
+import { buildAppPackage } from './appPackage.mjs';
 import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from '../../_shared/display.mjs';
 
@@ -61,6 +62,7 @@ export class MsTeamsAdapter {
     this.connector = new ConnectorClient(cfg, logger);
     this.verifyToken = makeTokenVerifier(cfg, logger);
     this.upnCache = new Map();       // from.id → UPN/email resolved via the conversation roster
+    this.notifyConversations = new Map(); // notify user target → opened personal conversation id
     this.pendingAsks = new Map();    // token → { id, conversationId, activityId, questions, askerId, selected, createdAt }
     this.pendingPickers = new Map(); // conversationId → { kind, options, activityId, page, senderId, createdAt, sessions? }
     this.askSeq = 0;
@@ -383,6 +385,55 @@ export class MsTeamsAdapter {
     for (const piece of splitContent(String(text))) {
       await this.tmSend(conversationId, piece);
     }
+  }
+
+  // ── proactive + tools ──
+
+  /** Host-initiated push (cron/tick echoes) → an explicit target or the configured notification
+   *  conversation. A target without a stored ref is treated as a user (Entra object id) and the
+   *  personal conversation is opened via the connector — Teams hands back the existing chat for a
+   *  known pair. No-op (with a warn) until the bot has seen at least one activity: proactive sends
+   *  ride the last known serviceUrl. */
+  async notify(text, channelId) {
+    const target = (typeof channelId === 'string' && channelId.trim().replace(/#\d+$/, ''))
+      || (typeof this.cfg.notifyConversationId === 'string' ? this.cfg.notifyConversationId.trim() : '');
+    if (!target) return;
+    const serviceUrl = this.serviceUrlFor(target);
+    if (!serviceUrl) { this.log.warn('msteams notify: no serviceUrl known yet — send the bot one message first'); return; }
+    let conversationId = target;
+    if (!this.state.get(target).ref) {
+      conversationId = this.notifyConversations.get(target) ?? await this.connector.createConversation(serviceUrl, {
+        bot: { id: `28:${this.cfg.appId}` },
+        members: [{ id: target }],
+        tenantId: this.cfg.tenantId,
+        isGroup: false,
+      });
+      if (!conversationId) { this.log.warn(`msteams notify: could not open a conversation with ${target}`); return; }
+      this.notifyConversations.set(target, conversationId);
+    }
+    for (const piece of splitContent(String(text))) {
+      await this.tmSend(conversationId, piece);
+    }
+  }
+
+  /** The connector route for a conversation, or a thrown error — used by the Teams* tools. */
+  requireServiceUrl(conversationId) {
+    const serviceUrl = this.serviceUrlFor(conversationId);
+    if (!serviceUrl) throw new Error('the bot has no route to this conversation yet — it must receive a message first');
+    return serviceUrl;
+  }
+
+  /** The sideloadable Teams app package (manifest + icons), served by GET /plugins/msteams/app-package. */
+  appPackage() {
+    return buildAppPackage(this.cfg, this.helpCommands());
+  }
+
+  /** Raw connector REST access (the owner-only TeamsApi tool): any method+path on the service host. */
+  async callApi(method, path, body, serviceUrl) {
+    const base = serviceUrl || this.state.get('_meta').serviceUrl;
+    if (!base) throw new Error('no serviceUrl known yet — the bot must receive a message first');
+    const cleanPath = String(path).startsWith('/') ? String(path) : `/${path}`;
+    return this.connector.call(base, String(method).toUpperCase(), cleanPath, body);
   }
 
   // ── AskUserQuestion cards ──
