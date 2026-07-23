@@ -60,6 +60,12 @@ export const sk = {
     resetConfirm: 'Vynulovať štatistiky',
     resetDone: 'Štatistiky spotreby boli vynulované.',
     resetFailed: 'Štatistiky sa nepodarilo vynulovať.',
+    modalTitle: 'Využitie',
+    sectionConversation: 'Táto konverzácia',
+    sectionModels: 'Všetky modely',
+    contextLabel: 'Kontext',
+    sessionTokens: 'Tokeny v tejto relácii',
+    arrowHint: '← → prepínanie sekcií',
   },
   common: {
     daemon: 'daemon',

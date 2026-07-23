@@ -29,6 +29,8 @@ export interface BrainClientOpts {
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
+/** Per-model token/cost usage, one record per model (exec spec), matching the /usage/by-model wire shape. */
+export interface ModelUsageView { exec: string; usage: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; costUsd: number | null; costSource?: string } }
 export type BrainWorkMode = 'build' | 'plan' | 'workflow';
 /** Single source of truth for the chat work-mode label (status chip / modal) and the toggle notice.
  *  Keyed by BrainWorkMode so adding a mode is one edit here, not scattered ternaries. */
@@ -414,6 +416,14 @@ export class BrainClient {
     // Match every sibling method: a daemon error must throw, not get parsed as a garbage BrainStatus.
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/status`);
     return (await res.json()) as BrainStatus;
+  }
+
+  /** Per-model token/cost usage for the /stats overlay. Mirrors the web's /usage/by-model endpoint. */
+  async usageByModel(): Promise<ModelUsageView[]> {
+    const res = await this.f(`${this.o.base}/usage/by-model`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /usage/by-model`);
+    return (await res.json()) as ModelUsageView[];
   }
 
   /** Delete a stored conversation (404 → Error). */

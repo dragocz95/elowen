@@ -34,6 +34,8 @@ export function isTabByte(data: string): boolean { return data === '\t'; }
 /** Tab in any reported form (raw byte or kitty/modifyOtherKeys sequence). */
 export function isTabKey(data: string): boolean { return data === '\t' || matchesKey(data, 'tab'); }
 
+export function isLeftKey(data: string): boolean { return data === '\x1b[D' || matchesKey(data, 'left'); }
+export function isRightKey(data: string): boolean { return data === '\x1b[C' || matchesKey(data, 'right'); }
 export function isPageUpKey(data: string): boolean { return data === '\x1b[5~'; }
 export function isPageDownKey(data: string): boolean { return data === '\x1b[6~'; }
 

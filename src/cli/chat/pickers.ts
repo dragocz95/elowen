@@ -7,6 +7,7 @@ import { loadMentionFrecency } from './mentions.js';
 import { isCtrlD, isCtrlL, isCtrlP, isCtrlR, isCtrlU, isTabKey } from './keys.js';
 import { openKeybindsEditor } from './keybindsEditor.js';
 import { openStatuslineEditor } from './statuslineEditor.js';
+import { openStatsOverlay } from './statsOverlay.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { formatK } from '../ui/text.js';
 import { WORK_MODE_LABEL, type BrainProviderView } from './brainClient.js';
@@ -25,6 +26,7 @@ export interface Pickers {
   openThemePicker(): void;
   openHelpModal(): void;
   openStatusModal(): void;
+  openStatsModal(): void;
   openSessionsModal(): void;
   openMcpModal(): void;
   openSkillsModal(): void;
@@ -335,6 +337,20 @@ export function createPickers(
     }, fail);
   };
 
+  // /stats as an interactive overlay with ←→-switchable sections: Conversation usage and per-model totals.
+  const openStatsModal = (): void => {
+    runSession(() => Promise.all([client.status().catch(() => null), client.usageByModel().catch(() => null)]), ([s, models]) => {
+      openStatsOverlay({
+        tui, editor,
+        data: {
+          model: s?.model ?? null,
+          usage: s?.usage ?? null,
+          models: models ?? [],
+        },
+      });
+    }, fail);
+  };
+
   const openSessionsModal = (): void => {
     runApplication(() => client.sessions(), (list) => {
       rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
@@ -629,7 +645,7 @@ export function createPickers(
 
   return {
     openThinkingPicker, cycleThinkingLevel, openModelPicker, applyModelArg, changeDirectory, applyTheme, openThemePicker,
-    openHelpModal, openStatusModal, openSessionsModal, openMcpModal, openSkillsModal,
+    openHelpModal, openStatusModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal,
     openLspModal, openToolsModal, openKeybindsModal, openStatuslineModal,
   };
 }

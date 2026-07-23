@@ -15,6 +15,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'new', description: 'Start a fresh conversation', kind: 'action' },
   { name: 'stop', description: 'Stop the running agent', kind: 'action' },
   { name: 'status', description: 'Session info — model, context and usage', kind: 'info' },
+  { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', surfaces: ['cli', 'web'] },
   { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', surfaces: ['cli'] },
   { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli', 'web'] },
   { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', surfaces: ['cli'] },

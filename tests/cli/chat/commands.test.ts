@@ -35,6 +35,12 @@ describe('parseCommand — /compact custom instructions', () => {
   });
 });
 
+describe('parseCommand — /stats', () => {
+  it('recognises a bare /stats with no argument', () => {
+    expect(parseCommand('/stats')).toEqual({ cmd: 'stats' });
+  });
+});
+
 describe('parseCommand — /cd', () => {
   it('captures the path, including one containing spaces', () => {
     expect(parseCommand('/cd ~/projects/api')).toEqual({ cmd: 'cd', arg: '~/projects/api' });

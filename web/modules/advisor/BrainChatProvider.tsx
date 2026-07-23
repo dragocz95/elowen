@@ -66,6 +66,8 @@ export interface BrainChatValue {
   cards: BrainCard[];
   agentsOpen: boolean;
   setAgentsOpen: (v: boolean) => void;
+  statsOpen: boolean;
+  setStatsOpen: (v: boolean) => void;
   queued: { id: string; text: string }[];
   readOnly: string | null;
   activeSessionId: string | null;
@@ -158,6 +160,7 @@ function useBrainChatController(): BrainChatValue {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [cards, setCards] = useState<BrainCard[]>([]);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
   const [readOnly, setReadOnly] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -517,6 +520,12 @@ function useBrainChatController(): BrainChatValue {
         toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
       }
       if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
+      if (cmd.name === 'stats') {
+        setStatsOpen(true);
+        // Refresh usage data for the modal
+        void elowenClient.brainStatus(boundSessionRef.current).then((s) => { if (s) setUsage(s.usage); }).catch(() => undefined);
+        return;
+      }
       // Inspect loaded skills — list the invocable /skill:name commands (PI expands them on send).
       if (cmd.name === 'skills') { const sk = await elowenClient.pluginSkills(); toast(sk.length ? sk.map((s) => `/skill:${s.name}`).join('  ') : t.skills.empty, 'ok'); return; }
       // A prompt macro usually wants arguments — picking it pre-fills the composer (`/review `) so the
@@ -601,7 +610,7 @@ function useBrainChatController(): BrainChatValue {
   useEffect(() => () => esRef.current?.close(), []);
 
   return {
-    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, queued, readOnly, activeSessionId,
+    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued, readOnly, activeSessionId,
     usage, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
     models, currentModel, setModel: (m) => void runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError,

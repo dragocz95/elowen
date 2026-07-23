@@ -11,6 +11,7 @@ import { collectSubagents, type ChatTurn, type SessionEventItem, type ToolItem }
 import { AskQuestionCard } from './AskQuestionCard';
 import { ProcessPanel } from './ProcessPanel';
 import { AgentsTable } from './AgentsTable';
+import { StatsModal } from './StatsModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { useBrainChat } from './BrainChatProvider';
@@ -254,7 +255,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
   const { toast } = useToast();
   const c = useBrainChat();
   const {
-    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, queued, readOnly, activeSessionId,
+    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued, readOnly, activeSessionId,
     usage, lineCfg, currentModel, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory,
@@ -544,6 +545,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
             onOpen={(sessionId) => { setAgentsOpen(false); void openReadOnly(sessionId).catch(() => toast(t.brainChat.searchOpenError, 'error')); }}
           />
         ) : null}
+        {statsOpen ? (
+          <StatsModal onClose={() => setStatsOpen(false)} />
+        ) : null}
         {ask ? (
           <AskQuestionCard
             key={ask.id}
@@ -692,6 +696,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
               if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) - 1 + slashItems.length) % slashItems.length); return; }
               if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); slashItems[slashSel]?.run(); return; }
               if (e.key === 'Escape') { e.preventDefault(); slash.clearModelOpts(); setInput(''); return; }
+            }
+            // ↑ with empty input + queued message → recall into composer
+            if (e.key === 'ArrowUp' && input === '' && queued.length > 0) {
+              e.preventDefault();
+              const last = queued[queued.length - 1];
+              onQueueRemove(last.id);
+              setInput(last.text);
+              return;
             }
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); }
           }}

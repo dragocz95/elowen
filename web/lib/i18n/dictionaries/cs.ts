@@ -60,6 +60,12 @@ export const cs = {
     resetConfirm: 'Vynulovat statistiky',
     resetDone: 'Statistiky spotřeby byly vynulovány.',
     resetFailed: 'Statistiky se nepodařilo vynulovat.',
+    modalTitle: 'Využití',
+    sectionConversation: 'Tato konverzace',
+    sectionModels: 'Všechny modely',
+    contextLabel: 'Kontext',
+    sessionTokens: 'Tokeny v této relaci',
+    arrowHint: '← → · přepínání sekcí',
   },
   common: {
     daemon: 'daemon',
