@@ -47,10 +47,19 @@ describe('install/proxy vhost renderers', () => {
     expect(v.indexOf('location = /sw.js {')).toBeLessThan(v.indexOf('location / {'));
   });
   it('apache vhost reverse-proxies with preserved host', () => {
-    const v = apacheVhost('elowen.example.com', 4500);
+    const v = apacheVhost('elowen.example.com', 4500, 4400);
     expect(v).toContain('ServerName elowen.example.com');
     expect(v).toContain('ProxyPass / http://127.0.0.1:4500/');
     expect(v).toContain('ProxyPreserveHost On');
+  });
+  it('both vhosts route /hooks/ plugin webhooks to the daemon before the catch-all', () => {
+    const n = nginxVhost('elowen.example.com', 4500, 4400);
+    expect(n).toContain('location /hooks/ {');
+    expect(n).toMatch(/location \/hooks\/ \{\n\s+proxy_pass http:\/\/127\.0\.0\.1:4400;/);
+    expect(n.indexOf('location /hooks/ {')).toBeLessThan(n.indexOf('location / {'));
+    const a = apacheVhost('elowen.example.com', 4500, 4400);
+    expect(a).toContain('ProxyPass /hooks/ http://127.0.0.1:4400/hooks/');
+    expect(a.indexOf('ProxyPass /hooks/')).toBeLessThan(a.indexOf('ProxyPass / '));
   });
 });
 

@@ -122,7 +122,7 @@ async function configureVhost(r: Runner, kind: ProxyKind, domain: string, ports:
     await must(r, 'nginx', ['-t']);
     await must(r, 'systemctl', ['reload', 'nginx']);
   } else {
-    await r.writeFile('/etc/apache2/sites-available/elowen.conf', apacheVhost(domain, ports.web));
+    await r.writeFile('/etc/apache2/sites-available/elowen.conf', apacheVhost(domain, ports.web, ports.daemon));
     await must(r, 'a2enmod', ['proxy', 'proxy_http']);
     await must(r, 'a2ensite', ['elowen']);
     await must(r, 'systemctl', ['reload', 'apache2']);

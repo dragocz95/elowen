@@ -17,8 +17,9 @@ export async function detectProxy(r: Runner): Promise<ProxyKind | null> {
 /** nginx vhost. `proxy_buffering off` + a long read timeout keep the SSE event stream (`/events`,
  *  proxied via the web's `/api`) flowing instead of being buffered/idle-closed. The `/ws/` location
  *  upgrades the terminal WebSocket straight to the daemon (the Next.js BFF can't proxy a WS upgrade),
- *  so it must come before the catch-all `/`. certbot --nginx rewrites this to add the :443 server and
- *  the HTTP→HTTPS redirect. */
+ *  and `/hooks/` routes plugin webhooks (e.g. the msteams bot endpoint) to the daemon — both must come
+ *  before the catch-all `/`. certbot --nginx rewrites this to add the :443 server and the HTTP→HTTPS
+ *  redirect. */
 export function nginxVhost(domain: string, webPort: number, daemonPort: number): string {
   return `server {
     listen 80;
@@ -33,6 +34,15 @@ export function nginxVhost(domain: string, webPort: number, daemonPort: number):
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 3600s;
+    }
+
+    # Plugin webhooks (e.g. the Microsoft Teams bot endpoint /hooks/msteams/messages). The plugin
+    # authenticates each request itself (e.g. Microsoft's JWT) — the daemon skips bearer auth here.
+    location /hooks/ {
+        proxy_pass http://127.0.0.1:${daemonPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 
     # The service worker must never be cached, or a stale sw.js keeps running and push breaks. Exact
@@ -60,11 +70,14 @@ export function nginxVhost(domain: string, webPort: number, daemonPort: number):
 `;
 }
 
-/** apache vhost. Needs mod_proxy + mod_proxy_http (the wizard enables them). certbot --apache adds TLS. */
-export function apacheVhost(domain: string, webPort: number): string {
+/** apache vhost. Needs mod_proxy + mod_proxy_http (the wizard enables them). certbot --apache adds TLS.
+ *  The `/hooks/` mapping (plugin webhooks → daemon) must precede the catch-all `/`. */
+export function apacheVhost(domain: string, webPort: number, daemonPort: number): string {
   return `<VirtualHost *:80>
     ServerName ${domain}
     ProxyPreserveHost On
+    ProxyPass /hooks/ http://127.0.0.1:${daemonPort}/hooks/
+    ProxyPassReverse /hooks/ http://127.0.0.1:${daemonPort}/hooks/
     ProxyPass / http://127.0.0.1:${webPort}/
     ProxyPassReverse / http://127.0.0.1:${webPort}/
     # SSE: do not buffer the event stream
