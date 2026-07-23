@@ -1,0 +1,28 @@
+{
+  "description": "Bot pre Microsoft Teams (Azure Bot Framework): napíšte mu v osobnom chate, skupinovom chate alebo tímovom kanáli a odpovie z Elowen AI. Prichádzajúce aktivity prichádzajú na webhook démona /hooks/msteams/messages (overené proti JWT Microsoftu); odpovede, indikátor písania a obrázky odchádzajú cez Bot Connector REST API. Lomkové príkazy (/model, /reasoning, /display, /new, /help) s výberom cez Adaptive Cards, AskUserQuestion ako karty s tlačidlami, živý priebeh nástrojov, proaktívne správy z cronu/ticku a balíček aplikácie Teams na stiahnutie. Nástroje chatu (administrátorské relácie): informácie o konverzácii a členoch, výpisy členov a konverzácií, plus odoslanie správy do ľubovoľného chatu a priamy prístup ku konektoru (prevádzkovateľ). Každé pravidlo roly mapuje Entra object ID / UPN / ID konverzácie na povolené projekty Elowen a prompt roly.",
+  "fields": {
+    "sec_connection": { "label": "Pripojenie", "hint": "Prihlasovacie údaje Azure Bota. Postup: 1) Entra admin centrum → Registrácie aplikácií → Nová registrácia (jeden tenant) → skopírujte Application (client) ID a ID tenantu, potom Certifikáty a tajné kľúče → Nový tajný kľúč klienta. 2) Azure portál → vytvorte Azure Bot naviazaný na toto App ID; nastavte messaging endpoint na https://<vaša-doména>/hooks/msteams/messages a povoľte kanál Microsoft Teams. 3) Stiahnite balíček aplikácie (tlačidlo vyššie) a nahrajte ho v centre spravovania Teams → Spravovať aplikácie." },
+    "appId": { "label": "Microsoft App ID", "hint": "Application (client) ID registrácie aplikácie v Entra — zároveň ID bota v prostriedku Azure Bot." },
+    "appPassword": { "label": "Tajný kľúč klienta", "hint": "Tajný kľúč klienta z registrácie aplikácie (Certifikáty a tajné kľúče). Používa sa na volanie Bot Connector API." },
+    "tenantId": { "label": "ID tenantu", "hint": "Directory (tenant) ID vášho Entra — bot sa overuje voči tomuto tenantu (registrácia pre jeden tenant)." },
+    "notifyConversationId": { "label": "Konverzácia pre oznámenia", "hint": "Kam sa odosielajú proaktívne správy (výsledky cronu/ticku) — ID konverzácie Teams, ktorú bot už videl. Prázdne = žiadne proaktívne správy." },
+    "sec_replies": { "label": "Odpovede a správanie", "hint": "Kedy a ako bot odpovedá." },
+    "respondWithoutMention": { "label": "Odpovedať bez zmienky", "hint": "Zapnuté: v skupinových chatoch bot odpovedá na každú správu namapovaného odosielateľa. Vypnuté: odpovedá len pri @zmienke. Príspevky v tímových kanáloch vyžadujú @zmienku vždy — Teams ich botovi inak nedoručí." },
+    "toolActivity": { "label": "Aktivita nástrojov", "hint": "Čo ukazuje priebežná správa, kým agent pracuje: nič, stavové riadky nástrojov, alebo stav vrátane živého výstupu.", "options": { "off": "Vypnuté", "status": "Živý stav", "live": "Živý výstup" } },
+    "answerMode": { "label": "Doručenie odpovede", "hint": "Finálne odošle jednu odpoveď po skončení; živé streamuje odpoveď do správy priebežne.", "options": { "final": "Iba finálna odpoveď", "live": "Streamovať odpoveď živo" } },
+    "toolOutput": { "label": "Detail výstupu nástrojov", "hint": "Koľko z výsledku každého nástroja priebežná správa ponechá po jeho dokončení.", "options": { "hidden": "Iba stav", "summary": "Krátke zhrnutie", "tail": "Koniec výstupu" } },
+    "toolMessageMode": { "label": "Rozloženie správ nástrojov", "hint": "Jedna správa sa priebežne edituje; per-tool odošle správu za každé volanie nástroja.", "options": { "single": "Jedna živá správa", "per_tool": "Správa za každý nástroj" } },
+    "runtimeFooter": { "label": "Riadok s behovými údajmi", "hint": "Pripojí pod finálnu odpoveď malý riadok „model · kontext %“." },
+    "showReasoning": { "label": "Zobraziť uvažovanie", "hint": "Streamovať uvažovanie modelu do priebežnej správy (modely s rozšíreným myslením). V predvolenom stave vypnuté — zvyčajne ide o šum." },
+    "language": { "label": "Jazyk služobných správ", "hint": "Jazyk vlastných správ bota (chyby, odpovede príkazov). Samotný agent odpovedá jazykom používateľa.", "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenčina" } },
+    "sec_conversation": { "label": "Konverzácia", "hint": "Smerovanie obrázkov." },
+    "visionModel": { "label": "Model pre obrázky", "hint": "Model použitý pre správy s obrazovými prílohami (musí podporovať videnie). Prázdne = bežný model chatu." },
+    "sec_media": { "label": "Limity médií", "hint": "Limity prichádzajúcich/odchádzajúcich obrázkov a doba otvorenia čakajúcej otázky." },
+    "maxImageBytes": { "label": "Max. veľkosť prichádzajúceho obrázka", "hint": "Najväčšia obrazová príloha (v bajtoch), ktorú bot stiahne pre videnie." },
+    "maxImages": { "label": "Max. obrázkov na správu", "hint": "Koľko obrazových príloh z jednej prichádzajúcej správy bot odošle modelu pre videnie." },
+    "maxUploadImages": { "label": "Max. obrázkov na odpoveď", "hint": "Koľko vygenerovaných obrázkov bot pripojí k jednej odchádzajúcej odpovedi." },
+    "askTimeoutMs": { "label": "Časový limit otázky (ms)", "hint": "Ako dlho zostáva karta s čakajúcou otázkou zodpovedateľná." },
+    "sec_roles": { "label": "Pravidlá rolí", "hint": "Mapujú odosielateľov v Teams na povolené projekty, prompt roly a nástroje, ktoré smie bot použiť." },
+    "rolePolicies": { "label": "Pravidlá rolí", "hint": "Vyhráva prvé zodpovedajúce pravidlo; odosielatelia bez pravidla sú ignorovaní. ID je Entra object ID odosielateľa (GUID), jeho UPN/e-mail, alebo celé ID konverzácie (povolí všetkým v danom chate)." }
+  }
+}

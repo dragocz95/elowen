@@ -14,7 +14,7 @@
     "toolMessageMode": { "label": "Rozložení zpráv nástrojů", "hint": "Jedna zpráva průběžně edituje; per-tool odešle zprávu za každé volání nástroje.", "options": { "single": "Jedna živá zpráva", "per_tool": "Zpráva za každý nástroj" } },
     "runtimeFooter": { "label": "Řádek s běhovými údaji", "hint": "Připojí pod finální odpověď malý řádek „model · kontext %“." },
     "showReasoning": { "label": "Zobrazit uvažování", "hint": "Streamovat uvažování modelu do průběžné zprávy (modely s rozšířeným myšlením). Ve výchozím stavu vypnuto — obvykle jde o šum." },
-    "language": { "label": "Jazyk služebních zpráv", "hint": "Jazyk vlastních zpráv bota (chyby, odpovědi příkazů). Samotný agent odpovídá jazykem uživatele.", "options": { "en": "Angličtina", "cs": "Čeština" } },
+    "language": { "label": "Jazyk služebních zpráv", "hint": "Jazyk vlastních zpráv bota (chyby, odpovědi příkazů). Samotný agent odpovídá jazykem uživatele.", "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenština" } },
     "sec_conversation": { "label": "Konverzace", "hint": "Směrování obrázků." },
     "visionModel": { "label": "Model pro obrázky", "hint": "Model použitý pro zprávy s obrazovými přílohami (musí podporovat vidění). Prázdné = běžný model chatu." },
     "sec_media": { "label": "Limity médií", "hint": "Limity příchozích/odchozích obrázků a doba otevření čekající otázky." },

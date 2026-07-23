@@ -75,8 +75,8 @@
     },
     "language": {
       "label": "Jazyk služebních zpráv",
-      "hint": "Jazyk vlastních zpráv bota (/new, /model, zástupné texty): en (výchozí) nebo cs.",
-      "options": { "en": "Angličtina", "cs": "Čeština" }
+      "hint": "Jazyk vlastních zpráv bota (/new, /model, zástupné texty): en (výchozí), cs nebo sk.",
+      "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenština" }
     },
     "visionModel": {
       "label": "Model pro obrázky",

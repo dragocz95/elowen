@@ -66,7 +66,7 @@ export class MsTeamsAdapter {
     this.pendingAsks = new Map();    // token → { id, conversationId, activityId, questions, askerId, selected, createdAt }
     this.pendingPickers = new Map(); // conversationId → { kind, options, activityId, page, senderId, createdAt, sessions? }
     this.askSeq = 0;
-    this.msg = MESSAGES[cfg.language === 'cs' ? 'cs' : 'en'];
+    this.msg = MESSAGES[cfg.language] ?? MESSAGES.en; // service texts
   }
 
   listen(onMessage) { this.handler = onMessage; }
