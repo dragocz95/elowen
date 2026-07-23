@@ -28,13 +28,16 @@ describe('composeLabel', () => {
   it('localizes a file write with its target in en and cs', () => {
     expect(composeLabel('Write', 'readme.md', 'en')).toBe('Writing file readme.md…');
     expect(composeLabel('Write', 'readme.md', 'cs')).toBe('Píšu soubor readme.md…');
+    expect(composeLabel('Write', 'readme.md', 'sk')).toBe('Píšem súbor readme.md…');
   });
 
   it('localizes an edit and a command', () => {
     expect(composeLabel('Edit', 'a.ts', 'en')).toBe('Editing file a.ts…');
     expect(composeLabel('Edit', 'a.ts', 'cs')).toBe('Upravuji soubor a.ts…');
+    expect(composeLabel('Edit', 'a.ts', 'sk')).toBe('Upravujem súbor a.ts…');
     expect(composeLabel('Bash', 'npm test', 'en')).toBe('Running command npm test…');
     expect(composeLabel('Bash', 'npm test', 'cs')).toBe('Spouštím příkaz npm test…');
+    expect(composeLabel('Bash', 'npm test', 'sk')).toBe('Spúšťam príkaz npm test…');
   });
 
   it('reduces a WebFetch URL detail to its host', () => {
@@ -45,6 +48,7 @@ describe('composeLabel', () => {
   it('returns the name-only phrase when the detail has not streamed yet', () => {
     expect(composeLabel('Write', undefined, 'en')).toBe('Writing file…');
     expect(composeLabel('Write', '', 'cs')).toBe('Píšu soubor…');
+    expect(composeLabel('Write', undefined, 'sk')).toBe('Píšem súbor…');
     // Detail-less tools (Delegate, workflow, image) are always name-only.
     expect(composeLabel('Delegate', 'agent-0 do the thing', 'cs')).toBe('Spouštím sub-agenta…');
     expect(composeLabel('GenerateImage', undefined, 'cs')).toBe('Generuji obrázek…');
@@ -60,7 +64,7 @@ describe('composeLabel', () => {
   });
 
   it('keeps every label ≤4 words and ellipsis-terminated, clamping a long detail', () => {
-    for (const locale of ['en', 'cs'] as const) {
+    for (const locale of ['en', 'cs', 'sk'] as const) {
       wellFormed(composeLabel('Bash', 'git commit --amend --no-edit -m x', locale)!);
       wellFormed(composeLabel('WebSearch', 'how to do a very long query here', locale)!);
       wellFormed(composeLabel('Write', 'src/some/deeply/nested/very/long/path/module.ts', locale)!);

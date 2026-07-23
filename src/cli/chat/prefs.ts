@@ -32,11 +32,14 @@ export function loadPrefs(env: NodeJS.ProcessEnv = process.env): CliPrefs {
 }
 
 /** The effective CLI locale: the explicit `language` pref when set, else auto-detected from the POSIX
- *  locale environment (`LC_ALL` → `LC_MESSAGES` → `LANG`, a `cs*` value meaning Czech), else English. */
+ *  locale environment (`LC_ALL` → `LC_MESSAGES` → `LANG`, a `cs*`/`sk*` value meaning Czech/Slovak),
+ *  else English. */
 export function resolveLocale(prefs: CliPrefs, env: NodeJS.ProcessEnv = process.env): ComposeLocale {
-  if (prefs.language === 'cs' || prefs.language === 'en') return prefs.language;
+  if (prefs.language === 'cs' || prefs.language === 'en' || prefs.language === 'sk') return prefs.language;
   const raw = env.LC_ALL || env.LC_MESSAGES || env.LANG || '';
-  return /^cs\b|^cs[_.@-]/i.test(raw) ? 'cs' : 'en';
+  if (/^cs\b|^cs[_.@-]/i.test(raw)) return 'cs';
+  if (/^sk\b|^sk[_.@-]/i.test(raw)) return 'sk';
+  return 'en';
 }
 
 /** Merge `patch` into the stored prefs. Best-effort — a read-only config dir must not break the TUI. */

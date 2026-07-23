@@ -15,7 +15,7 @@
 
 /** The locales the composing label speaks. Also the persisted `CliPrefs.language` domain and the value
  *  threaded to the renderer, so it is defined once here and imported where the locale is carried. */
-export type ComposeLocale = 'en' | 'cs';
+export type ComposeLocale = 'en' | 'cs' | 'sk';
 
 interface LocalePhrase {
   /** The label with the (already reduced + clamped) detail slotted in. Ends with `…`. */
@@ -29,6 +29,7 @@ interface Phrase {
   readonly reduce?: (detail: string) => string;
   readonly en: LocalePhrase;
   readonly cs: LocalePhrase;
+  readonly sk: LocalePhrase;
 }
 
 /** At most this many whitespace-separated words survive from the streamed detail, so a phrase whose fixed
@@ -67,46 +68,60 @@ function clampDetail(detail: string): string {
 const LONG_TOOLS: Readonly<Record<string, Phrase>> = {
   Write: { reduce: fileOf,
     en: { withDetail: (d) => `Writing file ${d}…`, nameOnly: 'Writing file…' },
-    cs: { withDetail: (d) => `Píšu soubor ${d}…`, nameOnly: 'Píšu soubor…' } },
+    cs: { withDetail: (d) => `Píšu soubor ${d}…`, nameOnly: 'Píšu soubor…' },
+    sk: { withDetail: (d) => `Píšem súbor ${d}…`, nameOnly: 'Píšem súbor…' } },
   Edit: { reduce: fileOf,
     en: { withDetail: (d) => `Editing file ${d}…`, nameOnly: 'Editing file…' },
-    cs: { withDetail: (d) => `Upravuji soubor ${d}…`, nameOnly: 'Upravuji soubor…' } },
+    cs: { withDetail: (d) => `Upravuji soubor ${d}…`, nameOnly: 'Upravuji soubor…' },
+    sk: { withDetail: (d) => `Upravujem súbor ${d}…`, nameOnly: 'Upravujem súbor…' } },
   Bash: {
     en: { withDetail: (d) => `Running command ${d}…`, nameOnly: 'Running command…' },
-    cs: { withDetail: (d) => `Spouštím příkaz ${d}…`, nameOnly: 'Spouštím příkaz…' } },
+    cs: { withDetail: (d) => `Spouštím příkaz ${d}…`, nameOnly: 'Spouštím příkaz…' },
+    sk: { withDetail: (d) => `Spúšťam príkaz ${d}…`, nameOnly: 'Spúšťam príkaz…' } },
   Delegate: {
     en: { withDetail: () => 'Starting sub-agent…', nameOnly: 'Starting sub-agent…' },
-    cs: { withDetail: () => 'Spouštím sub-agenta…', nameOnly: 'Spouštím sub-agenta…' } },
+    cs: { withDetail: () => 'Spouštím sub-agenta…', nameOnly: 'Spouštím sub-agenta…' },
+    sk: { withDetail: () => 'Spúšťam sub-agenta…', nameOnly: 'Spúšťam sub-agenta…' } },
   WorkflowStart: {
     en: { withDetail: () => 'Starting workflow…', nameOnly: 'Starting workflow…' },
-    cs: { withDetail: () => 'Spouštím workflow…', nameOnly: 'Spouštím workflow…' } },
+    cs: { withDetail: () => 'Spouštím workflow…', nameOnly: 'Spouštím workflow…' },
+    sk: { withDetail: () => 'Spúšťam workflow…', nameOnly: 'Spúšťam workflow…' } },
   WorkflowAddNodes: {
     en: { withDetail: () => 'Adding nodes…', nameOnly: 'Adding nodes…' },
-    cs: { withDetail: () => 'Přidávám uzly…', nameOnly: 'Přidávám uzly…' } },
+    cs: { withDetail: () => 'Přidávám uzly…', nameOnly: 'Přidávám uzly…' },
+    sk: { withDetail: () => 'Pridávam uzly…', nameOnly: 'Pridávam uzly…' } },
   CodebaseSearch: {
     en: { withDetail: (d) => `Searching codebase ${d}…`, nameOnly: 'Searching codebase…' },
-    cs: { withDetail: (d) => `Prohledávám kód ${d}…`, nameOnly: 'Prohledávám kód…' } },
+    cs: { withDetail: (d) => `Prohledávám kód ${d}…`, nameOnly: 'Prohledávám kód…' },
+    sk: { withDetail: (d) => `Prehľadávam kód ${d}…`, nameOnly: 'Prehľadávam kód…' } },
   CodebaseReindex: {
     en: { withDetail: () => 'Reindexing codebase…', nameOnly: 'Reindexing codebase…' },
-    cs: { withDetail: () => 'Přeindexovávám kód…', nameOnly: 'Přeindexovávám kód…' } },
+    cs: { withDetail: () => 'Přeindexovávám kód…', nameOnly: 'Přeindexovávám kód…' },
+    sk: { withDetail: () => 'Preindexovávam kód…', nameOnly: 'Preindexovávam kód…' } },
   GenerateImage: {
     en: { withDetail: () => 'Generating image…', nameOnly: 'Generating image…' },
-    cs: { withDetail: () => 'Generuji obrázek…', nameOnly: 'Generuji obrázek…' } },
+    cs: { withDetail: () => 'Generuji obrázek…', nameOnly: 'Generuji obrázek…' },
+    sk: { withDetail: () => 'Generujem obrázok…', nameOnly: 'Generujem obrázok…' } },
   EditImage: {
     en: { withDetail: () => 'Generating image…', nameOnly: 'Generating image…' },
-    cs: { withDetail: () => 'Generuji obrázek…', nameOnly: 'Generuji obrázek…' } },
+    cs: { withDetail: () => 'Generuji obrázek…', nameOnly: 'Generuji obrázek…' },
+    sk: { withDetail: () => 'Generujem obrázok…', nameOnly: 'Generujem obrázok…' } },
   CreateSkill: { reduce: fileOf,
     en: { withDetail: (d) => `Creating skill ${d}…`, nameOnly: 'Creating skill…' },
-    cs: { withDetail: (d) => `Vytvářím dovednost ${d}…`, nameOnly: 'Vytvářím dovednost…' } },
+    cs: { withDetail: (d) => `Vytvářím dovednost ${d}…`, nameOnly: 'Vytvářím dovednost…' },
+    sk: { withDetail: (d) => `Vytváram zručnosť ${d}…`, nameOnly: 'Vytváram zručnosť…' } },
   ScanCode: { reduce: fileOf,
     en: { withDetail: (d) => `Scanning code ${d}…`, nameOnly: 'Scanning code…' },
-    cs: { withDetail: (d) => `Kontroluji kód ${d}…`, nameOnly: 'Kontroluji kód…' } },
+    cs: { withDetail: (d) => `Kontroluji kód ${d}…`, nameOnly: 'Kontroluji kód…' },
+    sk: { withDetail: (d) => `Kontrolujem kód ${d}…`, nameOnly: 'Kontrolujem kód…' } },
   WebFetch: { reduce: hostOf,
     en: { withDetail: (d) => `Fetching ${d}…`, nameOnly: 'Fetching…' },
-    cs: { withDetail: (d) => `Načítám ${d}…`, nameOnly: 'Načítám…' } },
+    cs: { withDetail: (d) => `Načítám ${d}…`, nameOnly: 'Načítám…' },
+    sk: { withDetail: (d) => `Načítavam ${d}…`, nameOnly: 'Načítavam…' } },
   WebSearch: {
     en: { withDetail: (d) => `Searching ${d}…`, nameOnly: 'Searching…' },
-    cs: { withDetail: (d) => `Hledám ${d}…`, nameOnly: 'Hledám…' } },
+    cs: { withDetail: (d) => `Hledám ${d}…`, nameOnly: 'Hledám…' },
+    sk: { withDetail: (d) => `Hľadám ${d}…`, nameOnly: 'Hľadám…' } },
 };
 
 /** The set of tool names that carry a localized composing label — the frame loop's gate for the shorter
