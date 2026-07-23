@@ -6,7 +6,7 @@ import { createWrapper } from '../../test-utils';
 beforeEach(() => localStorage.clear());
 
 describe('LanguageSwitcher', () => {
-  it('opens the menu and lists both languages', () => {
+  it('opens the menu and lists all languages', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><LanguageSwitcher /></Wrapper>);
 
@@ -15,6 +15,7 @@ describe('LanguageSwitcher', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('English')).toBeInTheDocument();
     expect(within(menu).getByText('Čeština')).toBeInTheDocument();
+    expect(within(menu).getByText('Slovenčina')).toBeInTheDocument();
   });
 
   it('selects a locale via setLocale, persists it and closes the menu', () => {

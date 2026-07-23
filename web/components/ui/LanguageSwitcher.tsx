@@ -8,6 +8,7 @@ import type { Locale } from '../../lib/i18n/dictionaries';
 const LANGS: { value: Locale; name: string }[] = [
   { value: 'en', name: 'English' },
   { value: 'cs', name: 'Čeština' },
+  { value: 'sk', name: 'Slovenčina' },
 ];
 
 /**

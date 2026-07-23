@@ -9,7 +9,7 @@ const DEFAULT_LOCALE: Locale = 'en';
 function getInitialLocale(): Locale {
   if (typeof window === 'undefined') return DEFAULT_LOCALE;
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'en' || stored === 'cs') return stored;
+  if (stored && stored in dictionaries) return stored as Locale;
   return DEFAULT_LOCALE;
 }
 
