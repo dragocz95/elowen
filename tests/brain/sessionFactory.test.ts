@@ -127,3 +127,50 @@ describe('BrainSessionFactory context-saving installers', () => {
     }
   });
 });
+
+describe('BrainSessionFactory deferred-tool wiring', () => {
+  async function createWithDeferral(deferred: Set<string>) {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-home-'));
+    vi.stubEnv('HOME', home);
+    const session = {
+      sessionId: 'sess-deferral',
+      agent: {} as Record<string, unknown>,
+      subscribe: () => () => {},
+      messages: [] as unknown[],
+      setActiveToolsByName: vi.fn(),
+    };
+    const createSession = vi.fn(async () => ({ session }));
+    const factory = new BrainSessionFactory({
+      store: new BrainStore(openDb(':memory:')),
+      createSession: createSession as never,
+      resourceLoaderFactory: () => undefined,
+    });
+    const tools = [{ name: 'Read' }, { name: 'ToolSearch' }, { name: 'mcp__gh__a' }, { name: 'mcp__gh__b' }];
+    const toolSearch = { deferred, activated: new Set<string>(), session: undefined };
+    await factory.create({
+      sessionId: session.sessionId, ownerUserId: 1,
+      runtime: undefined,
+      model: { id: 'test-model', provider: 'kimi-coding', contextWindow: 200_000 },
+      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools,
+      toolSearch,
+      autoCompact: false, autoCompactAtPct: 80,
+    } as never);
+    vi.unstubAllEnvs();
+    return { session, createSession, toolSearch };
+  }
+
+  it('keeps deferred tools in the PI allow-list and narrows only the ACTIVE slice after create', async () => {
+    // Regression: PI treats the create() `tools` option as allowedToolNames — a REGISTRY filter. Passing
+    // the active slice there dropped every deferred tool from the registry, so ToolSearch "matched
+    // nothing" even for names its own awareness block advertised, forever.
+    const { session, createSession } = await createWithDeferral(new Set(['mcp__gh__a', 'mcp__gh__b']));
+    const spec = (createSession.mock.calls[0] as unknown[])[0] as { tools: string[] };
+    expect(spec.tools).toEqual(['Read', 'ToolSearch', 'mcp__gh__a', 'mcp__gh__b']); // registry keeps ALL names
+    expect(session.setActiveToolsByName).toHaveBeenCalledWith(['Read', 'ToolSearch']); // prompt slice omits deferred
+  });
+
+  it('with nothing deferred it never touches the active set (byte-identical to before deferral existed)', async () => {
+    const { session } = await createWithDeferral(new Set());
+    expect(session.setActiveToolsByName).not.toHaveBeenCalled();
+  });
+});

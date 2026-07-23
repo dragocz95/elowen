@@ -283,10 +283,13 @@ export class BrainSessionFactory {
       resourceLoader,
       settingsManager,
       customTools: spec.tools,
-      // The registry is the FULL set (customTools); the INITIAL active slice omits deferred tools so their
-      // schemas stay out of the prompt until ToolSearch fetches them. They remain in the registry, so
-      // setActiveToolsByName can add them back. No deferral → every tool starts active, exactly as before.
-      tools: initialActiveToolNames(spec.tools, spec.toolSearch?.deferred),
+      // PI treats `tools` as the session's ALLOWED tool names — a hard REGISTRY filter, not merely the
+      // initial active slice (sdk: `allowedToolNames = options.tools`). Deferred tools must therefore
+      // stay in this list: omitting them here drops them from the registry entirely, getAllTools() stops
+      // returning them, and ToolSearch can never fetch or activate them again ("matched nothing" for
+      // names its own awareness block advertised). The deferred slice is applied AFTER create via
+      // setActiveToolsByName, which narrows only the ACTIVE set and leaves the registry whole.
+      tools: spec.tools.map((t) => t.name),
       noTools: 'builtin',
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
@@ -301,6 +304,13 @@ export class BrainSessionFactory {
     // switch, LRU revival, restart) does not forget tools the model already fetched — the next visibility
     // pass turns them back on.
     if (spec.toolSearch) {
+      // Withhold the deferred tools from the INITIAL active slice (their schemas stay out of the prompt
+      // until fetched). Done here — not via the create() `tools` option — because that option is PI's
+      // registry allow-list; this call narrows only the active set. The per-turn visibility pass then
+      // keeps already-fetched tools advertised and withheld ones hidden.
+      if (spec.toolSearch.deferred.size > 0) {
+        session.setActiveToolsByName(initialActiveToolNames(spec.tools, spec.toolSearch.deferred));
+      }
       spec.toolSearch.session = session;
       seedActivatedFromHistory(spec.toolSearch, session.messages);
     }
