@@ -530,14 +530,22 @@ html[data-effects='full'] .cosmos[data-mode='orbit'] .cosmos-pod:hover .cosmos-p
 .hero-cosmos__pods { position: absolute; inset: 0; }
 .hero-cosmos__pod { position: absolute; translate: -50% -50%; display: flex; align-items: flex-start; gap: 0.6rem; width: 11.5rem; padding: 0.55rem 0.6rem; border-radius: 1rem; transition: transform var(--motion-base) var(--ease-out); }
 .hero-cosmos__pod:hover, .hero-cosmos__pod:focus-visible { transform: translateY(-3px); }
-.hero-cosmos__orb { display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid rgb(255 82 54 / 0.32); background: radial-gradient(circle at 38% 32%, rgb(255 82 54 / 0.06), #060606 70%); color: var(--color-text-muted); box-shadow: 0 0 0 4px #040404, 0 0 14px rgb(255 82 54 / 0.18); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
-.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { border-color: rgb(255 82 54 / 0.75); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, 0 0 24px rgb(255 82 54 / 0.45); }
+/* The hero orb wears the same ember pill as the section rail and the constellation pods — one design
+   language across every orbital surface. `isolation` keeps the negative-z dots above the orb's own
+   background. */
+.hero-cosmos__orb { position: relative; isolation: isolate; display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.14), #050505 68%); color: var(--color-accent); box-shadow: 0 0 0 4px #040404, var(--glow-active), inset 0 0 14px rgb(255 82 54 / 0.08); transition: border-color var(--motion-base) var(--ease-out), color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out); }
+.hero-cosmos__orb::before { content: ''; position: absolute; inset: -1rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(255 82 54 / 0.28), rgb(255 82 54 / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.hero-cosmos__orb::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(255 82 54 / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(255 82 54 / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
+html[data-effects='full'] .hero-cosmos__orb::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; animation-delay: calc(var(--i, 0) * -0.45s); }
+.hero-cosmos__pod:hover .hero-cosmos__orb, .hero-cosmos__pod:focus-visible .hero-cosmos__orb { box-shadow: 0 0 0 4px #040404, var(--glow-active), 0 0 30px rgb(255 82 54 / 0.4), inset 0 0 14px rgb(255 82 54 / 0.12); }
 .hero-cosmos__body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 0.1rem; }
 .hero-cosmos__label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); }
 .hero-cosmos__value { min-width: 3ch; font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text); }
 .hero-cosmos__detail { overflow: hidden; font-size: 11px; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 /* alert tone: unresolved decisions, and the needs_input filament matching the presence aura */
-.hero-cosmos__pod--alert .hero-cosmos__orb { border-color: rgb(245 158 11 / 0.5); color: var(--color-warning); }
+.hero-cosmos__pod--alert .hero-cosmos__orb { border-color: rgb(245 158 11 / 0.6); color: var(--color-warning); background: radial-gradient(circle, rgb(245 158 11 / 0.13), #050505 68%); box-shadow: 0 0 0 4px #040404, 0 0 0 1px rgb(245 158 11 / 0.3), 0 0 24px rgb(245 158 11 / 0.2), 0 0 64px rgb(245 158 11 / 0.1), inset 0 0 14px rgb(245 158 11 / 0.08); }
+.hero-cosmos__pod--alert .hero-cosmos__orb::before { background: radial-gradient(ellipse at 50% 66%, rgb(245 158 11 / 0.26), rgb(245 158 11 / 0.07) 34%, transparent 69%); }
+.hero-cosmos__pod--alert .hero-cosmos__orb::after { background: var(--color-warning); box-shadow: -1.15rem -0.15rem 0 rgb(245 158 11 / 0.55), 1.25rem 0.35rem 0 rgb(252 211 77 / 0.45), -0.45rem -1.22rem 0 rgb(245 158 11 / 0.48), 0.65rem -1.05rem 0 rgb(252 211 77 / 0.4); }
 .hero-cosmos__pod--alert .hero-cosmos__value { color: var(--color-warning); }
 .cosmos-fil--base.hero-fil--alert { stroke: rgb(245 158 11 / 0.5); }
 .cosmos-fil--flow.hero-fil--alert { stroke: rgb(245 158 11 / 0.9); }
