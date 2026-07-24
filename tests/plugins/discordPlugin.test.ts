@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +6,8 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('discord plugin', () => {
   it('registers no platform without a botToken (warns instead of crashing)', async () => {
@@ -1288,7 +1290,7 @@ describe('discord configurable media/timeout limits', () => {
   };
 
   it('maxImages unset reproduces the default cap (4): a 5th image attachment falls over it', async () => {
-    global.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })));
     const adapter = await mkAdapter();
     let seen: { src: Record<string, unknown> } | undefined;
     adapter.listen(async (src) => { seen = { src }; return undefined; });
@@ -1302,7 +1304,7 @@ describe('discord configurable media/timeout limits', () => {
   });
 
   it('a configured maxImages overrides the default, capping how many attachments become vision images', async () => {
-    global.fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })));
     const adapter = await mkAdapter({ maxImages: 2 });
     let seen: { src: Record<string, unknown> } | undefined;
     adapter.listen(async (src) => { seen = { src }; return undefined; });

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FakeInference, RelayClient } from '../../src/inference/client.js';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => vi.unstubAllGlobals());
 
 describe('FakeInference', () => {
   it('returns the scripted decision', async () => {
@@ -13,7 +13,7 @@ describe('FakeInference', () => {
 describe('RelayClient', () => {
   it('posts to /v1/chat/completions and returns the message content', async () => {
     let calledUrl = '';
-    global.fetch = vi.fn(async (url: any) => { calledUrl = String(url); return new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), { status: 200 }); }) as any;
+    vi.stubGlobal('fetch', vi.fn(async (url: any) => { calledUrl = String(url); return new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), { status: 200 }); }));
     const c = new RelayClient({ baseUrl: 'https://relay.example/v1', apiKey: 'k', model: 'm' });
     expect((await c.decide('q')).text).toBe('hi');
     // Trailing /v1 is normalized — no double /v1, exactly one /v1/chat/completions.
@@ -22,10 +22,10 @@ describe('RelayClient', () => {
 
   it('sends the Elowen app-identity headers (X-OpenRouter-Title/X-Title + HTTP-Referer) so relays show "Elowen", not "unknown"', async () => {
     let sentHeaders: Record<string, string> = {};
-    global.fetch = vi.fn(async (_url: any, init: any) => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
       sentHeaders = init.headers as Record<string, string>;
       return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
-    }) as any;
+    }));
     const c = new RelayClient({ baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k', model: 'm' });
     await c.decide('q');
     expect(sentHeaders['x-openrouter-title']).toBe('Elowen');
@@ -35,13 +35,13 @@ describe('RelayClient', () => {
   });
 
   it('throws a clear error on a 200 non-JSON (proxy HTML) response instead of a raw SyntaxError', async () => {
-    global.fetch = vi.fn(async () => new Response('<html>502</html>', { status: 200, headers: { 'content-type': 'text/html' } })) as any;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>502</html>', { status: 200, headers: { 'content-type': 'text/html' } })));
     const c = new RelayClient({ baseUrl: 'https://relay.example', apiKey: 'k', model: 'm' });
     await expect(c.decide('q')).rejects.toThrow(/non-JSON/);
   });
 
   it('throws on a non-ok status', async () => {
-    global.fetch = vi.fn(async () => new Response('nope', { status: 500 })) as any;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
     const c = new RelayClient({ baseUrl: 'https://relay.example', apiKey: 'k', model: 'm' });
     await expect(c.decide('q')).rejects.toThrow(/relay HTTP 500/);
   });
