@@ -453,7 +453,10 @@ export function collectMetadata(repo, cli, tmuxName, env = process.env) {
   return {
     generatedAt: new Date().toISOString(),
     commit,
-    branch: command('git', ['branch', '--show-current']),
+    // A PR checkout (actions/checkout, dependabot, forks) is a detached HEAD, where --show-current is
+    // empty — the identity contract wants a non-empty label, and the commit hash above already pins the
+    // exact code, so a placeholder loses nothing.
+    branch: command('git', ['branch', '--show-current']) || '(detached HEAD)',
     node: process.version,
     tmux: command('tmux', ['-V']),
     tmuxServer: tmuxName,
