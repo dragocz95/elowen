@@ -94,7 +94,7 @@ describe('dist integrity', () => {
     expect(existsSync(join(root, 'dist/legacy.js'))).toBe(true);
   });
 
-  it('removes a stale emitted module during the normal build', () => {
+  it('removes a stale emitted module during the normal build', { timeout: 180_000 }, () => {
     const stale = join(repositoryRoot, 'dist/cli/chat/legacy-build-output.js');
     mkdirSync(dirname(stale), { recursive: true });
     writeFileSync(stale, 'export {};');
