@@ -68,16 +68,14 @@ function normalizeKimiUsage(value: unknown, fetchedAt: number): ProviderUsage | 
   return { provider: PROVIDER_ID, planType, windows, fetchedAt, stale: false };
 }
 
-/** Usage source for the connected Kimi For Coding OAuth account. Kimi keeps one device id across token
- *  refreshes, so that id is the stable cache key (one login per daemon). */
+/** Usage source for the connected Kimi For Coding OAuth account. PI's credential carries no account or
+ *  device id to key on — one Kimi login per daemon — so the provider id is the cache key, and a missing
+ *  OAuth credential is what makes the rail absent rather than empty. */
 export const kimiUsageSource: UsageSource = {
   provider: PROVIDER_ID,
   authKey: PROVIDER_ID,
   cacheKey(auth: UsageAuth): string | null {
-    const credential = auth.get(PROVIDER_ID);
-    if (credential?.type !== 'oauth') return null;
-    const id = (credential as { deviceId?: unknown }).deviceId;
-    return typeof id === 'string' && id.trim() ? id.trim() : PROVIDER_ID;
+    return auth.get(PROVIDER_ID)?.type === 'oauth' ? PROVIDER_ID : null;
   },
   request(accessToken: string) {
     return {

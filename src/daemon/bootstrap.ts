@@ -65,7 +65,7 @@ import { lspManager } from '../brain/tools/lspTools.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
-import type { BrainCredentialAccess } from '../brain/providerUsage.js';
+import { bearerFromAuth, type BrainCredentialAccess } from '../brain/providerUsage.js';
 import { BrainStore } from '../store/brainStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
@@ -550,7 +550,7 @@ export async function buildApp(opts: BuildOpts) {
   // resolution (with refresh) goes through the runtime. Both no-op safely for an in-memory `:memory:` store.
   const brainCreds: BrainCredentialAccess = {
     get: (provider) => (brainAuthPath ? readStoredCredential(provider, brainAuthPath) : undefined),
-    getApiKey: async (provider) => (await brainRuntime.getAuth(provider))?.auth.apiKey,
+    getApiKey: async (provider) => bearerFromAuth((await brainRuntime.getAuth(provider))?.auth),
   };
   const brainOauth = new BrainOAuthManager(brainRuntime, brainCreds);
   // Live provider resolver: adding a provider / connecting an account in Settings applies to the next

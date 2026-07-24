@@ -33,6 +33,23 @@ export interface BrainCredentialAccess {
 
 export type UsageAuth = BrainCredentialAccess;
 
+/**
+ * The bearer token out of whichever shape PI resolved a provider's auth into.
+ *
+ * PI hands some OAuth providers back an `apiKey` (Anthropic, OpenAI Codex) and others a ready-made
+ * `Authorization` header — Kimi Code does the latter, since PI 0.82.0 took that flow over from Elowen.
+ * Callers here want the token itself (the usage pollers build their own request around it), so reading
+ * `apiKey` alone silently returns undefined for a perfectly healthy account and drops its usage rail.
+ */
+export function bearerFromAuth(
+  auth: { apiKey?: string; headers?: Record<string, string | null> } | undefined,
+): string | undefined {
+  if (auth?.apiKey) return auth.apiKey;
+  // PI's header record allows a null value (a header it deliberately suppresses), so narrow before use.
+  const header = auth?.headers?.['Authorization'] ?? auth?.headers?.['authorization'];
+  return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+}
+
 /** A per-provider adapter: how to key the cache, build the request, and parse the response. The generic
  *  {@link UsageService} owns everything else — TTL cache, single-flight, timeout, and stale-on-error. */
 export interface UsageSource {

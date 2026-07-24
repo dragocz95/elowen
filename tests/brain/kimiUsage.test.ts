@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UsageService, type UsageAuth } from '../../src/brain/providerUsage.js';
+import { UsageService, bearerFromAuth, type UsageAuth } from '../../src/brain/providerUsage.js';
 import { kimiUsageSource } from '../../src/brain/kimiUsage.js';
 
 const service = (deps: { auth: UsageAuth; fetchImpl?: typeof fetch; now?: () => number }) =>
   new UsageService(kimiUsageSource, deps.auth, { fetchImpl: deps.fetchImpl, now: deps.now });
 
 // Hand-rolled auth: AuthStorage.inMemory has no getApiKey path for the kimi-coding provider, so drive the
-// token directly. The credential carries `deviceId` the way Kimi round-trips it.
-const oauth = (deviceId = 'device-1', access = 'kimi-secret'): UsageAuth => ({
-  get: () => ({ type: 'oauth' as const, access, refresh: 'refresh-secret', expires: Date.now() + 3_600_000, deviceId }) as ReturnType<UsageAuth['get']>,
+// token directly.
+const oauth = (access = 'kimi-secret'): UsageAuth => ({
+  get: () => ({ type: 'oauth' as const, access, refresh: 'refresh-secret', expires: Date.now() + 3_600_000 }) as ReturnType<UsageAuth['get']>,
   getApiKey: async () => access,
 });
 
@@ -92,7 +92,7 @@ describe('kimiUsageSource via UsageService', () => {
     expect(usage?.windows[1]?.windowMinutes).toBe(10_080);
   });
 
-  it('caches by device id across refreshes and marks a transient failure stale', async () => {
+  it('caches across refreshes and marks a transient failure stale', async () => {
     let now = 100;
     const fetchImpl = vi.fn(async () => json(body())) as unknown as typeof fetch;
     const svc = service({ auth: oauth(), fetchImpl, now: () => now });
@@ -103,5 +103,30 @@ describe('kimiUsageSource via UsageService', () => {
     now += 60_001;
     vi.mocked(fetchImpl).mockResolvedValueOnce(new Response('', { status: 503 }));
     await expect(svc.getUsage()).resolves.toEqual({ ...fresh, stale: true });
+  });
+
+  // Regression: PI 0.82.0 took the Kimi OAuth flow over from Elowen and resolves it to an `Authorization`
+  // header instead of the `apiKey` every other connected account yields. The daemon read `auth.apiKey`
+  // alone, so a perfectly healthy Kimi login produced no token, `getUsage` bailed at the `!accessToken`
+  // guard, and the account's usage rail silently disappeared from Settings while Codex/Anthropic stayed.
+  describe('bearerFromAuth', () => {
+    it('unwraps the header form PI resolves Kimi Code to', () => {
+      expect(bearerFromAuth({ headers: { Authorization: 'Bearer kimi-secret' } })).toBe('kimi-secret');
+      expect(bearerFromAuth({ headers: { authorization: 'Bearer kimi-secret' } })).toBe('kimi-secret');
+    });
+
+    it('keeps returning the apiKey the other providers resolve to', () => {
+      expect(bearerFromAuth({ apiKey: 'sk-ant' })).toBe('sk-ant');
+      // apiKey wins when both are present — it is the shape the provider natively reports.
+      expect(bearerFromAuth({ apiKey: 'sk-ant', headers: { Authorization: 'Bearer other' } })).toBe('sk-ant');
+    });
+
+    it('yields undefined for anything that is not a bearer, so a rail is absent rather than wrong', () => {
+      expect(bearerFromAuth(undefined)).toBeUndefined();
+      expect(bearerFromAuth({})).toBeUndefined();
+      expect(bearerFromAuth({ headers: { Authorization: 'Basic abc' } })).toBeUndefined();
+      // PI's header record permits a suppressed (null) value.
+      expect(bearerFromAuth({ headers: { Authorization: null } })).toBeUndefined();
+    });
   });
 });
