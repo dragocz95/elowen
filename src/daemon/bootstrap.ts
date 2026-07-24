@@ -77,7 +77,6 @@ import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromElowen } from '../brain/config.js';
 import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
-import { registerKimiOAuth } from '../brain/providers.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
@@ -553,10 +552,6 @@ export async function buildApp(opts: BuildOpts) {
     get: (provider) => (brainAuthPath ? readStoredCredential(provider, brainAuthPath) : undefined),
     getApiKey: async (provider) => (await brainRuntime.getAuth(provider))?.auth.apiKey,
   };
-  // Kimi is not one of PI's import-time built-ins, so it has to be registered on the runtime before a
-  // sign-in can arrive — see registerKimiOAuth. Must stay ahead of BrainOAuthManager, which serves
-  // /brain/oauth/* over this same runtime.
-  registerKimiOAuth(brainRuntime);
   const brainOauth = new BrainOAuthManager(brainRuntime, brainCreds);
   // Live provider resolver: adding a provider / connecting an account in Settings applies to the next
   // brain start without a daemon restart.

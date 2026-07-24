@@ -1,11 +1,10 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import { ModelRegistry, type ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime } from '../../src/brain/providers.js';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime, OAUTH_BUILTIN } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities, qwenThinkingWire } from '../../src/brain/modelCapabilities.js';
-import { KIMI_CLI_VERSION } from '../../src/brain/kimiOAuth.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
-// A fresh runtime per test: buildBrainRegistry re-registers the kimi-coding provider, and that copy-forward
+// A fresh runtime per test: buildBrainRegistry re-registers the openai-codex provider, and that copy-forward
 // reads the provider's live descriptors — running it twice over one runtime would copy the already-consumed
 // (header-nulled) descriptors, so each test needs its own credential-less runtime, as the old per-test
 // in-memory registries gave.
@@ -376,62 +375,52 @@ describe('brain providers', () => {
   describe('Kimi Code (kimi-coding)', () => {
     const empty: BrainRuntimeConfig = { providers: [] };
 
-    it('attaches the Kimi OAuth provider onto the runtime a login reads from', async () => {
-      // PI 0.80.8 dropped AuthStorage; the ModelRuntime is now the single registry a login reads. PI 0.82.0
-      // added its own Kimi OAuth, so the assertion is no longer "absent → present" but "PI's → ours":
-      // buildBrainRegistry must still land ELOWEN's flow where sign-in looks for it, so
-      // `/brain/oauth/kimi/start` keeps driving the client id every stored credential was issued against.
+    // Elowen owns no Kimi code since PI 0.82.0: PI ships the provider's OAuth, catalog, baseUrl and
+    // per-model User-Agent, and `OAUTH_BUILTIN` simply points `oauth-kimi` at it. These assert what that
+    // mapping DEPENDS on, so a PI release that drops any of it fails here instead of at a user's sign-in.
+
+    it('is loginable straight off a bare runtime — no registration of ours in between', async () => {
+      // `/brain/oauth/:type/start` drives `runtime.login` directly and nothing builds a registry first, so
+      // on a fresh install the provider must already carry OAuth or the first sign-in dies with
+      // "Unknown OAuth provider: kimi-coding". Elowen used to attach that itself; PI now ships it.
       const freshRuntime = await inMemoryModelRuntime();
-      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi Code (subscription)');
-      buildBrainRegistry(empty, freshRuntime);
-      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi');
+      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth).toBeDefined();
+      expect(OAUTH_BUILTIN['oauth-kimi']).toBe('kimi-coding');
     });
 
-
-    it("keeps PI's built-in models", () => {
-      // registerProvider replaces a provider's model list wholesale, so the builtins are only still here
-      // because we copy them forward. PI 0.82.0 reshuffled the catalog (k2p7/kimi-k2-thinking out,
-      // k3/kimi-for-coding-highspeed in), which is exactly why this asserts against PI's live list rather
-      // than a hardcoded one — a hardcoded list only ever re-tests the fixture we wrote it from.
-      const builtins = new ModelRegistry(runtime).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
-      expect(builtins.length).toBeGreaterThan(0);
-      const ids = buildBrainRegistry(empty, runtime).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
-      expect(ids).toEqual(expect.arrayContaining(builtins));
+    it('serves a catalog on the coding endpoint, k3 included', () => {
+      // The subscription endpoint, NOT the generic Moonshot API: a wrong baseUrl 404s every request.
+      const models = buildBrainRegistry(empty, runtime).getAll().filter((m) => m.provider === 'kimi-coding');
+      expect(models.map((m) => m.id)).toContain('k3');
+      for (const model of models) expect(model.baseUrl).toBe('https://api.kimi.com/coding');
     });
 
-    it("keeps Kimi's per-model User-Agent on the wire for every copied model", async () => {
-      // Asserted on the resolved request headers, NOT on `model.headers`: registerProvider moves them into
-      // a side store and nulls the descriptor field, so a test reading the descriptor would pass while the
-      // header silently vanished from every request.
+    it("keeps Kimi's per-model User-Agent on the wire", async () => {
+      // Asserted on the resolved request headers, NOT on `model.headers`: registration moves them into a
+      // side store and nulls the descriptor field, so a test reading the descriptor would pass while the
+      // header silently vanished from every request. Kimi's endpoint rejects requests without it.
       //
-      // Every model in the catalog is checked rather than a sample: they are copied in one loop, but the
-      // headers are resolved per model, so a single one silently losing its User-Agent stays green
-      // otherwise. Kimi's API rejects requests without it.
+      // The shape is matched rather than a pinned version, so a PI bump to KimiCLI/1.6 stays green while
+      // the header going missing — the failure that actually breaks chat — still fails. Every model is
+      // checked because headers resolve per model, so one losing it would otherwise hide behind the rest.
       const reg = buildBrainRegistry(empty, runtime);
-      const wireAgent = async (id: string) => {
-        const model = reg.getAll().find((m) => m.provider === 'kimi-coding' && m.id === id);
+      const models = reg.getAll().filter((m) => m.provider === 'kimi-coding');
+      expect(models.length).toBeGreaterThan(0);
+      for (const model of models) {
         const resolved = await (reg as unknown as {
           getApiKeyAndHeaders(m: unknown): Promise<{ headers?: Record<string, string> }>;
         }).getApiKeyAndHeaders(model);
-        return resolved.headers?.['User-Agent'];
-      };
-      const ids = reg.getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
-      expect(ids).toContain('k3');
-      for (const id of ids) expect(await wireAgent(id)).toBe(`KimiCLI/${KIMI_CLI_VERSION}`);
+        expect(resolved.headers?.['User-Agent']).toMatch(/^KimiCLI\/\d/);
+      }
     });
 
-    it('knows k3 reasons and offers exactly the efforts PI documents', () => {
-      // K3 always thinks; registerKimiCatalog copies PI's NATIVE k3 descriptor forward (Elowen no longer
-      // imposes its own effort grading). PI 0.80.10 graded a single usable effort (`max`); 0.82.0 widened
-      // it to low/high/max. The copy is what this guards, so it asserts the map is carried over
-      // byte-for-byte from the live descriptor — a hardcoded map would just re-test the fixture, and
-      // dropping the assertion would let k3 silently degrade to a non-reasoning model.
-      const builtin = new ModelRegistry(runtime).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
-      expect(builtin?.reasoning).toBe(true);
-      expect(builtin?.thinkingLevelMap?.max).toBe('max');
+    it('reads k3 as a reasoning model', () => {
+      // K3 always thinks. Elowen no longer grades its efforts (PI 0.80.10 documented `max` alone, 0.82.0
+      // widened it to low/high/max), so only the property the model picker depends on is asserted: k3 must
+      // not silently degrade into a non-reasoning model offering no thinking level at all.
       const model = buildBrainRegistry(empty, runtime).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
       expect(model?.reasoning).toBe(true);
-      expect(model?.thinkingLevelMap).toEqual(builtin?.thinkingLevelMap);
+      expect(model?.thinkingLevelMap?.max).toBe('max');
     });
   });
 
