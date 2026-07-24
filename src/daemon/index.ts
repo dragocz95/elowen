@@ -1,5 +1,5 @@
-import { serve } from '@hono/node-server';
-import { createNodeWebSocket } from '@hono/node-ws';
+import { serve, upgradeWebSocket } from '@hono/node-server';
+import { WebSocketServer } from 'ws';
 import { buildApp } from './bootstrap.js';
 import { terminalWsHandler } from '../terminal/wsHandler.js';
 import { loadPty } from '../terminal/ptyLoader.js';
@@ -45,8 +45,8 @@ const { app, startLoops, tickets, tmux } = built;
 
 // Real-PTY terminal stream: the browser opens wss://…/ws/terminal?ticket=… straight at the daemon
 // (nginx proxies /ws/ here), the handler redeems the single-use ticket and bridges a tmux-attached PTY
-// to the socket. node-ws must inject into the same http server `serve()` returns, below.
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+// to the socket. The upgrade is handled by node-server itself (v2 built-in WS): the `ws` server below
+// is passed to `serve()` as `websocket.server` and must stay `noServer` — node-server owns the upgrade.
 app.get('/ws/terminal', upgradeWebSocket(terminalWsHandler({
   tickets,
   loadPty,
@@ -60,9 +60,12 @@ startLoops();
 // must not be publicly reachable. Front it with the web app's BFF proxy (or a reverse proxy). Set
 // ELOWEN_HOST=0.0.0.0 to expose it deliberately (e.g. web app on a separate host).
 const host = (process.env.ELOWEN_HOST) ?? '127.0.0.1';
-const server = serve({ fetch: app.fetch, port: Number((process.env.ELOWEN_PORT) ?? 4400), hostname: host }, info => log.info(`elowen serve on ${host}:${info.port} — logs → ${LOG_DIR}`));
-// Attach the WebSocket upgrade listener to the same server (node-ws needs the raw http.Server).
-injectWebSocket(server);
+const server = serve({
+  fetch: app.fetch,
+  port: Number((process.env.ELOWEN_PORT) ?? 4400),
+  hostname: host,
+  websocket: { server: new WebSocketServer({ noServer: true }) },
+}, info => log.info(`elowen serve on ${host}:${info.port} — logs → ${LOG_DIR}`));
 // Without an error handler an EADDRINUSE (zombie daemon still holding the port) crashes with a bare
 // stack trace; give it a clear exit message instead.
 server.on('error', (e: NodeJS.ErrnoException) => {

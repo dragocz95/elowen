@@ -11,7 +11,7 @@
 //   2) SSE STREAM LIFECYCLE — GET /brain/stream against a fully-wired daemon (spawnRealDaemon + a scripted
 //      model server): authed open delivers frames and idles, an UNAUTHED open is rejected, and a client
 //      disconnect closes cleanly with no hang.
-//   3) WEBSOCKET CHANNEL — GET /ws/terminal (the @hono/node-ws upgrade). It is public in isPublic; its
+//   3) WEBSOCKET CHANNEL — GET /ws/terminal (the @hono/node-server WS upgrade). It is public in isPublic; its
 //      capability is the single-use ticket minted by the AUTHED POST /sessions/:name/ws-ticket. Asserts
 //      the ticket gate: no/garbage ticket is rejected (close 4001 'ticket'), the mint endpoint itself is
 //      Bearer-gated, and a valid ticket passes the gate.

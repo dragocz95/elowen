@@ -1,7 +1,7 @@
 import type { PtySession } from './ptySession.js';
 
 /** Minimal WebSocket surface the bridge needs — keeps the bridge testable and decoupled from the
- *  concrete @hono/node-ws connection object. */
+ *  concrete @hono/node-server WebSocket connection object. */
 export interface WsLike {
   send(data: string): void;
   close(): void;
