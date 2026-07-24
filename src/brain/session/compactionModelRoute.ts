@@ -40,8 +40,8 @@ export function createCompactionModelRoute(
       const agent = session.agent;
       if (installed.has(agent)) return;
       installed.add(agent);
-      const nativeStream = agent.streamFn;
-      agent.streamFn = (model, context, options) => {
+      const nativeStream = agent.streamFunction;
+      agent.streamFunction = (model, context, options) => {
         const signal = options?.signal;
         const isNativeCompaction = signal !== undefined && compactionSignals.has(signal);
         if (!isNativeCompaction) return nativeStream(model, context, options);

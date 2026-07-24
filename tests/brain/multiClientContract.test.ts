@@ -57,7 +57,7 @@ function fakeDeps() {
     getActiveToolNames(this: { __active: string[] }) { return this.__active; },
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     model: undefined as unknown,
-    agent: { streamFn: vi.fn() },
+    agent: { streamFunction: vi.fn() },
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],

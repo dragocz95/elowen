@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { ModelRegistry, type ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities, qwenThinkingWire } from '../../src/brain/modelCapabilities.js';
 import { KIMI_CLI_VERSION } from '../../src/brain/kimiOAuth.js';
@@ -377,33 +377,36 @@ describe('brain providers', () => {
     const empty: BrainRuntimeConfig = { providers: [] };
 
     it('attaches the Kimi OAuth provider onto the runtime a login reads from', async () => {
-      // PI 0.80.8 dropped AuthStorage; the ModelRuntime is now the single registry a login reads. PI
-      // ships kimi-coding as API-key only, so its OAuth exists only once buildBrainRegistry re-registers
-      // the provider with `oauth` attached — the original intent: land Kimi's OAuth where sign-in looks
-      // for it, so `/brain/oauth/kimi/start` doesn't 404 with "Unknown OAuth provider".
+      // PI 0.80.8 dropped AuthStorage; the ModelRuntime is now the single registry a login reads. PI 0.82.0
+      // added its own Kimi OAuth, so the assertion is no longer "absent → present" but "PI's → ours":
+      // buildBrainRegistry must still land ELOWEN's flow where sign-in looks for it, so
+      // `/brain/oauth/kimi/start` keeps driving the client id every stored credential was issued against.
       const freshRuntime = await inMemoryModelRuntime();
-      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth).toBeUndefined();
+      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi Code (subscription)');
       buildBrainRegistry(empty, freshRuntime);
-      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth).toBeDefined();
+      expect(freshRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi');
     });
 
 
-    it("keeps PI's built-in models and adds the ones the account can reach", () => {
+    it("keeps PI's built-in models", () => {
       // registerProvider replaces a provider's model list wholesale, so the builtins are only still here
-      // because we copy them forward.
+      // because we copy them forward. PI 0.82.0 reshuffled the catalog (k2p7/kimi-k2-thinking out,
+      // k3/kimi-for-coding-highspeed in), which is exactly why this asserts against PI's live list rather
+      // than a hardcoded one — a hardcoded list only ever re-tests the fixture we wrote it from.
+      const builtins = new ModelRegistry(runtime).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
+      expect(builtins.length).toBeGreaterThan(0);
       const ids = buildBrainRegistry(empty, runtime).getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
-      expect(ids).toEqual(expect.arrayContaining(['k2p7', 'kimi-for-coding', 'kimi-k2-thinking']));
-      expect(ids).toContain('k3');
+      expect(ids).toEqual(expect.arrayContaining(builtins));
     });
 
-    it("keeps Kimi's per-model User-Agent on the wire, for copied and added models alike", async () => {
+    it("keeps Kimi's per-model User-Agent on the wire for every copied model", async () => {
       // Asserted on the resolved request headers, NOT on `model.headers`: registerProvider moves them into
       // a side store and nulls the descriptor field, so a test reading the descriptor would pass while the
       // header silently vanished from every request.
       //
-      // Both a copied builtin AND an added model are checked because they take their headers from
-      // different places (the builtin's own descriptor vs the template's). Testing only one leaves the
-      // other free to lose its User-Agent green.
+      // Every model in the catalog is checked rather than a sample: they are copied in one loop, but the
+      // headers are resolved per model, so a single one silently losing its User-Agent stays green
+      // otherwise. Kimi's API rejects requests without it.
       const reg = buildBrainRegistry(empty, runtime);
       const wireAgent = async (id: string) => {
         const model = reg.getAll().find((m) => m.provider === 'kimi-coding' && m.id === id);
@@ -412,23 +415,23 @@ describe('brain providers', () => {
         }).getApiKeyAndHeaders(model);
         return resolved.headers?.['User-Agent'];
       };
-      expect(await wireAgent('k2p7')).toBe(`KimiCLI/${KIMI_CLI_VERSION}`); // copied from PI
-      expect(await wireAgent('k3')).toBe(`KimiCLI/${KIMI_CLI_VERSION}`); // added by us
+      const ids = reg.getAll().filter((m) => m.provider === 'kimi-coding').map((m) => m.id);
+      expect(ids).toContain('k3');
+      for (const id of ids) expect(await wireAgent(id)).toBe(`KimiCLI/${KIMI_CLI_VERSION}`);
     });
 
-    it('knows k3 reasons and offers only the efforts Kimi documents', () => {
-      // K3 always thinks; registerKimiCatalog copies PI 0.80.10's NATIVE k3 descriptor forward (Elowen no
-      // longer imposes its own effort grading), and that descriptor documents a single usable effort —
-      // `max` — with every lesser level unsupported (null). Regression guard: k3 must still read as a
-      // reasoning model offering exactly Kimi's documented effort, not a non-reasoning model.
+    it('knows k3 reasons and offers exactly the efforts PI documents', () => {
+      // K3 always thinks; registerKimiCatalog copies PI's NATIVE k3 descriptor forward (Elowen no longer
+      // imposes its own effort grading). PI 0.80.10 graded a single usable effort (`max`); 0.82.0 widened
+      // it to low/high/max. The copy is what this guards, so it asserts the map is carried over
+      // byte-for-byte from the live descriptor — a hardcoded map would just re-test the fixture, and
+      // dropping the assertion would let k3 silently degrade to a non-reasoning model.
+      const builtin = new ModelRegistry(runtime).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
+      expect(builtin?.reasoning).toBe(true);
+      expect(builtin?.thinkingLevelMap?.max).toBe('max');
       const model = buildBrainRegistry(empty, runtime).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
       expect(model?.reasoning).toBe(true);
-      expect(model?.thinkingLevelMap?.max).toBe('max');
-      expect(model?.thinkingLevelMap?.minimal).toBeNull();
-      expect(model?.thinkingLevelMap?.low).toBeNull();
-      expect(model?.thinkingLevelMap?.medium).toBeNull();
-      expect(model?.thinkingLevelMap?.high).toBeNull();
-      expect(model?.thinkingLevelMap?.xhigh).toBeNull();
+      expect(model?.thinkingLevelMap).toEqual(builtin?.thinkingLevelMap);
     });
   });
 

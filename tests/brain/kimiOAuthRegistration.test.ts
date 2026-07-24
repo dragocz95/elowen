@@ -4,8 +4,8 @@ import { registerKimiOAuth, inMemoryModelRuntime } from '../../src/brain/provide
 /**
  * The cold-boot contract, and why this lives in a file of its own.
  *
- * PI seeds the built-in OAuth providers (Anthropic/Copilot/Codex) on every ModelRuntime, so those are
- * loginable the instant the daemon boots; Kimi only exists once we attach it. PI 0.80.8 dropped the
+ * PI seeds the built-in OAuth providers (Anthropic/Copilot/Codex, and since 0.82.0 its own Kimi flow) on
+ * every ModelRuntime; Elowen's Kimi flow only exists once we attach it over PI's. PI 0.80.8 dropped the
  * module-global OAuth map (and AuthStorage): registration now mutates the specific ModelRuntime it targets.
  * Nothing on the sign-in path builds a ModelRegistry — `/brain/oauth/:type/start` drives `runtime.login`
  * straight — and on a fresh install with no provider configured nothing else registers Kimi either. So the
@@ -18,10 +18,11 @@ import { registerKimiOAuth, inMemoryModelRuntime } from '../../src/brain/provide
 describe('Kimi OAuth registration on a cold process', () => {
   it('makes Kimi loginable without any registry having been built', async () => {
     const runtime = await inMemoryModelRuntime();
-    // Precondition: PI ships kimi-coding as an API-key provider only — no OAuth until we attach it. If this
-    // ever fails, PI adopted Kimi's OAuth upstream and registerKimiOAuth (and probably registerKimiCatalog's
-    // whole reason to exist) should be revisited.
-    expect(runtime.getProvider('kimi-coding')?.auth.oauth).toBeUndefined();
+    // Precondition as of PI 0.82.0: PI now ships its OWN Kimi OAuth ("Kimi Code (subscription)"), so the
+    // provider is no longer bare. registerKimiOAuth still has to land OUR flow over it — Elowen's runs
+    // through Elowen's own client id and stored credential, which is what every live login was issued
+    // against. Asserting on the name is what keeps this test honest: it fails if ours stops winning.
+    expect(runtime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi Code (subscription)');
 
     registerKimiOAuth(runtime);
 
@@ -38,9 +39,10 @@ describe('Kimi OAuth registration on a cold process', () => {
     // runtime does not inherit Kimi, which is the cold-boot trap this guards.
     const bootstrapRuntime = await inMemoryModelRuntime();
     registerKimiOAuth(bootstrapRuntime);
-    expect(bootstrapRuntime.getProvider('kimi-coding')?.auth.oauth).toBeDefined();
+    expect(bootstrapRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi');
 
+    // The second runtime keeps PI's stock OAuth: ours never leaked across instances.
     const otherRuntime = await inMemoryModelRuntime();
-    expect(otherRuntime.getProvider('kimi-coding')?.auth.oauth).toBeUndefined();
+    expect(otherRuntime.getProvider('kimi-coding')?.auth.oauth?.name).toBe('Kimi Code (subscription)');
   });
 });

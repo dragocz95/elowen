@@ -69,7 +69,7 @@ function fakeDeps() {
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     model: undefined as unknown,
     // BrainSessionFactory installs the compaction-only model route on PI's public Agent stream seam.
-    agent: { streamFn: vi.fn() },
+    agent: { streamFunction: vi.fn() },
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -2181,11 +2181,11 @@ describe('BrainService', () => {
       return undefined;
     }) as never;
     const svc = new BrainService(d as never);
-    const nativeStream = d.session.agent.streamFn;
+    const nativeStream = d.session.agent.streamFunction;
 
     await svc.start(1, { provider: 'codex', model: 'gpt-5.6-luna' });
     expect((d.createSession.mock.calls[0]![0] as { model: { id: string } }).model.id).toBe('gpt-5.6-luna');
-    expect(d.session.agent.streamFn).not.toBe(nativeStream);
+    expect(d.session.agent.streamFunction).not.toBe(nativeStream);
     await svc.switchModel(1, { provider: 'codex', model: 'gpt-5.6-sol' });
     expect((d.createSession.mock.calls[1]![0] as { model: { id: string } }).model.id).toBe('gpt-5.6-sol');
     expect(loaderRoutes).toEqual([{ hasRoute: true }, { hasRoute: true }]);
