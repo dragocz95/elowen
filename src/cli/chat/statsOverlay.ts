@@ -1,7 +1,8 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isEscapeKey, isKeyRelease, isLeftKey, isRightKey } from './keys.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color } from './theme.js';
+import { FRAME_COLS, framed, hintRow, sectionRule, sectionTabs, titleRow } from './modalFrame.js';
 import { openCenteredModal } from './openCenteredModal.js';
 import { formatK } from '../ui/text.js';
 import type { ModelUsageView, BrainUsageView } from './brainClient.js';
@@ -13,6 +14,15 @@ interface StatsOverlayData {
 }
 
 type Section = 'conversation' | 'models';
+
+/** Right-aligned label + value pair — the calm two-column grid all etched modals share. */
+const LABEL_W = 10;
+const kv = (label: string, value: string): string => ` ${color.dim(label.padStart(LABEL_W))}   ${value}`;
+
+function contextBar(width: number, percent: number): string {
+  const on = Math.max(0, Math.min(width, Math.round((percent / 100) * width)));
+  return color.text('▰'.repeat(on)) + color.faint('▱'.repeat(width - on));
+}
 
 class StatsOverlay implements Component, Focusable {
   private _focused = false;
@@ -38,69 +48,65 @@ class StatsOverlay implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(1, width - 4);
-    const line = (s: string): string => paintRow(chatTheme().modalBg, s, width);
+    const bodyWidth = Math.max(1, width - FRAME_COLS);
     const { model, usage, models } = this.data;
 
-    const out: string[] = [];
-    out.push(line(`  ${color.bold(color.text('Stats'))}${color.faint(' '.repeat(Math.max(1, bodyWidth - 10)) + 'esc')}`));
-    out.push(line(''));
+    const body: string[] = [];
+    body.push('');
+    const tabs = sectionTabs([
+      { label: 'Conversation', active: this.section === 'conversation' },
+      { label: 'Models', active: this.section === 'models' },
+    ]);
+    body.push(titleRow('Stats', tabs.text, bodyWidth, tabs.width));
+    body.push('');
 
-    // Section header with arrows
-    const navLabel = color.bold(this.section === 'conversation' ? color.text('‹ Conversation') : color.faint('‹ Conversation'));
-    const navRight = this.section === 'models' ? color.bold(color.text('Models ›')) : color.faint('Models ›');
-    const nav = `  ${navLabel}  ${color.faint('|')}  ${navRight}`;
-    out.push(line(nav));
-
-    // Section body
     if (this.section === 'conversation') {
+      body.push(sectionRule('session', bodyWidth));
+      body.push('');
       const u = usage;
       if (u) {
-        out.push(line(`  ${color.faint('model'.padEnd(12))} ${color.text(model || '—')}`));
+        body.push(kv('model', color.text(model || '—')));
         if (u.percent != null) {
-          out.push(line(`  ${color.faint('context'.padEnd(12))} ${color.text(`${Math.round(u.percent)}%  (${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)})`)}`));
+          body.push(kv('context', color.text(`${Math.round(u.percent)}%`) + color.faint(`   ${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)}`)));
+          body.push(kv('', contextBar(Math.min(34, Math.max(10, bodyWidth - LABEL_W - 6)), u.percent)));
         }
-        out.push(line(`  ${color.faint('tokens'.padEnd(12))} ${color.text(`${formatK(u.totalTokens)} total`)}`));
-        out.push(line(`  ${color.faint('cost'.padEnd(12))} ${color.text(`$${u.cost.toFixed(2)}`)}`));
+        body.push('');
+        body.push(sectionRule('usage', bodyWidth));
+        body.push('');
+        body.push(kv('tokens', color.text(`${formatK(u.totalTokens)} total`)));
+        body.push(kv('cost', color.bold(color.text(`$${u.cost.toFixed(2)}`))));
       } else {
-        out.push(line(`  ${color.faint('no conversation usage data')}`));
+        body.push(kv('', color.faint('no conversation usage data')));
       }
     } else {
+      body.push(sectionRule('per model', bodyWidth));
+      body.push('');
       if (models.length === 0) {
-        out.push(line(`  ${color.faint('no model usage data')}`));
+        body.push(kv('', color.faint('no model usage data')));
       } else {
-        // Header
-        const headExec = color.faint('model');
-        const headTokens = color.faint('tokens').padStart(14);
-        const headCache = color.faint('cache').padStart(10);
-        const headCost = color.faint('cost').padStart(12);
-        out.push(line(`  ${headExec}${headTokens}${headCache}${headCost}`));
+        const execW = 26, tokW = 10, cacheW = 10, costW = 10;
+        const pad = '   ';
+        body.push(`${pad}${color.dim('model'.padEnd(execW))}${color.dim('tokens'.padStart(tokW))}${color.dim('cache'.padStart(cacheW))}${color.dim('cost'.padStart(costW))}`);
 
-        // Sort by total descending
         const sorted = [...models].sort((a, b) => b.usage.total - a.usage.total);
-
         for (const m of sorted) {
-          const exec = m.exec.length > 24 ? `${m.exec.slice(0, 22)}…` : m.exec.padEnd(24);
-          const tokens = formatK(m.usage.total).padStart(14);
-          const cache = formatK(m.usage.cacheRead + m.usage.cacheWrite).padStart(10);
+          const exec = m.exec.length > execW - 2 ? `${m.exec.slice(0, execW - 4)}…` : m.exec;
           const costStr = m.usage.costUsd != null ? `$${m.usage.costUsd.toFixed(2)}` : '—';
-          const cost = costStr.padStart(12);
-          out.push(line(`  ${color.text(exec)}${color.text(tokens)}${color.faint(cache)}${color.text(cost)}`));
+          body.push(`${pad}${color.text(exec.padEnd(execW))}${color.text(formatK(m.usage.total).padStart(tokW))}${color.faint(formatK(m.usage.cacheRead + m.usage.cacheWrite).padStart(cacheW))}${color.text(costStr.padStart(costW))}`);
         }
 
-        // Totals
         const totalTokens = models.reduce((sum, m) => sum + m.usage.total, 0);
         const totalCache = models.reduce((sum, m) => sum + m.usage.cacheRead + m.usage.cacheWrite, 0);
         const costs = models.map((m) => m.usage.costUsd).filter((c): c is number => c != null);
         const totalCost = costs.length ? costs.reduce((sum, c) => sum + c, 0) : null;
-        out.push(line(''));
-        out.push(line(`  ${color.accent('Σ')}  ${color.text(formatK(totalTokens).padStart(14))}  ${color.faint(formatK(totalCache).padStart(10))}  ${color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(12))}`));
+        body.push(`${pad}${color.faint('─'.repeat(execW + tokW + cacheW + costW))}`);
+        body.push(`${pad}${color.accent('Σ'.padEnd(execW))}${color.text(formatK(totalTokens).padStart(tokW))}${color.faint(formatK(totalCache).padStart(cacheW))}${color.bold(color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(costW)))}`);
       }
     }
 
-    out.push(line(''));
-    out.push(line(`  ${color.faint('\u2190 \u2192 switch section  \u00b7  esc close')}`));
-    return out;
+    body.push('');
+    body.push(hintRow('← → section · esc close'));
+    return framed(body, width);
   }
 }
 
@@ -111,18 +117,17 @@ export function openStatsOverlay(o: {
   data: StatsOverlayData;
 }): void {
   const longest = Math.max(
-    60,
-    ...o.data.models.map((m) => m.exec.length + 14 + 10 + 12 + 6),
-    visibleWidth('model') + 14 + 10 + 12,
-    visibleWidth('‹ Conversation  |  Models ›'),
+    62,
+    ...o.data.models.map((m) => Math.min(m.exec.length, 26) + 10 + 10 + 10 + 6),
+    visibleWidth('Stats        ● Conversation    ○ Models') + 8,
   );
   openCenteredModal({
     tui: o.tui,
     editor: o.editor,
     makeComponent: (close) => new StatsOverlay(o.data, close),
     longest,
-    minWidth: 54,
-    pad: 12,
-    maxHeight: 18,
+    minWidth: 56,
+    pad: 8,
+    maxHeight: 20,
   });
 }

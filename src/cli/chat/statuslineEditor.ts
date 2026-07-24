@@ -1,8 +1,9 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color } from './theme.js';
 import { padAnsi } from '../ui/text.js';
+import { FRAME_COLS, framed, hintRow, titleRow } from './modalFrame.js';
 import { openCenteredModal } from './openCenteredModal.js';
 import type { StatuslineConfig } from './brainClient.js';
 
@@ -76,28 +77,29 @@ export class StatuslineEditor implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(1, width - 4);
+    const bodyWidth = Math.max(1, width - FRAME_COLS);
+    const innerWidth = Math.max(1, bodyWidth - 6);
     const pad = Math.max(...STATUSLINE_FIELDS.map((f) => f.label.length)) + 2;
-    const line = (s: string): string => paintRow(chatTheme().modalBg, s, width);
-    const out: string[] = [];
-    out.push(line(`  ${color.bold(color.text('Statusline'))}${color.faint(`${' '.repeat(Math.max(1, bodyWidth - 14))}esc`)}`));
-    out.push(line(''));
+    const body: string[] = [];
+    body.push('');
+    body.push(titleRow('Statusline', '', bodyWidth, 0));
+    body.push('');
 
     STATUSLINE_FIELDS.forEach((f, i) => {
       const on = this.values[f.key] === true;
       const box = on ? '[x]' : '[ ]';
       if (i === this.selectedIndex) {
         const plain = `${box} ${f.label.padEnd(pad)}${f.hint}`;
-        out.push(paintRow(chatTheme().modalBg, `  ${color.selected(padAnsi(plain, bodyWidth))}  `, width));
+        body.push(`   ${color.selected(padAnsi(plain, innerWidth))}`);
       } else {
         const boxText = on ? color.accent(box) : color.faint(box);
-        out.push(line(`  ${boxText} ${color.text(f.label.padEnd(pad))}${color.faint(f.hint)}`));
+        body.push(`   ${boxText} ${color.text(f.label.padEnd(pad))}${color.faint(f.hint)}`);
       }
     });
 
-    out.push(line(''));
-    out.push(line(`  ${color.faint('space toggle · ↑↓ move · esc close')}`));
-    return out;
+    body.push('');
+    body.push(hintRow('space toggle · ↑↓ move · esc close'));
+    return framed(body, width);
   }
 }
 

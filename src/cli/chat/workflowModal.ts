@@ -2,6 +2,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isLeftKey, isRightKey, isTabKey, isUpKey } from './keys.js';
 import { chatTheme, color, paintRow } from './theme.js';
+import { FRAME_COLS, framed } from './modalFrame.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText } from '../ui/text.js';
 import { spinnerFrame, workflowTitle } from './components.js';
 import { CARD_W, STATUS_GLYPH, STATUS_INK, canvasSize, drawCircuit, layoutCircuit, paintCanvas } from './workflowCanvas.js';
@@ -20,8 +21,8 @@ const ROW = (t: string, width: number): string => paintRow(chatTheme().modalBg, 
 const fit = (text: string, width: number): string =>
   padAnsi(truncateToWidth(text, Math.max(0, width), '…'), Math.max(0, width));
 
-/** title, summary, blank, dock rule, 3 dock rows, footer. */
-const CHROME_ROWS = 8;
+/** frame top, title, summary, blank, dock rule, 3 dock rows, footer, frame bottom. */
+const CHROME_ROWS = 10;
 /** Below this body width the canvas cannot seat two columns plus a gutter — fall back to the wave list. */
 const MIN_CANVAS_BODY = 72;
 /** Animation cadence for the energy dots (the braille spinner has its own 120ms clock). */
@@ -113,7 +114,7 @@ class WorkflowModal implements Component, Focusable {
   }
 
   private canvasMode(): boolean {
-    return modalGeometry(this.opts.tui.terminal).width - 4 >= MIN_CANVAS_BODY;
+    return modalGeometry(this.opts.tui.terminal).width - FRAME_COLS - 4 >= MIN_CANVAS_BODY;
   }
 
   private select(id: string | undefined): void {
@@ -290,13 +291,14 @@ class WorkflowModal implements Component, Focusable {
 
   /** Full-chrome message frame — an empty modal should still read as this modal, not a broken one. */
   private messageFrame(width: number, message: string): string[] {
-    return [
-      ROW(`  ${color.bold(color.accent('⚙ WORKFLOW'))}`, width),
-      ROW('', width),
-      ROW(`  ${color.faint(message)}`, width),
-      ROW('', width),
-      ROW(`  ${color.faint('esc close')}`, width),
-    ];
+    const inner = Math.max(1, width - FRAME_COLS);
+    return framed([
+      ROW(`  ${color.bold(color.accent('⚙ WORKFLOW'))}`, inner),
+      ROW('', inner),
+      ROW(`  ${color.faint(message)}`, inner),
+      ROW('', inner),
+      ROW(`  ${color.faint('esc close')}`, inner),
+    ], width);
   }
 
   render(width: number): string[] {
@@ -309,7 +311,9 @@ class WorkflowModal implements Component, Focusable {
     const running = wf.nodes.some((n) => n.status === 'running');
     this.syncAnimation(running);
 
-    const bodyWidth = Math.max(1, width - 4);
+    // Rows are composed at the frame's inner width, then wrapped with the shared etched border.
+    const inner = Math.max(1, width - FRAME_COLS);
+    const bodyWidth = Math.max(1, inner - 4);
     const selectedId = this.selection(wf.nodes);
     const placements = layoutCircuit(wf.nodes, selectedId);
     const selected = placements.find((p) => p.node.id === selectedId) ?? placements[0]!;
@@ -348,26 +352,26 @@ class WorkflowModal implements Component, Focusable {
     const right = `${wfInk(`${wfGlyph} ${wf.status}`)}  ${color.faint('esc')}`;
     const left = `  ${color.accent('⚙ WORKFLOW')} ${color.faint('·')} `
       + color.text(truncateToWidth(title, Math.max(8, bodyWidth - 34), '…'));
-    const titleGap = Math.max(2, width - visibleWidth(left) - visibleWidth(right));
-    out.push(ROW(`${left}${' '.repeat(titleGap)}${right}`, width));
-    out.push(ROW(this.summaryLine(wf, now, clipped), width));
-    out.push(ROW('', width));
-    for (const row of body) out.push(ROW(`  ${fit(row, bodyWidth)}  `, width));
+    const titleGap = Math.max(2, inner - visibleWidth(left) - visibleWidth(right));
+    out.push(ROW(`${left}${' '.repeat(titleGap)}${right}`, inner));
+    out.push(ROW(this.summaryLine(wf, now, clipped), inner));
+    out.push(ROW('', inner));
+    for (const row of body) out.push(ROW(`  ${fit(row, bodyWidth)}  `, inner));
 
     // Dock: a titled rule, then the selected node's detail or the run's activity feed.
     const dockTitle = this.dock === 'detail' ? ` ${terminalInlineText(selected.node.id)} ` : ' activity ';
     const rule = `─${color.accentSoft(dockTitle)}`;
-    out.push(ROW(`  ${color.faint('─')}${color.accentSoft(dockTitle)}${color.faint('─'.repeat(Math.max(0, bodyWidth - visibleWidth(rule))))}  `, width));
+    out.push(ROW(`  ${color.faint('─')}${color.accentSoft(dockTitle)}${color.faint('─'.repeat(Math.max(0, bodyWidth - visibleWidth(rule))))}  `, inner));
     const dockRows = this.dock === 'detail'
       ? this.detailDock(selected.node, bodyWidth, spinner, now)
       : this.activityDock(wf.nodes, bodyWidth, spinner);
-    for (const row of dockRows) out.push(ROW(`  ${row}  `, width));
+    for (const row of dockRows) out.push(ROW(`  ${row}  `, inner));
 
     const hint = selected.node.sessionId
       ? `enter open node transcript · ←→↑↓ move · tab ${this.dock === 'detail' ? 'activity' : 'detail'} · esc close`
       : '←→↑↓ move · esc close (node not started)';
-    out.push(ROW(`  ${this.notice ? color.warning(terminalInlineText(this.notice)) : color.faint(hint)}`, width));
-    return out;
+    out.push(ROW(`  ${this.notice ? color.warning(terminalInlineText(this.notice)) : color.faint(hint)}`, inner));
+    return framed(out, width);
   }
 }
 

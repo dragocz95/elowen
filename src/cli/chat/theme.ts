@@ -47,7 +47,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(255, 108, 128),
     panelBg: bg(9, 6, 6),
     inputBg: bg(19, 12, 12),
-    modalBg: bg(12, 8, 8),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(255, 82, 54),
   },
   blue: {
@@ -64,7 +64,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(224, 108, 117),
     panelBg: bg(8, 9, 12),
     inputBg: bg(20, 20, 20),
-    modalBg: bg(8, 8, 10),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(92, 156, 245),
   },
   mono: {
@@ -81,7 +81,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(5, 5, 5),
     inputBg: bg(18, 18, 18),
-    modalBg: bg(7, 7, 7),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(212, 212, 216),
   },
   midnight: {
@@ -98,7 +98,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(6, 7, 15),
     inputBg: bg(14, 16, 28),
-    modalBg: bg(8, 9, 18),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(129, 140, 248),
   },
   forest: {
@@ -115,7 +115,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(4, 8, 5),
     inputBg: bg(12, 20, 14),
-    modalBg: bg(6, 11, 7),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(74, 222, 128),
   },
   ember: {
@@ -132,7 +132,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(12, 7, 3),
     inputBg: bg(24, 16, 10),
-    modalBg: bg(16, 10, 5),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(251, 146, 60),
   },
   rose: {
@@ -149,7 +149,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(251, 113, 133),
     panelBg: bg(12, 5, 9),
     inputBg: bg(24, 12, 18),
-    modalBg: bg(16, 7, 12),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(244, 114, 182),
   },
   violet: {
@@ -166,7 +166,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(9, 6, 15),
     inputBg: bg(19, 14, 30),
-    modalBg: bg(12, 8, 20),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(167, 139, 250),
   },
   ocean: {
@@ -183,7 +183,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(248, 113, 113),
     panelBg: bg(3, 8, 13),
     inputBg: bg(10, 18, 26),
-    modalBg: bg(5, 11, 17),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(56, 189, 248),
   },
   sunset: {
@@ -200,7 +200,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(239, 68, 68),
     panelBg: bg(13, 6, 6),
     inputBg: bg(26, 13, 13),
-    modalBg: bg(17, 8, 8),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(251, 113, 133),
   },
   nord: {
@@ -217,7 +217,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(191, 97, 106),
     panelBg: bg(30, 34, 42),
     inputBg: bg(46, 52, 64),
-    modalBg: bg(36, 41, 51),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(136, 192, 208),
   },
   dracula: {
@@ -234,7 +234,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(255, 85, 85),
     panelBg: bg(30, 31, 41),
     inputBg: bg(40, 42, 54),
-    modalBg: bg(34, 36, 46),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(189, 147, 249),
   },
   gruvbox: {
@@ -251,7 +251,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(251, 73, 52),
     panelBg: bg(29, 32, 33),
     inputBg: bg(40, 40, 40),
-    modalBg: bg(34, 37, 38),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(250, 189, 47),
   },
   matrix: {
@@ -268,7 +268,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(255, 96, 96),
     panelBg: bg(0, 6, 3),
     inputBg: bg(2, 14, 8),
-    modalBg: bg(1, 9, 5),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(0, 255, 128),
   },
   sand: {
@@ -285,7 +285,7 @@ const CHAT_THEMES: Record<ChatThemeName, ChatTheme> = {
     error: fg(224, 122, 108),
     panelBg: bg(12, 10, 7),
     inputBg: bg(24, 20, 15),
-    modalBg: bg(16, 13, 9),
+    modalBg: bg(0, 0, 0),
     selectedBg: bg(214, 178, 120),
   },
 };
@@ -336,7 +336,7 @@ export function setCustomChatTheme(palette: Partial<Record<string, string>>): Ch
     error: f(palette.red, base.error),
     panelBg: lift(palette.background, 0, base.panelBg),
     inputBg: lift(palette.background, 14, base.inputBg),
-    modalBg: lift(palette.background, 5, base.modalBg),
+    modalBg: bg(0, 0, 0), // modals are OLED black in every theme — the frame + text carry the theme
     selectedBg: (() => { const c = rgb(palette.selectionBackground) ?? rgb(palette.cyan); return c ? bg(...c) : base.selectedBg; })(),
   };
   return activeTheme;

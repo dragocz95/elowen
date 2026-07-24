@@ -7,7 +7,8 @@ import {
 import type { KeybindAction, KeybindRow, Keymap } from './keys.js';
 import { loadPrefs, savePrefs } from './prefs.js';
 import { openCenteredModal } from './openCenteredModal.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color } from './theme.js';
+import { FRAME_COLS, framed, hintRow, titleRow } from './modalFrame.js';
 import { padAnsi } from '../ui/text.js';
 
 /** The editor's state machine: browsing the list, or waiting to capture the next keypress as a chord
@@ -129,44 +130,45 @@ export class KeybindsEditor implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(1, width - 4);
+    const bodyWidth = Math.max(1, width - FRAME_COLS);
+    const innerWidth = Math.max(1, bodyWidth - 6);
     const pad = Math.max(...KEYBIND_ACTIONS.map((a) => a.length)) + 2;
-    const line = (s: string): string => paintRow(chatTheme().modalBg, s, width);
-    const out: string[] = [];
-    out.push(line(`  ${color.bold(color.text('Keybinds'))}${color.faint(`${' '.repeat(Math.max(1, bodyWidth - 12))}esc`)}`));
-    out.push(line(''));
+    const body: string[] = [];
+    body.push('');
+    body.push(titleRow('Keybinds', '', bodyWidth, 0));
+    body.push('');
 
     this.rows.forEach((r, i) => {
       const chordText = (r.chord ?? '—').padEnd(16);
       const markerText = r.chord === null ? 'unbound' : r.custom ? 'custom' : 'default';
       if (i === this.selectedIndex) {
         const plain = `${r.action.padEnd(pad)}${chordText}${markerText}`;
-        out.push(paintRow(chatTheme().modalBg, `  ${color.selected(padAnsi(plain, bodyWidth))}  `, width));
+        body.push(`   ${color.selected(padAnsi(plain, innerWidth))}`);
       } else {
         const chord = r.chord ? color.accent(chordText) : color.faint(chordText);
         const marker = r.chord === null ? color.faint('unbound') : r.custom ? color.warning('custom') : color.faint('default');
-        out.push(line(`  ${color.text(r.action.padEnd(pad))}${chord}${marker}`));
+        body.push(`   ${color.text(r.action.padEnd(pad))}${chord}${marker}`);
       }
     });
 
-    out.push(line(''));
+    body.push('');
     const action = this.currentAction();
     if (this.mode === 'capture') {
-      out.push(line(`  ${color.accent(`press a chord for ${action}…`)}  ${color.faint('press the leader first for a leader sequence · esc cancel')}`));
+      body.push(`   ${color.accent(`press a chord for ${action}…`)}  ${color.faint('press the leader first for a leader sequence · esc cancel')}`);
     } else if (this.mode === 'capture2') {
       const lead = this.keymap.chordLabel('leader') ?? 'leader';
-      out.push(line(`  ${color.accent(`${lead} … now press the second key for ${action}`)}  ${color.faint('esc cancel')}`));
+      body.push(`   ${color.accent(`${lead} … now press the second key for ${action}`)}  ${color.faint('esc cancel')}`);
     } else if (this.error) {
-      out.push(line(`  ${color.error(`! ${this.error}`)}`));
+      body.push(`   ${color.error(`! ${this.error}`)}`);
     } else {
-      out.push(line(`  ${color.faint('enter rebind · x unbind · r reset · ↑↓ move · esc close')}`));
+      body.push(hintRow('enter rebind · x unbind · r reset · ↑↓ move · esc close'));
     }
 
     if (this.keymap.warnings.length) {
-      out.push(line(''));
-      for (const w of this.keymap.warnings) out.push(line(`  ${color.error(`! ${w}`)}`));
+      body.push('');
+      for (const w of this.keymap.warnings) body.push(`   ${color.error(`! ${w}`)}`);
     }
-    return out;
+    return framed(body, width);
   }
 }
 

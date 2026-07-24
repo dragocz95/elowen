@@ -271,8 +271,14 @@ describe('workflow canvas modal', () => {
     const flat = frame.map(strip).join('\n');
     expect(flat).toContain('wave 1');
     expect(flat).toContain('wave 2');
-    expect(flat).not.toContain('╭'); // no canvas cards
-    expect(flat).not.toContain('│'); // no card borders either
+    // The shared etched frame owns exactly one ╭ (its top-left corner) and one │ pair per row — the
+    // BODY must stay a flat list with no canvas cards, so no further corner glyphs may appear.
+    expect(flat.match(/╭/gu)).toHaveLength(1);
+    for (const row of frame.slice(1, -1).map(strip)) {
+      expect(row.startsWith('│')).toBe(true);
+      expect(row.endsWith('│')).toBe(true);
+      expect(row.slice(1, -1)).not.toContain('│'); // no card borders inside the list body
+    }
     modal.handleInput(RIGHT);        // ←→ still navigates: jumps to the next wave
     expect(strip(modal.render(62).join('\n'))).toMatch(/─ analyze ─/);
   });
@@ -299,11 +305,12 @@ describe('workflow canvas modal', () => {
     setChatTheme('elowen');
     const onElowen = openModal(() => WF).modal.render(90);
     setChatTheme('elowen');
-    // The modal is an Elowen surface, so /theme recolours it — the two frames must differ.
+    // The modal is an Elowen surface, so /theme recolours it — the two frames must differ (accents,
+    // inks). The SURFACE, however, is deliberately the same OLED black in every theme: modals sit on
+    // pure #000 and the frame + text carry the theme.
     expect(onMatrix).not.toEqual(onElowen);
-    // Rows are painted on the theme's modalBg (elowen's is a warm near-black, matrix's a green one).
-    expect(onElowen.join('')).toContain('\x1b[48;2;12;8;8m');
-    expect(onMatrix.join('')).toContain('\x1b[48;2;1;9;5m');
+    expect(onElowen.join('')).toContain('\x1b[48;2;0;0;0m');
+    expect(onMatrix.join('')).toContain('\x1b[48;2;0;0;0m');
   });
 
   it('renders every row at exactly the frame width, in both layouts', () => {
