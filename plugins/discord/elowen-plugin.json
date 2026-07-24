@@ -37,11 +37,6 @@
     ]
   },
   "icons": { "Discord*": "💬" },
-  "requires": {
-    "config": [
-      "botToken"
-    ]
-  },
   "configSchema": [
     {
       "key": "sec_connection",

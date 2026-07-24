@@ -244,9 +244,7 @@ CREATE TABLE IF NOT EXISTS brain_subagent_results (
   payload TEXT NOT NULL,
   delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'acknowledged')),
   attempts INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  acknowledged_at TEXT,
   UNIQUE (parent_session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_subagent_results_pending

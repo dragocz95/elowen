@@ -5,7 +5,7 @@
   "description": "Bridge external MCP servers (stdio, HTTP, SSE) into the assistant's toolset.",
   "entry": "index.mjs",
   "icons": { "mcp__*": "🧩", "ListMcpResources": "🧩", "ReadMcpResource": "🧩" },
-  "provides": { "hooks": ["plugin.reload.before"], "tools": ["ListMcpResources", "ReadMcpResource", "mcp__*"] },
+  "provides": { "tools": ["ListMcpResources", "ReadMcpResource", "mcp__*"] },
   "capabilities": {},
   "configSchema": [
     {

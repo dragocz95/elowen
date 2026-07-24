@@ -352,8 +352,7 @@ export class BrainDelegationStore {
          ON CONFLICT(parent_session_id, tool_call_id) DO UPDATE SET
            result_id = excluded.result_id, child_session_id = excluded.child_session_id,
            status = excluded.status, task = excluded.task, payload = excluded.payload,
-           attempts = 0, last_error = NULL,
-           delivery_state = 'pending', acknowledged_at = NULL
+           attempts = 0, delivery_state = 'pending'
          WHERE brain_subagent_results.result_id LIKE '${SYNTHETIC_RESTART_RESULT_PREFIX}%'
            AND excluded.result_id NOT LIKE '${SYNTHETIC_RESTART_RESULT_PREFIX}%'`
       ).run(result.id, parentSessionId, result.toolCallId, result.sessionId, result.status, result.task, payload);
@@ -385,15 +384,15 @@ export class BrainDelegationStore {
 
   acknowledgeSubagentResult(parentSessionId: string, resultId: string): boolean {
     return this.db.prepare(
-      `UPDATE brain_subagent_results SET delivery_state = 'acknowledged', acknowledged_at = datetime('now')
+      `UPDATE brain_subagent_results SET delivery_state = 'acknowledged'
        WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'pending'`
     ).run(parentSessionId, resultId).changes === 1;
   }
 
-  noteSubagentResultFailure(parentSessionId: string, resultId: string, error: string): void {
+  noteSubagentResultFailure(parentSessionId: string, resultId: string): void {
     this.db.prepare(
-      `UPDATE brain_subagent_results SET attempts = attempts + 1, last_error = ?
+      `UPDATE brain_subagent_results SET attempts = attempts + 1
        WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'pending'`
-    ).run(bounded(error, 2_000), parentSessionId, resultId);
+    ).run(parentSessionId, resultId);
   }
 }

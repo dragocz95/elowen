@@ -199,7 +199,7 @@ export class BrainTurnRunner {
           // re-drain it. Don't burn an attempt or arm a retry timer.
           if (error instanceof ParentTurnBusyError) return;
           const cause = error instanceof Error ? error.message : String(error);
-          this.d.store.noteSubagentResultFailure(parentSessionId, result.id, cause);
+          this.d.store.noteSubagentResultFailure(parentSessionId, result.id);
           logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} failed delivery attempt ${result.attempts + 1}/${MAX_RESULT_DELIVERY_ATTEMPTS}: ${cause}`);
           if (result.attempts + 1 >= MAX_RESULT_DELIVERY_ATTEMPTS) {
             // Out of timed retries: stop arming a timer for it, but move on to the rest of the queue rather

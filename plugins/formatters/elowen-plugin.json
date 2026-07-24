@@ -4,8 +4,6 @@
   "apiVersion": "1",
   "description": "Automatically format files the assistant writes, using the formatter the project itself is set up for (prettier, biome, pint, ruff, gofmt, rustfmt, ...). A formatter only runs when its binary or config is present in the project.",
   "entry": "index.mjs",
-  "provides": { "hooks": ["tools.call.after"] },
-  "capabilities": { "hooks": ["tools.call.after"] },
   "configSchema": [
     {
       "key": "enabled",

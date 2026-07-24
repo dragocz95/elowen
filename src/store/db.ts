@@ -58,9 +58,6 @@ export function openDb(path: string): Db {
   // on login. Additive so existing DBs gain them with sensible defaults (autostart on once chosen).
   addColumn(db, 'users', 'advisor_exec', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'advisor_autostart', 'INTEGER NOT NULL DEFAULT 1');
-  // Which advisor engine the user runs: 'spawn' = the legacy external-CLI advisor, 'brain' = the
-  // in-process embedded PI brain. Defaults to 'spawn' so existing users are unchanged (coexistence).
-  addColumn(db, 'users', 'advisor_engine', "TEXT NOT NULL DEFAULT 'spawn'");
   // Token scope: spawned agents get a 'agent'-scoped token (worker/overseer/pilot verbs only),
   // never the admin's full token. Pre-existing rows default to 'full' (interactive user sessions).
   addColumn(db, 'auth_tokens', 'scope', "TEXT NOT NULL DEFAULT 'full'");

@@ -459,8 +459,8 @@ export class BrainStore {
     return this.delegation.acknowledgeSubagentResult(parentSessionId, resultId);
   }
 
-  noteSubagentResultFailure(parentSessionId: string, resultId: string, error: string): void {
-    this.delegation.noteSubagentResultFailure(parentSessionId, resultId, error);
+  noteSubagentResultFailure(parentSessionId: string, resultId: string): void {
+    this.delegation.noteSubagentResultFailure(parentSessionId, resultId);
   }
 
   /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform

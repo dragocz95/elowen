@@ -28,11 +28,6 @@
     ]
   },
   "icons": { "Telegram*": "✈️" },
-  "requires": {
-    "config": [
-      "botToken"
-    ]
-  },
   "configSchema": [
     {
       "key": "sec_connection",

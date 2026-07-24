@@ -49,7 +49,6 @@ html[data-effects='reduced'] {
   --motion-fast: 80ms;
   --motion-base: 120ms;
   --motion-slow: 160ms;
-  --motion-distance-sm: 0px;
   --motion-distance-md: 0px;
 }
 

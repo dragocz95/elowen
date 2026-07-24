@@ -10,9 +10,6 @@
   --color-accent: #ff5236;
   --color-accent-hot: #ff735c;
   --color-ember: #ff9a62;
-  --color-accent-soft: rgb(255 82 54 / 0.12);
-  --color-accent-faint: rgb(255 82 54 / 0.055);
-  --color-accent-line: rgb(255 82 54 / 0.24);
 
   --color-text: #f7f3f0;
   --color-text-muted: #9d948e;
@@ -64,7 +61,6 @@
   --motion-base: 240ms;
   --motion-slow: 420ms;
   --motion-ambient: 8s;
-  --motion-distance-sm: 4px;
   --motion-distance-md: 10px;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

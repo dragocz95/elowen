@@ -177,7 +177,7 @@ describe('BrainStore', () => {
     it('upgrades a pending synthetic restart result to the real completion, resetting retry state', () => {
       const { syntheticId, synthetic, real } = seed();
       expect(store.enqueueSubagentResult('root', synthetic)).toBe(true);
-      store.noteSubagentResultFailure('root', syntheticId, 'delivery boom'); // attempts → 1
+      store.noteSubagentResultFailure('root', syntheticId); // attempts → 1
       expect(store.pendingSubagentResults('root')[0]).toMatchObject({ id: syntheticId, status: 'error', attempts: 1 });
 
       // The real completion arriving after the restart placeholder upgrades the pending row IN PLACE.

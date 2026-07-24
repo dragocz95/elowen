@@ -19,9 +19,6 @@
   "icons": { "Teams*": "💼" },
   "showOutput": ["Teams*"],
   "planSafe": ["TeamsChatInfo", "TeamsMembers", "TeamsMemberInfo", "TeamsListConversations"],
-  "requires": {
-    "config": ["appId", "appPassword", "tenantId"]
-  },
   "configSchema": [
     { "key": "sec_connection", "label": "Connection", "type": "section", "hint": "Azure Bot credentials. Setup: 1) Entra admin center → App registrations → New registration (single tenant) → copy the Application (client) ID and tenant ID, then Certificates & secrets → New client secret. 2) Azure portal → Create an Azure Bot bound to that app ID; set the messaging endpoint to https://<your-domain>/hooks/msteams/messages and enable the Microsoft Teams channel. 3) Download the app package (button above) and upload it in the Teams admin center → Manage apps." },
     { "key": "appId", "label": "Microsoft App ID", "type": "string", "required": true, "hint": "The Entra app registration's Application (client) ID — also the bot ID in the Azure Bot resource." },

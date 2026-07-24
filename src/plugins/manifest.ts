@@ -69,8 +69,7 @@ export interface PluginManifest {
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
-  requires?: { env?: string[]; config?: string[] };
-  provides?: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[]; httpRoutes?: string[] };
+  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; httpRoutes?: string[] };
   /** Per-tool display icons (emoji), keyed by tool name — surfaced in the chat clients' tool-call lines.
    *  Overrides the core default icon map; a tool without an entry falls back to it, then to a generic glyph. */
   icons?: Record<string, string>;
@@ -105,14 +104,9 @@ const ManifestSchema = Type.Object({
   apiVersion: Type.String({ minLength: 1 }),
   description: Type.String(),
   entry: Type.String({ minLength: 1 }),
-  requires: Type.Optional(Type.Object({
-    env: Type.Optional(Type.Array(Type.String())),
-    config: Type.Optional(Type.Array(Type.String())),
-  })),
   provides: Type.Optional(Type.Object({
     tools: Type.Optional(Type.Array(Type.String())),
     skills: Type.Optional(Type.Array(Type.String())),
-    hooks: Type.Optional(Type.Array(Type.String())),
     platforms: Type.Optional(Type.Array(Type.String())),
     httpRoutes: Type.Optional(Type.Array(Type.String())),
   })),
@@ -155,7 +149,6 @@ const ManifestSchema = Type.Object({
     })),
   }))),
   capabilities: Type.Optional(Type.Object({
-    hooks: Type.Optional(Type.Array(Type.String())),
     mutates: Type.Optional(Type.Array(Type.Union([
       Type.Literal('prompt'), Type.Literal('turnContext'),
       Type.Literal('tools'), Type.Literal('memory'),

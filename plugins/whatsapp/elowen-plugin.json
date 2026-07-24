@@ -18,9 +18,6 @@
     ]
   },
   "icons": { "Whatsapp*": "🟢" },
-  "requires": {
-    "config": []
-  },
   "configSchema": [
     {
       "key": "sec_connection",

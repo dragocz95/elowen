@@ -49,14 +49,13 @@ export type HookOutcome = void | HookResult;
 export interface PluginHook { name: PluginHookName; run: (payload: unknown) => HookOutcome | Promise<HookOutcome> }
 
 /** What a plugin is ALLOWED to do, declared in its manifest (`capabilities`). Deny-by-default: a plugin
- *  with no capabilities block can mutate nothing. `hooks` documents the lifecycle points it subscribes
- *  to; `mutates` gates runtime patches (only `turnContext` is patch-wired in v1); `network` is
- *  declarative intent for the audit/UI. `reads` lists read scopes the plugin claims — two are
- *  runtime-wired: `'providers'` permits `ctx.resolveProvider()` for provider ids beyond the plugin's own
- *  config (see PluginContext.resolveProvider), and `'embeddings'` permits `ctx.embeddings.embed*()` (the
- *  shared text→vector pipeline, see PluginContext.embeddings). Both are deny-by-default. */
+ *  with no capabilities block can mutate nothing. `mutates` gates runtime patches (only `turnContext`
+ *  is patch-wired in v1); `network` is declarative intent for the audit/UI. `reads` lists read scopes
+ *  the plugin claims — two are runtime-wired: `'providers'` permits `ctx.resolveProvider()` for provider
+ *  ids beyond the plugin's own config (see PluginContext.resolveProvider), and `'embeddings'` permits
+ *  `ctx.embeddings.embed*()` (the shared text→vector pipeline, see PluginContext.embeddings). Both are
+ *  deny-by-default. */
 export interface PluginCapabilities {
-  hooks?: PluginHookName[];
   mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
   reads?: string[];
   network?: boolean;
