@@ -345,6 +345,11 @@ try {
   });
   assert.match(copiedText, /stable row one[\s\S]*stable row two/u,
     'real SGR drag selection must copy the expected visible transcript text');
+  // The OSC-52 write happens synchronously inside the release handler, before the re-render that
+  // clears the selection highlight reaches the diagnostics log. Without this wait the capture can
+  // bind to a still-stable mid-drag frame whose selection span legitimately spans many cells.
+  await waitFor('post-copy release frame recorded', () =>
+    liveFrames().some((frame) => frame.reasons?.includes('input:copied')));
   saveCapture('02b-drag-copy-complete');
   sendKey('PageDown');
   await waitFor('PageDown returns to tail', () => !capture().includes('History +'));
