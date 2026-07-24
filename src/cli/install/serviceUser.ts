@@ -13,6 +13,14 @@ export async function userHome(r: Runner, username: string): Promise<string | nu
   return home || null;
 }
 
+/** The invoking user, for the macOS install where everything runs per-user (launchd gui domain, brew,
+ *  npm prefix) — there is no dedicated service account to create. */
+export async function currentUser(r: Runner, env: NodeJS.ProcessEnv = process.env): Promise<{ username: string; home: string }> {
+  const res = await r.exec('id', ['-un']);
+  const username = res.stdout.trim() || 'unknown';
+  return { username, home: env.HOME ?? `/Users/${username}` };
+}
+
 /** Create the service user (idempotent) or validate the chosen existing one, returning its resolved
  *  username + HOME. A created user is a `--system` account with its own HOME and a real shell (so
  *  `sudo -u … -H bash -lc` gives the agent CLIs a normal environment). */

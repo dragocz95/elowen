@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
-import { userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
+import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
 import { ensureTerminalStreaming } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
@@ -48,7 +48,7 @@ describe('install/preflight', () => {
   });
 
   it('passes on a root apt box with node ≥22 and tmux', async () => {
-    const p = await preflight(ok);
+    const p = await preflight(ok, 'linux');
     expect(p.isRoot).toBe(true);
     expect(p.pkgManager).toBe('apt');
     expect(p.node.ok).toBe(true);
@@ -61,19 +61,44 @@ describe('install/preflight', () => {
       exec: async (cmd) => (cmd === 'id' ? { code: 0, stdout: '0\n', stderr: '' } : cmd === 'node' ? { code: 0, stdout: 'v22.0.0\n', stderr: '' } : { code: 0, stdout: '', stderr: '' }),
       which: async (cmd) => (['cc', 'python3', 'apt-get'].includes(cmd) ? `/usr/bin/${cmd}` : null),
     });
-    expect((await preflight(withTools)).buildTools).toBe(true);
+    expect((await preflight(withTools, 'linux')).buildTools).toBe(true);
   });
   it('blocks when not root and node is too old', async () => {
     const bad = runner({
       exec: async (cmd) => (cmd === 'id' ? { code: 0, stdout: '1000\n', stderr: '' } : cmd === 'node' ? { code: 0, stdout: 'v18.0.0\n', stderr: '' } : { code: 0, stdout: '', stderr: '' }),
       which: async () => null,
     });
-    const p = await preflight(bad);
+    const p = await preflight(bad, 'linux');
     const blockers = preflightBlockers(p);
     expect(p.isRoot).toBe(false);
     expect(blockers.join(' ')).toMatch(/root/i);
     expect(blockers.join(' ')).toMatch(/Node/i);
     expect(blockers.join(' ')).toMatch(/apt/i);
+  });
+
+  // macOS inverts the Linux contract: brew is the package manager, and root is REFUSED (Homebrew and
+  // the gui launchd domain are both per-user — sudo would provision the wrong user).
+  it('macOS: passes as a normal user with brew, and blocks under sudo', async () => {
+    const macRunner = (uid: string) => runner({
+      exec: async (cmd) => (cmd === 'id' ? { code: 0, stdout: `${uid}\n`, stderr: '' } : cmd === 'node' ? { code: 0, stdout: 'v22.0.0\n', stderr: '' } : { code: 0, stdout: '', stderr: '' }),
+      which: async (cmd) => (cmd === 'brew' ? '/opt/homebrew/bin/brew' : null),
+    });
+    const user = await preflight(macRunner('501'), 'darwin');
+    expect(user.platform).toBe('darwin');
+    expect(user.pkgManager).toBe('brew');
+    expect(preflightBlockers(user)).toEqual([]);
+
+    const root = await preflight(macRunner('0'), 'darwin');
+    expect(preflightBlockers(root).join(' ')).toMatch(/without sudo/i);
+  });
+
+  it('macOS: missing brew blocks only while tmux is also missing', async () => {
+    const base = (tmux: boolean) => runner({
+      exec: async (cmd) => (cmd === 'id' ? { code: 0, stdout: '501\n', stderr: '' } : cmd === 'node' ? { code: 0, stdout: 'v22.0.0\n', stderr: '' } : { code: 0, stdout: '', stderr: '' }),
+      which: async (cmd) => (tmux && cmd === 'tmux' ? '/usr/local/bin/tmux' : null),
+    });
+    expect(preflightBlockers(await preflight(base(false), 'darwin')).join(' ')).toMatch(/Homebrew/);
+    expect(preflightBlockers(await preflight(base(true), 'darwin'))).toEqual([]);
   });
 });
 
@@ -103,6 +128,21 @@ describe('install/ensureTerminalStreaming', () => {
     const flat = calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
     expect(flat.some((s) => s.includes('apt-get'))).toBe(false);
     expect(flat.some((s) => s.includes('node-pty@'))).toBe(true);
+  });
+
+  it('never reaches for apt on macOS — there is none, and npm may still land a prebuilt binary', async () => {
+    const { r, calls } = recordingRunner([]); // no cc/python3, worst case
+    await ensureTerminalStreaming(r, 'darwin');
+    const flat = calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
+    expect(flat.some((s) => s.includes('apt-get'))).toBe(false);
+    expect(flat.some((s) => s.includes('node-pty@'))).toBe(true);
+  });
+});
+
+describe('install/currentUser (macOS per-user install)', () => {
+  it('resolves the invoking user and HOME without touching passwd databases', async () => {
+    const r = runner({ exec: async (cmd, args) => (cmd === 'id' && args[0] === '-un' ? { code: 0, stdout: 'filip\n', stderr: '' } : { code: 0, stdout: '', stderr: '' }) });
+    expect(await currentUser(r, { HOME: '/Users/filip' })).toEqual({ username: 'filip', home: '/Users/filip' });
   });
 });
 

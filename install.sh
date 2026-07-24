@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 #
-# Elowen bootstrap installer for Debian/Ubuntu.
+# Elowen bootstrap installer for Debian/Ubuntu and macOS.
 #
 #   curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
 #
 # This script does ONLY what `elowen install` cannot do itself, because it has to run
 # *before* Elowen exists on the machine: ensure a modern Node.js and the global `elowen`
-# package. Everything else — tmux, systemd services, the reverse proxy and the first
-# admin — is delegated to `elowen install`, the project's own tested provisioner.
+# package. Everything else — tmux, the services (systemd units on Linux, per-user launchd
+# agents on macOS), the reverse proxy (Linux) and the first admin — is delegated to
+# `elowen install`, the project's own tested provisioner.
+#
+# Linux runs privileged (sudo) and provisions a dedicated service user; macOS runs entirely
+# as the invoking user (Homebrew and launchd gui agents both refuse root).
 #
 # Environment overrides:
 #   ELOWEN_VERSION        install a specific npm version (e.g. 0.27.3). Default: latest.
@@ -34,11 +38,17 @@ die()   { printf '%serror%s %s\n' "$c_red$c_bold" "$c_reset" "$*" >&2; exit 1; }
 FORCE=false
 [ -n "${ELOWEN_FORCE:-}" ] && FORCE=true
 
+# ── platform ─────────────────────────────────────────────────────────────────
+OS_NAME="$(uname -s)"
+
 # ── privilege escalation ─────────────────────────────────────────────────────
-# Collect a `sudo` prefix once so every privileged step is explicit and the script also
-# works when already run as root (empty prefix).
+# Linux: collect a `sudo` prefix once so every privileged step is explicit and the script also
+# works when already run as root (empty prefix). macOS: the whole install is per-user — Homebrew
+# and launchd gui agents both refuse root — so running under sudo would provision the wrong user.
 SUDO=''
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$OS_NAME" = "Darwin" ]; then
+  [ "$(id -u)" -eq 0 ] && die "Do not run this installer as root on macOS — it provisions per-user launchd agents. Re-run without sudo."
+elif [ "$(id -u)" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
     SUDO='sudo'
   else
@@ -89,13 +99,19 @@ Reinstalling would overwrite that link and detach the checkout. Update it in pla
 # ── preflight ────────────────────────────────────────────────────────────────
 info "Checking the environment"
 
-command -v apt-get >/dev/null 2>&1 || die \
-  "This installer supports Debian/Ubuntu (apt) only. On another OS, install Node.js ${MIN_NODE_MAJOR}+ manually, then run: npm install -g elowen && sudo elowen install"
+if [ "$OS_NAME" = "Darwin" ]; then
+  # Homebrew is the one bootstrap prerequisite on macOS: it provides Node and tmux. Installing brew
+  # itself from inside a piped script is too invasive — point at the official one-liner instead.
+  command -v brew >/dev/null 2>&1 || die \
+    "Homebrew is required on macOS — install it first (https://brew.sh), then re-run this script."
+elif ! command -v apt-get >/dev/null 2>&1; then
+  die "This installer supports Debian/Ubuntu (apt) and macOS. On another OS, install Node.js ${MIN_NODE_MAJOR}+ manually, then run: npm install -g elowen && sudo elowen install"
+fi
 
 guard_existing_install
 
-# curl + CA certs are needed to fetch the NodeSource setup script below.
-if ! command -v curl >/dev/null 2>&1; then
+# curl + CA certs are needed to fetch the NodeSource setup script below (macOS ships curl).
+if [ "$OS_NAME" != "Darwin" ] && ! command -v curl >/dev/null 2>&1; then
   info "Installing curl"
   as_root apt-get update -y
   as_root apt-get install -y curl ca-certificates
@@ -110,6 +126,10 @@ node_major() {
 current_major="$(node_major)"
 if [ "$current_major" -ge "$MIN_NODE_MAJOR" ] 2>/dev/null; then
   ok "Node.js $(node -v) already satisfies the >= ${MIN_NODE_MAJOR} requirement"
+elif [ "$OS_NAME" = "Darwin" ]; then
+  info "Installing Node.js via Homebrew"
+  brew install node
+  ok "Installed Node.js $(node -v)"
 else
   if [ "$current_major" -eq 0 ]; then
     info "Node.js not found — installing Node.js ${MIN_NODE_MAJOR}.x from NodeSource"
@@ -127,13 +147,19 @@ else
   ok "Installed Node.js $(node -v)"
 fi
 
-command -v npm >/dev/null 2>&1 || die "npm is missing even after installing Node.js — check the NodeSource install output above."
+command -v npm >/dev/null 2>&1 || die "npm is missing even after installing Node.js — check the install output above."
 
 # ── Elowen package ───────────────────────────────────────────────────────────
+# macOS: brew's node prefix is user-writable, so the global install (and later self-updates) never
+# need sudo. Linux: the global prefix is root-owned, so install through the sudo wrapper.
 pkg_spec="elowen"
 if [ -n "${ELOWEN_VERSION:-}" ]; then pkg_spec="elowen@${ELOWEN_VERSION}"; fi
 info "Installing the ${c_bold}${pkg_spec}${c_reset} package globally"
-as_root npm install -g --no-audit --no-fund "$pkg_spec"
+if [ "$OS_NAME" = "Darwin" ]; then
+  npm install -g --no-audit --no-fund "$pkg_spec"
+else
+  as_root npm install -g --no-audit --no-fund "$pkg_spec"
+fi
 command -v elowen >/dev/null 2>&1 || die "The 'elowen' command is not on PATH after install — check the npm global bin directory."
 ok "Installed elowen $(elowen --version 2>/dev/null || echo '?')"
 
@@ -149,6 +175,12 @@ fi
 
 info "Provisioning Elowen — handing over to 'elowen install'"
 
+# macOS provisions per-user launchd agents — `elowen install` must run as the invoking user there,
+# while Linux provisions system units and needs root.
+provision() {
+  if [ "$OS_NAME" = "Darwin" ]; then elowen install "$@"; else as_root elowen install "$@"; fi
+}
+
 # The interactive wizard reads from stdin, but under `curl | bash` stdin is the piped script.
 # Reconnect it to the controlling terminal so the prompts work. When there is no terminal
 # (CI, no /dev/tty), an unattended run is the only viable path.
@@ -156,9 +188,9 @@ unattended=false
 for a in "${install_args[@]:-}"; do [ "$a" = "--unattended" ] && unattended=true; done
 
 if [ "$unattended" = true ]; then
-  as_root elowen install "${install_args[@]}"
+  provision "${install_args[@]}"
 elif has_tty; then
-  as_root elowen install "${install_args[@]}" < /dev/tty
+  provision "${install_args[@]}" < /dev/tty
 else
   die "No terminal available for the interactive wizard. Re-run with an unattended install, e.g.:
   ELOWEN_INSTALL_ARGS='--unattended --localhost --admin-user admin --admin-pass CHANGEME --agents none' bash install.sh"

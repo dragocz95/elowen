@@ -3,9 +3,10 @@ import { dirname, resolve, join } from 'node:path';
 import * as p from '../ui/prompts.js';
 import { realRunner, type Runner } from './runner.js';
 import { preflight, preflightBlockers } from './preflight.js';
-import { ensureServiceUser, userHome, type ServiceUserChoice } from './serviceUser.js';
+import { currentUser, ensureServiceUser, userHome, type ServiceUserChoice } from './serviceUser.js';
 import { AGENT_CLIS, detectAgentClis, installCommand } from './agentClis.js';
 import { daemonUnit, webUnit, updateService, updateTimer, elowenSudoers, type UnitParams } from './systemdUnits.js';
+import { LAUNCHD_DAEMON_LABEL, LAUNCHD_UPDATE_LABEL, LAUNCHD_WEB_LABEL, agentPlistPath, daemonAgent, updateAgent, webAgent, type LaunchdParams } from './launchdUnits.js';
 import { SERVICES } from '../systemd.js';
 import { applySetup, buildSetupPlan, defaultExecForCli, isFirstRun, type SetupAnswers } from '../setup.js';
 import { selfPrefix, reinstallNpmArgs } from '../update.js';
@@ -17,6 +18,10 @@ import { beginInstaller } from '../ui/installer.js';
 
 const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
 const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT) ?? 4500);
+
+/** macOS provisions per-user launchd agents (current user, localhost, no sudo) instead of the Linux
+ *  root+systemd+service-user model — the platform picks the whole provisioning shape, not one step. */
+const MAC = process.platform === 'darwin';
 
 /** Everything `elowen install` needs to provision a box, resolved either interactively (modal prompts)
  *  or non-interactively (CLI flags). Collecting it up front keeps the two front-ends thin and lets the
@@ -79,10 +84,37 @@ async function loginSmokeTest(username: string, password: string): Promise<void>
  *  toolchain to compile its native addon when no prebuilt binary matches, so ensure python3/make/g++,
  *  then install node-pty into the globally-installed elowen package where the daemon loads it from.
  *  A failure here is non-fatal — the terminal degrades to the snapshot mirror. */
-export async function ensureTerminalStreaming(r: Runner): Promise<void> {
-  if (!(await r.which('cc')) || !(await r.which('python3'))) await aptInstall(r, 'python3', 'make', 'g++');
+export async function ensureTerminalStreaming(r: Runner, platform = process.platform): Promise<void> {
+  // macOS ships python3 and gets cc from the Xcode CLT; there is no apt to fill a gap with, and npm can
+  // still land a prebuilt binary — so only Linux tries to install the toolchain first.
+  if (platform !== 'darwin' && (!(await r.which('cc')) || !(await r.which('python3')))) await aptInstall(r, 'python3', 'make', 'g++');
   const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   await must(r, 'bash', ['-lc', `cd '${pkgRoot}' && npm install --no-save --no-audit --no-fund node-pty@1.0.0`]);
+}
+
+/** Write + bootstrap the three launchd LaunchAgents (daemon, web, hourly update) in the invoking
+ *  user's gui domain — the macOS counterpart of provisionSystemd. Idempotent: a stale bootstrap from a
+ *  previous run is booted out first, so a re-install replaces rather than fails. */
+async function provisionLaunchd(r: Runner, home: string): Promise<void> {
+  const { daemonEntry, webServer } = packagePaths();
+  const params: LaunchdParams = {
+    home, nodePath: process.execPath, daemonEntry, webServer,
+    npmGlobalBin: await npmGlobalBin(r), daemonPort: DAEMON_PORT, webPort: WEB_PORT,
+  };
+  await must(r, 'mkdir', ['-p', join(home, '.config', 'elowen', 'logs')]);
+  await must(r, 'mkdir', ['-p', join(home, 'Library', 'LaunchAgents')]);
+  const uid = (await r.exec('id', ['-u'])).stdout.trim();
+  const agents: [string, string][] = [
+    [LAUNCHD_DAEMON_LABEL, daemonAgent(params)],
+    [LAUNCHD_WEB_LABEL, webAgent(params)],
+    [LAUNCHD_UPDATE_LABEL, updateAgent(params)],
+  ];
+  for (const [label, body] of agents) {
+    const path = agentPlistPath(home, label);
+    await r.writeFile(path, body);
+    await r.exec('launchctl', ['bootout', `gui/${uid}/${label}`]); // expected to fail on a first install
+    await must(r, 'launchctl', ['bootstrap', `gui/${uid}`, path]);
+  }
 }
 
 /** Write + enable the two systemd units and verify they came active. */
@@ -145,9 +177,11 @@ async function provisionAdmin(answers: SetupAnswers): Promise<void> {
  *  path drives the same executors with spinners and inline prompts. Returns whether TLS was obtained,
  *  so the caller can build the final URL (a non-fatal certbot failure leaves the site on HTTP). */
 async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> {
-  if (plan.installTmux) await step('Installing tmux', () => aptInstall(r, 'tmux'));
+  if (plan.installTmux) await step('Installing tmux', () => (MAC ? must(r, 'brew', ['install', 'tmux']) : aptInstall(r, 'tmux')));
 
-  const { home } = await step(`Service user "${plan.user.username}"`, () => ensureServiceUser(r, plan.user));
+  const { username, home } = MAC
+    ? await step('Resolving the current user', () => currentUser(r))
+    : await step(`Service user "${plan.user.username}"`, () => ensureServiceUser(r, plan.user));
 
   for (const id of plan.agents) {
     const { cmd, args } = installCommand(agentCli(id));
@@ -159,24 +193,30 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
   await step('Enabling terminal streaming', () => ensureTerminalStreaming(r))
     .catch((e) => p.log.warn(`Terminal streaming unavailable (snapshot fallback stays active): ${(e as Error).message}`));
 
-  await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
+  if (MAC) {
+    await step('Configuring launchd agents', () => provisionLaunchd(r, home));
+  } else {
+    await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
 
-  // Non-fatal: without the sudoers drop-in the services still run — only in-place self-updates
-  // (auto-update timer + manual `elowen update`) lose the ability to restart the units unattended.
-  await step('Granting self-update permissions', () => provisionSudoers(r, plan.user.username))
-    .catch((e) => p.log.warn(`Self-update permissions not granted (auto-update can't restart units until fixed): ${(e as Error).message}`));
+    // Non-fatal: without the sudoers drop-in the services still run — only in-place self-updates
+    // (auto-update timer + manual `elowen update`) lose the ability to restart the units unattended.
+    // macOS needs none of this: the agents run as the invoking user, who can already restart them.
+    await step('Granting self-update permissions', () => provisionSudoers(r, plan.user.username))
+      .catch((e) => p.log.warn(`Self-update permissions not granted (auto-update can't restart units until fixed): ${(e as Error).message}`));
+  }
 
   const ready = await step('Waiting for the daemon', () => waitForDaemon());
-  if (!ready) throw new Error('daemon did not become reachable — check: journalctl -u elowen-daemon');
+  if (!ready) throw new Error(`daemon did not become reachable — check: ${MAC ? `${home}/.config/elowen/logs/launchd-daemon.log` : 'journalctl -u elowen-daemon'}`);
 
   const d = plan.deploy;
   const { tls: tlsOk } = await provisionProxy(r, d, { web: WEB_PORT, daemon: DAEMON_PORT });
 
   if (plan.admin) await step('Creating admin + verifying login', () => provisionAdmin(plan.admin!));
 
-  // Record the deployment so the launcher menu shows the right URL and drives systemd (not a 2nd daemon).
-  const info: InstallInfo = { publicUrl: publicUrl(d, tlsOk, WEB_PORT), mode: d.mode, serviceUser: plan.user.username, daemonPort: DAEMON_PORT, webPort: WEB_PORT };
-  await must(r, 'mkdir', ['-p', '/etc/elowen']);
+  // Record the deployment so the launcher menu shows the right URL and drives the provisioned services
+  // (systemd units / launchd agents), never a second, port-conflicting daemon.
+  const info: InstallInfo = { publicUrl: publicUrl(d, tlsOk, WEB_PORT), mode: d.mode, serviceUser: username, daemonPort: DAEMON_PORT, webPort: WEB_PORT };
+  await must(r, 'mkdir', ['-p', dirname(INSTALL_INFO_PATH)]);
   await r.writeFile(INSTALL_INFO_PATH, serializeInstallInfo(info));
   return { tls: tlsOk };
 }
@@ -198,7 +238,7 @@ function flag(args: string[], name: string): string | undefined {
  *  already exists, so the same command is idempotent across re-runs. */
 async function planFromArgs(r: Runner, args: string[]): Promise<InstallPlan> {
   const username = flag(args, '--user') ?? 'elowen';
-  const exists = (await userHome(r, username)) !== null;
+  const exists = MAC ? true : (await userHome(r, username)) !== null;
 
   const agentsRaw = flag(args, '--agents');
   const agents = !agentsRaw || agentsRaw === 'none' ? []
@@ -215,11 +255,16 @@ async function planFromArgs(r: Runner, args: string[]): Promise<InstallPlan> {
     ? { username: adminUser, password: adminPass, pilotExec, apiUrl: flag(args, '--llm-url') ?? 'https://api.openai.com/v1', apiKey: flag(args, '--llm-key') ?? '', model: flag(args, '--llm-model') ?? 'gpt-4o-mini' }
     : null;
 
+  // macOS: everything runs as the invoking user on localhost — a --user/--domain/--ip flag has nothing
+  // to configure there, so say so instead of silently honouring half of it.
+  if (MAC && (flag(args, '--user') || flag(args, '--domain') || flag(args, '--ip') || flag(args, '--host'))) {
+    p.log.warn('macOS installs run as the current user on localhost — ignoring --user/--domain/--ip.');
+  }
   return {
     installTmux: !args.includes('--no-tmux'),
     user: { mode: exists ? 'existing' : 'create', username },
     agents,
-    deploy: deploymentFromArgs(args),
+    deploy: MAC ? localhostDeploy() : deploymentFromArgs(args),
     admin,
   };
 }
@@ -292,18 +337,23 @@ function planSummary(plan: InstallPlan): string {
     : d.mode === 'ip'
       ? `http://${d.host}:${WEB_PORT} — direct, no reverse proxy`
       : `localhost only — http://localhost:${WEB_PORT}`;
+  const user = MAC ? `current user "${plan.user.username}" — launchd agents, no sudo`
+    : plan.user.mode === 'create' ? `create system user "${plan.user.username}"` : `existing user "${plan.user.username}"`;
   return [
-    `${pad('User')}${plan.user.mode === 'create' ? `create system user "${plan.user.username}"` : `existing user "${plan.user.username}"`}`,
+    `${pad('User')}${user}`,
     `${pad('Agents')}${plan.agents.length ? plan.agents.join(', ') : 'none (install later)'}`,
-    `${pad('tmux')}${plan.installTmux ? 'install' : 'present / skipped'}`,
+    `${pad('tmux')}${plan.installTmux ? `install${MAC ? ' (brew)' : ''}` : 'present / skipped'}`,
     `${pad('Web')}${web}`,
     `${pad('Admin')}${plan.admin ? plan.admin.username : 'create interactively once the daemon is up'}`,
   ].join('\n');
 }
 
-/** `elowen install` — provision a fresh Debian/Ubuntu box. Run as root. Pass `--unattended` (with flags)
- *  for a non-interactive install; otherwise an interactive wizard collects every answer. */
-const INSTALL_HELP = `elowen install - provision a fresh Debian/Ubuntu box as an elowen service (run as root)
+/** `elowen install` — provision a fresh box. Linux (Debian/Ubuntu, run as root): systemd services and a
+ *  dedicated service user. macOS (run as yourself, NO sudo): per-user launchd agents on localhost. Pass
+ *  `--unattended` (with flags) for a non-interactive install; otherwise a wizard collects every answer. */
+const INSTALL_HELP = `elowen install - provision this machine as an elowen service
+  Linux (Debian/Ubuntu)  run as root: systemd services + a dedicated service user
+  macOS                  run as yourself (no sudo): per-user launchd agents, localhost only
 
 USAGE
   elowen install                    interactive wizard (recommended)
@@ -311,11 +361,11 @@ USAGE
 
 OPTIONS
   --unattended                    run non-interactively from the flags below
-  --user <name>                   service user that runs the agents          (default: elowen)
+  --user <name>                   service user that runs the agents          (Linux only; default: elowen)
   --agents <list>                 agent CLIs to install: all | none | claude,opencode,codex
   --no-tmux                       skip installing tmux
 
-  Deployment (pick one; default is localhost):
+  Deployment (Linux only — macOS is always localhost; default is localhost):
   --domain <host>                 serve on a domain behind a reverse proxy (+ Let's Encrypt HTTPS)
   --ip <addr> | --host <addr>     serve directly on the public IP and port (no proxy)
   --localhost                     bind to localhost only
@@ -351,13 +401,15 @@ export async function install(args: string[] = []): Promise<void> {
   } else {
     let installTmux = false;
     if (!pf.tmux) {
-      const wantTmux = await p.confirm({ message: 'tmux is required to run agents and is not installed. Install it now?' });
+      const wantTmux = await p.confirm({ message: `tmux is required to run agents and is not installed. Install it now${MAC ? ' (brew)' : ''}?` });
       installTmux = !p.isCancel(wantTmux) && wantTmux === true;
       if (!installTmux) p.log.warn('Continuing without tmux — agents will not run until it is installed.');
     }
-    const user = await chooseServiceUser();
+    // macOS has neither question: the agents run as the invoking user (launchd gui domain) and the box
+    // is a personal machine, so the deployment is localhost by definition.
+    const user = MAC ? await currentUser(r).then(({ username }): ServiceUserChoice => ({ mode: 'existing', username })) : await chooseServiceUser();
     const agents = await chooseAgents(r, user.username);
-    const deploy = await chooseDeployment(r, WEB_PORT);
+    const deploy = MAC ? localhostDeploy() : await chooseDeployment(r, WEB_PORT);
     if (!deploy) { p.cancel('Installation cancelled.'); process.exit(1); }
     // Admin is created via the shared wizard AFTER the daemon is up, so collect it there instead.
     plan = { installTmux, user, agents, deploy, admin: null };
@@ -392,9 +444,15 @@ export async function install(args: string[] = []): Promise<void> {
   const summary = [
     `Open       ${url}`,
     adminUser ? `Sign in    ${adminUser}` : 'Sign in    create an admin in the web UI',
-    `Status     systemctl status elowen-daemon elowen-web`,
-    `Logs       journalctl -u elowen-daemon -f`,
-    `Restart    systemctl restart elowen-daemon elowen-web`,
+    ...(MAC ? [
+      `Status     launchctl print gui/$(id -u)/io.elowen.daemon`,
+      `Logs       tail -f ~/.config/elowen/logs/launchd-daemon.log`,
+      `Restart    launchctl kickstart -k gui/$(id -u)/io.elowen.daemon`,
+    ] : [
+      `Status     systemctl status elowen-daemon elowen-web`,
+      `Logs       journalctl -u elowen-daemon -f`,
+      `Restart    systemctl restart elowen-daemon elowen-web`,
+    ]),
   ].join('\n');
   const doneBody = [...summary.split('\n'), '', `ELOWEN is live at ${url}`];
   // Interactive install ends on a distinct terminal DONE screen, held until the operator dismisses it

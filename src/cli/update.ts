@@ -7,6 +7,7 @@ import { isNewer } from './version.js';
 import { start, stop } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
 import { SERVICES, systemctl } from './systemd.js';
+import { launchdRestart } from './launchd.js';
 import { hasLiveMission } from './missionGate.js';
 import { fetchLatestVersion } from '../shared/registry.js';
 
@@ -121,6 +122,13 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
   // A plain launcher install has no install.json — fall back to stop/start of our own spawned daemon.
   const restart = deps.restart ?? (async (e) => {
     if (readInstallInfo()) {
+      // A macOS box provisioned by `elowen install` runs per-user launchd agents — kickstart them (the
+      // invoking user owns them, so no sudo and no --no-block dance is needed).
+      if (process.platform === 'darwin') {
+        const mac = await launchdRestart();
+        if (mac.code !== 0) throw new Error(`installed ${latest} but the launchd restart failed (code ${mac.code}) — services run the old build until restarted`);
+        return;
+      }
       // `--no-block`: a web-triggered update spawns this `elowen update` INSIDE elowen-daemon's systemd
       // cgroup, so a blocking `systemctl restart elowen-daemon elowen-web` would have the daemon's own
       // restart kill this process (and the waiting systemctl client) the instant elowen-daemon stops —

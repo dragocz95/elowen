@@ -62,9 +62,32 @@ for (const p of ['dist/prompts/', 'dist/plugins/', 'web-dist/.next/static/', 'pr
   if (!hasPrefix(p)) die(`tarball ships no ${p} entries (check package.json "files" and the build)`);
 }
 
-// 4. Docker — only reached once the tarball is proven complete. Clear message if Docker is unavailable.
+// 4a. Native mode (`--native`, used by the macOS CI job): no Docker on the platform, so install the
+//     tarball globally on THIS machine and run the same smoke assertions against it directly. Guarded
+//     hard against dev boxes: a pre-existing global elowen (above all a linked checkout, which a global
+//     install would silently replace and detach) refuses the run.
+if (process.argv.includes('--native')) {
+  const globalRoot = spawnSync('npm', ['root', '-g'], { encoding: 'utf8' }).stdout.trim();
+  if (globalRoot && existsSync(join(globalRoot, 'elowen'))) {
+    die('refusing --native: elowen is already installed globally on this machine (this mode is for clean CI runners).');
+  }
+  process.stdout.write('\n[test:install] installing tarball globally (native mode)…\n');
+  run('npm', ['install', '-g', '--no-audit', '--no-fund', tgz]);
+  process.stdout.write('\n[test:install] running unboxing smoke natively…\n');
+  const native = spawnSync('node', [join(here, 'smoke.mjs')], {
+    stdio: 'inherit', cwd: repo, timeout: 180_000,
+    env: { ...process.env, ELOWEN_EXPECTED_VERSION: version },
+  });
+  spawnSync('npm', ['rm', '-g', 'elowen'], { stdio: 'ignore' });
+  if (native.error || native.status !== 0) die(`native smoke failed${native.signal ? ` (${native.signal})` : ''}`);
+  cleanup();
+  process.stdout.write(`\nPASS test:install — elowen ${version} unboxes cleanly (native).\n`);
+  process.exit(0);
+}
+
+// 4b. Docker — only reached once the tarball is proven complete. Clear message if Docker is unavailable.
 if (spawnSync('docker', ['version'], { stdio: 'ignore' }).status !== 0) {
-  die('Docker is required to run the container smoke (build + tarball checks passed). Start Docker and retry, or run this in CI.');
+  die('Docker is required to run the container smoke (build + tarball checks passed). Start Docker and retry, or run this in CI. On a Docker-less clean machine (CI runner), use --native.');
 }
 process.stdout.write('\n[test:install] building clean-machine image…\n');
 run('docker', ['build', '-t', IMAGE, '--build-arg', `ELOWEN_VERSION=${version}`, here]);

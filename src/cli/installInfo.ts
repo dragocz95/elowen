@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 /** Metadata `elowen install` records about a systemd-provisioned box, so the launcher menu can show the
  *  real public URL the operator chose (not a hard-coded localhost) and drive the systemd units instead
@@ -12,9 +14,12 @@ export interface InstallInfo {
   webPort: number;
 }
 
-/** System-wide so any user invoking `elowen` (typically root) can read it, regardless of which user the
- *  services run as. */
-export const INSTALL_INFO_PATH = '/etc/elowen/install.json';
+/** Linux: system-wide so any user invoking `elowen` (typically root) can read it, regardless of which
+ *  user the services run as. macOS: everything is per-user (launchd agents in the invoker's gui domain,
+ *  no root anywhere), so the record lives next to the rest of ~/.config/elowen. */
+export const INSTALL_INFO_PATH = process.platform === 'darwin'
+  ? join(homedir(), '.config', 'elowen', 'install.json')
+  : '/etc/elowen/install.json';
 
 export function readInstallInfo(path = INSTALL_INFO_PATH): InstallInfo | null {
   try { return JSON.parse(readFileSync(path, 'utf8')) as InstallInfo; }

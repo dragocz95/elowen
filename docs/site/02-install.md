@@ -48,11 +48,12 @@ it, read it, and reason about it.
 The shortest path from a bare machine to a running Elowen. A small bootstrap
 script installs everything the machine is missing — a modern Node.js and the
 global **`elowen`** package — then hands over to `elowen install`, the tested
-provisioner that sets up tmux, the systemd services, an optional reverse proxy
+provisioner that sets up tmux, the services, an optional reverse proxy (Linux)
 and the first admin. You end up with a running daemon and Web UI.
 
 ```bash
-# Linux (Debian/Ubuntu)
+# Linux (Debian/Ubuntu) — run with sudo access
+# macOS — run as yourself (no sudo; needs Homebrew)
 curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
 ```
 
@@ -61,11 +62,22 @@ curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | 
 irm https://raw.githubusercontent.com/dragocz95/elowen/main/install.ps1 | iex
 ```
 
-Elowen runs its agents inside tmux and its services under systemd, both
-Linux-only, so on **Windows** the bootstrap enables **WSL2**, installs Ubuntu if
-it is missing, and runs the exact same Linux install inside it. A first-time WSL
-setup needs one reboot — re-run the command afterwards to finish. The Web UI is
-then reachable from Windows at `http://localhost:4500`.
+On **Linux** the provisioner runs as root: a dedicated service user, the systemd
+units (`elowen-daemon`, `elowen-web`, hourly auto-update) and optionally a
+reverse proxy with HTTPS for a public domain.
+
+On **macOS** everything runs as *you*, with no sudo anywhere: the provisioner
+writes per-user launchd agents (`io.elowen.daemon`, `io.elowen.web`, plus an
+hourly `io.elowen.update` check) into `~/Library/LaunchAgents`, bound to
+localhost. They start at login and restart on failure; manage them with
+`launchctl` or just run `elowen` for the launcher menu. Logs live in
+`~/.config/elowen/logs/`.
+
+On **Windows** the bootstrap enables **WSL2**, installs Ubuntu if it is
+missing, and runs the exact same Linux install inside it (tmux and systemd are
+Linux-only). A first-time WSL setup needs one reboot — re-run the command
+afterwards to finish. The Web UI is then reachable from Windows at
+`http://localhost:4500`.
 
 Two optional environment variables tune the run:
 

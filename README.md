@@ -27,10 +27,13 @@ It is deliberately self-hosted: a Node.js daemon, SQLite, a Next.js Web UI, and 
 
 ## Start here
 
-**One-line install** — provisions a fresh box end to end (Node.js, the `elowen` package, tmux, systemd services, the first admin) and leaves a running daemon and Web UI:
+**One-line install** — provisions a fresh box end to end (Node.js, the `elowen` package, tmux, the services, the first admin) and leaves a running daemon and Web UI:
 
 ```bash
-# Linux (Debian/Ubuntu)
+# Linux (Debian/Ubuntu) — run with sudo access; provisions systemd services
+curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
+
+# macOS — run as yourself (no sudo; needs Homebrew); provisions per-user launchd agents
 curl -fsSL https://raw.githubusercontent.com/dragocz95/elowen/main/install.sh | bash
 ```
 
@@ -49,17 +52,21 @@ elowen
 
 `elowen setup` walks through the local account, a project, an AI provider, optional memory embeddings, and code intelligence. A bare `elowen` opens the terminal chat; `elowen doctor` explains what is ready and what still needs attention.
 
-> **Requirements:** Node.js 22+ and tmux. The one-line installer takes care of both; on Windows it runs inside WSL2 because tmux and systemd are Linux-only.
+> **Requirements:** Node.js 22+ and tmux. The one-line installer takes care of both (macOS additionally needs [Homebrew](https://brew.sh)); on Windows it runs inside WSL2 because tmux and systemd are Linux-only.
 
 <details>
 <summary><b>How the one-line installer works</b></summary>
 
 The bootstrap script is deliberately thin — it does only what has to happen *before* Elowen exists on the machine, then hands the rest to `elowen install`, the project's own provisioner:
 
-1. **Preflight** — confirms a Debian/Ubuntu (apt) system and ensures `curl`.
-2. **Node.js** — installs Node.js 22+ from NodeSource when it is missing or too old; a suitable Node already present is left untouched.
+1. **Preflight** — confirms a Debian/Ubuntu (apt) system or macOS with Homebrew, and ensures `curl`.
+2. **Node.js** — installs Node.js 22+ (NodeSource on Linux, Homebrew on macOS) when it is missing or too old; a suitable Node already present is left untouched.
 3. **Package** — installs the global `elowen` package from npm (`ELOWEN_VERSION` pins a specific release).
-4. **Provision** — hands over to `elowen install`, which sets up tmux, the systemd services (`elowen-daemon`, `elowen-web`, auto-update), an optional reverse proxy, and the first admin. The interactive wizard runs on the real terminal even under `curl … | bash`; pass `ELOWEN_INSTALL_ARGS='--unattended …'` for a fully non-interactive run.
+4. **Provision** — hands over to `elowen install`, which sets up tmux, the services, and the first admin. The interactive wizard runs on the real terminal even under `curl … | bash`; pass `ELOWEN_INSTALL_ARGS='--unattended …'` for a fully non-interactive run.
+
+On **Linux** the provisioner runs as root: it creates a dedicated service user, installs the systemd units (`elowen-daemon`, `elowen-web`, hourly auto-update) and can configure an optional reverse proxy with HTTPS for a public domain.
+
+On **macOS** everything runs as *you*, with no sudo anywhere: the provisioner writes per-user launchd agents (`io.elowen.daemon`, `io.elowen.web`, plus an hourly `io.elowen.update` check) into `~/Library/LaunchAgents`, bound to localhost. They start at login and restart on failure; manage them with `launchctl` (`launchctl kickstart -k gui/$(id -u)/io.elowen.daemon`) or just run `elowen` for the menu. Logs live in `~/.config/elowen/logs/`.
 
 It is safe to re-run: an existing install is never reprovisioned without confirmation (or `ELOWEN_FORCE=1`), and a globally-linked development checkout is refused outright so a reinstall can't detach it.
 

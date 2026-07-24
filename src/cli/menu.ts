@@ -6,20 +6,48 @@ import { openBrowser } from './setup/browser.js';
 import { readInstallInfo, type InstallInfo } from './installInfo.js';
 import { update } from './update.js';
 import { SERVICES, runCmd, systemctl, servicesActive } from './systemd.js';
+import { launchdLogTail, launchdRestart, launchdServicesActive, launchdStart, launchdStatusText, launchdStop } from './launchd.js';
 import { launchChat } from './chat/launch.js';
 
 const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
 
-/** Launcher menu for a systemd-provisioned box (`elowen install`): drives the units via systemctl and
- *  shows the real public URL the operator chose — never spawns a second, port-conflicting daemon. */
-async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
+/** The provisioned-service seam the menu drives: systemd units on Linux, per-user launchd agents on
+ *  macOS. One menu loop, two thin backends — the actions and wording stay identical. */
+interface ServiceOps {
+  kind: 'systemd' | 'launchd';
+  active(): Promise<boolean>;
+  run(action: 'start' | 'stop' | 'restart'): Promise<{ code: number }>;
+  statusText(): Promise<string>;
+  logsText(): Promise<string>;
+}
+
+const serviceOps = (): ServiceOps => (process.platform === 'darwin'
+  ? {
+    kind: 'launchd',
+    active: () => launchdServicesActive(),
+    run: (action) => (action === 'start' ? launchdStart() : action === 'stop' ? launchdStop() : launchdRestart()),
+    statusText: async () => launchdStatusText(),
+    logsText: async () => launchdLogTail() || '(no logs — see ~/.config/elowen/logs)',
+  }
+  : {
+    kind: 'systemd',
+    active: () => servicesActive(),
+    run: (action) => systemctl(action, ...SERVICES),
+    statusText: async () => (await systemctl('status', '--no-pager', '-n', '0', ...SERVICES)).stdout.trim() || '(no output)',
+    logsText: async () => (await runCmd('journalctl', ['-u', 'elowen-daemon', '-n', '20', '--no-pager'])).stdout.trim() || '(no logs - try: journalctl -u elowen-daemon)',
+  });
+
+/** Launcher menu for a provisioned box (`elowen install`): drives the services via systemctl/launchctl
+ *  and shows the real public URL the operator chose — never spawns a second, port-conflicting daemon. */
+async function provisionedMenu(info: InstallInfo, version: string): Promise<void> {
+  const svc = serviceOps();
   p.mascot();
-  p.intro(`elowen v${version}  ·  systemd`);
+  p.intro(`elowen v${version}  ·  ${svc.kind}`);
   // A systemd box was provisioned by `elowen install`, which already created the admin — don't nag. The
   // `elowen setup` command still runs the wizard here on demand.
   let lastReport: { title?: string; body: string } | undefined;
   for (;;) {
-    const active = await servicesActive();
+    const active = await svc.active();
     const state = active ? `● elowen is running  ·  ${info.publicUrl}` : '○ elowen is stopped';
     const action = await p.select({
       message: state,
@@ -28,7 +56,7 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
         { value: 'chat', label: 'Talk to Elowen', hint: 'chat in the terminal' },
         active ? { value: 'restart', label: 'Restart', hint: 'daemon + web' } : { value: 'start', label: 'Start', hint: 'daemon + web' },
         ...(active ? [{ value: 'stop', label: 'Stop' }] : []),
-        { value: 'status', label: 'Status', hint: 'systemctl status' },
+        { value: 'status', label: 'Status', hint: svc.kind === 'launchd' ? 'launchctl print' : 'systemctl status' },
         { value: 'open', label: 'Open web UI', hint: info.publicUrl },
         { value: 'logs', label: 'Recent daemon logs' },
         { value: 'update', label: 'Update', hint: 'npm + restart services' },
@@ -42,7 +70,7 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
       // Chat talks to the daemon's brain — bring the services up first, then hand the terminal to the
       // pi-tui client. When it exits (ctrl+c / /quit) control falls back to this launcher loop.
       if (!active) {
-        const r = await systemctl('start', ...SERVICES);
+        const r = await svc.run('start');
         lastReport = r.code === 0
           ? undefined
           : { title: 'Services', body: `start failed (code ${r.code})` };
@@ -56,13 +84,11 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
       continue;
     }
     if (action === 'status') {
-      const r = await systemctl('status', '--no-pager', '-n', '0', ...SERVICES);
-      lastReport = { title: 'Status', body: r.stdout.trim() || '(no output)' };
+      lastReport = { title: 'Status', body: await svc.statusText() };
       continue;
     }
     if (action === 'logs') {
-      const r = await runCmd('journalctl', ['-u', 'elowen-daemon', '-n', '20', '--no-pager']);
-      lastReport = { title: 'elowen-daemon', body: r.stdout.trim() || '(no logs - try: journalctl -u elowen-daemon)' };
+      lastReport = { title: 'elowen-daemon', body: await svc.logsText() };
       continue;
     }
     if (action === 'update') {
@@ -80,7 +106,7 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
       continue;
     }
     // start | stop | restart
-    const r = await systemctl(action as string, ...SERVICES);
+    const r = await svc.run(action as 'start' | 'stop' | 'restart');
     const message = r.code === 0 ? `${action} ok` : `${action} failed (code ${r.code})`;
     lastReport = { title: 'Services', body: message };
   }
@@ -88,9 +114,10 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
 
 /** The interactive launcher menu shown when `elowen` is run with no arguments in a terminal. */
 export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<void> {
-  // A box provisioned by `elowen install` is systemd-managed — drive those units, don't spawn our own.
+  // A box provisioned by `elowen install` is service-managed (systemd / launchd) — drive those
+  // services, don't spawn our own.
   const info = readInstallInfo();
-  if (info) { await systemdMenu(info, version); return; }
+  if (info) { await provisionedMenu(info, version); return; }
 
   const deps = { ...defaultLifecycleDeps(version), log: () => {} };
   p.mascot();

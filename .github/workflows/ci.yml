@@ -358,3 +358,26 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix web
       - run: npm run test:install
+
+  macos-smoke:
+    name: macOS smoke (packed tarball, native launcher)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The same unboxing contract as install-smoke, but natively on macOS (no Docker on these
+      # runners): pack the tarball, install it globally on the clean runner and drive the launcher
+      # path (`elowen up` -> setup-mode API -> first admin -> web serves -> `elowen down`) — the exact
+      # flow a Mac user hits after `npm install -g elowen`. Also proves the native deps
+      # (better-sqlite3, node-pty) resolve on darwin-arm64. tmux mirrors the Linux image's baseline.
+      - run: brew install tmux
+      - run: npm ci
+      - run: npm ci --prefix web
+      - run: npm run test:install -- --native
