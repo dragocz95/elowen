@@ -96,6 +96,10 @@
   "optionalDependencies": {
     "node-pty": "^1.0.0"
   },
+  "overrides": {
+    "@hono/node-server": "$@hono/node-server",
+    "protobufjs": "^7.6.5"
+  },
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.2.9",
     "@types/better-sqlite3": "^7.6.0",

@@ -49,5 +49,10 @@
     "typescript": "^5.6.0",
     "vite-tsconfig-paths": "^5.0.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "dompurify": "$dompurify",
+    "postcss": "^8.5.22",
+    "sharp": "^0.35.3"
   }
 }
