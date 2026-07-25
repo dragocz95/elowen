@@ -103,7 +103,7 @@
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.2.9",
     "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.1",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "dependency-cruiser": "^17.4.3",
