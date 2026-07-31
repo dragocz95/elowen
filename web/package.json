@@ -38,7 +38,7 @@
     "@testing-library/jest-dom": "^6.5.0",
     "@playwright/test": "^1.62.0",
     "@testing-library/react": "^16.0.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.185.1",
