@@ -123,15 +123,31 @@ export class DelegatedSessionService {
 
   /** Boot phase 2 (ASYNCHRONOUS, after startPlatforms): respawn each claimed delegation to finish where it
    *  was interrupted, or park it as recovery_required when replay is not safe. Runs the children serially
-   *  so a fleet of interrupted delegations does not stampede the freshly booted daemon. A per-run failure
-   *  is logged and left claimed (its lease lapses, so a later boot retries until MAX_RECOVERY_ATTEMPTS). */
+   *  so a fleet of interrupted delegations does not stampede the freshly booted daemon. An unexpected turn
+   *  failure is parked with a durable parent notice instead of leaving a current-boot `recovering` claim with
+   *  no worker until another daemon restart happens to retry it. */
   async runDelegationRecovery(): Promise<void> {
     const claimed = this.pendingRecovery;
     this.pendingRecovery = [];
     for (const run of claimed) {
       try { await this.recoverOne(run); }
       catch (e) {
-        logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${e instanceof Error ? e.message : String(e)}`);
+        const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
+        logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${message}`);
+        const reason = `automatic restart recovery failed: ${message}`;
+        const parked = this.d.store.markRecoveryRequired(run.parentSessionId, run.toolCallId, reason, {
+          id: syntheticRestartResultId(run.parentSessionId, run.toolCallId),
+          toolCallId: run.toolCallId,
+          sessionId: run.childSessionId,
+          status: 'error',
+          task: run.state.task,
+          tools: run.state.tools,
+          seconds: run.state.seconds,
+          ...(run.state.tokens !== undefined ? { tokens: run.state.tokens } : {}),
+          ...(run.state.model !== undefined ? { model: run.state.model } : {}),
+          error: `${reason}. Continue the sub-agent ${run.childSessionId} with DelegateContinue after checking whether its last step completed.`,
+        });
+        if (!parked) logger('brain').error(`boot recovery of ${run.childSessionId} could not park its stale claim`);
       }
     }
   }

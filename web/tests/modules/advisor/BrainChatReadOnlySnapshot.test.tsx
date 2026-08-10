@@ -22,6 +22,10 @@ class FakeES {
   emit(type: string, data: unknown) {
     act(() => { for (const fn of this.listeners.get(type) ?? []) fn({ data: JSON.stringify(data) }); });
   }
+  emitRaw(type: string) {
+    act(() => { for (const fn of this.listeners.get(type) ?? []) fn({}); });
+  }
+  listenerCount(type: string) { return this.listeners.get(type)?.length ?? 0; }
 }
 
 const server = setupServer(
@@ -48,6 +52,10 @@ function Harness() {
     <button onClick={() => { void chat.openReadOnly('brain-child'); }}>open child</button>
     <span data-testid="model">{chat.currentModel}</span>
     <span data-testid="cards">{chat.cards.map((card) => card.title).join(',')}</span>
+    <span data-testid="read-only">{chat.readOnly ?? 'live'}</span>
+    <span data-testid="busy">{chat.busy ? 'busy' : 'idle'}</span>
+    <span data-testid="turn-count">{chat.turns.length}</span>
+    <span data-testid="turns">{JSON.stringify(chat.turns)}</span>
   </>;
 }
 
@@ -63,6 +71,8 @@ describe('read-only child snapshot', () => {
     const params = new URL(child.url, 'http://localhost').searchParams;
     expect(params.get('session')).toBe('brain-child');
     expect(params.get('snapshot')).toBe('1');
+    expect(params.get('heartbeat')).toBe('1');
+    expect(child.listenerCount('heartbeat')).toBe(1);
     // A drill-in must NOT carry the parent client attachment identity: with client+generation the daemon's
     // resolveStreamSession runs its owned-user-session branch and rejects the channel child as `unknown
     // session`, which is exactly why web drill-in was hanging while the CLI (which omits them) worked.
@@ -81,20 +91,76 @@ describe('read-only child snapshot', () => {
     await waitFor(() => expect(screen.getByTestId('cards')).toHaveTextContent('Child live card'));
   });
 
-  it('closes the child tap and leaves the read-only view when the server sends an error frame', async () => {
+  it('leaves a native transport error to EventSource auto-reconnect', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
     await waitFor(() => expect(FakeES.instances).toHaveLength(1));
-
     await act(async () => { fireEvent.click(screen.getByText('open child')); });
     await waitFor(() => expect(FakeES.instances).toHaveLength(2));
     const child = FakeES.instances[1]!;
 
-    // Previously this frame was dropped and the drill-in hung on a blank view forever.
+    child.emitRaw('error');
+
+    expect(child.closed).toBe(false);
+    expect(FakeES.instances).toHaveLength(2);
+    expect(screen.getByTestId('read-only')).toHaveTextContent('brain-child');
+  });
+
+  it('folds a child turn error after the snapshot without leaving drill-in', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(1));
+    await act(async () => { fireEvent.click(screen.getByText('open child')); });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    const child = FakeES.instances[1]!;
+    child.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-child', session: { model: 'child-model', provider: 'openai-codex' },
+      history: [{ id: 'child-message', role: 'assistant', text: 'child history' }], events: [], cards: [],
+      control: { streaming: true, pendingAsk: null, workMode: 'build', pendingPlan: null },
+    });
+    await waitFor(() => expect(screen.getByTestId('busy')).toHaveTextContent('busy'));
+
+    child.emit('error', { type: 'error', message: 'rate limited' });
+
+    await waitFor(() => expect(screen.getByTestId('busy')).toHaveTextContent('idle'));
+    expect(screen.getByTestId('turns')).toHaveTextContent('rate limited');
+    expect(child.closed).toBe(false);
+    expect(screen.getByTestId('read-only')).toHaveTextContent('brain-child');
+  });
+
+  it('treats a server error after transport reconnect as a new unresolved tap', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(1));
+    await act(async () => { fireEvent.click(screen.getByText('open child')); });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    const child = FakeES.instances[1]!;
+    child.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-child', session: { model: 'child-model', provider: 'openai-codex' },
+      history: [{ id: 'child-message', role: 'assistant', text: 'child history' }], events: [], cards: [],
+    });
+    child.emitRaw('open');
+
     child.emit('error', { type: 'error', message: 'unknown session' });
 
     await waitFor(() => expect(child.closed).toBe(true));
-    // Falls back to the live conversation (a fresh parent stream is opened).
+    expect(screen.getByTestId('read-only')).toHaveTextContent('live');
+    await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(2));
+  });
+
+  it('closes an unresolved child tap and clears its transcript before reconnecting the parent', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(1));
+    await act(async () => { fireEvent.click(screen.getByText('open child')); });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    const child = FakeES.instances[1]!;
+
+    child.emit('error', { type: 'error', message: 'unknown session' });
+
+    await waitFor(() => expect(child.closed).toBe(true));
+    expect(screen.getByTestId('read-only')).toHaveTextContent('live');
+    expect(screen.getByTestId('turn-count')).toHaveTextContent('0');
     await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(2));
   });
 });

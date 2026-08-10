@@ -363,11 +363,13 @@ export class BrainDelegationStore {
     return out;
   }
 
-  /** Child sessions this boot durably claimed for restart recovery. This is a read-model liveness source:
-   *  claim happens before platforms start, so the recovery turn has a real window where no in-memory child
-   *  edge exists yet. Keep the same parent/child owner validation as getSubagentRuns so status shaping can
-   *  safely treat these rows as visible without widening which conversation may observe them. */
+  /** Child sessions THIS boot still durably owns during restart recovery. This is a read-model liveness
+   *  source: all rows are claimed before serial recovery starts, so later queued rows may outlive the initial
+   *  lease while still owned by this process. A previous boot stays hidden because it has no worker. Keep the
+   *  same parent/child owner validation as getSubagentRuns so status shaping cannot widen tenancy. */
   recoveringSubagentSessionIds(parentSessionId: string): string[] {
+    const cur = this.bootId;
+    if (!cur) return [];
     return (this.db.prepare(
       `SELECT r.child_session_id
          FROM brain_subagent_runs r
@@ -375,10 +377,11 @@ export class BrainDelegationStore {
          JOIN brain_sessions c ON c.id = r.child_session_id
         WHERE r.parent_session_id = ?
           AND r.lifecycle = 'recovering'
+          AND r.owner_boot_id = ?
           AND c.parent_session_id = p.id
           AND c.user_id = p.user_id
         ORDER BY r.updated_at ASC, r.rowid ASC`
-    ).all(parentSessionId) as { child_session_id: string }[]).map((row) => row.child_session_id);
+    ).all(parentSessionId, cur) as { child_session_id: string }[]).map((row) => row.child_session_id);
   }
 
   /** The delegated sub-agents ONE conversation spawned, newest first — the parent's own record of what
@@ -788,10 +791,12 @@ export class BrainDelegationStore {
       const changed = this.db.prepare(
         `UPDATE brain_subagent_runs
             SET lifecycle = 'recovery_required', owner_boot_id = NULL, lease_until = NULL,
-                state = CASE WHEN json_valid(state) THEN json_set(state, '$.recoveryReason', ?) ELSE state END,
+                state = CASE WHEN json_valid(state)
+                  THEN json_set(state, '$.status', 'error', '$.detail', ?, '$.recoveryReason', ?)
+                  ELSE state END,
                 updated_at = datetime('now')
           WHERE parent_session_id = ? AND tool_call_id = ? AND owner_boot_id = ? AND lifecycle = 'recovering'`
-      ).run(bounded(reason, 2_000), parentSessionId, toolCallId, cur).changes === 1;
+      ).run(bounded(reason, 2_000), bounded(reason, 2_000), parentSessionId, toolCallId, cur).changes === 1;
       if (!changed) return false;
       return this.enqueueResultRowLocked(parentSessionId, result);
     });

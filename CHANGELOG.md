@@ -5,6 +5,15 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the
+  child transcript, and returns cleanly to the parent only when the child cannot be resolved.
+- Restart recovery stays visible while the current daemon boot owns it, including turns waiting behind a long
+  serial recovery; failed or unsafe recovery is parked as a visible error with a durable parent notice.
+- OpenAI Responses cache diagnostics now cover both official and ChatGPT wires, use the provider's maximum
+  retention for destructive cold-history transforms, and warn for future major-only GPT identifiers missing native
+  tool-search compatibility.
+
 ## [0.27.82] - 2026-08-10
 
 Delegated sub-agents now survive a daemon restart. A delegation that was still running is respawned from
@@ -19,7 +28,7 @@ instead of re-billing them at full price.
   `error`; now the drain lets a runner finish (`KillMode=mixed`), and a child that outlives the drain — or
   a hard crash — is respawned from its durable transcript on the next boot and its result is delivered to
   the parent. A claim uses a boot-scoped lease so two boots can never recover the same row, and a suffix
-  that contains an unanswered mutating tool call is flagged `recovery_required` (surfaced to the parent
+  that contains an unanswered tool call is flagged `recovery_required` (surfaced to the parent
   through the durable inbox) rather than blindly replayed. `DelegateContinue`/`Status`/`Result`/`Stop` now
   resolve a `dlg-` job id back to its child session, so those handles keep working after a restart too.
 - **Configurable tool loading.** Rarely used plugin tools are deferred out of the cached prompt and

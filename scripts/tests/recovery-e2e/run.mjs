@@ -164,7 +164,7 @@ async function scenarioForegroundRecovery() {
 }
 
 async function scenarioUnsafeToolRecovery() {
-  console.log('\n— 3: unanswered mutating tool call parks recovery and the parent continues it —');
+  console.log('\n— 3: unanswered tool call parks recovery and the parent continues it —');
   const model = await startRecoveryModel({
     task: MARKERS.unsafeTask,
     result: 'UNUSED-UNSAFE-RECOVERY-RESULT',

@@ -4625,6 +4625,36 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(pending[0]!.error).toContain('DelegateContinue');
   });
 
+  it('parks an unexpected recovery turn failure and notifies the parent instead of leaving a live claim', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.createSession({
+      id: 'brain-ch-subagent-failed-recovery', userId: 1, model: 'm', parentSessionId: sessionId,
+      delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
+    });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-failed-recovery', sessionId: 'brain-ch-subagent-failed-recovery', status: 'running',
+      task: 'recover and fail', tools: 1, seconds: 5,
+    });
+    d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable'));
+
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    await restarted.runDelegationRecovery();
+
+    const row = d.db.prepare("SELECT lifecycle, state, owner_boot_id, lease_until FROM brain_subagent_runs WHERE tool_call_id = 'delegate-failed-recovery'").get() as {
+      lifecycle: string; state: string; owner_boot_id: string | null; lease_until: number | null;
+    };
+    expect(row.lifecycle).toBe('recovery_required');
+    expect(row.owner_boot_id).toBeNull();
+    expect(row.lease_until).toBeNull();
+    expect(JSON.parse(row.state)).toMatchObject({ status: 'error', detail: expect.stringContaining('provider unavailable') });
+    expect(d.store.pendingSubagentResults(sessionId)[0]).toMatchObject({
+      status: 'error', error: expect.stringContaining('DelegateContinue'),
+    });
+  });
+
   it('boot reconcile terminalizes a workflow on a channel session no owner start() ever opens', async () => {
     // The lazy per-session sweep hung off start(), which a channel/task session never reaches — its row
     // stayed 'running' in the DB forever and only a display transform hid it, so the phantom came back the

@@ -19,6 +19,7 @@ import { installHistoryImageStripping } from './historyImageStripping.js';
 import { imagesRejected } from './imageRejection.js';
 import { installToolResultClearing } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
+import { idleThresholdMs, OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { logger } from '../../shared/logger.js';
@@ -398,7 +399,10 @@ export class BrainSessionFactory {
     // input_tokens_details.cached_tokens onto the same usage.cacheRead the watch reads, and the payload
     // snapshot understands the Responses instructions/input shape (see cacheWatch's flavor).
     const cacheFlavor: CacheWatchFlavor | undefined = spec.model.provider === 'anthropic' ? 'anthropic'
-      : spec.model.api === 'openai-codex-responses' ? 'openai-responses' : undefined;
+      : spec.model.api === 'openai-codex-responses' || spec.model.api === 'openai-responses'
+        ? 'openai-responses' : undefined;
+    const cacheIdleMs = cacheFlavor === 'openai-responses'
+      ? idleThresholdMs(process.env, OPENAI_CACHE_MAX_RETENTION_MS) : undefined;
     const cacheMonitor = cacheFlavor ? createCachePayloadMonitor() : undefined;
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
@@ -471,7 +475,10 @@ export class BrainSessionFactory {
     // current run's fresh images stay intact; persisted history is untouched. An image the provider has
     // already REFUSED opens that gate immediately (imageRejection.ts): it fails every later request until
     // it is gone, so leaving it in until the cache goes cold would brick the conversation for an hour.
-    installHistoryImageStripping(session, { rejected: () => imagesRejected(spec.sessionId) });
+    installHistoryImageStripping(session, {
+      rejected: () => imagesRejected(spec.sessionId),
+      ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
+    });
     // Same egress seam: large tool results that have scrolled two user turns back are swapped for a
     // placeholder + spill-file path, but only once the prompt cache has provably expired (idle gate) —
     // history is never rewritten while a request could still cache-hit, and the per-session latch keeps
@@ -479,6 +486,7 @@ export class BrainSessionFactory {
     // brain_tool_result_spills so a respawn restores it even when rehydration changed the message text
     // (externalized images) — the file-equality fallback alone cannot.
     installToolResultClearing(session, spec.sessionId, {
+      ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
       latchStore: {
         load: () => this.d.store.toolResultSpills(spec.sessionId),
         save: (entry) => { this.d.store.upsertToolResultSpill(spec.sessionId, entry); },
@@ -486,9 +494,8 @@ export class BrainSessionFactory {
       },
     });
     // cacheWatch is the tripwire that logs whether a warm drop came from system, tools, a history segment,
-    // or a likely provider-side eviction. Installed for Anthropic and the ChatGPT (openai-codex-responses)
-    // backend — both report real cacheRead figures; other providers report best-effort cache stats whose
-    // warm drops are routine noise.
+    // or a likely provider-side eviction. Installed for Anthropic and both OpenAI Responses wires — all map
+    // real cached-token figures into cacheRead; other providers expose best-effort stats whose drops are noise.
     if (cacheMonitor && cacheFlavor) {
       installCacheWatch(session, { monitor: cacheMonitor, sessionId: spec.sessionId, flavor: cacheFlavor });
     }

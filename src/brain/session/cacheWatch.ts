@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { logger } from '../../shared/logger.js';
-import { cacheTtlMs } from './cacheTiming.js';
+import { cacheTtlMs, OPENAI_CACHE_TTL_MS } from './cacheTiming.js';
 import { currentTurnMode, type TurnWorkMode } from '../../plugins/policyContext.js';
 
 /** Prompt-cache observability, modeled on Claude Code's promptCacheBreakDetection. In a healthy
@@ -403,10 +403,11 @@ function formatDropReport(r: DropReport): string {
   ];
   if (r.previous && r.current) {
     const added = r.current.blockCount - r.previous.blockCount;
-    lines.push(
-      `  payload  ${r.previous.historyCount} → ${r.current.historyCount} messages, `
-      + `${r.previous.blockCount} → ${r.current.blockCount} content blocks (${added >= 0 ? '+' : ''}${added} this step)`,
-    );
+    lines.push(r.flavor === 'openai-responses'
+      ? `  payload  ${r.previous.historyCount} → ${r.current.historyCount} input items (`
+        + `${r.current.historyCount - r.previous.historyCount >= 0 ? '+' : ''}${r.current.historyCount - r.previous.historyCount} this step)`
+      : `  payload  ${r.previous.historyCount} → ${r.current.historyCount} messages, `
+        + `${r.previous.blockCount} → ${r.current.blockCount} content blocks (${added >= 0 ? '+' : ''}${added} this step)`);
     const deferred = r.current.deferredToolCount > 0 ? ` (${r.current.deferredToolCount} deferred)` : '';
     lines.push(`  tools    ${r.current.toolCount}${deferred}`);
   }
@@ -421,11 +422,6 @@ type Subscribable = { subscribe?: (listener: (event: SessionEvent) => void) => u
  *  the payload shape already handled by snapshotPayload, the warm-window default, and the report wording
  *  (no Anthropic fan-out verdict and no "wrote 0" line for a backend that does not report cache writes). */
 export type CacheWatchFlavor = 'anthropic' | 'openai-responses';
-
-/** OpenAI's prompt cache is automatic with eviction typically starting after 5–10 minutes of inactivity
- *  (no operator-selectable TTL like PI_CACHE_RETENTION). The conservative end keeps a routine expiry from
- *  being reported as a break. */
-const OPENAI_CACHE_TTL_MS = 5 * 60_000;
 
 export interface CacheWatchOptions {
   /** Warm window in ms; a drop after a longer gap is TTL expiry, not a break. Defaults to the flavor's

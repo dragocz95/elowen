@@ -428,6 +428,8 @@ describe('installCacheWatch — openai-responses flavor (ChatGPT backend)', () =
 
     expect(warnings()).toHaveLength(1);
     expect(warnings()[0]?.message).toContain('system prompt changed');
+    expect(warnings()[0]?.message).toContain('input items');
+    expect(warnings()[0]?.message).not.toContain('content blocks');
     // Items without a role are labeled by their Responses item type.
     expect(warnings()[0]?.message).toContain('history REWRITTEN IN PLACE at 1:function_call');
   });

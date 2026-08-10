@@ -15,7 +15,8 @@ const CHILD = 'brain-ch-subagent-sub-dlg-recovery';
 const TOOL_CALL = 'call-recovery';
 
 function harness() {
-  const store = new BrainStore(openDb(':memory:'));
+  const db = openDb(':memory:');
+  const store = new BrainStore(db);
   const sessions = new LiveSessionRegistry<LiveBrain>();
   const elicitation = new ElicitationRegistry();
   const lifecycle = new ConversationLifecycle({
@@ -56,7 +57,7 @@ function harness() {
       content: [{ type: 'toolCall', id: TOOL_CALL, name: 'Delegate', arguments: { task: 'recover me' } }],
     },
   });
-  return { store, sessions, status };
+  return { db, store, sessions, status };
 }
 
 function projectedSubagent(status: BrainStatusService) {
@@ -84,6 +85,50 @@ describe('sub-agent recovery status projection', () => {
     expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
 
     expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'recover me' });
+  });
+
+  it('hides a recovering claim owned by a dead boot even while its lease has not expired', () => {
+    const { db, store, status } = harness();
+    store.setDelegationBootId('boot-old');
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'dead boot', tools: 0, seconds: 1,
+    })).toBe(true);
+    store.setDelegationBootId('boot-new');
+    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    db.prepare('UPDATE brain_subagent_runs SET owner_boot_id = ? WHERE tool_call_id = ?').run('boot-dead', TOOL_CALL);
+
+    expect(projectedSubagent(status)).toBeUndefined();
+  });
+
+  it('keeps an expired current-boot recovery claim visible while it waits in the serial queue', () => {
+    const { db, store, status } = harness();
+    store.setDelegationBootId('boot-old');
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'queued', tools: 0, seconds: 1,
+    })).toBe(true);
+    store.setDelegationBootId('boot-new');
+    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    db.prepare('UPDATE brain_subagent_runs SET lease_until = ? WHERE tool_call_id = ?').run(Date.now() - 1, TOOL_CALL);
+
+    expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'queued' });
+  });
+
+  it('renders recovery_required as a terminal error with the durable reason', () => {
+    const { store, status } = harness();
+    store.setDelegationBootId('boot-old');
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'unsafe', tools: 1, seconds: 2,
+    })).toBe(true);
+    store.setDelegationBootId('boot-new');
+    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    expect(store.markRecoveryRequired(PARENT, TOOL_CALL, 'unanswered Write after restart', {
+      id: 'result-recovery', toolCallId: TOOL_CALL, sessionId: CHILD, status: 'error', task: 'unsafe',
+      error: 'manual continuation required', tools: 1, seconds: 2,
+    })).toBe(true);
+
+    expect(projectedSubagent(status)).toMatchObject({
+      sessionId: CHILD, status: 'error', task: 'unsafe', detail: 'unanswered Write after restart',
+    });
   });
 
   it('still hides an unclaimed stale running row with no live child', () => {

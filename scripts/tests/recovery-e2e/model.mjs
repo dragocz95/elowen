@@ -102,9 +102,9 @@ export async function startRecoveryModel({ task, result, background = false, uns
         return;
       }
       if (unsafe) {
-        // The process is intentionally long-lived, but runs only under spawnRealDaemon's temp project. The
-        // test waits for the persisted pending tool-call row before restarting, never for elapsed time.
-        callTool('Bash', { command: 'node -e "setInterval(() => {}, 1000)"' });
+        // Long enough for a slow CI daemon to be killed after the persisted tool call is observed, but finite:
+        // a detached terminal process outlives that daemon, so an endless interval would leak on every run.
+        callTool('Bash', { command: 'node -e "setTimeout(() => {}, 120000)"' });
         return;
       }
       if (!initialChildSignalled) {

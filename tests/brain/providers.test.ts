@@ -479,10 +479,11 @@ describe('brain providers', () => {
         { id: 'gpt-5.7-nova' }, // hypothetical future model shipped before its catalog update
         { id: 'gpt-5.6-luna', compat: { supportsToolSearch: true } },
         { id: 'gpt-5.4', compat: {} }, // in-family but flagless — the real regression this exists for
+        { id: 'gpt-6-codex' }, // future major-only naming must not bypass the defensive warning
         { id: 'gpt-5.3-codex-spark' }, // ships without the flag by design; must not warn every start
         { id: 'gpt-image-2' },
         { id: 'claude-opus-5' },
-      ])).toEqual(['gpt-5.7-nova', 'gpt-5.4']);
+      ])).toEqual(['gpt-5.7-nova', 'gpt-5.4', 'gpt-6-codex']);
     });
 
     it('does not flag any model of the real pinned openai-codex catalog (gpt-5.6-* carry the flag)', () => {

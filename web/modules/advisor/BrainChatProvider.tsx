@@ -15,7 +15,7 @@ import { formatTokens, formatCost } from '../../lib/format';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive, STALE_HIDE_MS } from '../../lib/useRevive';
 import { createReconnectController, type ReconnectController } from '../../lib/reconnect';
-import { startStreamWatchdog, resolveStreamSilence } from '../../lib/streamWatchdog';
+import { isStreamDataFrame, startStreamWatchdog, resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
 import {
   BRAIN_COMPOSE_EVENT,
@@ -497,6 +497,7 @@ function useBrainChatController(): BrainChatValue {
   // caller's active one). Late responses from a superseded generation are discarded (stale-gen guard).
   const connect = async (opts: { session?: string; fresh?: boolean } = {}): Promise<void> => {
     esRef.current?.close();
+    setReadOnly(null); // every explicit reconnect returns to the live parent; native EventSource retries stay in the child
     setReady(false);
     setNotice(''); // a fresh connection (mount / session switch) starts without a stale runtime line
     setAsk(null); // drop any parked question from the previous conversation
@@ -881,17 +882,28 @@ function useBrainChatController(): BrainChatValue {
     // and so rejects a channel child as `unknown session`. The CLI omits them here for the same reason
     // (brainClient.stream identifies only the bound parent stream). `generation` still guards THIS
     // controller's frame handlers locally, below — it is a client-side race fence, not the server param.
-    const params = new URLSearchParams({ session: sessionId, snapshot: '1' });
+    const params = new URLSearchParams({ session: sessionId, snapshot: '1', heartbeat: '1' });
     const es = new EventSource(`${BASE}/brain/stream?${params.toString()}`);
     esRef.current = es;
+    let snapshotSeen = false;
+    // EventSource reuses this object across reconnects. A server error is an open failure unless THIS
+    // connection already delivered its snapshot, even when an earlier connection had done so.
+    es.addEventListener('open', () => {
+      if (generation === genRef.current && es === esRef.current) snapshotSeen = false;
+    });
     const onFrame = (type: string, handler: (e: Event) => void): void => {
       es.addEventListener(type, (e) => {
         if (generation !== genRef.current || es !== esRef.current) return;
+        // Bare native transport errors have no data and prove no liveness. Counting them would let a failed
+        // auto-reconnect refresh the silence watchdog forever while no server frame arrives.
+        if (isStreamDataFrame(e)) lastFrameAtRef.current = Date.now();
         handler(e);
       });
     };
+    onFrame('heartbeat', () => {});
     onFrame('snapshot', (e) => {
       const snap = JSON.parse((e as MessageEvent).data) as BrainStreamSnapshotFrame;
+      snapshotSeen = true;
       historyEpochRef.current++;
       historyCursorRef.current = snap.nextBefore ?? null;
       setHasMoreHistory(snap.hasMore ?? false);
@@ -908,13 +920,28 @@ function useBrainChatController(): BrainChatValue {
       const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
       setCards((cur) => upsertCard(cur, card));
     });
-    onFrame('error', () => {
-      // The child tap failed server-side (the session is gone, or momentarily unresolvable). Never leave
-      // the reader staring at a blank read-only view forever: report it and fall back to the live
-      // conversation. Without this, an `error` SSE frame is silently dropped and the drill-in just hangs.
+    onFrame('error', (e) => {
+      // EventSource also emits a bare native `error` when the transport drops. It has no payload and the
+      // browser is already reconnecting it; closing here would turn a transient wifi/daemon blip into a
+      // permanent exit from the child view.
+      const data = (e as MessageEvent).data;
+      if (typeof data !== 'string') return;
+      let message: string;
+      try { message = (JSON.parse(data) as { message: string }).message; } catch { return; }
+      // Once the snapshot established the tap, an error frame belongs to the CHILD's own turn. It is
+      // transcript content, not a failure to open the child, so keep the read-only view and fold it normally.
+      if (snapshotSeen) {
+        applyEvent({ type: 'error', message });
+        return;
+      }
+      // Before the first snapshot the route sends exactly this frame when the requested child cannot be
+      // resolved, then closes. Fall back through the freshest connect closure: this listener was created by
+      // an older render whose `readOnly` value may still be null.
       es.close();
       toast(t.brainChat.searchOpenError, 'error');
-      void exitReadOnly();
+      setReadOnly(null);
+      setView(emptyView());
+      void connectRef.current();
     });
   };
 

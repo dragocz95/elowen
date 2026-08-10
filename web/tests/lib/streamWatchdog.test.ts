@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startStreamWatchdog, resolveStreamSilence, DEFAULT_STREAM_SILENCE, MIN_SILENCE_LIMIT_MS } from '../../lib/streamWatchdog';
+import { isStreamDataFrame, startStreamWatchdog, resolveStreamSilence, DEFAULT_STREAM_SILENCE, MIN_SILENCE_LIMIT_MS } from '../../lib/streamWatchdog';
 
 // A dropped SSE connection can stay in readyState OPEN with nothing ever arriving on it, so silence is the
 // only observable symptom. The daemon heartbeats every 30 s, which is what makes silence measurable.
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+describe('isStreamDataFrame', () => {
+  it('counts server frames but not bare EventSource transport errors as liveness', () => {
+    expect(isStreamDataFrame({ data: '{}' } as MessageEvent)).toBe(true);
+    expect(isStreamDataFrame(new Event('error'))).toBe(false);
+  });
+});
 
 describe('startStreamWatchdog', () => {
   const run = (opts: { silentMs: number; hidden?: boolean; limitMs?: number }) => {

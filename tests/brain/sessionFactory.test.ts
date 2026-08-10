@@ -146,7 +146,7 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
 });
 
 describe('BrainSessionFactory context-saving installers', () => {
-  async function createWithProvider(provider: string) {
+  async function createWithProvider(provider: string, api?: string) {
     // Spills resolve through dataDir(HOME) — point HOME at a tmp dir so the test never touches the
     // real ~/.config/elowen.
     const home = mkdtempSync(join(tmpdir(), 'elowen-home-'));
@@ -169,7 +169,7 @@ describe('BrainSessionFactory context-saving installers', () => {
     await factory.create({
       sessionId: session.sessionId, ownerUserId: 1,
       runtime: undefined,
-      model: { id: 'test-model', provider, contextWindow: 200_000 },
+      model: { id: 'test-model', provider, contextWindow: 200_000, ...(api ? { api } : {}) },
       cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
       autoCompact: false, autoCompactAtPct: 80,
     } as never);
@@ -224,6 +224,45 @@ describe('BrainSessionFactory context-saving installers', () => {
       // payload recorder was handed to the resource loader's before_provider_request extension path.
       expect(listeners.length).toBeGreaterThanOrEqual(2);
       expect(cacheMonitor).toBeDefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('installs cache diagnostics for the official OpenAI Responses wire too', async () => {
+    const { listeners, cacheMonitor } = await createWithProvider('openai', 'openai-responses');
+    try {
+      expect(listeners.length).toBeGreaterThanOrEqual(3);
+      expect(cacheMonitor).toBeDefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('uses OpenAI maximum cache retention for destructive Responses transforms', async () => {
+    vi.stubEnv('PI_CACHE_RETENTION', 'long');
+    const { session } = await createWithProvider('openai', 'openai-responses');
+    try {
+      const transform = session.agent.transformContext;
+      expect(typeof transform).toBe('function');
+      const t0 = 1_700_000_000_000;
+      const messagesAt = (thirdAt: number) => [
+        { role: 'user', content: 'first', timestamp: t0 },
+        { role: 'assistant', timestamp: t0 + 1, content: [{ type: 'toolCall', id: 'old', name: 'Bash', arguments: {} }] },
+        { role: 'toolResult', toolCallId: 'old', toolName: 'Bash', isError: false, timestamp: t0 + 2,
+          content: [{ type: 'text', text: 'x'.repeat(CLEAR_MIN_BYTES * 2) }] },
+        { role: 'user', content: 'second', timestamp: t0 + 3 },
+        { role: 'assistant', timestamp: t0 + 4, content: [{ type: 'text', text: 'ok' }] },
+        { role: 'user', content: 'third', timestamp: thirdAt },
+      ];
+
+      const warm = messagesAt(t0 + 7 * 60_000);
+      const warmOut = await transform!(warm as never) as typeof warm;
+      expect(warmOut[2]).toBe(warm[2]);
+
+      const cold = messagesAt(t0 + 62 * 60_000);
+      const coldOut = await transform!(cold as never) as typeof cold;
+      expect((coldOut[2]?.content as { text: string }[])[0]?.text).toContain('Older tool result cleared');
     } finally {
       vi.unstubAllEnvs();
     }

@@ -41,6 +41,12 @@ export function resolveStreamSilence(
   };
 }
 
+/** Only a server-sent data frame proves liveness. Native EventSource transport errors carry no `data`; if
+ *  they refreshed the clock, repeated failed reconnects would suppress the silence watchdog forever. */
+export function isStreamDataFrame(event: Event): boolean {
+  return typeof (event as MessageEvent).data === 'string';
+}
+
 export interface StreamWatchdogOptions {
   /** When the last frame (event OR heartbeat) arrived, as a wall-clock timestamp. */
   lastFrameAt: () => number;

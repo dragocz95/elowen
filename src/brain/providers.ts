@@ -75,7 +75,7 @@ const OPENAI_CODEX_OAUTH_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
 /** GPT text families from 5.4 upward, the ones whose openai-codex-responses descriptors carry
  *  `compat.supportsToolSearch` in the pinned pi-ai catalog. Older ids (gpt-5.3-codex-spark) ship without
  *  the flag by design and must not trip the warning below on every start. */
-const GPT_TOOL_SEARCH_FAMILY = /^gpt-(\d+)\.(\d+)/;
+const GPT_TOOL_SEARCH_FAMILY = /^gpt-(\d+)(?:\.(\d+))?/;
 
 /** Which of these openai-codex model descriptors will silently lose NATIVE deferred-tool loading: a
  *  GPT-5.4+ id registered without `compat.supportsToolSearch`. pi-ai's openai-codex-responses adapter
@@ -90,7 +90,7 @@ export function modelsMissingToolSearchCompat(
       const match = GPT_TOOL_SEARCH_FAMILY.exec(m.id);
       if (!match) return false;
       const major = Number(match[1]);
-      const minor = Number(match[2]);
+      const minor = Number(match[2] ?? 0);
       if (major < 5 || (major === 5 && minor < 4)) return false;
       return (m.compat as { supportsToolSearch?: boolean } | undefined)?.supportsToolSearch !== true;
     })
