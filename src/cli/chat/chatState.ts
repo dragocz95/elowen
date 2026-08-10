@@ -66,7 +66,7 @@ export class ChatState {
   lspEnabled: boolean | null;
   yoloOn: boolean;
   mcpList: McpServerView[] | null = null;
-  rateLimits: BrainRateLimits | null = null;
+  rateLimitsByProvider: Record<string, BrainRateLimits> = {};
   workMode: BrainWorkMode;
   cards: BrainCard[];
   queued: { id: string; text: string }[];

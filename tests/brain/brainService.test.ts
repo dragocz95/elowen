@@ -222,6 +222,190 @@ describe('BrainService', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it('holds a hot plugin reload until plugin-owned work drains without resetting its runner', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    let activeDelegations = 1;
+    let activeWorkflows = 0;
+    const delegationCount = vi.fn(() => activeDelegations);
+    const workflowCount = vi.fn(() => activeWorkflows);
+    ctx.registerControl('subagent', {
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: delegationCount,
+    });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: workflowCount,
+      isWorkflowLive: () => false,
+      addNodesFromSession: () => { throw new Error('unused'); },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const reset = vi.fn();
+    let runnerWork = 1;
+    const runnerActiveCount = vi.fn(async () => runnerWork);
+    (d as unknown as { subagentRunner: unknown }).subagentRunner = { reset, activeCount: runnerActiveCount };
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    const reload = svc.reloadPlugins();
+    await vi.waitFor(() => expect(delegationCount).toHaveBeenCalled());
+    expect(reset).not.toHaveBeenCalled();
+    await expect(svc.send({ userId: 1, text: 'new work', mode: 'build', session: 'brain-1' }))
+      .rejects.toThrow(/shutting down/);
+    await expect(svc.channelSend({
+      channelId: 'new-channel', ownerUserId: 1,
+      policy: { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] },
+    }, 'new platform work')).rejects.toThrow(/shutting down/);
+    expect(() => svc.preflightSubagentSend(1, 'brain-ch-subagent-new')).toThrow(/not admitting new work/);
+
+    const countBeforeDelegateDrain = delegationCount.mock.calls.length;
+    activeDelegations = 0;
+    activeWorkflows = 1;
+    await vi.waitFor(() => expect(delegationCount.mock.calls.length).toBeGreaterThan(countBeforeDelegateDrain));
+    expect(reset).not.toHaveBeenCalled();
+
+    activeWorkflows = 0;
+    const countBeforeRunnerDrain = runnerActiveCount.mock.calls.length;
+    await vi.waitFor(() => expect(runnerActiveCount.mock.calls.length).toBeGreaterThan(countBeforeRunnerDrain));
+    expect(reset).not.toHaveBeenCalled();
+
+    runnerWork = 0;
+    await reload;
+    expect(reset).toHaveBeenCalledOnce();
+    await expect(svc.send({ userId: 1, text: 'after reload', mode: 'build', session: 'brain-1' }))
+      .resolves.toBeUndefined();
+  });
+
+  it('counts runner-local core, child and plugin work for reload activity IPC', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerControl('subagent', {
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 4,
+    });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 5,
+      isWorkflowLive: () => false,
+      addNodesFromSession: () => { throw new Error('unused'); },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    vi.spyOn(svc, 'busy').mockReturnValue({ turns: 2, children: 3, undelivered: 99 });
+
+    await expect(svc.reloadOwnedWorkCount()).resolves.toBe(14);
+  });
+
+  it('re-reads daemon activity after runner IPC before deciding a reload is quiescent', async () => {
+    const d = fakeDeps();
+    let releaseRunnerQuery!: () => void;
+    const runnerQueryGate = new Promise<void>((resolve) => { releaseRunnerQuery = resolve; });
+    let firstQuery = true;
+    let runnerQueryCompleted = false;
+    let mirroredChildActive = false;
+    const activeCount = vi.fn(async () => {
+      if (firstQuery) {
+        firstQuery = false;
+        mirroredChildActive = true;
+        await runnerQueryGate;
+        runnerQueryCompleted = true;
+      }
+      return 0;
+    });
+    const reset = vi.fn();
+    (d as unknown as { subagentRunner: unknown }).subagentRunner = { activeCount, reset };
+    const svc = new BrainService(d as never);
+    let observedPostIpcSnapshot = false;
+    vi.spyOn(svc, 'busy').mockImplementation(() => {
+      if (runnerQueryCompleted) observedPostIpcSnapshot = true;
+      return {
+        turns: 0,
+        children: mirroredChildActive ? 1 : 0,
+        undelivered: 0,
+      };
+    });
+
+    const reload = svc.reloadPlugins();
+    await vi.waitFor(() => expect(activeCount).toHaveBeenCalledOnce());
+    releaseRunnerQuery();
+    await vi.waitFor(() => expect(observedPostIpcSnapshot).toBe(true));
+    expect(reset).not.toHaveBeenCalled();
+
+    mirroredChildActive = false;
+    await reload;
+    expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it('does not let a durable pending result deadlock a plugin reload', async () => {
+    const d = fakeDeps();
+    vi.spyOn(d.store, 'countPendingDeliveries').mockReturnValue(1);
+    const reset = vi.fn();
+    (d as unknown as { subagentRunner: unknown }).subagentRunner = { reset };
+    const svc = new BrainService(d as never);
+
+    await expect(svc.reloadPlugins()).resolves.toBeUndefined();
+    expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a timed-out plugin reload without interrupting work or leaving admission closed', async () => {
+    vi.useFakeTimers();
+    try {
+      const d = fakeDeps();
+      const reset = vi.fn();
+      (d as unknown as { subagentRunner: unknown }).subagentRunner = {
+        reset,
+        activeCount: vi.fn(async () => 1),
+      };
+      const svc = new BrainService(d as never);
+      await svc.start(1);
+
+      const reload = svc.reloadPlugins();
+      const rejected = expect(reload).rejects.toThrow(/reload timed out.*aborted without interrupting/i);
+      await vi.advanceTimersByTimeAsync(600_100);
+      await rejected;
+      expect(reset).not.toHaveBeenCalled();
+      await expect(svc.send({ userId: 1, text: 'work survived', mode: 'build', session: 'brain-1' }))
+        .resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not swap plugins through an ordinary owner turn already in flight', async () => {
+    const d = fakeDeps();
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+    d.session.prompt = vi.fn(async (_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      options?.preflightResult?.(true);
+      await turnGate;
+      d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'done' }] });
+    });
+    const reset = vi.fn();
+    (d as unknown as { subagentRunner: unknown }).subagentRunner = { reset };
+    const plugins = new PluginRegistryProvider(async () => new PluginRegistry());
+    const invalidate = vi.spyOn(plugins, 'invalidate');
+    (d as unknown as { plugins: unknown }).plugins = plugins;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    const turn = svc.send({ userId: 1, text: 'already running', mode: 'build', session: 'brain-1' });
+    await vi.waitFor(() => expect(d.session.prompt).toHaveBeenCalledOnce());
+    const reload = svc.reloadPlugins();
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+
+    releaseTurn();
+    await turn;
+    await reload;
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(reset).toHaveBeenCalledOnce();
+  });
+
   it('splices the workflow-mode instruction ahead of a workflow-mode turn, and nothing for build', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -385,7 +569,7 @@ describe('BrainService', () => {
     const reg = new PluginRegistry();
     const detachForeground = vi.fn(() => ({ detached: 1 }));
     reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} })
-      .registerControl('subagent', { detachForeground });
+      .registerControl('subagent', { detachForeground, activeCount: () => 0 });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
@@ -661,7 +845,10 @@ describe('BrainService', () => {
     d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.upsertSubagentRun(sessionId, { id: 'call-lock', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1, background: true });
     const registry = (svc as unknown as { sessions: { withLock<T>(key: string, fn: () => Promise<T>): Promise<T> } }).sessions;
-    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    const runner = (svc as unknown as { turnRunner: {
+      acceptSubagentCompletion(parent: string, userId: number, result: unknown): void;
+      resultDeliveryWorkCount(): number;
+    } }).turnRunner;
 
     // Hold the bare session lock so any concurrent delivery must queue behind it.
     let releaseLock!: () => void;
@@ -672,6 +859,7 @@ describe('BrainService', () => {
     await new Promise((resolve) => setTimeout(resolve, 20)); // let the drain reach — and block on — the bare lock
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
+    expect(runner.resultDeliveryWorkCount()).toBe(1);
 
     releaseLock();
     await lockDone;
@@ -714,10 +902,19 @@ describe('BrainService', () => {
     d.session.sendCustomMessage.mockImplementationOnce(async () => {
       d.session.messages.push({ role: 'assistant', content: 'partial', stopReason: 'aborted' } as never);
     });
-    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    const runner = (svc as unknown as { turnRunner: {
+      acceptSubagentCompletion(parent: string, userId: number, result: unknown): void;
+      resultDeliveryWorkCount(): number;
+      resultRetryTimers: Map<string, unknown>;
+      resultDrains: Set<string>;
+    } }).turnRunner;
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-lost', toolCallId: 'call-lost', sessionId: child, status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 1 });
 
     await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)[0]).toMatchObject({ id: 'res-lost', attempts: 1 }));
+    await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
+    expect(runner.resultRetryTimers.has(sessionId)).toBe(true);
+    expect(runner.resultDeliveryWorkCount()).toBe(1);
+    await expect(svc.reloadOwnedWorkCount()).resolves.toBe(1);
     expect(d.store.getSubagentRuns(sessionId)[0]).not.toMatchObject({ resultDelivery: 'acknowledged' });
   });
 
@@ -1589,6 +1786,7 @@ describe('BrainService', () => {
     ctx.registerControl('workflow', {
       cancelForSession: ({ sessionId }: { sessionId: string }) => { cancelledFor.push(sessionId); return { cancelled: 1 }; },
       detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
     });

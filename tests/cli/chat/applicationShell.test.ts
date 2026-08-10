@@ -1310,13 +1310,16 @@ describe('chat application shell ownership', () => {
     'prepares telemetry for real PI overlay geometry at %ix%i before PI applies maxHeight',
     async (columns, rows) => {
       const h = compositionHarness({ columns, rows, turns: 40 });
+      h.rt.provider = 'test';
       h.rt.usage = { tokens: 28_000, contextWindow: 372_000, percent: 8, totalTokens: 28_000, cost: 0.09 };
-      h.rt.rateLimits = {
-        provider: 'openai-codex', planType: 'pro', fetchedAt: 123, stale: false,
-        windows: [
-          { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
-          { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
-        ],
+      h.rt.rateLimitsByProvider = {
+        [h.rt.provider]: {
+          provider: h.rt.provider, planType: 'pro', fetchedAt: 123, stale: false,
+          windows: [
+            { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
+            { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+          ],
+        },
       };
       h.rt.mcpList = [
         { name: 'chrome-devtools', status: 'connected' },
@@ -1417,6 +1420,16 @@ describe('chat application shell ownership', () => {
     // Parent model is test/provider-model, reasoning level medium (from the harness). Drill into a child.
     const childTranscript = new TranscriptModel([{ role: 'assistant', text: 'child working' }]);
     childTranscript.apply({ type: 'text', delta: 'thinking…' }); // child is active → activity 'agent'
+    h.rt.rateLimitsByProvider = {
+      [h.rt.provider]: {
+        provider: h.rt.provider, planType: 'parent-plan', fetchedAt: 1, stale: false,
+        windows: [{ usedPercent: 91, windowMinutes: 300, resetsAt: 456 }],
+      },
+      'openai-codex': {
+        provider: 'openai-codex', planType: 'child-plan', fetchedAt: 2, stale: false,
+        windows: [{ usedPercent: 12, windowMinutes: 300, resetsAt: 789 }],
+      },
+    };
     h.rt.childView = {
       sessionId: 'child-42',
       model: 'gpt-5.6-sol',
@@ -1449,6 +1462,11 @@ describe('chat application shell ownership', () => {
     expect(rendered).toContain('2m 17s');
     // The parent's reasoning-level label is dropped for a child (level unknown).
     expect(rendered).not.toContain('medium');
+    const telemetry = h.tui.overlays.find((overlay) => !overlay.removed
+      && overlay.options?.anchor === 'top-right')!;
+    const rail = telemetry.component.render(46).map(terminalPlainText).join('\n');
+    expect(rail).toContain('child-plan');
+    expect(rail).not.toContain('parent-plan');
     composition.dispose();
     composition.stop();
   });

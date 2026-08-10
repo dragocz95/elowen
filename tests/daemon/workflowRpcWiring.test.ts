@@ -91,6 +91,7 @@ describe('brainCore workflow RPC capability wiring', () => {
     ctx.registerControl('workflow', {
       cancelForSession: () => ({ cancelled: 0 }),
       detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
       isWorkflowLive: () => true,
       addNodesFromSession: (input: unknown) => { mutations.push(input); return { added: ['late'] }; },
     });

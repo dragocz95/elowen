@@ -61,7 +61,7 @@ const server = setupServer(
   http.get('*/api/brain/processes', () => { processFetches += 1; return HttpResponse.json(processes); }),
   http.get('*/api/brain/processes/:id/output', () => HttpResponse.json({ output: 'ready on :4500' })),
   http.delete('*/api/brain/processes/:id', ({ params }) => { killed.push(String(params['id'])); return HttpResponse.json({ killed: true }); }),
-  http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+  http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
 );

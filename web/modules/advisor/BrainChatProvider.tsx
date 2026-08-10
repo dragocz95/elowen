@@ -873,6 +873,11 @@ function useBrainChatController(): BrainChatValue {
     // The composer is about to be replaced by the read-only banner, so drop the in-flight marker at once.
     setView((cur) => ({ ...cur, thinking: false }));
     setReadOnly(sessionId);
+    // The parent identity is wrong for every child-specific control while the snapshot is in flight. Clear
+    // it and address the child immediately; the atomic snapshot below fills the authoritative pair.
+    setCurrentModel('');
+    setProvider('');
+    setActiveSessionId(sessionId);
     historyCursorRef.current = null;
     setHasMoreHistory(false);
     historyEpochRef.current++;

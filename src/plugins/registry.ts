@@ -50,10 +50,10 @@ export interface PluginEmbedder {
  *  A control carrying more than one method must list them all: verifying only the first hands the caller
  *  a value typed as the WHOLE contract while a method may be missing, which then throws at the call site. */
 const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof KnownControls[K] & string)[] } = {
-  subagent: ['detachForeground'],
+  subagent: ['detachForeground', 'activeCount'],
   terminal: ['detachForeground', 'killForeground'],
   cron: ['pendingWakeupOriginSessionIds'],
-  workflow: ['cancelForSession', 'detachForeground', 'isWorkflowLive', 'addNodesFromSession'],
+  workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession'],
   mcp: ['listServers', 'bridgeSnapshot'],
 };
 

@@ -113,6 +113,9 @@ export interface DelegatedTurnRunner {
   /** Ask the runner to drop its live record for a channel so the caller can run that child's next turn
    *  itself (an idle continuation rehydrates from SQLite). `busy` = still working on it. */
   release(channelId: string): Promise<{ busy: boolean }>;
+  /** Count work owned by runner-local plugin closures, including gaps between delegated turns. A hot plugin
+   *  reload must drain this before replacing those closures. Absent means the runner predates this seam. */
+  activeCount?(): Promise<number>;
   /** Tear the runner down (plugin reload, shutdown). In-flight turns settle as interrupted. */
   reset(reason: string): void;
   /** Can this runner take work AT ALL right now? The pool answers false when the operator has sized it to

@@ -492,6 +492,14 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     return result;
   }
 
+  async activeCount(): Promise<number> {
+    const remote = await Promise.all(this.runners.map(async (entry) => {
+      try { return Math.max(entry.inFlight, await entry.host.activeCount()); }
+      catch { return Math.max(1, entry.inFlight); }
+    }));
+    return this.queue.depth + remote.reduce((sum, count) => sum + count, 0);
+  }
+
   reset(reason: string): void {
     this.stopped = true;
     this.generation += 1;

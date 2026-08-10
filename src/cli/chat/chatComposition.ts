@@ -3,7 +3,7 @@ import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
-import type { BrainStatus } from './brainClient.js';
+import type { BrainRateLimits, BrainStatus } from './brainClient.js';
 import type { BrainCard } from '../../brain/events.js';
 import type { WorkflowState } from '../../brain/transcript.js';
 import { openWorkflowModal as showWorkflowModal } from './workflowModal.js';
@@ -373,6 +373,12 @@ export function createChatComposition(
    *  a child with no cards yet has an EMPTY panel, and falling back would paint the parent's checklist —
    *  cards collide by id (`todos`), so a merge is indistinguishable from the child's own work. */
   const focusedCards = (): BrainCard[] => rt.childView ? rt.childView.cards : rt.cards;
+  /** Provider identity follows the same no-parent-fallback rule. While the child snapshot is loading its
+   *  provider is empty, so the limits section stays hidden instead of showing the parent's subscription. */
+  const focusedRateLimits = (): BrainRateLimits | null => {
+    const provider = rt.childView ? rt.childView.provider : rt.provider;
+    return provider ? (rt.rateLimitsByProvider[provider] ?? null) : null;
+  };
   let currentRunSeconds = 0;
   let currentAgents: readonly SubagentPanelEntry[] = [];
   let currentWorkflows: readonly WorkflowState[] = [];
@@ -386,7 +392,7 @@ export function createChatComposition(
     processes: rt.childView?.processes ?? rt.processes,
     subagents: currentAgents,
     workflows: currentWorkflows,
-    rateLimits: rt.rateLimits,
+    rateLimits: focusedRateLimits(),
     goal: rt.goal,
     floatOffset: animations.mascotOffset,
     showMascot: rt.showMascot,

@@ -338,6 +338,12 @@ export interface DetachControl {
   detachForeground(input: { sessionId: string; principal: string }): { detached: number };
 }
 
+/** Whole-lifecycle work held inside a plugin closure, including gaps between actual child turns. Core waits
+ *  for this count to reach zero before replacing the registry during a hot reload. */
+export interface ActiveCountControl {
+  activeCount(): number;
+}
+
 /** The terminal plugin's stop-escalation seam: SIGKILL the process group of every still-foreground Bash
  *  run bound to this session+principal. Complements DetachControl — Ctrl+B moves the wait aside and keeps
  *  the command alive, this ends it so an already-aborted turn parked on the Bash tool can unwind (PI's
@@ -416,10 +422,10 @@ export interface McpListControl {
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
 export interface KnownControls {
-  subagent: DetachControl;
+  subagent: DetachControl & ActiveCountControl;
   terminal: DetachControl & KillForegroundControl;
   cron: PendingWakeupControl;
-  workflow: WorkflowCancelControl & DetachControl & WorkflowLivenessControl & WorkflowExpansionControl;
+  workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl;
   mcp: McpListControl;
 }
 

@@ -53,6 +53,10 @@ import { collapseWhitespace } from '../shared/text.js';
 
 export type { BrainDeps } from './brainDeps.js';
 
+/** Match graceful shutdown's work budget, but fail by ABORTING the reload rather than killing the work. */
+const PLUGIN_RELOAD_DRAIN_MS = 600_000;
+const PLUGIN_RELOAD_POLL_MS = 100;
+
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
  *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI.
  *  A thin facade over the focused units: session state (LiveSessionRegistry), assembly
@@ -114,6 +118,10 @@ export class BrainService {
   private spawner: LiveSessionSpawner;
   /** Latched by {@link beginDrain} on shutdown; gates new turns so the drain can converge. */
   private draining = false;
+  /** Reversible admission gate while a hot plugin reload waits for existing work to finish. Unlike shutdown
+   *  drain this returns to false after the registry swap. A counter keeps the gate closed across queued reloads. */
+  private pluginReloadWaiters = 0;
+  private reloadingPlugins = false;
   /** Session addressing, start/resume resolution and every respawn path (rollover, hop, restart). */
   private lifecycle: ConversationLifecycle;
   /** The owner-chat turn pipeline (send). */
@@ -218,7 +226,7 @@ export class BrainService {
     });
     this.turnRunner = new BrainTurnRunner({
       store: d.store, sessions: this.sessions,
-      admitsNewWork: () => !this.draining,
+      admitsNewWork: () => !this.draining && !this.reloadingPlugins,
       lifecycle: this.lifecycle, goals: this.goals, permissions: this.permissionSvc,
       elicitation: this.elicitation, cards: this.cards, identity: this.identity,
       titler: this.titler, curator: this.curator,
@@ -271,7 +279,7 @@ export class BrainService {
       get policy() { return d.policy; },
     });
     this.channelService = new ChannelSessionService({
-      registry: this.sessions, admitsNewWork: () => !this.draining,
+      registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,
       store: d.store, cards: this.cards, users: d.users,
       maxChannels: () => this.limits().channelSessionCap,
       spawn: (o) => this.spawner.spawn(o), // composition stays in the spawner — single source
@@ -882,11 +890,13 @@ export class BrainService {
   /** Synchronous route preflight for `/brain/subagent/send`: a legacy child with no immutable scope
    *  must return 409 now, not be silently swallowed by the route's detached promise. */
   preflightSubagentSend(userId: number, sessionId: string): void {
+    if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
     this.delegated.preflightSubagentSend(userId, sessionId);
   }
 
   /** The owner talking INTO a delegated sub-agent's session — see DelegatedSessionService.sendToSubagent. */
   async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
+    if (this.draining || this.reloadingPlugins) throw new Error('the daemon is temporarily not admitting new work');
     return this.delegated.sendToSubagent(userId, sessionId, text);
   }
 
@@ -1140,41 +1150,93 @@ export class BrainService {
     });
   }
 
-  /** Invalidate the shared plugin registry and restart every live session — called when the admin flips
-   *  a plugin on/off so the change applies without a daemon restart. Channel sessions are simply dropped;
-   *  the next inbound message re-opens them with the fresh registry. The shared invalidation also covers
-   *  the elowen-exec brain workers — their next launch composes from the fresh registry. */
-  async reloadPlugins(): Promise<void> {
-    // Serialized: two rapid plugin toggles must not interleave stopAll()/startAll() and leave
-    // duplicate connected adapters (a distinct lock key from any session, so it never blocks a turn).
-    await this.serial('plugins-reload', async () => {
-      // Every live session is about to be torn down — release any parked AskUserQuestion across all of
-      // them so a pending question can't stall the reload (or leave a turn hanging on a disposed session).
-      this.elicitation.cancelAll('plugins reloaded');
-      // Let plugins observe the reload boundary. Observational only (fail-open, no mutation) — fires on
-      // the CURRENT registry's hooks before we swap it out.
-      const before = await this.d.plugins?.get();
-      if (before) await new PluginHookBus({ hooks: before.hooks }).emit('plugin.reload.before', {});
-      this.d.plugins?.invalidate();
-      for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
-      // Non-active live sessions just drop; they respawn with the new registry on next resume.
-      const activeIds = this.sessions.activeIds();
-      for (const [id] of this.sessions.liveEntries()) {
-        if (!activeIds.includes(id)) this.sessions.dispose(id);
+  /** Work that must finish before this process can replace its plugin registry. Runner IPC calls this because
+   *  daemon-side counters cannot see core turns, child edges or plugin closures owned by the forked brain. */
+  async reloadOwnedWorkCount(): Promise<number> {
+    const busy = this.busy();
+    const registry = await this.d.plugins?.get();
+    return busy.turns
+      + busy.children
+      + this.turnRunner.resultDeliveryWorkCount()
+      + (registry?.control('subagent')?.activeCount() ?? 0)
+      + (registry?.control('workflow')?.activeCount() ?? 0);
+  }
+
+  /** Wait until replacing the current plugin registry cannot cut through work owned by its closures. The
+   *  core busy counters cover active turns/children; plugin controls cover delegates waiting between child
+   *  turns and workflows between nodes — gaps where the live registry legitimately reads idle. */
+  private async waitForPluginReloadQuiescence(registry: PluginRegistry | undefined): Promise<void> {
+    let announced = false;
+    const deadline = Date.now() + PLUGIN_RELOAD_DRAIN_MS;
+    while (true) {
+      const runnerWork = await this.d.subagentRunner?.activeCount?.() ?? 0;
+      // Read the daemon snapshot AFTER the asynchronous runner query. A runner completion can mirror a new
+      // child edge while the IPC response is in flight; using a snapshot from before the query could reset
+      // that runner even though the daemon had already learned about its newly active child.
+      const busy = this.busy();
+      const delegates = registry?.control('subagent')?.activeCount() ?? 0;
+      const workflows = registry?.control('workflow')?.activeCount() ?? 0;
+      // Pending durable result delivery belongs to the core, not to the old plugin closure. Waiting for it
+      // would deadlock after its retry budget is exhausted: only a new user turn retries it, and admission is
+      // intentionally closed here. It survives the registry swap and is delivered by the normal core path.
+      if (busy.turns === 0 && busy.children === 0 && delegates === 0 && workflows === 0 && runnerWork === 0) {
+        if (announced) logger('brain').info('plugin reload drain complete');
+        return;
       }
-      await this.channelService.resetChannels('plugins reloaded');
-      // The sub-agent runner loaded the OLD plugin set into a process this reload cannot reach into, so a
-      // surviving one would keep serving delegated turns with the tools that were just replaced. Tear it
-      // down instead; the next delegation forks a fresh one off the new registry. Its in-flight turns
-      // settle as interrupted, which is the same verdict resetChannels above just gave the local ones.
-      this.d.subagentRunner?.reset('plugins reloaded');
-      // Platform adapters were built by the old registry — disconnect them and start the fresh set.
-      this.platforms.stopAll();
-      await this.platforms.startAll();
-      // reload.after fires against the freshly rebuilt registry so plugins can re-prime state.
-      const after = await this.d.plugins?.get();
-      if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
-    });
+      const detail = `${busy.turns} turn(s), ${busy.children} child turn(s), ${delegates} delegation(s), ${workflows} workflow(s), ${runnerWork} runner task(s)`;
+      if (!announced) {
+        announced = true;
+        logger('brain').info(`plugin reload waiting for work — ${detail}`);
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`plugin reload timed out waiting for work; reload aborted without interrupting it — ${detail}`);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, PLUGIN_RELOAD_POLL_MS));
+    }
+  }
+
+  /** Invalidate the shared plugin registry and restart every live session — called when the admin flips
+   *  a plugin on/off so the change applies without a daemon restart. New top-level work is paused first;
+   *  existing turns, delegates, workflows and result delivery drain to completion before any closure or
+   *  runner is replaced. Queued reload callers keep admission closed across the whole serialized batch. */
+  async reloadPlugins(): Promise<void> {
+    this.pluginReloadWaiters += 1;
+    this.reloadingPlugins = true;
+    try {
+      // A parked question cannot finish without user input and may hold a turn for hours. Cancel it before
+      // waiting; the turn unwinds normally and the quiescence loop observes its lock reach zero. The wait is
+      // deliberately OUTSIDE the plugins-reload lock because busy().turns counts every held serial key.
+      this.elicitation.cancelAll('plugins reloaded');
+      const drainRegistry = await this.d.plugins?.get();
+      await this.waitForPluginReloadQuiescence(drainRegistry);
+      // Serialized: two rapid plugin toggles must not interleave stopAll()/startAll() and leave duplicate
+      // connected adapters. The waiter counter above prevents a fresh turn slipping between queued reloads.
+      await this.serial('plugins-reload', async () => {
+        // Resolve the current registry only after taking the swap lock: an earlier queued reload may have
+        // replaced the instance we drained, while admission stayed closed and kept the new one quiescent.
+        const before = await this.d.plugins?.get();
+        // Defensive hooks now normally see no work. They remain fail-safe for a plugin whose liveness signal
+        // regresses, so an unreachable old closure is terminalized rather than orphaned.
+        if (before) await new PluginHookBus({ hooks: before.hooks }).emit('plugin.reload.before', {});
+        this.d.plugins?.invalidate();
+        for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
+        const activeIds = this.sessions.activeIds();
+        for (const [id] of this.sessions.liveEntries()) {
+          if (!activeIds.includes(id)) this.sessions.dispose(id);
+        }
+        await this.channelService.resetChannels('plugins reloaded');
+        // The old runners are idle now, but still hold the old tool registry; reset so the next delegation
+        // forks against the new build/config without interrupting any work.
+        this.d.subagentRunner?.reset('plugins reloaded');
+        this.platforms.stopAll();
+        await this.platforms.startAll();
+        const after = await this.d.plugins?.get();
+        if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
+      });
+    } finally {
+      this.pluginReloadWaiters -= 1;
+      if (this.pluginReloadWaiters === 0) this.reloadingPlugins = false;
+    }
   }
 
   /** A plugin's request (from inside a turn) to apply a plugin-set change live — the skills plugin calls

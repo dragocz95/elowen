@@ -284,6 +284,22 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('reads rate-limit windows for every provider without binding them to the parent session', async () => {
+    const f = vi.fn(async () => j(200, {
+      'openai-codex': { provider: 'openai-codex', planType: 'team', fetchedAt: 123, stale: false, windows: [] },
+      anthropic: { provider: 'anthropic', planType: 'max', fetchedAt: 124, stale: false, windows: [] },
+    })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+
+    await expect(c.rateLimitsAll()).resolves.toEqual(expect.objectContaining({
+      'openai-codex': expect.objectContaining({ planType: 'team' }),
+      anthropic: expect.objectContaining({ planType: 'max' }),
+    }));
+    expect(f).toHaveBeenLastCalledWith('http://x/brain/rate-limits/all', expect.objectContaining({
+      headers: expect.objectContaining({ authorization: 'Bearer t' }),
+    }));
+  });
+
   it('renameSession PATCHes the selected title', async () => {
     const f = vi.fn(async () => j(200, { id: 'brain-2', title: 'New title' })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

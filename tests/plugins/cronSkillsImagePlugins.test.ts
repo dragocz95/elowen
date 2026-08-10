@@ -469,6 +469,7 @@ describe('subagent plugin', () => {
     const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const control = reg.controls.get('subagent') as {
       detachForeground(input: { sessionId: string; principal: string }): { detached: number };
+      activeCount(): number;
     };
     expect(control).toBeTruthy();
 
@@ -485,6 +486,7 @@ describe('subagent plugin', () => {
       emitSubagentCompletion: (result) => completed.push(result),
     });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(control.activeCount()).toBe(1);
 
     expect(control.detachForeground(
       { sessionId: 'brain-parent-detach', principal: 'elowen:1' },
@@ -500,6 +502,90 @@ describe('subagent plugin', () => {
         result: 'detached child result',
       }),
     ]));
+    expect(control.activeCount()).toBe(0);
+  });
+
+  it('detaches a foreground continuation and delivers its eventual reply without stopping the child', async () => {
+    const dataRoot = freshDataRoot();
+    let resolveContinuation!: (result: { status: 'reply'; reply: string }) => void;
+    const continuation = new Promise<{ status: 'reply'; reply: string }>((resolve) => { resolveContinuation = resolve; });
+    const reg = await loadPlugins({
+      dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log,
+      delegatedChildren: {
+        runs: () => [],
+        read: () => '',
+        continue: async (_parent, _child, _text, _access, onEvent) => {
+          onEvent?.({ type: 'tool', name: 'Read', detail: 'src/continued.ts' });
+          return continuation;
+        },
+        stop: async () => ({ stopped: false }),
+      },
+    });
+    const continueTool = reg.tools.find((t) => t.name === 'DelegateContinue')!;
+    const control = reg.controls.get('subagent') as {
+      detachForeground(input: { sessionId: string; principal: string }): { detached: number };
+    };
+    const completed: unknown[] = [];
+    const foreground = runWithPolicy(ADMIN, () => continueTool.execute('call-continue', {
+      id: 'brain-ch-subagent-sub-dlg-existing', message: 'check one more edge',
+    }, undefined as never, undefined as never), {
+      sessionId: 'brain-parent-continue', identity: OWNER,
+      emitSubagentCompletion: (result) => completed.push(result),
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(control.detachForeground(
+      { sessionId: 'brain-parent-continue', principal: 'elowen:1' },
+    )).toEqual({ detached: 1 });
+    expect(asText(await foreground)).toContain('moved this sub-agent continuation to the background');
+
+    resolveContinuation({ status: 'reply', reply: 'continued child result' });
+    await vi.waitFor(() => expect(completed).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-continue',
+        sessionId: 'brain-ch-subagent-sub-dlg-existing',
+        task: 'check one more edge',
+        status: 'done',
+        result: 'continued child result',
+      }),
+    ]));
+  });
+
+  it('refuses a continuation at capacity before it can steer or start child work', async () => {
+    const dataRoot = freshDataRoot();
+    const continueSubagent = vi.fn(async () => ({ status: 'reply' as const, reply: 'must not run' }));
+    const reg = await loadPlugins({
+      dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log,
+      delegatedChildren: {
+        runs: () => [], read: () => '', continue: continueSubagent,
+        stop: async () => ({ stopped: false }),
+      },
+    });
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
+    const continueTool = reg.tools.find((t) => t.name === 'DelegateContinue')!;
+    const control = reg.controls.get('subagent') as { activeCount(): number };
+    let releaseChildren!: (reply: string) => void;
+    const children = new Promise<string>((resolve) => { releaseChildren = resolve; });
+    reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-capacity' });
+      return children;
+    });
+
+    for (let i = 0; i < 64; i += 1) {
+      await runWithPolicy(ADMIN, () => delegate.execute(
+        `capacity-${i}`, { task: `held-${i}`, background: true }, undefined as never, undefined as never,
+      ), { sessionId: 'brain-parent-capacity', identity: OWNER });
+    }
+    expect(control.activeCount()).toBe(64);
+
+    const refused = await runWithPolicy(ADMIN, () => continueTool.execute('over-capacity', {
+      id: 'brain-ch-subagent-existing', message: 'do not start this',
+    }, undefined as never, undefined as never), { sessionId: 'brain-parent-capacity', identity: OWNER });
+    expect(asText(refused)).toContain('too many delegations (64)');
+    expect(continueSubagent).not.toHaveBeenCalled();
+
+    releaseChildren('done');
+    await vi.waitFor(() => expect(control.activeCount()).toBe(0));
   });
 
   it('returns a background handle immediately, exposes progress/result, and keeps emitting the child session', async () => {

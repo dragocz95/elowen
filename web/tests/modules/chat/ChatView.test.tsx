@@ -27,7 +27,7 @@ const server = setupServer(
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([])),
   http.get('*/api/brain/status', () => HttpResponse.json({ running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [] })),
-  http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+  http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([
     { id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-08', running: false, active: true },

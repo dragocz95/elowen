@@ -247,6 +247,7 @@ export function register(ctx) {
   // tool wait; it never aborts the child channel. Completion uses the turn-captured durable host sink,
   // so explicit background and Ctrl+B follow the exact same result path.
   ctx.registerControl('subagent', {
+    activeCount: () => [...jobs.values()].filter((job) => job.status === 'running').length,
     detachForeground: ({ sessionId, principal }) => {
       let detached = 0;
       for (const job of jobs.values()) {
@@ -834,48 +835,98 @@ export function register(ctx) {
       // Mirror Delegate's live progress row so a follow-up shows as a RUNNING sub-agent in the rail, keyed
       // on THIS tool call (with the child's session for drill-in), instead of running invisibly. The child
       // already exists, so its session id is known up front — no `session` event needed to seed the row.
+      const originSessionId = ctx.currentSessionId();
+      const originPrincipal = principalOf(ctx.currentIdentity());
+      const trackable = Boolean(originSessionId && originPrincipal);
+      // Capacity must be reserved BEFORE continueSubagent can steer or start a child turn. Checking after that
+      // side effect returned an error while leaving an untracked continuation running outside detach/reload.
+      if (trackable) {
+        pruneJobs(Date.now(), true);
+        if (jobs.size >= MAX_BACKGROUND_JOBS) {
+          return ok(`Error: too many delegations (${MAX_BACKGROUND_JOBS}) are still running; wait for one to finish.`);
+        }
+      }
+      const emitCompletion = ctx.subagentCompletionEmitter();
       const state = {
+        id: _id,
         toolCallId: _id,
+        status: 'running',
         sessionId: childSessionId,
         task: clip(message, MAX_STORED_TASK_CHARS),
         tools: 0,
         detail: undefined,
         tokens: undefined,
         startedAt: Date.now(),
+        finishedAt: undefined,
+        result: undefined,
+        error: undefined,
+        originSessionId,
+        originPrincipal,
         emit: ctx.subagentEmitter(),
+        emitCompletion,
+        background: false,
+        autoDeliver: false,
+        resolveDetached: undefined,
       };
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
         if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
       };
-      try {
-        // Start the continuation BEFORE raising the progress row. The host decides between "steer into the
-        // running turn" and "run an idle turn" by reading the very registry this row writes to (a `running`
-        // update registers the child as live), so raising it first made every idle continuation see ITSELF
-        // as the running child. continueSubagent runs all its guards synchronously before its first await,
-        // so they see the registry as it was.
-        const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined);
-        push('running');
-        const res = await continuation;
-        push('done');
-        if (res.status === 'steered') {
-          return ok(
-            'The sub-agent was mid-turn, so your message was steered into its RUNNING turn and has entered '
-              + 'its context — it folds it into the work in progress. There is no separate reply to this '
-              + 'message: the (updated) conclusion arrives through the delegation\'s normal result path, so '
-              + 'do not poll for it.',
-            { steered: true },
-          );
+      // Start the continuation BEFORE raising the progress row. The host decides between "steer into the
+      // running turn" and "run an idle turn" by reading the very registry this row writes to (a `running`
+      // update registers the child as live), so raising it first made every idle continuation see ITSELF
+      // as the running child. continueSubagent runs all its guards synchronously before its first await.
+      const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined);
+      const runContinuation = async () => {
+        try {
+          push('running');
+          const res = await continuation;
+          state.status = 'done';
+          if (res.status === 'steered') {
+            state.result = 'The follow-up entered the sub-agent\'s running turn; its updated conclusion arrives through the original delegation.';
+            return ok(
+              'The sub-agent was mid-turn, so your message was steered into its RUNNING turn and has entered '
+                + 'its context — it folds it into the work in progress. There is no separate reply to this '
+                + 'message: the (updated) conclusion arrives through the delegation\'s normal result path, so '
+                + 'do not poll for it.',
+              { steered: true },
+            );
+          }
+          state.result = clipTail(res.reply || '(the sub-agent returned nothing)', MAX_STORED_RESULT_CHARS);
+          return ok(state.result);
+        } catch (e) {
+          // A refusal is self-correctable — the agent can wait for a busy child or pick another one — so it
+          // comes back as a readable result. An abort mid-continuation lands here the same way.
+          state.status = 'error';
+          state.error = clip(errorText(e), MAX_STORED_RESULT_CHARS);
+          return ok(`Error: ${state.error}`);
+        } finally {
+          state.finishedAt = Date.now();
+          push(state.status);
+          deliverCompletion(state);
         }
-        return ok(res.reply || '(the sub-agent returned nothing)');
-      } catch (e) {
-        // A refusal is self-correctable — the agent can wait for a busy child or pick another one — so it
-        // comes back as a readable result, exactly like every other error this plugin surfaces. An abort
-        // mid-continuation (the host rejects with 'delegation aborted') lands here the same way.
-        push('error');
-        return ok(`Error: ${errorText(e)}`);
+      };
+
+      // Outside an authenticated conversation there is no safe Ctrl+B target; preserve blocking behavior.
+      if (!trackable) return runContinuation();
+      jobs.set(state.id, state);
+      const detached = new Promise((resolve) => { state.resolveDetached = resolve; });
+      const child = runContinuation();
+      const winner = await Promise.race([
+        child.then((result) => ({ kind: 'result', result })),
+        detached.then(() => ({ kind: 'detached' })),
+      ]);
+      if (winner.kind === 'result') {
+        jobs.delete(state.id);
+        return winner.result;
       }
+      return ok(
+        'The user moved this sub-agent continuation to the background. It is still running in '
+          + `${childSessionId}; continue helping the user now. Its result is delivered to you automatically `
+          + 'in a new turn when it finishes.',
+        { sessionId: childSessionId, status: 'running', detached: true },
+      );
     },
   }));
 

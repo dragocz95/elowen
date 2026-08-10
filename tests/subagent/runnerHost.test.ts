@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { SubagentRunnerHost } from '../../src/subagent/runnerHost.js';
@@ -305,6 +305,64 @@ describe('SubagentRunnerHost — the forked runner as seen from the daemon', () 
   it('treats a runner that is not running as holding nothing (release resolves free)', async () => {
     const host = hostWith(new FakeChild());
     expect(await host.release('subagent-sub-dlg-1')).toEqual({ busy: false });
+  });
+
+  it('queries runner-local plugin activity with correlation', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+
+    const activity = host.activeCount();
+    await tick();
+    const asked = child.received.find((m) => m.type === 'activity') as Extract<DaemonToRunner, { type: 'activity' }>;
+    child.reply({ type: 'activity', activityId: 'someone-elses-query', activeCount: 99 });
+    child.reply({ type: 'activity', activityId: asked.activityId, activeCount: 2 });
+    expect(await activity).toBe(2);
+
+    const { turnId } = child.received.find((m) => m.type === 'turn') as Extract<DaemonToRunner, { type: 'turn' }>;
+    child.reply({ type: 'result', turnId, reply: 'ok' });
+    await run;
+  });
+
+  it('fails closed when a live runner does not answer an activity query', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+
+    vi.useFakeTimers();
+    try {
+      const activity = host.activeCount();
+      await vi.advanceTimersByTimeAsync(1_001);
+      await expect(activity).resolves.toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const { turnId } = child.received.find((m) => m.type === 'turn') as Extract<DaemonToRunner, { type: 'turn' }>;
+    child.reply({ type: 'result', turnId, reply: 'ok' });
+    await run;
+  });
+
+  it('fails closed when an activity query cannot be sent to a still-live runner', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+
+    child.send = () => false;
+    await expect(host.activeCount()).resolves.toBe(1);
+
+    const { turnId } = child.received.find((m) => m.type === 'turn') as Extract<DaemonToRunner, { type: 'turn' }>;
+    child.reply({ type: 'result', turnId, reply: 'ok' });
+    await run;
   });
 
   it('returns the runner-owned atomic snapshot and relays full live drill-in events until untapped', async () => {

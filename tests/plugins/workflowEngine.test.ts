@@ -48,6 +48,7 @@ const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoun
 
 interface WorkflowControl {
   cancelForSession(input: { sessionId: string }): { cancelled: number };
+  activeCount(): number;
   addNodesFromSession(input: {
     callerSessionId: string;
     callerAccess: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] } };
@@ -858,10 +859,12 @@ describe('workflow engine', () => {
     await new Promise((r) => setTimeout(r, 5)); // root launches and parks on the gate
     const wfId = snapshots[0]!.id;
     const control = controls.get('workflow')!;
+    expect(control.activeCount()).toBe(1);
     expect(control.isWorkflowLive({ workflowId: wfId })).toBe(true);
     expect(control.isWorkflowLive({ workflowId: 'wf-unknown' })).toBe(false);
     releaseRoot();
     await startP;
+    expect(control.activeCount()).toBe(0);
     expect(control.isWorkflowLive({ workflowId: wfId })).toBe(false);
   });
 

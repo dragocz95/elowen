@@ -210,6 +210,10 @@ export class BrainTurnRunner {
     return 'landed';
   }
 
+  resultDeliveryWorkCount(): number {
+    return this.resultDrains.size + this.resultRetryTimers.size;
+  }
+
   /** Store-first terminal completion ingress shared by explicit background jobs and Ctrl+B detaches. */
   acceptSubagentCompletion(parentSessionId: string, userId: number, completion: SubagentCompletion): void {
     if (!this.d.store.enqueueSubagentResult(parentSessionId, completion)) {

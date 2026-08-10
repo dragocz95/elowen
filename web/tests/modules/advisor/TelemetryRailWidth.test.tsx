@@ -13,7 +13,7 @@ const KEY = 'elowen:telemetry-rail-width';
 
 const server = setupServer(
   http.get('*/api/brain/status', () => HttpResponse.json({ running: false, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [] })),
-  http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+  http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
 );

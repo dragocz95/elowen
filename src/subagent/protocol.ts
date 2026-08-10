@@ -73,6 +73,8 @@ export type DaemonToRunner =
   /** Drop the live record for a channel so the DAEMON can run that child's next turn itself (an idle
    *  continuation rehydrates from SQLite). Refused while that channel is busy. */
   | { type: 'release'; releaseId: string; channelId: string }
+  /** Query work owned by runner-local plugin closures before replacing them on hot reload. */
+  | { type: 'activity'; activityId: string }
   /** The daemon's answer to a runner-originated host call. Errors are data so a rejected workflow
    *  expansion settles the tool call without crashing either IPC peer. */
   | { type: 'hostResult'; callId: string; result: HostRpcResult }
@@ -97,6 +99,7 @@ export type RunnerToDaemon =
   | { type: 'result'; turnId: string; reply: string }
   | { type: 'error'; turnId: string; message: string }
   | { type: 'released'; releaseId: string; busy: boolean }
+  | { type: 'activity'; activityId: string; activeCount: number }
   /** The answer to a `steer` frame. `delivered` only once the message is confirmed in the child's
    *  context; `idle` when no streaming turn holds this channel here (the daemon then delivers the text
    *  itself); `aborted` when the delegation's abort fences fired while the steer waited. */
@@ -185,6 +188,10 @@ export function parseDaemonMessage(raw: unknown): DaemonToRunner | undefined {
     const channelId = str(v.channelId);
     return releaseId && channelId ? { type: 'release', releaseId, channelId } : undefined;
   }
+  if (v.type === 'activity') {
+    const activityId = str(v.activityId);
+    return activityId ? { type: 'activity', activityId } : undefined;
+  }
   if (v.type === 'hostResult') {
     const callId = str(v.callId);
     const result = parseHostRpcResult(v.result);
@@ -231,6 +238,13 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
     case 'released': {
       const releaseId = str(v.releaseId);
       return releaseId ? { type: 'released', releaseId, busy: v.busy === true } : undefined;
+    }
+    case 'activity': {
+      const activityId = str(v.activityId);
+      const activeCount = v.activeCount;
+      return activityId && Number.isSafeInteger(activeCount) && (activeCount as number) >= 0
+        ? { type: 'activity', activityId, activeCount: activeCount as number }
+        : undefined;
     }
     case 'steered': {
       const steerId = str(v.steerId);

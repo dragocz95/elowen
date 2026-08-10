@@ -305,6 +305,15 @@ export class BrainClient {
     return (await res.json()) as BrainRateLimits | null;
   }
 
+  /** Subscription windows for every connected provider account. Drill-in child sessions are not owner
+   *  addressable through the session-bound endpoint, so the CLI selects their snapshot provider locally. */
+  async rateLimitsAll(): Promise<Record<string, BrainRateLimits>> {
+    const res = await this.f(`${this.o.base}/brain/rate-limits/all`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/rate-limits/all`);
+    return (await res.json()) as Record<string, BrainRateLimits>;
+  }
+
   /** Pop the LAST pending mid-turn message from the bound conversation and return its text — the CLI
    *  ↑-recall and ctrl+x remove-last. The server pops by VALUE (not a positional id that goes stale the
    *  moment PI delivers a queued message), so it can never leave the message both queued and re-sendable.

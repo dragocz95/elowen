@@ -108,6 +108,27 @@ describe('SubagentRunnerPool — cold start and the operator knob', () => {
     h.pool.reset('test over');
   });
 
+  it('aggregates exact in-flight work with runner-local plugin activity', async () => {
+    const h = poolWith();
+    const { run } = await coldStart(h);
+    const child = h.children[0]!;
+
+    const active = h.pool.activeCount();
+    await settle();
+    const query = child.received.find((m): m is Extract<DaemonToRunner, { type: 'activity' }> => m.type === 'activity')!;
+    child.reply({ type: 'activity', activityId: query.activityId, activeCount: 3 });
+    expect(await active).toBe(3);
+
+    child.finish(child.turns()[0]!.turnId);
+    await run;
+    const idle = h.pool.activeCount();
+    await settle();
+    const queries = child.received.filter((m): m is Extract<DaemonToRunner, { type: 'activity' }> => m.type === 'activity');
+    child.reply({ type: 'activity', activityId: queries.at(-1)!.activityId, activeCount: 0 });
+    expect(await idle).toBe(0);
+    h.pool.reset('test over');
+  });
+
   // 0 is the operator saying "do not use the pool at all". The dispatcher must see `in-process`, not a
   // runner that fails once per delegated turn.
   it('reports itself unusable and forks nothing at pool max 0', async () => {

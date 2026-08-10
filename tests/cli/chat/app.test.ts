@@ -304,7 +304,7 @@ describe('ChatApplication shutdown ownership', () => {
       bindLifetime: vi.fn(),
       status: vi.fn(async () => null),
       mcpServers: vi.fn(async () => []),
-      rateLimits: vi.fn(async () => null),
+      rateLimitsAll: vi.fn(async () => ({})),
       goal: vi.fn(async () => activeGoal),
     } as unknown as BrainClient;
     const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
@@ -323,7 +323,7 @@ describe('ChatApplication shutdown ownership', () => {
     expect(state.goal).toEqual(activeGoal);
   });
 
-  it('clears stale limits and refetches immediately when metadata reports a provider switch', async () => {
+  it('hydrates all provider limits when metadata reports a provider switch', async () => {
     const codexLimits = {
       provider: 'openai-codex', planType: 'pro', fetchedAt: 2, stale: false,
       windows: [{ usedPercent: 11, windowMinutes: 300, resetsAt: 123 }],
@@ -335,14 +335,16 @@ describe('ChatApplication shutdown ownership', () => {
         usage: null, statusline: null,
       })),
       mcpServers: vi.fn(async () => []),
-      rateLimits: vi.fn(async () => codexLimits),
+      rateLimitsAll: vi.fn(async () => ({ 'openai-codex': codexLimits })),
       goal: vi.fn(async () => null),
     } as unknown as BrainClient;
     const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
     const state = new ChatState({ transcript: new TranscriptModel(), provider: 'anthropic' });
-    state.rateLimits = {
-      provider: 'anthropic', planType: null, fetchedAt: 1, stale: false,
-      windows: [{ usedPercent: 90, windowMinutes: 300, resetsAt: 456 }],
+    state.rateLimitsByProvider = {
+      anthropic: {
+        provider: 'anthropic', planType: null, fetchedAt: 1, stale: false,
+        windows: [{ usedPercent: 90, windowMinutes: 300, resetsAt: 456 }],
+      },
     };
     const internals = application as unknown as {
       state: ChatState;
@@ -355,10 +357,10 @@ describe('ChatApplication shutdown ownership', () => {
     internals.rateLimitsFetchedAt = 999;
 
     await internals.refreshMeta();
-    await vi.waitFor(() => expect(state.rateLimits).toEqual(codexLimits));
+    await vi.waitFor(() => expect(state.rateLimitsByProvider['openai-codex']).toEqual(codexLimits));
 
     expect(state.provider).toBe('openai-codex');
-    expect(client.rateLimits).toHaveBeenCalledOnce();
+    expect(client.rateLimitsAll).toHaveBeenCalledOnce();
     expect(internals.rateLimitsFetchedAt).not.toBe(999);
   });
 
@@ -375,7 +377,7 @@ describe('ChatApplication shutdown ownership', () => {
       bindLifetime: vi.fn(),
       status: vi.fn(async () => null),
       mcpServers: vi.fn(async () => []),
-      rateLimits: vi.fn(async () => null),
+      rateLimitsAll: vi.fn(async () => ({})),
       goal: vi.fn(() => delayedGoal),
     } as unknown as BrainClient;
     const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
@@ -409,7 +411,7 @@ describe('ChatApplication shutdown ownership', () => {
     const delayedGoal = new Promise<typeof staleActive>((resolve) => { resolveGoal = resolve; });
     const client = {
       bindLifetime: vi.fn(), status: vi.fn(async () => null), mcpServers: vi.fn(async () => []),
-      rateLimits: vi.fn(async () => null), goal: vi.fn(() => delayedGoal),
+      rateLimitsAll: vi.fn(async () => ({})), goal: vi.fn(() => delayedGoal),
     } as unknown as BrainClient;
     const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
     const state = new ChatState({ transcript: new TranscriptModel() });
@@ -443,7 +445,7 @@ describe('ChatApplication shutdown ownership', () => {
       commands: vi.fn(async () => []),
       localShellTimeoutMs: vi.fn(async () => null),
       history: vi.fn(() => { enteredHistory(); return delayedHistory; }),
-      rateLimits: vi.fn(async () => null),
+      rateLimitsAll: vi.fn(async () => ({})),
       mcpServers: vi.fn(async () => []),
       stopSession: vi.fn(async () => {}),
     } as unknown as BrainClient;

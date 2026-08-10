@@ -25,7 +25,7 @@ class FakeES {
 
 /** The extended /brain/status payload: usage + project + LSP + MCP, all from the one poll. */
 const STATUS = {
-  running: true, sessionId: 'brain-1', model: 'm', statusline: null, cards: [], queued: [],
+  running: true, sessionId: 'brain-1', model: 'm', provider: 'openai-codex', statusline: null, cards: [], queued: [],
   usage: { tokens: 42_000, contextWindow: 200_000, percent: 21, totalTokens: 51_000, cost: 1.2345 },
   project: { cwd: '/var/www/elowen', branch: 'dev' },
   lspEnabled: true,
@@ -38,9 +38,11 @@ const server = setupServer(
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([])),
   http.get('*/api/brain/status', () => HttpResponse.json(STATUS)),
-  http.get('*/api/brain/rate-limits', () => HttpResponse.json({
-    provider: 'openai-codex', planType: 'pro', fetchedAt: 0, stale: false,
-    windows: [{ usedPercent: 64, windowMinutes: 300, resetsAt: null }],
+  http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({
+    'openai-codex': {
+      provider: 'openai-codex', planType: 'pro', fetchedAt: 0, stale: false,
+      windows: [{ usedPercent: 64, windowMinutes: 300, resetsAt: null }],
+    },
   })),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([
@@ -164,7 +166,7 @@ describe('chat telemetry panel', () => {
       http.get('*/api/brain/status', () => HttpResponse.json({
         ...STATUS, project: { cwd: null, branch: null }, mcp: null, lspEnabled: undefined,
       })),
-      http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+      http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
     renderChat(<ChatView />);
     expect(await screen.findByTestId('telemetry-context')).toBeInTheDocument();
@@ -180,7 +182,7 @@ describe('chat telemetry panel', () => {
       http.get('*/api/brain/status', () => HttpResponse.json({
         ...STATUS, project: { cwd: null, branch: null }, mcp: null, lspEnabled: undefined, usage: null,
       })),
-      http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+      http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
     );
     renderChat(<ChatView />);
     // Even with nothing to report the rail is inhabited — the owl shows, the empty note beside it.

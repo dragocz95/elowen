@@ -1,11 +1,11 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Target, TerminalSquare, Users, Workflow, X } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { plural } from '../../lib/i18n/plural';
 import { elowenClient } from '../../lib/elowenClient';
-import { useBrainProcesses } from '../../lib/queries';
+import { useBrainProcesses, useBrainRateLimitsAll } from '../../lib/queries';
 import { formatTokens, formatCost } from '../../lib/format';
 import { OAuthUsageRail, usageFillClass } from '../settings/OAuthUsageRail';
 import { MascotGlyph } from '../../components/ui/SpatialMascot';
@@ -143,14 +143,11 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
   // Track the open process by id, not a click-time copy, so the modal follows the live list (it stops
   // polling once the process exits, and closes when the process is pruned away).
   const [openProcessId, setOpenProcessId] = useState<string | null>(null);
-  // The subscription rail changes on the scale of hours and lives on its own endpoint (the daemon keeps
-  // it out of the hot status poll on purpose) — so it is fetched separately and refreshed slowly.
-  const { data: limits } = useQuery({
-    queryKey: ['brain-rate-limits-session', activeSessionId, provider],
-    queryFn: () => elowenClient.brainRateLimits(activeSessionId ?? undefined),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-  });
+  // A drill-in session is intentionally not owner-addressable through /brain/rate-limits?session=. Fetch
+  // the owner-wide provider map and select with the focused snapshot's provider instead; an empty provider
+  // while that snapshot loads must show no rail rather than leaking the parent's account into the child.
+  const { data: limitsByProvider = {} } = useBrainRateLimitsAll();
+  const limits = provider ? (limitsByProvider[provider] ?? null) : null;
 
   const project = telemetry.project;
   const mcp = telemetry.mcp;

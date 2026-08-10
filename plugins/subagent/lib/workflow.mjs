@@ -639,6 +639,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   ctx.registerControl('workflow', {
     cancelForSession: ({ sessionId }) => cancelForSession(sessionId),
     detachForeground: ({ sessionId, principal }) => detachForeground(sessionId, principal),
+    activeCount: () => [...workflows.values()].filter((wf) => !wf.finished).length,
     // Does THIS engine still hold the DAG? The durable row alone cannot answer that: when a terminal
     // snapshot fails to persist (or boot reconcile misses one), the row claims `running` forever while
     // the engine dropped the workflow long ago. Status reads consult this instead of inferring liveness

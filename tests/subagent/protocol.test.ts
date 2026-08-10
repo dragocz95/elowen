@@ -93,6 +93,18 @@ describe('runner session tap — daemon → runner and back', () => {
   });
 });
 
+describe('runner activity — daemon → runner and back', () => {
+  it('parses correlated activity frames and rejects unsafe counts', () => {
+    expect(parseDaemonMessage({ type: 'activity', activityId: 'a-1' }))
+      .toEqual({ type: 'activity', activityId: 'a-1' });
+    expect(parseRunnerMessage({ type: 'activity', activityId: 'a-1', activeCount: 2 }))
+      .toEqual({ type: 'activity', activityId: 'a-1', activeCount: 2 });
+    expect(parseDaemonMessage({ type: 'activity' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'activity', activityId: 'a-1', activeCount: -1 })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'activity', activityId: 'a-1', activeCount: 1.5 })).toBeUndefined();
+  });
+});
+
 describe('steer verb — daemon → runner and back', () => {
   it('parses a steer frame', () => {
     expect(parseDaemonMessage({ type: 'steer', steerId: 's-1', channelId: 'subagent-sub-dlg-1', text: 'also check docs' }))

@@ -42,7 +42,7 @@ const server = setupServer(
     running: false, sessionId: 'brain-1', model: 'claude-sonnet-5', usage: null, statusline: null, cards: [], queued: [],
   })),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
-  http.get('*/api/brain/rate-limits', () => HttpResponse.json(null)),
+  http.get('*/api/brain/rate-limits/all', () => HttpResponse.json({})),
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
 );

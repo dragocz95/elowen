@@ -160,6 +160,7 @@ describe('deleting a conversation releases everything it owns', () => {
     ctx.registerControl('workflow', {
       cancelForSession: ({ sessionId }: { sessionId: string }) => { cancelled.push(sessionId); return { cancelled: 1 }; },
       detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
     });

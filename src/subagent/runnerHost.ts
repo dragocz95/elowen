@@ -30,6 +30,9 @@ const BOOT_TIMEOUT_MS = 60_000;
 /** After a failed boot, stay in-process for this long instead of forking on every single delegation — a
  *  broken runner must not turn one failure into a fork storm. */
 const BOOT_RETRY_COOLDOWN_MS = 60_000;
+/** An activity query is a reload safety check, not an excuse to hang reload forever on a wedged IPC peer.
+ *  Timeout fails closed as active; the outer bounded reload drain decides when to give up safely. */
+const ACTIVITY_TIMEOUT_MS = 1_000;
 
 export interface SubagentRunnerHostDeps {
   dbPath: string;
@@ -228,6 +231,33 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
       child.on('message', onMessage);
       child.once('exit', onExit);
       if (!this.post(child, { type: 'release', releaseId, channelId })) { onExit(); }
+    });
+  }
+
+  async activeCount(): Promise<number> {
+    const child = this.child;
+    if (!child || !this.ready) return 0;
+    const activityId = randomUUID();
+    return new Promise<number>((resolve) => {
+      let settled = false;
+      const finish = (count: number): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+        resolve(count);
+      };
+      const onMessage = (raw: unknown): void => {
+        const msg = parseRunnerMessage(raw);
+        if (msg?.type === 'activity' && msg.activityId === activityId) finish(msg.activeCount);
+      };
+      const onExit = (): void => finish(0);
+      const timer = setTimeout(() => finish(1), ACTIVITY_TIMEOUT_MS);
+      timer.unref();
+      child.on('message', onMessage);
+      child.once('exit', onExit);
+      if (!this.post(child, { type: 'activity', activityId })) finish(1);
     });
   }
 

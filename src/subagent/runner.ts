@@ -33,6 +33,7 @@ import { parseDaemonMessage, subagentBuildId, type RunnerToDaemon } from './prot
 import type { McpBridgeSnapshot } from '../plugins/mcpSnapshot.js';
 import { currentSessionId } from '../plugins/policyContext.js';
 import { HostRpcClient, WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from './hostRpc.js';
+import { runnerReloadActivityCount } from './activity.js';
 
 // A runner writes into the daemon's own log file and builds the same brain core, so its lines carry the
 // same scopes the daemon's do (`[daemon] plugin loaded: …`). The pid is what makes them attributable —
@@ -302,6 +303,18 @@ process.on('message', (raw: unknown) => {
           heldChannels.delete(msg.channelId);
           send({ type: 'released', releaseId: msg.releaseId, busy: false });
         });
+      return;
+    }
+    case 'activity': {
+      void (async (): Promise<void> => {
+        await booting;
+        const activeCount = await runnerReloadActivityCount(runningChannels.size, brain);
+        send({ type: 'activity', activityId: msg.activityId, activeCount });
+      })().catch((e: unknown) => {
+        log.warn(`activity query failed: ${errorText(e)}`);
+        // Fail closed: the daemon keeps waiting instead of replacing closures whose state it could not read.
+        send({ type: 'activity', activityId: msg.activityId, activeCount: 1 });
+      });
       return;
     }
     case 'hostResult':

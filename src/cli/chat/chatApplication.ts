@@ -340,14 +340,14 @@ export class ChatApplication {
     this.rateLimitsFetchedAt = Date.now();
     const publication = this.lifetime.begin('rate-limits');
     try {
-      const limits = await this.resources.client.rateLimits();
+      const limits = await this.resources.client.rateLimitsAll();
       this.lifetime.commit(publication, () => {
-        this.state.rateLimits = limits;
+        this.state.rateLimitsByProvider = limits;
         this.actions.render('metadata:rate-limits');
       });
     } catch {
       this.lifetime.commit(publication, () => {
-        this.state.rateLimits = null;
+        this.state.rateLimitsByProvider = {};
         this.actions.render('metadata:rate-limits-error');
       });
     }
@@ -376,10 +376,6 @@ export class ChatApplication {
   private applyStatus(status: BrainStatus): void {
     const state = this.state;
     const nextProvider = status.provider || state.provider;
-    if (state.provider && nextProvider && state.provider !== nextProvider) {
-      state.rateLimits = null;
-      this.rateLimitsFetchedAt = 0;
-    }
     state.provider = nextProvider;
     state.modelName = status.model || state.modelName;
     state.conversationTitle = status.title ?? state.conversationTitle;
