@@ -30,14 +30,15 @@ export interface ThemeBrand {
  *  The product name comes from the theme (falling back to its agent name — a one-name theme brands
  *  both), never from `brain.agentName`: renaming the persona to "Jarvis" must not relabel the product. */
 export function resolveBrand(
-  config: { brain: { agentName: string }; theme: { active: string | null } },
+  config: { brain: { agentName: string } },
   themeBrand: ThemeBrand | null,
+  themeName: string | null,
 ): ResolvedBrand {
   const configured = config.brain.agentName.trim();
   const explicit = configured && configured !== DEFAULT_AGENT_NAME ? configured : '';
   const agentName = explicit || themeBrand?.agentName || DEFAULT_AGENT_NAME;
   const productName = themeBrand?.productName || themeBrand?.agentName || DEFAULT_AGENT_NAME;
-  return { agentName, productName, themeName: config.theme.active };
+  return { agentName, productName, themeName };
 }
 
 export const DEFAULT_BRAND: ResolvedBrand = { agentName: DEFAULT_AGENT_NAME, productName: DEFAULT_AGENT_NAME, themeName: null };

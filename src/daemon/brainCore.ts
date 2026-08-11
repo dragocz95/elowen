@@ -7,7 +7,7 @@ import { SpawnService } from '../spawn/spawn.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
-import { ThemeStore } from '../store/themeStore.js';
+import { ThemeStore, activeThemeName } from '../store/themeStore.js';
 import { resolveBrand, type ResolvedBrand } from '../shared/brand.js';
 import { UserStore } from '../store/userStore.js';
 import { EventStore } from '../store/eventStore.js';
@@ -227,9 +227,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // read through the SAME store instance, so the served payload and the persona always agree.
   const themes = opts.dbPath === ':memory:' ? undefined : new ThemeStore(join(dirname(opts.dbPath), 'themes'));
   const brand = (): ResolvedBrand => {
-    const cfg = config.get();
-    const theme = cfg.theme.active ? themes?.get(cfg.theme.active) ?? null : null;
-    return resolveBrand(cfg, theme?.manifest.brand ?? null);
+    const name = activeThemeName();
+    const theme = name ? themes?.get(name) ?? null : null;
+    return resolveBrand(config.get(), theme?.manifest.brand ?? null, name);
   };
   // Typed sub-agents: built-in explore/plan ship in dist/prompts/agents (same `../` resolution as the
   // bundled plugins dir); user `.md` types live next to the DB in <config>/agents. Loaded lazily and

@@ -3,7 +3,7 @@ import { accessSync, constants, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { resolveBrand } from '../../shared/brand.js';
-import { THEME_ASSET_FILES, ASSET_MAX_BYTES, type ThemeAssetFile } from '../../store/themeStore.js';
+import { THEME_ASSET_FILES, ASSET_MAX_BYTES, activeThemeName, type ThemeAssetFile } from '../../store/themeStore.js';
 import { isNewer } from '../../cli/version.js';
 import { handleMcpRequest } from '../../mcp/server.js';
 import { eventProjectId } from '../eventProject.js';
@@ -211,9 +211,9 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>>;
     v: string;
   } => {
-    const cfg = d.config.get();
-    const theme = cfg.theme.active ? d.themes?.get(cfg.theme.active) ?? null : null;
-    const brand = resolveBrand(cfg, theme?.manifest.brand ?? null);
+    const active = activeThemeName();
+    const theme = active ? d.themes?.get(active) ?? null : null;
+    const brand = resolveBrand(d.config.get(), theme?.manifest.brand ?? null, active);
     const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512'> = {
       'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512',
     };
@@ -244,20 +244,20 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   // whitelist (4 entries max); a swapped file changes the mtime and naturally evicts its stale bytes.
   const assetBytesCache = new Map<string, { mtimeMs: number; bytes: Uint8Array<ArrayBuffer> }>();
   app.get('/public/theme/assets/:file', (c) => {
-    const cfg = d.config.get();
+    const active = activeThemeName();
     const file = c.req.param('file');
     // Whitelist check before any filesystem access; only the ACTIVE theme's assets are ever served, so
     // this route enumerates nothing and a stale URL after a theme switch turns into a plain 404.
-    if (!cfg.theme.active || !(THEME_ASSET_FILES as readonly string[]).includes(file)) return c.json({ error: 'not found' }, 404);
+    if (!active || !(THEME_ASSET_FILES as readonly string[]).includes(file)) return c.json({ error: 'not found' }, 404);
     // The response below is `immutable` for a year, which is only honest if a versioned URL can never
     // change meaning. A `?v=` from a DIFFERENT theme generation (stale tab after a switch, shared cache
     // replay) must therefore 404 instead of silently binding the old URL to the new theme's bytes.
     const requestedV = c.req.query('v');
-    if (requestedV !== undefined && requestedV !== d.themes?.get(cfg.theme.active)?.version) return c.json({ error: 'not found' }, 404);
-    const asset = d.themes?.resolveAsset(cfg.theme.active, file);
+    if (requestedV !== undefined && requestedV !== d.themes?.get(active)?.version) return c.json({ error: 'not found' }, 404);
+    const asset = d.themes?.resolveAsset(active, file);
     if (!asset) return c.json({ error: 'not found' }, 404);
     try {
-      const key = `${cfg.theme.active}/${file}`;
+      const key = `${active}/${file}`;
       let cached = assetBytesCache.get(key);
       if (!cached || cached.mtimeMs !== asset.mtimeMs) {
         const bytes = new Uint8Array(readFileSync(asset.path));
@@ -277,13 +277,6 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       });
     } catch { return c.json({ error: 'not found' }, 404); }
   });
-  // The admin picker list: every theme folder with its validity (an invalid manifest shows its reason
-  // so a hand-written theme is debuggable from Settings).
-  app.get('/themes', (c) => {
-    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json({ themes: d.themes?.list() ?? [], active: d.config.get().theme.active });
-  });
-
   app.get('/config', (c) => c.json(d.config.get()));
   app.get('/config/tool-deferral', async (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
@@ -322,11 +315,11 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       const { lspManager } = await import('../../brain/tools/lspTools.js');
       lspManager().setEnabled(patch.lspEnabled);
     }
-    // A brand change (theme switch or persona rename) sits at the very top of every live system prompt.
-    // Respawn live sessions so the chat does not keep speaking as the old name while the UI shows the
-    // new one. Fire-and-forget for the same reason cli-settings does it: restart waits for in-flight
-    // turns, and the save response must not hang on that.
-    if (updated.theme.active !== before.theme.active || updated.brain.agentName !== before.brain.agentName) queueBrandChange();
+    // A persona rename sits at the very top of every live system prompt. Respawn live sessions so the
+    // chat does not keep speaking as the old name while the UI shows the new one. Fire-and-forget for
+    // the same reason cli-settings does it: restart waits for in-flight turns, and the save response
+    // must not hang on that. (A theme switch needs no sweep: ELOWEN_THEME only changes with a restart.)
+    if (updated.brain.agentName !== before.brain.agentName) queueBrandChange();
     return c.json(updated);
   });
 

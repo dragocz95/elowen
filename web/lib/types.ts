@@ -46,12 +46,7 @@ export interface ElowenConfig {
   brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: BrainLimits; hiddenOauth?: string[] };
   /** Operator-tunable runtime knobs — the sibling group of `brain.limits`; absent on an older daemon. */
   runtime?: RuntimeConfig;
-  /** White-label theme selection: the active theme folder name, or null for the built-in Elowen brand. */
-  theme?: { active: string | null };
 }
-
-/** One installable white-label theme (folder under the daemon's themes/ dir), from GET /themes. */
-export interface ThemeInfo { name: string; displayName: string; valid: boolean; error?: string }
 
 // Operator-tunable brain limits — shared with the daemon via the wire contract (re-exported from it
 // further down this file); every field is a whole number the daemon clamps to a sane range.
@@ -233,8 +228,6 @@ export interface ConfigPatch {
   brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field by the daemon, like the brain limits above. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; memoryRetention?: Partial<MemoryRetentionConfig> };
-  /** `active: null` is a real value — back to the built-in brand; omit the block to keep the selection. */
-  theme?: { active?: string | null };
 }
 interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null }
 export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[] }

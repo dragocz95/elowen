@@ -75,7 +75,7 @@ export class AdvisorService {
     // The instance brand so {{agentName}}/{{productName}} in the prompt resolve — the same resolver the
     // brain spawner uses, so the tmux advisor and the embedded brain never disagree on the identity.
     // Minimal wiring without the dep still honours the configured agent name (theme-less resolve).
-    const { agentName, productName } = this.d.brand?.() ?? resolveBrand(this.d.config.get(), null);
+    const { agentName, productName } = this.d.brand?.() ?? resolveBrand(this.d.config.get(), null, null);
     const vars = { userName: u.name || u.username, personality, agentName, productName };
     const rawPrompt = this.d.prompts
       ? this.d.prompts.render('elowen', vars, userId)

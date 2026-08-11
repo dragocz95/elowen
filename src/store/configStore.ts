@@ -1,5 +1,4 @@
 import type { Db } from './db.js';
-import { THEME_NAME_RE } from './themeStore.js';
 import { stripControlChars } from '../shared/text.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
@@ -95,11 +94,6 @@ export interface ElowenConfig {
   embedding: EmbeddingBlock;
   /** Memory categorization model (workspace-level; no secret — key reused from the brain provider). */
   categorization: CategorizationBlock;
-  /** White-label theme selection: the name of a folder under `<dataDir>/themes/`, or null for the
-   *  built-in Elowen brand. Presentation only (no secret) — the actual theme data is validated and
-   *  served by the ThemeStore; a name pointing at a missing/invalid folder simply resolves to the
-   *  built-in default, so the value is kept even while the folder is still being copied in. */
-  theme: { active: string | null };
 }
 
 /** How a brain provider authenticates/talks upstream. `openai` = any OpenAI-compatible endpoint;
@@ -607,7 +601,6 @@ const DEFAULT_CONFIG: ElowenConfig = {
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
-  theme: { active: null },
 };
 
 interface Stored {
@@ -639,8 +632,6 @@ interface Stored {
   embedding: EmbeddingBlock;
   /** Categorization model config. Holds no secret (key reused from the brain provider) → public verbatim. */
   categorization: CategorizationBlock;
-  /** Active white-label theme name (folder under `<dataDir>/themes/`), or null for the built-in brand. */
-  theme: { active: string | null };
 }
 
 /** The autopilot fields that merge by the plain "incoming value wins, else keep the fallback" rule shared
@@ -697,7 +688,6 @@ const defaultStored = (): Stored => ({
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
-  theme: { active: null },
 });
 
 export interface ConfigPatch {
@@ -723,16 +713,6 @@ export interface ConfigPatch {
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
   categorization?: { providerId?: string; model?: string; baseUrl?: string };
-  /** Theme selection replaces wholesale; `active: null` is a REAL value (back to the built-in brand),
-   *  an absent block leaves the current selection alone. */
-  theme?: { active?: string | null };
-}
-
-/** A theme name is a single folder segment under `<dataDir>/themes/` — the SAME RegExp object the
- *  ThemeStore enforces on disk, so the two layers cannot drift. Anything else (including a traversal
- *  attempt persisted by hand) reads as null. */
-function sanitizeThemeActive(v: unknown): string | null {
-  return typeof v === 'string' && THEME_NAME_RE.test(v) ? v : null;
 }
 
 /** The agent display name feeds the same sinks a theme's brand name does — terminals (control chars =
@@ -820,7 +800,6 @@ export class ConfigStore {
           model: typeof p.categorization?.model === 'string' ? p.categorization.model : d.categorization.model,
           baseUrl: typeof p.categorization?.baseUrl === 'string' ? p.categorization.baseUrl : d.categorization.baseUrl,
         },
-        theme: { active: sanitizeThemeActive(p.theme?.active) },
       };
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
@@ -856,8 +835,6 @@ export class ConfigStore {
       embedding: s.embedding,
       // Likewise no secret in the categorization block → expose verbatim.
       categorization: s.categorization,
-      // Presentation only (a folder name), no secret → expose verbatim.
-      theme: s.theme,
     };
   }
 
@@ -986,9 +963,6 @@ export class ConfigStore {
         model: patch.categorization?.model ?? cur.categorization.model,
         baseUrl: patch.categorization?.baseUrl ?? cur.categorization.baseUrl,
       },
-      // `active` distinguishes null (back to the built-in brand) from absent (keep the selection);
-      // the same name grammar as read() so a bad patch value can never persist.
-      theme: patch.theme && 'active' in patch.theme ? { active: sanitizeThemeActive(patch.theme.active) } : cur.theme,
     });
     return this.get();
   }

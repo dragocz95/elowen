@@ -7,7 +7,11 @@ import { ThemeStore } from '../../src/store/themeStore.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'themes-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+
+// The routes read the active theme from ELOWEN_THEME (deployment configuration, like the web's
+// ELOWEN_SKIN) — there is no runtime selection to patch.
+const activate = (name: string) => vi.stubEnv('ELOWEN_THEME', name);
 
 const writeTheme = (name: string) => {
   mkdirSync(join(dir, name), { recursive: true });
@@ -36,8 +40,8 @@ describe('GET /public/theme', () => {
 
   it('serves the active theme payload with versioned asset URLs', async () => {
     writeTheme('acme');
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
+    activate('acme');
+    const { app } = await makeApp();
     const body = await (await app.request('/public/theme')).json() as {
       brand: { agentName: string; productName: string }; colors: Record<string, string>;
       text: Record<string, Record<string, string>>; assets: { logo?: string }; v: string;
@@ -51,15 +55,26 @@ describe('GET /public/theme', () => {
 
   it('an explicit configured agentName still wins over the theme in the public payload', async () => {
     writeTheme('acme');
+    activate('acme');
     const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' }, brain: { agentName: 'Jarvis' } });
+    deps.config.update({ brain: { agentName: 'Jarvis' } });
     const body = await (await app.request('/public/theme')).json() as { brand: { agentName: string; productName: string } };
     expect(body.brand).toEqual({ agentName: 'Jarvis', productName: 'Acme' });
   });
 
   it('a theme name pointing at a missing folder falls back to the built-in brand', async () => {
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'ghost' } });
+    activate('ghost');
+    const { app } = await makeApp();
+    const body = await (await app.request('/public/theme')).json() as { v: string };
+    expect(body.v).toBe('builtin');
+  });
+
+  // A malformed env value must degrade to the built-in brand, never to an error path an
+  // unauthenticated request could probe.
+  it('a grammar-violating ELOWEN_THEME reads as no theme', async () => {
+    writeTheme('acme');
+    activate('../acme');
+    const { app } = await makeApp();
     const body = await (await app.request('/public/theme')).json() as { v: string };
     expect(body.v).toBe('builtin');
   });
@@ -83,8 +98,8 @@ describe('GET /public/theme', () => {
   it('every emitted asset URL matches the web client re-validation shape', async () => {
     writeTheme('acme');
     for (const f of ['icon.png', 'icon-192.png', 'icon-512.png']) writeFileSync(join(dir, 'acme', f), Buffer.from('png'));
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
+    activate('acme');
+    const { app } = await makeApp();
     const src = readFileSync(join(__dirname, '..', '..', 'web', 'lib', 'brandShared.ts'), 'utf-8');
     const shape = src.match(/THEME_ASSET_PATH_RE = \/([^\n]+)\/;/)?.[1];
     expect(shape, 'THEME_ASSET_PATH_RE not found in web/lib/brandShared.ts').toBeTruthy();
@@ -99,8 +114,8 @@ describe('GET /public/theme', () => {
 describe('GET /public/theme/assets/:file', () => {
   it('serves a whitelisted PNG of the active theme with immutable caching and nosniff', async () => {
     writeTheme('acme');
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
+    activate('acme');
+    const { app } = await makeApp();
     const res = await app.request('/public/theme/assets/logo.png');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/png');
@@ -111,12 +126,12 @@ describe('GET /public/theme/assets/:file', () => {
 
   it('404s on a non-whitelisted file, with no active theme, and for an absent asset', async () => {
     writeTheme('acme');
-    const { app, deps } = await makeApp();
+    activate('acme');
+    const { app } = await makeApp();
     // theme.json itself must NOT be reachable even while the theme is active
-    deps.config.update({ theme: { active: 'acme' } });
     expect((await app.request('/public/theme/assets/theme.json')).status).toBe(404);
     expect((await app.request('/public/theme/assets/icon.png')).status).toBe(404);
-    deps.config.update({ theme: { active: null } });
+    vi.unstubAllEnvs();
     expect((await app.request('/public/theme/assets/logo.png')).status).toBe(404);
   });
 
@@ -125,8 +140,8 @@ describe('GET /public/theme/assets/:file', () => {
   // than silently bind the OLD URL to the NEW theme's bytes in every cache along the way.
   it('404s a version query from a different theme generation, serves the current one', async () => {
     writeTheme('acme');
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
+    activate('acme');
+    const { app } = await makeApp();
     const body = await (await app.request('/public/theme')).json() as { assets: { logo: string } };
     expect((await app.request(body.assets.logo)).status).toBe(200);
     expect((await app.request('/public/theme/assets/logo.png?v=' + '0'.repeat(16))).status).toBe(404);
@@ -136,8 +151,8 @@ describe('GET /public/theme/assets/:file', () => {
   // forever after a logo swap) turns this red.
   it('serves fresh bytes after an asset is swapped on disk', async () => {
     writeTheme('acme');
-    const { app, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
+    activate('acme');
+    const { app } = await makeApp();
     expect(Buffer.from(await (await app.request('/public/theme/assets/logo.png')).arrayBuffer()).toString()).toBe('png');
     writeFileSync(join(dir, 'acme', 'logo.png'), Buffer.from('png-v2'));
     utimesSync(join(dir, 'acme', 'logo.png'), new Date(), new Date(Date.now() + 5000));
@@ -145,49 +160,22 @@ describe('GET /public/theme/assets/:file', () => {
   });
 });
 
-describe('GET /themes (admin list)', () => {
-  it('lists theme folders with validity and reports the active selection', async () => {
-    writeTheme('acme');
-    const { app, token, deps } = await makeApp();
-    deps.config.update({ theme: { active: 'acme' } });
-    const res = await app.request('/themes', { headers: { authorization: `Bearer ${token}` } });
-    expect(res.status).toBe(200);
-    const body = await res.json() as { themes: { name: string; valid: boolean }[]; active: string | null };
-    expect(body.themes).toEqual([{ name: 'acme', displayName: 'Acme', valid: true }]);
-    expect(body.active).toBe('acme');
-  });
-});
-
-describe('PUT /config theme patch + live brand apply', () => {
+describe('PUT /config live brand apply', () => {
   const put = (token: string, body: unknown) => ({
     method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
 
-  it('persists theme.active, treats null as a real value, and rejects a malformed name with 400', async () => {
-    const { app, token, deps } = await makeApp();
-    expect((await app.request('/config', put(token, { theme: { active: 'acme' } }))).status).toBe(200);
-    expect(deps.config.get().theme.active).toBe('acme');
-    // Bad grammar answers 400 AND leaves the selection untouched — silently deactivating the theme
-    // while reporting success would be a lie to the settings UI.
-    expect((await app.request('/config', put(token, { theme: { active: '../etc' } }))).status).toBe(400);
-    expect(deps.config.get().theme.active).toBe('acme');
-    expect((await app.request('/config', put(token, { theme: { active: null } }))).status).toBe(200);
-    expect(deps.config.get().theme.active).toBeNull();
-  });
-
-  it('a theme or agentName change triggers applyBrandChange; an unrelated patch does not', async () => {
+  it('an agentName change triggers applyBrandChange; an unrelated patch does not', async () => {
     const applyBrandChange = vi.fn(async () => {});
     const { app, token } = await makeTestApp({ extra: { themes: new ThemeStore(dir), brain: { applyBrandChange } as never } });
-    await app.request('/config', put(token, { theme: { active: 'acme' } }));
-    expect(applyBrandChange).toHaveBeenCalledTimes(1);
     await app.request('/config', put(token, { brain: { agentName: 'Jarvis' } }));
-    expect(applyBrandChange).toHaveBeenCalledTimes(2);
+    expect(applyBrandChange).toHaveBeenCalledTimes(1);
     await app.request('/config', put(token, { webPushContact: 'https://x.example' }));
-    expect(applyBrandChange).toHaveBeenCalledTimes(2); // unrelated save must not respawn every session
+    expect(applyBrandChange).toHaveBeenCalledTimes(1); // unrelated save must not respawn every session
     // Saving the SAME value again is not a change — the respawn is expensive (full prompt re-cache).
-    await app.request('/config', put(token, { theme: { active: 'acme' } }));
-    expect(applyBrandChange).toHaveBeenCalledTimes(2);
+    await app.request('/config', put(token, { brain: { agentName: 'Jarvis' } }));
+    expect(applyBrandChange).toHaveBeenCalledTimes(1);
   });
 
   // Each sweep restarts EVERY session (full prompt-cache re-warm), and in setup mode the PUT is reachable
@@ -198,9 +186,9 @@ describe('PUT /config theme patch + live brand apply', () => {
     const gate = new Promise<void>((r) => { release = r; });
     const applyBrandChange = vi.fn(() => gate);
     const { app, token } = await makeTestApp({ extra: { themes: new ThemeStore(dir), brain: { applyBrandChange } as never } });
-    await app.request('/config', put(token, { theme: { active: 'aa' } }));
-    await app.request('/config', put(token, { theme: { active: 'bb' } }));
-    await app.request('/config', put(token, { theme: { active: 'cc' } }));
+    await app.request('/config', put(token, { brain: { agentName: 'Aa' } }));
+    await app.request('/config', put(token, { brain: { agentName: 'Bb' } }));
+    await app.request('/config', put(token, { brain: { agentName: 'Cc' } }));
     expect(applyBrandChange).toHaveBeenCalledTimes(1); // first sweep still running, the rest queued
     release();
     await vi.waitFor(() => expect(applyBrandChange).toHaveBeenCalledTimes(2));

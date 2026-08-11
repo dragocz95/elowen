@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ThemeStore, sanitizeThemeManifest, THEME_COLOR_KEYS, THEME_NAME_RE } from '../../src/store/themeStore.js';
+import { ThemeStore, sanitizeThemeManifest, activeThemeName, THEME_COLOR_KEYS, THEME_NAME_RE } from '../../src/store/themeStore.js';
 import { readFileSync } from 'node:fs';
 
 let dir: string;
@@ -184,13 +184,24 @@ describe('theme color keys contract', () => {
   });
 });
 
-// `theme.active` is validated at three layers on purpose (Zod → 400, ConfigStore sanitize, ThemeStore
-// lookup). ConfigStore now imports THEME_NAME_RE directly; the Zod schema cannot (API → store dependency),
-// so its literal is pinned against the store's source here — a drifted copy would fail asymmetrically
-// and silently (one layer accepts, the other resolves to the built-in brand with no error).
-describe('theme name grammar contract', () => {
-  it('the Zod config schema carries the exact THEME_NAME_RE grammar', () => {
-    const src = readFileSync(join(__dirname, '..', '..', 'src', 'api', 'schemas', 'config.ts'), 'utf-8');
-    expect(src).toContain(`/${THEME_NAME_RE.source}/`);
+// The active theme is deployment configuration (ELOWEN_THEME), not a config key — the resolver must
+// degrade a typo to the built-in brand, never to an error an unauthenticated request could probe.
+describe('activeThemeName', () => {
+  it('reads a valid ELOWEN_THEME and trims whitespace', () => {
+    expect(activeThemeName({ ELOWEN_THEME: 'acme' })).toBe('acme');
+    expect(activeThemeName({ ELOWEN_THEME: ' acme ' })).toBe('acme');
+  });
+
+  it('treats an absent or empty value as no theme', () => {
+    expect(activeThemeName({})).toBeNull();
+    expect(activeThemeName({ ELOWEN_THEME: '' })).toBeNull();
+    expect(activeThemeName({ ELOWEN_THEME: '   ' })).toBeNull();
+  });
+
+  it('rejects a value failing the theme name grammar', () => {
+    expect(activeThemeName({ ELOWEN_THEME: '../escape' })).toBeNull();
+    expect(activeThemeName({ ELOWEN_THEME: 'Acme' })).toBeNull();
+    expect(activeThemeName({ ELOWEN_THEME: 'a'.repeat(65) })).toBeNull();
+    expect(THEME_NAME_RE.test('acme')).toBe(true); // the same grammar the store enforces on folders
   });
 });

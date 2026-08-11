@@ -163,8 +163,4 @@ export const configPatchSchema = z.object({
     model: z.string().optional(),
     baseUrl: z.string().optional(),
   }).optional(),
-  // `active: null` is a real value (back to the built-in brand). The name grammar is enforced HERE so a
-  // malformed name answers 400 instead of being silently sanitized to null (which would deactivate the
-  // theme while reporting success); ConfigStore re-checks the same grammar as its own second layer.
-  theme: z.object({ active: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'invalid theme name').nullable().optional() }).optional(),
 });

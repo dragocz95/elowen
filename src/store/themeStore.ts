@@ -14,10 +14,27 @@ import type { ThemeBrand } from '../shared/brand.js';
 const log = logger('theme');
 
 /** One lowercase path segment, no traversal possible. Slightly looser than the plugin/marketplace name
- *  rule (`{1,63}` there — two chars minimum): a one-letter theme name is fine. Exported so the config
- *  store reuses the SAME object for `theme.active` — the two grammars drifting apart would fail silently
- *  (a name one layer accepts and the other rejects resolves to the built-in brand with no error). */
+ *  rule (`{1,63}` there — two chars minimum): a one-letter theme name is fine. */
 export const THEME_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Warn about a rejected ELOWEN_THEME once per value, not once per request — the env cannot change
+ *  within a process lifetime, but the resolver runs on every /public/theme hit and prompt render. */
+let warnedTheme: string | null = null;
+
+/** The active theme is selected by the ELOWEN_THEME env var — deployment configuration like the web's
+ *  ELOWEN_SKIN, deliberately NOT a runtime config key: switching it means a daemon restart, which also
+ *  re-renders every session prompt naturally (no live brand sweep needed for a theme change). A value
+ *  failing the name grammar reads as "no theme" so a typo degrades to the built-in brand, never to an
+ *  error path an unauthenticated /public/theme request could probe. */
+export function activeThemeName(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = env.ELOWEN_THEME?.trim();
+  if (!raw) return null;
+  if (!THEME_NAME_RE.test(raw)) {
+    if (warnedTheme !== raw) { warnedTheme = raw; log.warn(`ELOWEN_THEME ${JSON.stringify(raw)} is not a valid theme name — using the built-in brand`); }
+    return null;
+  }
+  return raw;
+}
 
 /** The only files a theme may serve as assets. A fixed whitelist (not a pattern) because these names are
  *  part of the public URL contract and nothing else in the folder must ever be reachable. */
