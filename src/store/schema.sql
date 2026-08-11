@@ -444,3 +444,13 @@ CREATE TABLE IF NOT EXISTS memory_categories (
   UNIQUE(user_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_memory_categories_user ON memory_categories(user_id);
+
+-- Plugin-owned schema migrations bookkeeping (plugin-platform F1c). Plugin tables live in THIS database
+-- (one WAL/backup/transaction domain — see src/store/pluginDb.ts for why not a per-plugin file); each
+-- plugin applies its own ordered steps through ctx.db().migrate(), recorded here exactly once.
+CREATE TABLE IF NOT EXISTS plugin_migrations (
+  plugin TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  applied_at TEXT NOT NULL,
+  PRIMARY KEY (plugin, version)
+);

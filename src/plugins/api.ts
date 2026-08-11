@@ -292,6 +292,31 @@ export interface PluginApiRoute {
   handler: (req: PluginApiRequest) => Promise<PluginHttpResponse>;
 }
 
+/** A prepared statement over the shared main database, narrowed to what a plugin needs. Parameters are
+ *  positional; results are untyped rows the plugin validates itself. */
+export interface PluginDbStatement {
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+}
+/** Raw SQL access over the shared main database (see {@link PluginDb}). */
+export interface PluginDbHandle {
+  exec(sql: string): void;
+  prepare(sql: string): PluginDbStatement;
+}
+/** One ordered, run-exactly-once schema step. `up` runs inside an immediate transaction together with
+ *  its bookkeeping row. Steps must be additive/idempotent-friendly — a rollback to an older plugin
+ *  version simply ignores newer tables. */
+export interface PluginDbMigrationStep { version: number; up(db: PluginDbHandle): void }
+/** A plugin's handle on the MAIN SQLite database — gated by the `reads:['db']` capability. Tables the
+ *  plugin creates should be namespaced `p_<plugin>_*` (convention; a grandfathered core-extraction
+ *  plugin may keep its historical names). `migrate` is a no-op outside the daemon process. */
+export interface PluginDb extends PluginDbHandle {
+  migrate(steps: PluginDbMigrationStep[]): void;
+  /** Highest applied migration version for this plugin (0 = none). */
+  appliedVersion(): number;
+}
+
 /** A long-running background worker a plugin contributes — mission loops, sweepers, watchers. The host
  *  owns the lifecycle: started after boot reconcile on a full daemon start (never in a sub-agent
  *  runner), stopped and restarted around a plugin reload, and abandoned at process exit (the daemon
@@ -553,6 +578,9 @@ export interface PluginContext {
    *  reconcile on a full daemon start, stopped/restarted around plugin reloads. The first-class home for
    *  what plugins used to smuggle into fake platform adapters' connect/disconnect. */
   registerService(service: PluginService): void;
+  /** The shared main database (see {@link PluginDb}). Throws unless the manifest declares the
+   *  `reads:['db']` capability — DB reach is a real grant, not a default. */
+  db(): PluginDb;
   /** Run once BEFORE the daemon starts serving platform turns — and again after every plugin reload —
    *  to reconcile durable state with reality (re-park watchers, terminalize orphans). Must be
    *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not

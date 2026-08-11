@@ -1,4 +1,5 @@
 import { openDb } from '../store/db.js';
+import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
 import { AgentStore } from '../store/agentStore.js';
@@ -444,6 +445,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       // Present only in the runner process. Its plugin instance has no local DAG, so WorkflowAddNodes uses
       // this client to reach the daemon instance that owns the workflow.
       ...(opts.workflowExpansionRpc ? { workflowExpansionRpc: opts.workflowExpansionRpc } : {}),
+      // ctx.db(): shared main DB, capability-gated. Migrations run only in the daemon — the runner
+      // opened this DB {migrate:false} and must never race the daemon as a second migrator.
+      pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: opts.migrate !== false }),
       logger: log,
     }).then((registry) => {
       // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the

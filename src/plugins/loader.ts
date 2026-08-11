@@ -5,7 +5,7 @@ import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
 import type { PluginEmbedder } from './registry.js';
-import type { DelegatedChildBridge, PluginLogger, PluginModule, ProviderCredentials } from './api.js';
+import type { DelegatedChildBridge, PluginDb, PluginLogger, PluginModule, ProviderCredentials } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -129,6 +129,10 @@ export interface LoadPluginsOptions {
   delegatedWorkflowExpansionAvailable?: () => boolean;
   /** Runner-only reverse RPC client. Ordinary daemon plugin instances never receive it. */
   workflowExpansionRpc?: WorkflowExpansionRpc;
+  /** Per-plugin main-database handle factory, exposed to plugins as ctx.db() — gated by the
+   *  `reads:['db']` capability. The daemon wires it with migrations enabled; the sub-agent runner wires
+   *  it with migrations as a no-op (it opens the DB `{migrate:false}`). */
+  pluginDb?: (plugin: string) => PluginDb;
   logger: PluginLogger;
 }
 
@@ -181,7 +185,8 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           opts.delegatedWorkflowExpansionAvailable,
           // Reverse mutation belongs exclusively to the bundled workflow owner. Do not hand arbitrary enabled
           // plugins a client that can mutate daemon-owned DAGs from a runner turn.
-          name === 'subagent' ? opts.workflowExpansionRpc : undefined);
+          name === 'subagent' ? opts.workflowExpansionRpc : undefined,
+          opts.pluginDb);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
