@@ -6,6 +6,7 @@ import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.
 import type { SlashCommandDef } from '../brain/slashCommands.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
+import type { ElowenEvent } from '../api/sse.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 export type { DelegatedChildSummary };
@@ -117,7 +118,7 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
  *  `ctx.embeddings.embed*()` (the shared text→vector pipeline, see PluginContext.embeddings). Both are
  *  deny-by-default. */
 export interface PluginCapabilities {
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events')[];
   reads?: string[];
   network?: boolean;
 }
@@ -598,6 +599,15 @@ export interface PluginContext {
   /** Contribute editable prompt templates: `<name>.md` files under `dir`, catalogued for the account UI
    *  and resolved user override → plugin file → core file. Gated by `mutates:['prompt']`. */
   registerPrompts(opts: { dir: string; entries: PluginPromptEntry[] }): void;
+  /** Publish an event onto the daemon's event bus (SSE + activity log). Core-shaped events keep their
+   *  exact core contract (consumers cannot tell the publisher moved into a plugin); a `type:'plugin'`
+   *  event carries its own tenancy in `projectId` (null = admins only) and its `plugin` field is
+   *  overwritten with the publishing plugin's name. Gated by `mutates:['events']`; throws unwired. */
+  publishEvent(event: ElowenEvent): void;
+  /** Contribute a resolver mapping a core-shaped event to its owning project when the CORE lookups
+   *  cannot (the data moved into this plugin). Consulted after core, first non-null wins, exceptions
+   *  fail closed. Gated by `mutates:['events']` — resolution decides tenant visibility. */
+  registerEventProjectResolver(resolve: (event: ElowenEvent) => number | null): void;
   /** Run once BEFORE the daemon starts serving platform turns — and again after every plugin reload —
    *  to reconcile durable state with reality (re-park watchers, terminalize orphans). Must be
    *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not

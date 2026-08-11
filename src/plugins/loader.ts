@@ -6,6 +6,7 @@ import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
 import type { PluginEmbedder } from './registry.js';
 import type { DelegatedChildBridge, PluginDb, PluginLogger, PluginModule, ProviderCredentials } from './api.js';
+import type { ElowenEvent } from '../api/sse.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -133,6 +134,9 @@ export interface LoadPluginsOptions {
    *  `reads:['db']` capability. The daemon wires it with migrations enabled; the sub-agent runner wires
    *  it with migrations as a no-op (it opens the DB `{migrate:false}`). */
   pluginDb?: (plugin: string) => PluginDb;
+  /** Event-bus publish sink exposed to plugins as ctx.publishEvent() — gated by `mutates:['events']`.
+   *  Wired in the daemon; absent in the sub-agent runner (its plugin instances have no SSE audience). */
+  publishEvent?: (e: ElowenEvent) => void;
   logger: PluginLogger;
 }
 
@@ -186,7 +190,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // Reverse mutation belongs exclusively to the bundled workflow owner. Do not hand arbitrary enabled
           // plugins a client that can mutate daemon-owned DAGs from a runner turn.
           name === 'subagent' ? opts.workflowExpansionRpc : undefined,
-          opts.pluginDb);
+          opts.pluginDb, opts.publishEvent);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest

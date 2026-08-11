@@ -450,6 +450,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       // ctx.db(): shared main DB, capability-gated. Migrations run only in the daemon — the runner
       // opened this DB {migrate:false} and must never race the daemon as a second migrator.
       pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: opts.migrate !== false }),
+      // ctx.publishEvent(): the daemon's ONE bus (SSE + activity log). Capability-gated in the registry.
+      publishEvent: (e) => bus.publish(e),
       logger: log,
     }).then((registry) => {
       // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the
@@ -552,5 +554,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
+    // Sync view of the last loaded registry (undefined before the first load) — for wiring that must
+    // read plugin contributions without awaiting the provider (e.g. event tenancy resolvers).
+    loadedPlugins: () => loadedPluginRegistry,
   };
 }

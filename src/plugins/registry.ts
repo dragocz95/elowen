@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
+import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
@@ -83,6 +84,9 @@ export class PluginRegistry {
    *  `user_prompts` keep matching when a template migrates from core into a plugin. */
   readonly promptEntries: { plugin: string; entry: PluginPromptEntry }[] = [];
   readonly promptSources = new Map<string, { plugin: string; file: string }>();
+  /** Plugin-contributed event→project resolvers (tenancy for core-shaped events whose data moved into a
+   *  plugin). Consulted by eventProjectId after the core lookups; first non-null wins. */
+  readonly eventProjectResolvers: { plugin: string; fn: (e: ElowenEvent) => number | null }[] = [];
   readonly controls = new Map<string, PluginControl>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
@@ -157,6 +161,7 @@ export class PluginRegistry {
     for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
+    this.eventProjectResolvers.push(...other.eventProjectResolvers);
     for (const p of other.promptEntries) {
       const prior = this.promptSources.get(p.entry.name);
       if (prior && prior.plugin !== p.plugin) { warn?.(`prompt "${p.entry.name}" from "${p.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
@@ -281,7 +286,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -426,6 +431,18 @@ export class PluginRegistry {
         this.services.push({ plugin: name, service });
       },
       registerBootReconcile: (fn) => { this.bootReconciles.push({ plugin: name, fn }); },
+      // Event-bus reach decides what tenants SEE, so both verbs ride one explicit mutates:['events']
+      // grant. Publishing throws (like db()): a plugin built around events cannot degrade meaningfully.
+      publishEvent: (event) => {
+        if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);
+        if (!publishEvent) throw new Error('no event bus wired for plugins in this process');
+        // Stamp the publisher on a plugin-shaped event — a plugin never publishes as another plugin.
+        publishEvent(event.type === 'plugin' ? { ...event, plugin: name } : event);
+      },
+      registerEventProjectResolver: (fn) => {
+        if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventProjectResolver refused: missing mutates:['events'] capability`); return; }
+        this.eventProjectResolvers.push({ plugin: name, fn });
+      },
       // Editable prompt templates. Shadowing what the model reads is a prompt mutation, so it rides the
       // existing mutates:['prompt'] grant. Names stay BARE (`worker`, not `agents/worker`) — the
       // override key in `user_prompts` must survive a template migrating from core into a plugin.

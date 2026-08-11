@@ -452,7 +452,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand,
+    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -543,6 +543,8 @@ export async function buildApp(opts: BuildOpts) {
     taskProject: (id) => tasks.get(id)?.project_id ?? null,
     sessionProject: (s) => taskForSession(s)?.project_id ?? null,
     jobProject: (id) => planJobs.get(id)?.projectId ?? null,
+    // Live registry read (not a snapshot): a plugin reload swaps the resolver set with it.
+    pluginResolvers: () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn),
   };
   bus.subscribe((e) => { try { events.record(e, eventProjectId(e, eventDeps)); } catch (err) { log.error('event record failed', err); } });
   // The active mission owning a session (via its task's parent epic), or null for a manual launch.

@@ -9,12 +9,32 @@ export interface EventProjectDeps {
   sessionProject(session: string): number | null;
   /** project of a planning job by its id */
   jobProject(jobId: string): number | null;
+  /** Plugin-contributed resolvers (read from the live registry, so a reload swaps them), consulted only
+   *  when the core lookups above yielded nothing. First non-null wins. */
+  pluginResolvers?(): readonly ((e: ElowenEvent) => number | null)[];
 }
 
 /** The project an event belongs to, or null when it has no project (or its row is gone). Single source
  *  of truth shared by the activity-log stamping (persisted rows) and the live SSE per-subscriber gate,
  *  so both scope identically. A null result is treated as "admin-only" by callers — fail closed. */
 export function eventProjectId(e: ElowenEvent, d: EventProjectDeps): number | null {
+  // A plugin event carries its tenancy from its publisher — authoritative, including null (admin-only).
+  // Resolvers must not widen it: they exist for core-shaped events whose lookup moved into a plugin.
+  if (e.type === 'plugin') return e.projectId;
+  const core = coreEventProjectId(e, d);
+  if (core !== null) return core;
+  // Core could not place the event — let a plugin try (e.g. an extracted subsystem resolving its own
+  // session naming). A throwing resolver is skipped: tenancy fails CLOSED, it never crashes the bus.
+  for (const resolve of d.pluginResolvers?.() ?? []) {
+    try {
+      const pid = resolve(e);
+      if (pid !== null) return pid;
+    } catch { /* fail closed for this resolver */ }
+  }
+  return null;
+}
+
+function coreEventProjectId(e: Exclude<ElowenEvent, { type: 'plugin' }>, d: EventProjectDeps): number | null {
   switch (e.type) {
     case 'task':
     case 'review':
