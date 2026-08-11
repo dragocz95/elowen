@@ -495,14 +495,12 @@ export async function buildApp(opts: BuildOpts) {
     tasks, readiness, missions, tmux, bus, events,
     get notes() { return agentsControl()?.notes(); },
     get engine() { return agentsControl()?.engine(); },
-    get spawn() { return agentsControl()?.spawn(); },
     get missionGit() { return agentsControl()?.missionGit(); },
     get gitLock() { return agentsControl()?.gitLock(); },
     get planJobs() { return agentsControl()?.planJobs(); },
     get decisionQueue() { return agentsControl()?.decisionQueue(); },
     get pilot() { return agentsControl()?.pilot(); },
-    get agents() { return agentsControl()?.agents(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = () => {

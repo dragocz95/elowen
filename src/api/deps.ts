@@ -1,6 +1,6 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsNotes, AgentsPlanJobs, AgentsRegistryView, AgentsSpawn } from '../plugins/api.js';
+import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsNotes, AgentsPlanJobs } from '../plugins/api.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
@@ -8,7 +8,6 @@ import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { UserStore } from '../store/userStore.js';
-import type { TicketStore } from '../terminal/ticketStore.js';
 import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
@@ -39,8 +38,6 @@ export interface ServerDeps {
   /** The agents plugin's mission engine (structural — see AgentsControl). Absent while the plugin is
    *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
   engine?: AgentsMissionEngine;
-  /** The agents plugin's spawn seam. Absent while the plugin is disabled → manual launches answer 503. */
-  spawn?: AgentsSpawn;
   tmux: TmuxDriver; bus: EventBus;
   /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
   missionGit?: AgentsMissionGit;
@@ -84,9 +81,6 @@ export interface ServerDeps {
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;
   taskUsage?: TaskUsageStore;
-  /** Agent registry read view — records each spawned agent's project at spawn. Used to tag live
-   *  sessions with their project (the daemon's single source of truth for session→repo). */
-  agents?: AgentsRegistryView;
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;
@@ -138,9 +132,6 @@ export interface ServerDeps {
    *  view reports empty. Constructed in bootstrap's brain stage, shared with the hook bus as its
    *  audit sink. */
   hookAudit?: import('../shared/hookAudit.js').HookAuditBuffer;
-  /** Single-use ticket store backing the terminal WebSocket stream. Shared with the daemon's
-   *  `/ws/terminal` handler so a ticket minted here is redeemable there. Defaulted when absent. */
-  tickets?: TicketStore;
   /** Latest published version lookup for the System panel. Injected in tests; defaults to a cached
    *  npm-registry fetch. */
   latestVersion?: () => Promise<string | null>;

@@ -9,7 +9,6 @@ import { toEmbeddingConfig } from '../store/configStore.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
 import { PlanJobStore } from './planJobStore.js';
 import { DecisionQueue } from './decisionQueue.js';
-import { createTicketStore, type TicketStore } from '../terminal/ticketStore.js';
 import type { AgentsDecisionQueue, AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
 import type { Phase, PlanJob } from '../shared/agentEvents.js';
 import type { EventProjectDeps } from './eventProject.js';
@@ -49,7 +48,6 @@ export interface RouteContext {
   log: ReturnType<typeof logger>;
   planJobs: AgentsPlanJobs;
   decisionQueue: AgentsDecisionQueue;
-  tickets: TicketStore;
   gitLock: AgentsGitLock;
 
   /** Projects an AGENT-scoped token may currently touch (its live working set). */
@@ -134,7 +132,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     next: (missionId, timeoutMs) => liveDecisionQueue().next(missionId, timeoutMs),
     resolve: (missionId, id, result) => liveDecisionQueue().resolve(missionId, id, result),
   };
-  const tickets = d.tickets ?? createTicketStore();
   const localGitLock = new KeyedMutex();
   const gitLock: AgentsGitLock = { run: (key, fn) => (d.gitLock ?? localGitLock).run(key, fn) };
 
@@ -348,7 +345,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     : undefined;
 
   return {
-    d, log, planJobs, decisionQueue, tickets, gitLock,
+    d, log, planJobs, decisionQueue, gitLock,
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects, missionAccessible,
     taskForSession, eventDeps, sessionAccessible, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,

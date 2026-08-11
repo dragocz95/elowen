@@ -8,7 +8,8 @@ import { openDb } from '../../src/store/db.js';
 
 describe('buildApp', () => {
   it('wires a healthy app with an injected tmux fake', async () => {
-    const { app } = await buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true });
+    // /sessions lives on the agents plugin's root mount now, so point the loader at the repo plugins.
+    const { app } = await buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
     expect((await app.request('/health')).status).toBe(200);
     expect((await app.request('/sessions')).status).toBe(200);
   });

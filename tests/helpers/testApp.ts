@@ -136,11 +136,11 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   const pilot = async (_job: PlanJob, _projectPath: string) => { /* parked */ };
 
   const app = createServer({
-    tasks, readiness, missions, engine, spawn, tmux, bus,
+    tasks, readiness, missions, engine, tmux, bus,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
     planJobs, decisionQueue, pilot,
-    agents: control.agents(), gitLock: control.gitLock(),
+    gitLock: control.gitLock(),
     missionGit: control.missionGit(),
     plugins: provider,
     ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
