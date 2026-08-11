@@ -76,6 +76,7 @@ export function Sidebar({
       ) : null}
 
       <nav
+        data-shell="sidebar"
         aria-label={t.common.primaryNav}
         aria-hidden={drawer && !drawerOpen ? true : undefined}
         inert={drawer && !drawerOpen ? true : undefined}
