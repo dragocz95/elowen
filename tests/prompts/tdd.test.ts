@@ -5,7 +5,7 @@ import { EDITABLE_PROMPTS } from '../../src/prompts/catalog.js';
 import { PromptService } from '../../src/prompts/promptService.js';
 import { UserPromptStore } from '../../src/store/userPromptStore.js';
 import { openDb } from '../../src/store/db.js';
-import { buildAgentCommand } from '../../src/spawn/commandBuilder.js';
+import { buildAgentCommand } from '../../plugins/agents/src/spawn/commandBuilder.js';
 
 describe('tddDirective', () => {
   it('returns the directive prefixed with a blank-line gap when on', () => {

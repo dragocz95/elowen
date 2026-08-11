@@ -4,7 +4,7 @@ import { TaskStore } from '../../src/store/taskStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
-import { PlanJobStore } from '../../src/overseer/planJob.js';
+import { PlanJobStore } from '../../src/api/planJobStore.js';
 import { createPlanService } from '../../src/api/services/planService.js';
 import type { ServerDeps } from '../../src/api/deps.js';
 import type { CreateTaskInput } from '../../src/store/types.js';

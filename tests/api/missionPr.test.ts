@@ -2,15 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../src/store/missionStore.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { MissionPrStore } from '../../src/store/missionPrStore.js';
-import { MissionGit } from '../../src/overseer/missionGit.js';
+import { MissionPrStore } from '../../plugins/agents/src/store/missionPrStore.js';
+import { MissionGit } from '../../plugins/agents/src/overseer/missionGit.js';
 import { createServer } from '../../src/api/server.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
-import type { FinishResult } from '../../src/overseer/missionGit.js';
+import type { FinishResult } from '../../plugins/agents/src/overseer/missionGit.js';
 
 function build(openPr: () => Promise<FinishResult>, withGit = true) {
   const db = openDb(':memory:');

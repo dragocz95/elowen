@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { render } from '../../src/prompts/index.js';
+const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../src/store/missionStore.js';
-import { AgentStore } from '../../src/store/agentStore.js';
-import { SpawnService } from '../../src/spawn/spawn.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
+import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
+import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -25,7 +27,7 @@ function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     missionGit: extra.missionGit as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),

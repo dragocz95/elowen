@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { modelsBlock } from '../../src/overseer/planner.js';
+import { modelsBlock } from '../../src/api/services/planner.js';
 
 let db: Db;
 let cfg: ConfigStore;

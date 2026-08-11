@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../src/store/missionStore.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -11,7 +11,7 @@ import { FakeClock } from '../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { KeyedMutex } from '../../src/shared/keyedMutex.js';
-import type { MissionEngine } from '../../src/overseer/missionEngine.js';
+import type { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
 import type { ServerDeps } from '../../src/api/deps.js';
 
 /** A store whose dependency write always fails — stands in for any error inside setDeps (locked DB,

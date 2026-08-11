@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DecisionQueue } from '../../src/overseer/decisionQueue.js';
+import { DecisionQueue } from '../../src/api/decisionQueue.js';
 import { createAskService, ASK_SENTINEL } from '../../src/api/services/askService.js';
 
 /** Minimal deps for the ask exchange: a task under an active mission, a parked overseer (overseerExec

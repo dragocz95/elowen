@@ -1,22 +1,29 @@
 import { openDb } from '../../src/store/db.js';
+import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
+
+// The plugin engine/scheduler take read-only git helpers as a host seam; the core functions
+// stand in (the same ones the pre-extraction core imported directly).
+const gitSeam = { projectHead, projectRangeDiff };
+import { render } from '../../src/prompts/index.js';
+const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { AgentStore } from '../../src/store/agentStore.js';
-import { MissionStore } from '../../src/store/missionStore.js';
+import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { EventBus } from '../../src/api/sse.js';
-import { SpawnService } from '../../src/spawn/spawn.js';
-import { MissionEngine } from '../../src/overseer/missionEngine.js';
-import { PlanJobStore } from '../../src/overseer/planJob.js';
-import { DecisionQueue } from '../../src/overseer/decisionQueue.js';
+import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
+import { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
+import { PlanJobStore } from '../../src/api/planJobStore.js';
+import { DecisionQueue } from '../../src/api/decisionQueue.js';
 import { FakeInference } from '../../src/inference/client.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { uniqueName } from '../../src/daemon/uniqueName.js';
 import { createServer } from '../../src/api/server.js';
-import type { PlanJob } from '../../src/overseer/planJob.js';
+import type { PlanJob } from '../../src/api/planJobStore.js';
 
 export interface TestAppOpts {
   /** Raw LLM output the relay path returns from `decompose` (a JSON array of phases). */
@@ -49,10 +56,10 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
 
   const tmux = new FakeTmuxDriver();
   const bus = new EventBus();
-  const spawn = new SpawnService({ tmux, agents, providers: (program) => config.get().providers[program] });
+  const spawn = new SpawnService({ prompts: promptSeam, tmux, agents, providers: (program) => config.get().providers[program] });
   const planJobs = new PlanJobStore();
   const decisionQueue = new DecisionQueue();
-  const engine = new MissionEngine({
+  const engine = new MissionEngine({ git: gitSeam,
     tasks, readiness, missions, spawn, tmux, bus, projects,
     fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new FakeClock(0),
   });

@@ -6,7 +6,7 @@ vi.mock('../../src/integrations/github/auth.js', () => ({ detectGithubAuth }));
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../src/store/missionStore.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';

