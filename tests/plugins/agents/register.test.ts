@@ -10,12 +10,15 @@ import { FakeTmuxDriver } from '../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../src/api/sse.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import { loadPlugins } from '../../../src/plugins/loader.js';
+import { logger as coreLogger, setLogSink } from '../../../src/shared/logger.js';
+import { PluginLogBuffer } from '../../../src/shared/logBuffer.js';
 import type { PluginHostConfig } from '../../../src/plugins/api.js';
+import type { PluginLogger } from '../../../src/plugins/api.js';
 
 /** Load the REAL on-disk agents plugin (plugins/agents → dist/index.js, so `npx tsc -b
  *  tsconfig.plugins.json` must have built it) against a full fake host wiring. This is the B2b
  *  activation proof: the daemon reaches the subsystem exclusively through what register() registers. */
-async function loadAgentsPlugin() {
+async function loadAgentsPlugin(logger?: PluginLogger) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
@@ -54,7 +57,7 @@ async function loadAgentsPlugin() {
       git: { projectHead: async () => '', projectRangeDiff: async () => [] } as never,
       push: () => ({ sendToUsers: async () => {} }),
     },
-    logger: { info() {}, warn() {}, error() {} },
+    logger: logger ?? { info() {}, warn() {}, error() {} },
   });
   return { registry, db, tasks, tmux, bus, published };
 }
@@ -119,6 +122,26 @@ describe('agents plugin register() (B2b activation)', () => {
     expect(resolver({ type: 'signal', session: 'elowen-Nova', signal: 'question' } as ElowenEvent)).toBe(1);
     // No runtime yet (no control access happened) → plan jobs cannot exist → null, not a crash.
     expect(resolver({ type: 'plan', jobId: 'pj-1', status: 'planning' } as ElowenEvent)).toBeNull();
+  });
+
+  it('subsystem log lines reach the process-wide sink — the admin per-plugin log ring sees them', async () => {
+    // The old lib/logger copy was a separate module instance, so setLogSink (the PluginLogBuffer
+    // behind /plugins/:name log/health) never saw a subsystem line. This drives the REAL chain:
+    // plugin lib logger → ctx.logger (registry `[plugin:agents]` prefix) → core emit() → sink.
+    const buffer = new PluginLogBuffer();
+    setLogSink(buffer);
+    try {
+      const { registry, tasks } = await loadAgentsPlugin(coreLogger('daemon'));
+      tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
+      tasks.create({ id: 't1', project_id: 1, title: 'phase one', parent_id: 'epic' });
+      await registry.control('agents')!.engine().engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+      const lines = buffer.forPlugin('agents').map((e) => e.message);
+      // A runtime-service line, with the subsystem scope tag preserved inside the plugin prefix.
+      expect(lines.some((m) => m.includes('[spawn] spawned '))).toBe(true);
+      expect(buffer.health('agents')).toBe('ok');
+    } finally {
+      setLogSink(undefined);
+    }
   });
 
   it('plugin stores land in the shared DB via the plugin db seam (missions table usable through the control)', async () => {

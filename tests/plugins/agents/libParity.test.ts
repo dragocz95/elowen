@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 // pins the ones that must not drift byte-for-byte (pattern: tests/contract/cronParity.test.ts).
 // execs.ts is the critical one: the program/exec grammar feeds routing, resume and usage attribution
 // on BOTH sides, and a one-sided change would split how core and plugin parse the same exec label.
-// The other lib copies either deliberately deviate (logger inlines logDir; tdd/mcpArgs/owner/
-// uniqueName/text/textHash/time/clock/keyedMutex are tiny and judged low-risk) and are not pinned.
+// The other lib copies are tiny and judged low-risk (tdd/mcpArgs/owner/uniqueName/text/textHash/
+// time/clock/keyedMutex) and are not pinned. lib/logger.ts is no copy at all anymore — it delegates
+// to the host's plugin logger (F4), so there is nothing to keep in lockstep.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const PINNED: [core: string, copy: string][] = [

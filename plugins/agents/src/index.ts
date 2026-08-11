@@ -23,9 +23,14 @@ import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
 import { agentsPluginConfig } from './config.js';
-import type { Logger } from './lib/logger.js';
+import { logger, setBaseLogger } from './lib/logger.js';
 
 export function register(ctx: PluginContext): void {
+  // Logging first: every subsystem module logs through lib/logger's scoped facade, which delegates to
+  // the plugin-scoped host logger — so the lines reach the daemon log AND the admin per-plugin
+  // log/health ring (`[plugin:agents] [deriver] …`). See lib/logger.ts for why this replaced a copy.
+  setBaseLogger(ctx.logger);
+
   // Schema first: grandfathered tables (see store/migrations.ts). In the daemon this applies pending
   // steps exactly once; in the sub-agent runner ctx.db().migrate() is a logged no-op by design.
   ctx.db().migrate(AGENTS_MIGRATIONS);
@@ -34,16 +39,8 @@ export function register(ctx: PluginContext): void {
   // Bare names — a user's pre-extraction `user_prompts` override still wins over these files.
   ctx.registerPrompts({ dir: AGENTS_PROMPTS_DIR, entries: AGENTS_PROMPTS });
 
-  // The subsystem logs through the plugin-scoped host logger, so its lines land in the daemon log AND
-  // the admin per-plugin log/health views (`[plugin:agents] …`). The host logger has no debug level or
-  // structured extra, so debug drops and the extra is appended as text.
-  const withExtra = (m: string, extra?: unknown) => (extra === undefined ? m : `${m} — ${String(extra)}`);
-  const log: Logger = {
-    debug: () => { /* the host plugin logger has no debug channel */ },
-    info: (m, extra) => ctx.logger.info(withExtra(m, extra)),
-    warn: (m, extra) => ctx.logger.warn(withExtra(m, extra)),
-    error: (m, extra) => ctx.logger.error(withExtra(m, extra)),
-  };
+  // The runtime's own lines (sweeps, resume capture, …) under their own scope tag.
+  const log = logger('runtime');
 
   let runtime: AgentsRuntime | null = null;
   const rt = (): AgentsRuntime => {
