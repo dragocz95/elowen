@@ -8,6 +8,7 @@
   "web": {
     "entry": "web/index.js",
     "requiresApiVersion": 1,
-    "nav": [{ "label": "UI demo", "icon": "Sparkles", "route": "" }]
+    "nav": [{ "label": "UI demo", "icon": "Sparkles", "route": "" }],
+    "settings": [{ "id": "demo", "label": "UI demo", "icon": "Sparkles" }]
   }
 }

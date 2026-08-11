@@ -36,7 +36,24 @@ function DemoPage({ plugin }) {
     h(components.Button, { onClick: load }, 'Refresh'));
 }
 
+/** Settings-deck proof: the manifest's `web.settings` entry adds the section to the core Settings
+ *  page, and THIS component (registered under the same id) renders as its content. */
+function DemoSettings({ plugin }) {
+  const [stats, setStats] = React.useState(null);
+  React.useEffect(() => {
+    api(`/plugins/${plugin}/api/stats`).then(setStats).catch(() => setStats(null));
+  }, [plugin]);
+
+  return h('div', { className: 'max-w-xl space-y-4', 'data-testid': 'ui-demo-settings' },
+    h('p', { className: 'text-sm text-text-muted' },
+      'This section is rendered from the ui-demo plugin bundle inside the core Settings page.'),
+    h('div', { className: 'rounded-lg border border-border bg-surface px-4 py-2' },
+      Row('Plugin', plugin),
+      Row('Loaded at', stats ? stats.startedAt : '\u2026')));
+}
+
 window.__elowenRegisterPluginUi('ui-demo', {
   requiresApiVersion: 1,
   pages: { '': DemoPage },
+  settings: { demo: DemoSettings },
 });

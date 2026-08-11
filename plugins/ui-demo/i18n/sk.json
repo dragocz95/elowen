@@ -1,6 +1,7 @@
 {
   "description": "Referenčný plugin platformy pre webové rozhrania: ukážková stránka servírovaná z runtime bundlu, napojená na autentizovanú API routu pluginu. Zapnite ho, aby ste videli, ako do seba zapadajú stránky pluginov, navigácia a API pluginov — a ako šablónu na písanie vlastných.",
   "web": {
-    "nav": { "": "UI demo" }
+    "nav": { "": "UI demo" },
+    "settings": { "demo": "UI demo" }
   }
 }
