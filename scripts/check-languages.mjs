@@ -198,9 +198,25 @@ for (const name of pluginNames) {
 
     // Orphans — keys that translate nothing in the manifest anymore.
     for (const key of Object.keys(i18n)) {
-      if (key !== 'description' && key !== 'fields') {
-        errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/fields are read)`);
+      if (key !== 'description' && key !== 'fields' && key !== 'web') {
+        errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/fields/web are read)`);
       }
+    }
+    // Browser-UI menu labels (manifest `web` block): every override must name a declared nav route /
+    // settings id, and every declared entry needs a translation — same rule as fields.
+    const webNavRoutes = new Set((manifest.web?.nav ?? []).map((n) => n.route ?? ''));
+    const webSettingsIds = new Set((manifest.web?.settings ?? []).map((s) => s.id));
+    for (const route of Object.keys(i18n.web?.nav ?? {})) {
+      if (!webNavRoutes.has(route)) errors.push(`plugin ${name} (${locale}): web.nav["${route}"] has no matching manifest web.nav route`);
+    }
+    for (const id of Object.keys(i18n.web?.settings ?? {})) {
+      if (!webSettingsIds.has(id)) errors.push(`plugin ${name} (${locale}): web.settings.${id} has no matching manifest web.settings id`);
+    }
+    for (const route of webNavRoutes) {
+      if (!i18n.web?.nav?.[route]) errors.push(`plugin ${name} (${locale}): missing web.nav["${route}"] translation`);
+    }
+    for (const id of webSettingsIds) {
+      if (!i18n.web?.settings?.[id]) errors.push(`plugin ${name} (${locale}): missing web.settings.${id} translation`);
     }
     for (const [key, override] of Object.entries(i18n.fields ?? {})) {
       const field = fieldByKey.get(key);
