@@ -27,6 +27,8 @@ module.exports = {
           '(^|/)scripts/',
           '(^|/)src/daemon/index\\.ts$',
           '(^|/)web/(app|instrumentation|proxy)',
+          // A plugin's entry is loaded dynamically by the plugin loader, never imported statically.
+          '(^|/)plugins/[^/]+/src/index\\.ts$',
         ],
       },
       to: {},
@@ -46,6 +48,24 @@ module.exports = {
         + 'rest of src/shared/ is runtime Node code (logger, apiClient, execs, …) the web must not bundle.',
       from: { path: '^web/' },
       to: { path: '^src/', pathNot: '^src/shared/wireContract\\.ts$' },
+    },
+    {
+      name: 'core-not-to-agents-plugin',
+      severity: 'error',
+      comment: 'The daemon core (src) must NEVER import the agents plugin — not even type-only. The '
+        + 'contract lives in src/plugins/api.ts (AgentsControl and friends) + src/shared/agentEvents.ts; '
+        + 'core reaches the running subsystem exclusively through the loaded registry\'s control.',
+      from: { path: '^src/' },
+      to: { path: '^plugins/' },
+    },
+    {
+      name: 'agents-plugin-runtime-not-to-core',
+      severity: 'error',
+      comment: 'The agents plugin may import src/ TYPE-ONLY (erased at compile time — PluginContext, '
+        + 'store types, seam shapes). A runtime import would drag the daemon\'s module graph into the '
+        + 'built plugin and break its process independence.',
+      from: { path: '^plugins/agents/' },
+      to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
       name: 'no-test-in-prod',
