@@ -2057,6 +2057,7 @@ export const en = {
     incompatible: 'This plugin needs a newer version of the application. Update the server to use its interface.',
     loadFailed: 'The plugin interface failed to load. Check the plugin logs in Settings → Plugins.',
     pageMissing: 'The plugin has no page at this address.',
+    settingsUnavailable: 'The plugin provides no settings panel for this section.',
     crashed: 'The plugin interface encountered an error. The rest of the application is unaffected.',
   },
   help: {

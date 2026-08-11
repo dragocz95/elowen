@@ -2057,6 +2057,7 @@ export const cs = {
     incompatible: 'Tento plugin vyžaduje novější verzi aplikace. Pro použití jeho rozhraní aktualizujte server.',
     loadFailed: 'Rozhraní pluginu se nepodařilo načíst. Zkontrolujte záznamy pluginu v Nastavení → Pluginy.',
     pageMissing: 'Plugin nemá na této adrese žádnou stránku.',
+    settingsUnavailable: 'Plugin pro tuto sekci neposkytuje žádný panel nastavení.',
     crashed: 'V rozhraní pluginu došlo k chybě. Zbytek aplikace není ovlivněn.',
   },
   help: {
