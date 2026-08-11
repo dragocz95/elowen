@@ -2,7 +2,8 @@ import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
-import { render } from '../../src/prompts/index.js';
+import { render, setPluginPromptSources } from '../../src/prompts/index.js';
+import { setPluginPromptCatalog } from '../../src/prompts/catalog.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
@@ -78,6 +79,12 @@ export function agentsPluginProvider(w: {
       },
     },
     logger: { info() {}, warn() {}, error() {} },
+  }).then((registry) => {
+    // Mirror brainCore's post-load snapshot: the plugin owns the agents templates now, so the core
+    // renderer needs the source overlay before the first worker/guide render.
+    setPluginPromptCatalog(registry.promptEntries.map((p) => p.entry));
+    setPluginPromptSources(new Map([...registry.promptSources].map(([n, s]) => [n, s.file])));
+    return registry;
   }));
 }
 

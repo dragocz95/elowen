@@ -20,12 +20,17 @@ import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
 import { stripPrefix } from './lib/text.js';
+import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import type { Logger } from './lib/logger.js';
 
 export function register(ctx: PluginContext): void {
   // Schema first: grandfathered tables (see store/migrations.ts). In the daemon this applies pending
   // steps exactly once; in the sub-agent runner ctx.db().migrate() is a logged no-op by design.
   ctx.db().migrate(AGENTS_MIGRATIONS);
+
+  // The subsystem's prompt templates (worker*, agent-guide*, pilot, overseer, code-review, decision-*).
+  // Bare names — a user's pre-extraction `user_prompts` override still wins over these files.
+  ctx.registerPrompts({ dir: AGENTS_PROMPTS_DIR, entries: AGENTS_PROMPTS });
 
   // The subsystem logs through the plugin-scoped host logger, so its lines land in the daemon log AND
   // the admin per-plugin log/health views (`[plugin:agents] …`). The host logger has no debug level or

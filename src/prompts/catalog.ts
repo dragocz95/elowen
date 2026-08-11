@@ -18,25 +18,15 @@ export interface PromptCatalogEntry {
   appendOnly?: boolean;
 }
 
-const WORKER_VARS = ['agentName', 'taskId', 'titlePart', 'detailsPart', 'resumePart', 'closeCommand'];
-
 export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
-  { name: 'worker', group: 'workers', vars: [...WORKER_VARS, 'cli'], jsonContract: false },
-  { name: 'worker-resume', group: 'workers', vars: [...WORKER_VARS, 'cli'], jsonContract: false },
-  { name: 'worker-phase', group: 'workers', vars: [...WORKER_VARS, 'epicId', 'cli'], jsonContract: false },
-  // The embedded (Elowen AI) worker: no CLI — it closes its task via the ElowenCloseTask tool.
+  // The tmux-agent/mission templates (worker*, agent-guide*, pilot, overseer, code-review, decision-*)
+  // live in the agents plugin now (plugins/agents/prompts + registerPrompts): the plugin runtime is
+  // their only renderer, so their catalog entries ride the plugin overlay and disappear with it.
+  // The embedded (Elowen AI) worker stays core — rendered by src/brain/worker/brainWorker.ts, which
+  // runs with or without the agents plugin. No CLI: it closes its task via the ElowenCloseTask tool.
   { name: 'worker-brain', group: 'workers', vars: ['agentName', 'taskId', 'titlePart', 'detailsPart', 'resumePart'], jsonContract: false },
-  // The on-demand control guide an agent fetches with `elowen help` (rendered by guideService). `agent-guide`
-  // is the base; `agent-guide-phase` is appended for a mission phase (sibling rules, handoff, epic close).
-  { name: 'agent-guide', group: 'workers', vars: ['cli', 'closeCommand'], jsonContract: false },
-  { name: 'agent-guide-phase', group: 'workers', vars: ['epicId', 'cli', 'epicCloseCommand'], jsonContract: false },
-  { name: 'pilot', group: 'pilot', vars: ['goal', 'notes', 'submit', 'jobId', 'models', 'parallelism'], jsonContract: true },
+  // Rendered by the core plan path too (plugin-less /tasks/plan via plannerDefault.ts) — stays core.
   { name: 'planner', group: 'pilot', vars: ['goal', 'project', 'models', 'parallelism'], jsonContract: true },
-  { name: 'overseer', group: 'overseer', vars: ['missionId', 'cli', 'codeReview'], jsonContract: false },
-  { name: 'code-review', group: 'overseer', vars: [], jsonContract: false },
-  { name: 'decision-header', group: 'overseer', vars: ['subject', 'approveGuidance'], jsonContract: true },
-  { name: 'decision-prompt', group: 'overseer', vars: ['autonomy', 'question', 'context', 'options'], jsonContract: true },
-  { name: 'decision-question', group: 'overseer', vars: ['autonomy', 'question', 'context', 'options'], jsonContract: true },
   { name: 'elowen', group: 'advisor', vars: ['userName', 'personality', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   { name: 'elowen-platform', group: 'advisor', vars: ['ownerName', 'agentName', 'productName'], jsonContract: false, appendOnly: true },
   // A scheduled/unattended turn (any plugin that fires timer-driven work — the bundled cronjob today)

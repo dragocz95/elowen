@@ -13,7 +13,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 function resolvePromptsDir(): string {
   const candidates = [here, join(here, '..', '..', 'prompts')];
   for (const dir of candidates) {
-    if (existsSync(join(dir, 'pilot.md'))) return dir;
+    // Probe with a template that stays core (the agents plugin owns pilot.md and friends now).
+    if (existsSync(join(dir, 'elowen.md'))) return dir;
   }
   // Fall back to the compiled-sibling location; readTemplate surfaces a clear error if it is wrong.
   return here;

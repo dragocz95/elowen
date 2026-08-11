@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { setPluginPromptCatalog, editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../src/prompts/catalog.js';
-import { setPluginPromptSources, render, _resetPromptCache } from '../../src/prompts/index.js';
+import { setPluginPromptSources, render, rawTemplate, applyVars, _resetPromptCache } from '../../src/prompts/index.js';
+import { readFileSync } from 'node:fs';
+import { openDb } from '../../src/store/db.js';
+import { UserPromptStore } from '../../src/store/userPromptStore.js';
+import { PromptService } from '../../src/prompts/promptService.js';
+import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from '../../plugins/agents/src/promptCatalog.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 
@@ -52,24 +57,51 @@ describe('prompt catalog + renderer overlay', () => {
   it('plugin entries extend the catalog but never displace a core entry', () => {
     setPluginPromptCatalog([
       { name: 'agents-brief', group: 'agents', vars: ['x'], jsonContract: false, appendOnly: true },
-      { name: 'worker', group: 'agents', vars: [], jsonContract: true }, // core name — must be dropped
+      { name: 'planner', group: 'agents', vars: [], jsonContract: true }, // core name — must be dropped
     ]);
     const all = editablePrompts();
-    expect(all.filter((p) => p.name === 'worker')).toHaveLength(1);
-    expect(all.find((p) => p.name === 'worker')?.group).toBe('workers');
+    expect(all.filter((p) => p.name === 'planner')).toHaveLength(1);
+    expect(all.find((p) => p.name === 'planner')?.group).toBe('pilot');
     expect(isEditablePrompt('agents-brief')).toBe(true);
     expect(isAppendOnlyPrompt('agents-brief')).toBe(true);
     expect(isEditablePrompt('agents-missing')).toBe(false);
   });
 
   it('a plugin source shadows the core file and un-shadows on swap-out', () => {
-    writeFileSync(join(tmp, 'pilot.md'), 'plugin pilot {{goal}}');
-    const core = render('pilot', { goal: 'g' });
-    expect(core).not.toContain('plugin pilot');
-    setPluginPromptSources(new Map([['pilot', join(tmp, 'pilot.md')]]));
-    expect(render('pilot', { goal: 'g' })).toBe('plugin pilot g');
+    writeFileSync(join(tmp, 'planner.md'), 'plugin planner {{goal}}');
+    const core = render('planner', { goal: 'g' });
+    expect(core).not.toContain('plugin planner');
+    setPluginPromptSources(new Map([['planner', join(tmp, 'planner.md')]]));
+    expect(render('planner', { goal: 'g' })).toBe('plugin planner g');
     // Swap the overlay out again — the cache entry must drop with it, not pin the plugin text.
     setPluginPromptSources(new Map());
-    expect(render('pilot', { goal: 'g' })).toBe(core);
+    expect(render('planner', { goal: 'g' })).toBe(core);
+  });
+});
+
+describe('agents plugin templates (moved out of core in F2)', () => {
+  // Re-install the real overlay (the shared setup file did too, but the afterEach above swaps it out).
+  const installAgentsOverlay = () => {
+    setPluginPromptCatalog(AGENTS_PROMPTS.map((e) => ({ ...e })));
+    setPluginPromptSources(new Map(AGENTS_PROMPTS.map((e) => [e.name, join(AGENTS_PROMPTS_DIR, `${e.name}.md`)])));
+  };
+
+  it('every registered template resolves to the plugin file, byte-identical to disk', () => {
+    installAgentsOverlay();
+    for (const e of AGENTS_PROMPTS) {
+      const onDisk = readFileSync(join(AGENTS_PROMPTS_DIR, `${e.name}.md`), 'utf-8').trim();
+      expect(rawTemplate(e.name), e.name).toBe(onDisk);
+      expect(isEditablePrompt(e.name), e.name).toBe(true);
+    }
+  });
+
+  it('a user override in user_prompts still wins over the plugin file', () => {
+    installAgentsOverlay();
+    const store = new UserPromptStore(openDb(':memory:'));
+    const prompts = new PromptService(store);
+    store.set(1, 'worker', 'my worker override for {{agentName}}');
+    expect(prompts.render('worker', { agentName: 'Ada' }, 1)).toBe('my worker override for Ada');
+    // Another user without an override gets the plugin file default.
+    expect(prompts.render('worker', { agentName: 'Ada' }, 2)).toBe(applyVars(rawTemplate('worker'), { agentName: 'Ada' }));
   });
 });
