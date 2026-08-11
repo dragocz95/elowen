@@ -281,6 +281,8 @@ export function useTogglePlugin() {
       void qc.invalidateQueries({ queryKey: ['plugin-logs', v.name] });
       // A toggled plugin adds/removes its slash commands — re-pull the menu's single source of truth.
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
+      // …and its browser UI (sidebar world + /p/<name> pages) appears/disappears with it.
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.pluginUi });
     },
   });
 }
@@ -289,6 +291,7 @@ function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['marketplace'] });
   void qc.invalidateQueries({ queryKey: ['plugins'] });
   void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.pluginUi });
 }
 /** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
 export function useInstallPlugin() {
