@@ -57,7 +57,7 @@ export function registerTools(ctx, adapter) {
 
   ctx.registerTool(defineTool({
     name: 'TeamsMembers', label: 'Teams members',
-    description: 'List the members of a Teams conversation (name, id, Entra object id and UPN/email from the roster).',
+    description: 'List the members of a Teams conversation (name, id, Entra object id and UPN/email from the roster). To notify one of them, write "<@id>" (or their e-mail, or their exact display name) in your reply — it is turned into a real Teams mention.',
     parameters: Type.Object({ conversationId: Type.String({ description: 'Teams conversation id' }) }),
     execute: async (_id, p) => {
       try {

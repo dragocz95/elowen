@@ -33,6 +33,25 @@ const ASK_TTL_MS = 360000;
 const TYPING_INTERVAL_MS = 8000;
 const CONTEXT_MAX = 40;
 
+const ROSTER_TTL_MS = 300000;
+
+/** An explicit outbound mention: `<@…>` around an id, UPN, e-mail or display name — the shape Discord
+ *  already uses, kept identical here so one answer reads the same on either surface. */
+const MENTION_TOKEN = /<@([^<>\s][^<>]{0,127}?)>/g;
+
+/** Every identifier a roster entry can plausibly be named by, lowercased for matching. */
+function memberKeys(member) {
+  return [member?.id, member?.aadObjectId, member?.objectId, member?.userPrincipalName, member?.email,
+    member?.name, [member?.givenName, member?.surname].filter(Boolean).join(' ')]
+    .filter((v) => typeof v === 'string' && v.trim())
+    .map((v) => v.trim().toLowerCase());
+}
+
+/** A mention span is markup, so a name carrying markup characters has to be escaped into it. */
+const escapeSpan = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /** Read a numeric config field, clamped to [min,max], falling back to `def` when unset/invalid. */
 function cfgNum(cfg, key, def, min, max) {
   return Math.min(Math.max(Number(cfg?.[key]) || def, min), max);
@@ -55,6 +74,7 @@ export class MsTeamsAdapter {
     this.connector = new ConnectorClient(cfg, logger);
     this.verifyToken = makeTokenVerifier(cfg, logger);
     this.upnCache = new Map();       // from.id → UPN/email resolved via the conversation roster
+    this.rosterCache = new Map();    // conversationId → { at, members } for outbound mention resolution
     this.notifyConversations = new Map(); // notify user target → opened personal conversation id
     this.pendingAsks = new Map();    // token → { id, conversationId, activityId, questions, askerId, selected, createdAt }
     this.pendingPickers = new Map(); // conversationId → { kind, options, activityId, page, senderId, createdAt, sessions? }
@@ -143,9 +163,32 @@ export class MsTeamsAdapter {
     return false;
   }
 
-  /** Remove `<at>…</at>` mention spans (the bot's own mention text) and collapse whitespace. */
+  /** Remove `<at>…</at>` mention spans (the bot's own mention text) and collapse whitespace. The
+   *  no-entity fallback for {@link resolveMentions} and for any span nobody declared. */
   stripMention(text) {
     return String(text ?? '').replace(/<at>[^<]*<\/at>/gi, '').replace(/\s+/g, ' ').trim();
+  }
+
+  /** Inbound mention spans → what the model should read. Addressing the bot is not content, so OUR own
+   *  mention disappears; every other `<at>Name</at>` becomes a readable `@Name` instead of vanishing,
+   *  which is how the Discord adapter hands mentions over — without it the model cannot see that a
+   *  message was aimed at someone else in the channel, and cannot mention them back by name. */
+  resolveMentions(activity) {
+    const botId = activity?.recipient?.id;
+    let text = String(activity?.text ?? '');
+    for (const e of Array.isArray(activity?.entities) ? activity.entities : []) {
+      if (e?.type !== 'mention' || typeof e.text !== 'string' || !e.text) continue;
+      const name = String(e.mentioned?.name ?? '').trim();
+      text = text.split(e.text).join(e.mentioned?.id === botId || !name ? '' : `@${name}`);
+    }
+    const botName = String(activity?.recipient?.name ?? '').trim().toLowerCase();
+    return text
+      .replace(/<at>([^<]*)<\/at>/gi, (_, inner) => {
+        const name = String(inner).trim();
+        return !name || name.toLowerCase() === botName ? '' : `@${name}`;
+      })
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   isAdmin(ids) {
@@ -201,7 +244,7 @@ export class MsTeamsAdapter {
     const { access } = this.accessFor(ids, conv.id);
     if (!access) return; // unmapped sender → stay silent
 
-    let text = this.stripMention(m.text);
+    let text = this.resolveMentions(m);
 
     // A slash command targets the bot's controls, not the brain.
     if (text.startsWith('/') && await this.handleCommand(m, conv, from, ids, text)) return;
@@ -286,6 +329,65 @@ export class MsTeamsAdapter {
 
   // ── outbound transport (the tm* helpers the live stream + commands ride) ──
 
+  /** The conversation roster (Bot Connector, so no Graph permission), cached briefly: mention
+   *  resolution runs on every outbound message — a live answer edits itself many times — while the
+   *  membership of a chat changes rarely. A failed lookup keeps the previous roster rather than
+   *  dropping every mention in the message. */
+  async roster(serviceUrl, conversationId) {
+    const key = String(conversationId);
+    const hit = this.rosterCache.get(key);
+    if (hit && Date.now() - hit.at < ROSTER_TTL_MS) return hit.members;
+    let members = hit?.members ?? [];
+    try {
+      const list = await this.connector.members(serviceUrl, key);
+      if (Array.isArray(list)) members = list;
+    } catch (e) {
+      this.log.warn(`msteams roster lookup failed for ${key}: ${e?.message ?? e}`);
+    }
+    this.rosterCache.set(key, { at: Date.now(), members });
+    return members;
+  }
+
+  /** Turn the mentions an answer WRITES into ones Teams actually rings.
+   *
+   *  Teams only notifies someone when the text carries an `<at>` span AND the activity declares a
+   *  matching mention entity, so a mention cannot be produced by the model alone — it is assembled
+   *  here, against the real roster of this conversation. Two shapes are accepted: the explicit
+   *  `<@…>` token Discord uses (id, UPN, e-mail or display name inside), and a bare `@Display Name`,
+   *  which is what a model writes unprompted and what the Teams client resolves for a human typing.
+   *  A token matching nobody degrades to plain text instead of a dead ping, and a literal `<at>` from
+   *  the model was already neutralised upstream (stream.mjs) — so every mention that leaves here
+   *  belongs to a member who is genuinely in the conversation. */
+  async withMentions(conversationId, serviceUrl, content) {
+    const body = String(content ?? '');
+    if (!body.includes('@')) return { text: body, entities: [] };
+    const members = await this.roster(serviceUrl, conversationId);
+    const entities = [];
+    const span = (member, fallback) => {
+      const name = String(member.name ?? fallback).trim();
+      const markup = `<at>${escapeSpan(name)}</at>`;
+      if (!entities.some((e) => e.mentioned.id === member.id)) {
+        entities.push({ type: 'mention', text: markup, mentioned: { id: member.id, name } });
+      }
+      return markup;
+    };
+    let text = body.replace(MENTION_TOKEN, (_whole, raw) => {
+      const key = String(raw).trim().toLowerCase();
+      const member = members.find((m) => m?.id && memberKeys(m).includes(key));
+      return member ? span(member, raw) : `@${String(raw).trim()}`;
+    });
+    // Longest display name first, so a colleague called "Alex" cannot claim the "@Alex Rivera" in the
+    // text before Alex Rivera herself gets the chance.
+    const named = members
+      .filter((m) => m?.id && typeof m.name === 'string' && m.name.trim())
+      .sort((a, b) => b.name.trim().length - a.name.trim().length);
+    for (const member of named) {
+      const name = member.name.trim();
+      text = text.replace(new RegExp(`@${escapeRe(name)}(?![\\p{L}\\p{N}_])`, 'giu'), () => span(member, name));
+    }
+    return { text, entities };
+  }
+
   /** Send text (or a card via extra.card) into a conversation; returns the new activity id or null.
    *  `extra.replyToId` threads it under the trigger. */
   async tmSend(conversationId, content, extra = {}) {
@@ -293,7 +395,7 @@ export class MsTeamsAdapter {
     if (!serviceUrl) { this.log.warn(`msteams send: no stored route for conversation ${conversationId}`); return null; }
     const activity = extra.card
       ? { type: 'message', attachments: [extra.card] }
-      : { type: 'message', textFormat: 'markdown', text: String(content) };
+      : await this.textActivity(conversationId, serviceUrl, content);
     try {
       return extra.replyToId
         ? (await this.connector.reply(serviceUrl, conversationId, extra.replyToId, activity)) ?? null
@@ -304,13 +406,20 @@ export class MsTeamsAdapter {
     }
   }
 
+  /** A markdown text activity with its mentions resolved — the one shape both send and edit ride, so a
+   *  streamed answer keeps its mentions through every in-place edit. */
+  async textActivity(conversationId, serviceUrl, content) {
+    const { text, entities } = await this.withMentions(conversationId, serviceUrl, content);
+    return { type: 'message', textFormat: 'markdown', text, ...(entities.length ? { entities } : {}) };
+  }
+
   /** Edit a previously sent bot message in place; true when the edit landed. */
   async tmEdit(conversationId, activityId, content, card) {
     const serviceUrl = this.serviceUrlFor(conversationId);
     if (!serviceUrl || !activityId) return false;
     const activity = card
       ? { type: 'message', attachments: [card] }
-      : { type: 'message', textFormat: 'markdown', text: String(content) };
+      : await this.textActivity(conversationId, serviceUrl, content);
     try {
       await this.connector.update(serviceUrl, conversationId, activityId, activity);
       return true;
@@ -341,7 +450,9 @@ export class MsTeamsAdapter {
       const contentType = imageMimeType(f.name);
       return { contentType, contentUrl: `data:${contentType};base64,${f.data.toString('base64')}`, name: f.name };
     });
-    const message = { type: 'message', attachments, ...(caption ? { text: caption } : {}) };
+    // The caption is the agent's own words about the picture, so it resolves mentions like any reply.
+    const { text, entities } = await this.withMentions(conversationId, serviceUrl, caption ?? '');
+    const message = { type: 'message', attachments, ...(text ? { text } : {}), ...(entities.length ? { entities } : {}) };
     await this.connector.send(serviceUrl, conversationId, message).catch((e) => this.log.error(`image upload failed: ${e?.message ?? e}`));
   }
 

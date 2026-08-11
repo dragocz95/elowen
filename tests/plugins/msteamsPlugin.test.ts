@@ -358,3 +358,56 @@ describe('msteams webhook JWT validation', () => {
     expect((await adapter.handleWebhook({ ...req, method: 'GET' })).status).toBe(405);
   });
 });
+
+describe('msteams mentions + runtime footer', () => {
+  const roster = [
+    { id: '29:dana', name: 'Dana Novák', userPrincipalName: 'dana@contoso.com', aadObjectId: 'aad-2' },
+    { id: '29:sam', name: 'Sam', userPrincipalName: 'sam@contoso.com' },
+  ];
+
+  it('hands an inbound mention of someone else to the model as a name, and drops its own', async () => {
+    const { adapter } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    const seen: string[] = [];
+    adapter.listen(async (_src, text) => { seen.push(text); return undefined; });
+    await adapter.onActivity(activity({
+      text: '<at>Elowen</at> ask <at>Dana Novák</at> about it',
+      entities: [
+        { type: 'mention', text: '<at>Elowen</at>', mentioned: { id: '28:bot', name: 'Elowen' } },
+        { type: 'mention', text: '<at>Dana Novák</at>', mentioned: { id: '29:dana', name: 'Dana Novák' } },
+      ],
+    }));
+    expect(seen).toEqual(['[Alex Rivera] ask @Dana Novák about it']);
+  });
+
+  it('rings a real member for both <@…> and a bare @name, and leaves a stranger as plain text', async () => {
+    const { adapter, calls } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    Object.assign(adapter.connector, { members: async () => roster });
+    adapter.listen(async () => 'ping <@dana@contoso.com> and @Dana Novák, but not @Nobody Here');
+    await adapter.onActivity(activity());
+    const sent = calls.find((c) => c.kind === 'reply')?.args[3] as {
+      text: string; entities?: { type: string; text: string; mentioned: { id: string; name: string } }[];
+    };
+    expect(sent.text).toBe('ping <at>Dana Novák</at> and <at>Dana Novák</at>, but not @Nobody Here');
+    expect(sent.entities).toEqual([
+      { type: 'mention', text: '<at>Dana Novák</at>', mentioned: { id: '29:dana', name: 'Dana Novák' } },
+    ]);
+  });
+
+  it('declares no mention entity when the answer names nobody in the conversation', async () => {
+    const { adapter, calls } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    Object.assign(adapter.connector, { members: async () => roster });
+    adapter.listen(async () => 'mail me at ops@contoso.com');
+    await adapter.onActivity(activity());
+    const sent = calls.find((c) => c.kind === 'reply')?.args[3] as { text: string; entities?: unknown[] };
+    expect(sent.text).toBe('mail me at ops@contoso.com');
+    expect(sent.entities).toBeUndefined();
+  });
+
+  it('sets the runtime footer apart as its own quoted line', async () => {
+    const { footerLine } = await import(join(repoRoot, 'plugins/msteams/lib/format.mjs')) as {
+      footerLine: (idle: unknown) => string;
+    };
+    expect(footerLine({ model: 'openai/gpt-5', usage: { percent: 42 } })).toBe('> *gpt-5 · 42 %*');
+    expect(footerLine({})).toBe('');
+  });
+});
