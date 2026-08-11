@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
@@ -87,6 +87,9 @@ export class PluginRegistry {
   /** Plugin-contributed event→project resolvers (tenancy for core-shaped events whose data moved into a
    *  plugin). Consulted by eventProjectId after the core lookups; first non-null wins. */
   readonly eventProjectResolvers: { plugin: string; fn: (e: ElowenEvent) => number | null }[] = [];
+  /** Browser UI bundles (manifest-declared, loader-resolved): absolute bundle path + content hash (pins
+   *  the immutable serving URL) + the manifest's nav/settings menu metadata. */
+  readonly webUi = new Map<string, PluginWebUi>();
   readonly controls = new Map<string, PluginControl>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
@@ -162,6 +165,7 @@ export class PluginRegistry {
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
+    for (const [k, v] of other.webUi) this.webUi.set(k, v);
     for (const p of other.promptEntries) {
       const prior = this.promptSources.get(p.entry.name);
       if (prior && prior.plugin !== p.plugin) { warn?.(`prompt "${p.entry.name}" from "${p.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }

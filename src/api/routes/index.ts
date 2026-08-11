@@ -14,6 +14,7 @@ import { registerTaskRoutes } from './tasks.js';
 import { registerMemoryRoutes } from './memory.js';
 import { registerHookRoutes } from './hooks.js';
 import { registerPluginApiRoutes } from './pluginApi.js';
+import { registerPluginUiRoutes } from './pluginUi.js';
 
 /** Register every route family on the app. Order matters: the auth/tenancy guards are global
  *  middleware and MUST register before any family so every downstream handler is authenticated and
@@ -30,6 +31,9 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerIntegrationRoutes(app, ctx);
   registerMissionRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
+  // BEFORE the admin plugin family: `/plugins/ui` must win over its `/plugins/:name` param route (Hono
+  // matches in registration order), and the bundle route is user-authed while that family is admin.
+  registerPluginUiRoutes(app, ctx);
   registerPluginRoutes(app, ctx);
   // Authenticated plugin API dispatcher — the `/api/` segment keeps it disjoint from the core
   // `/plugins/:name/...` admin routes registered just above.

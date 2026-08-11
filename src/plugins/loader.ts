@@ -1,4 +1,5 @@
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseManifest } from './manifest.js';
@@ -18,6 +19,8 @@ import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 interface PluginI18n {
   description?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;
+  /** Localized browser-UI menu labels: nav keyed by route (`''` = the root page), settings by id. */
+  web?: { nav?: Record<string, string>; settings?: Record<string, string> };
 }
 
 /** A plugin found on disk (manifest parsed, code NOT imported). What the admin UI lists. */
@@ -200,6 +203,28 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         registry.setShowOutput(manifest.showOutput);
         registry.setPlanSafe(manifest.planSafe, manifest.provides, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         registry.setDeferLoading(name, manifest.deferLoading, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
+        // Browser UI bundle (manifest-declared): resolve inside the plugin dir (same escape rule as the
+        // entry), content-hash it now so the serving route can pin an immutable URL, and carry the
+        // manifest's nav/settings metadata — menus must render before (and without) the bundle's JS.
+        if (manifest.web) {
+          const webPath = resolve(pluginDir, manifest.web.entry);
+          if (webPath !== pluginDir && !webPath.startsWith(pluginDir + sep)) throw new Error(`web entry "${manifest.web.entry}" escapes plugin dir`);
+          if (!existsSync(webPath)) {
+            opts.logger.warn(`[plugin:${name}] web bundle missing at ${manifest.web.entry} — UI skipped`);
+          } else {
+            const hash = createHash('sha256').update(readFileSync(webPath)).digest('hex').slice(0, 16);
+            const i18n = loadPluginI18n(pluginDir);
+            const webI18n = i18n
+              ? Object.fromEntries(Object.entries(i18n).flatMap(([lang, v]) => (v.web ? [[lang, v.web]] : [])))
+              : {};
+            registry.webUi.set(name, {
+              plugin: name, file: webPath, hash,
+              requiresApiVersion: manifest.web.requiresApiVersion ?? 1,
+              nav: manifest.web.nav ?? [], settings: manifest.web.settings ?? [],
+              ...(Object.keys(webI18n).length > 0 ? { i18n: webI18n } : {}),
+            });
+          }
+        }
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {

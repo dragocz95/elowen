@@ -100,6 +100,17 @@ export interface PluginManifest {
    *  applied only if the matching value is listed in `mutates`. A manifest with no `capabilities` can
    *  mutate nothing. */
   capabilities?: PluginCapabilities;
+  /** Browser UI bundle (plugin platform F0). `entry` is the built same-origin ESM bundle (relative to
+   *  the plugin folder) that calls `window.__elowenRegisterPluginUi`; nav/settings metadata live HERE so
+   *  menus render before (and without) the bundle's JS. Labels are English fallback — locale overrides
+   *  come from `i18n/<lang>.json` under a `web` key. Icons are lucide names resolved by the web app. */
+  web?: {
+    entry: string;
+    /** The window.ElowenUiRuntime major the bundle needs; an unsupported one renders a placeholder. */
+    requiresApiVersion?: number;
+    nav?: { label: string; icon?: string; route?: string }[];
+    settings?: { id: string; label: string; icon?: string }[];
+  };
 }
 
 const ManifestSchema = Type.Object({
@@ -157,10 +168,24 @@ const ManifestSchema = Type.Object({
   capabilities: Type.Optional(Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([
       Type.Literal('prompt'), Type.Literal('turnContext'),
-      Type.Literal('tools'), Type.Literal('memory'),
+      Type.Literal('tools'), Type.Literal('memory'), Type.Literal('events'),
     ]))),
     reads: Type.Optional(Type.Array(Type.String())),
     network: Type.Optional(Type.Boolean()),
+  })),
+  web: Type.Optional(Type.Object({
+    entry: Type.String({ minLength: 1 }),
+    requiresApiVersion: Type.Optional(Type.Number()),
+    nav: Type.Optional(Type.Array(Type.Object({
+      label: Type.String({ minLength: 1 }),
+      icon: Type.Optional(Type.String()),
+      route: Type.Optional(Type.String()),
+    }))),
+    settings: Type.Optional(Type.Array(Type.Object({
+      id: Type.String({ minLength: 1 }),
+      label: Type.String({ minLength: 1 }),
+      icon: Type.Optional(Type.String()),
+    }))),
   })),
 });
 

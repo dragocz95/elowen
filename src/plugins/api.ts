@@ -332,6 +332,21 @@ export interface PluginDb extends PluginDbHandle {
   appliedVersion(): number;
 }
 
+/** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
+ *  content hash (pins the immutable serving URL — a stale hash 404s), and the manifest's menu metadata. */
+export interface PluginWebUi {
+  plugin: string;
+  /** Absolute path of the built ESM bundle on disk. */
+  file: string;
+  /** Short content hash of the bundle — part of the serving URL, so clients cache immutably. */
+  hash: string;
+  requiresApiVersion: number;
+  nav: { label: string; icon?: string; route?: string }[];
+  settings: { id: string; label: string; icon?: string }[];
+  /** Localized menu labels from `i18n/<lang>.json` `web` blocks: nav keyed by route, settings by id. */
+  i18n?: Record<string, { nav?: Record<string, string>; settings?: Record<string, string> }>;
+}
+
 /** A long-running background worker a plugin contributes — mission loops, sweepers, watchers. The host
  *  owns the lifecycle: started after boot reconcile on a full daemon start (never in a sub-agent
  *  runner), stopped and restarted around a plugin reload, and abandoned at process exit (the daemon
