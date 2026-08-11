@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -76,6 +76,8 @@ export interface PluginHostWiring {
   git?: PluginHost['git'] extends () => infer G ? G : never;
   /** Live accessor — the PushSender is constructed after the plugin load (bootstrap late wiring). */
   push?: () => PluginHostPush | undefined;
+  /** Live accessor — advisor/chat-terminal/ticket services are constructed after the plugin load. */
+  terminals?: () => PluginHostTerminals | undefined;
 }
 
 export class PluginRegistry {
@@ -617,6 +619,12 @@ export class PluginRegistry {
           const sender = host?.push?.();
           if (!sender) throw new Error('the push transport is not available in this process (daemon-only, wired after boot)');
           return sender;
+        },
+        terminals: () => {
+          if (!capabilities.reads?.includes('terminals')) throw new Error(`plugin "${name}" did not declare the reads:['terminals'] capability`);
+          const t = host?.terminals?.();
+          if (!t) throw new Error('the terminal controls are not available in this process (daemon-only, wired after boot)');
+          return t;
         },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as

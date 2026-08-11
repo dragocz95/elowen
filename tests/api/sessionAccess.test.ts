@@ -5,6 +5,7 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -30,12 +31,17 @@ function setup() {
   tasks.setAgent('t2', 'Zar');  // session elowen-Zar  → t2 (project 2)
   const tmux = new FakeTmuxDriver();
   for (const s of ['elowen-Nova', 'elowen-Zar', `elowen-advisor-${bob.id}`, `elowen-advisor-${admin.id}`]) tmux.setPane(s, '');
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects,
+    clock: new FakeClock(0), config,
+    users, projects, userProjects,
+    // '/sessions' is plugin-served now (same fake tmux, so the list sees the seeded panes).
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux }),
   });
   return { app, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id), bobId: bob.id, adminId: admin.id };
 }

@@ -5,6 +5,7 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -20,12 +21,18 @@ function setup() {
   const amy = users.create('amy', 'pw');
   const bob = users.create('bob', 'pw');
   const tmux = new FakeTmuxDriver();
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    clock: new FakeClock(0), config,
+    users, projects, userProjects: new UserProjectStore(db),
+    // '/sessions' is plugin-served now (same fake tmux, so sentRaw() sees the plugin's writes).
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux }),
   });
   return {
     app, tmux,

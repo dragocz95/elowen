@@ -19,7 +19,7 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import type { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import type { PlanJob } from '../../src/api/planJobStore.js';
-import type { PluginHostConfig } from '../../src/plugins/api.js';
+import type { PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
 
 /** Build a PluginRegistryProvider that loads the REAL agents plugin (its dist build) over the given
  *  stores — the host wiring shape brainCore builds, with test fakes for tmux/inference/push. Local
@@ -34,6 +34,9 @@ export function agentsPluginProvider(w: {
   users?: UserStore;
   bus?: EventBus;
   tmux?: FakeTmuxDriver;
+  /** Core terminal controls (advisor/chat teardown, brain workers, ws tickets). Tests exercising those
+   *  paths pass their real services here; the default is a no-op fake. */
+  terminals?: PluginHostTerminals;
 }): PluginRegistryProvider {
   const bus = w.bus ?? new EventBus();
   return new PluginRegistryProvider(() => loadPlugins({
@@ -64,6 +67,13 @@ export function agentsPluginProvider(w: {
       relayClient: () => ({ decide: async () => ({ text: '' }) }) as never,
       git: { projectHead, projectRangeDiff } as never,
       push: () => ({ sendToUsers: async () => {} }),
+      terminals: () => w.terminals ?? {
+        advisorStop: async () => {},
+        chatTerminalStop: async () => {},
+        brainWorkerLive: () => false,
+        brainWorkerAbort: async () => {},
+        ticketIssue: () => 'test-ticket',
+      },
     },
     logger: { info() {}, warn() {}, error() {} },
   }));
@@ -112,6 +122,10 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   // The ONE subsystem instance set — server deps and the plugin's root-mounted routes share it, exactly
   // like the daemon's live control getters.
   const missions = control.missions() as MissionStore;
+  // Launch-path tests stub the mission worktree resolution — the plugin's manual-launch handler calls
+  // the runtime's REAL MissionGit, so patch that exact instance (own-property assignment over the
+  // class method), keeping the core-facing deps.missionGit override below in sync.
+  if (opts.worktreeFor) (control.missionGit() as { worktreeFor: (id: string) => string | null | undefined }).worktreeFor = opts.worktreeFor;
   const engine = control.engine();
   const spawn = control.spawn();
   const decisionQueue = control.decisionQueue();

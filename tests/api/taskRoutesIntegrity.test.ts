@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -6,7 +6,7 @@ import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
-import { createSessionService } from '../../src/api/services/sessionService.js';
+import { makeTestApp } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
@@ -171,55 +171,31 @@ describe('destructive task routes keep the row when teardown fails', () => {
 });
 
 describe('manual launch does not leave an agent behind for a task that disappeared', () => {
+  const post = (token: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
   it('kills the freshly spawned session when the task was deleted during the spawn', async () => {
-    const db = openDb(':memory:');
-    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-    const tasks = new TaskStore(db);
-    const task = tasks.create({ id: 'sess-1', project_id: 1, title: 'T' });
-    const tmux = new FakeTmuxDriver();
-    const spawn = {
-      launch: async (input: { agentName: string }) => {
-        // A concurrent DELETE /tasks/sess-1 lands while the agent is starting: it kills a session that
-        // does not exist yet, so nothing stops the worker this launch is about to bring up.
-        tasks.delete('sess-1');
-        const session = `elowen-${input.agentName}`;
-        await tmux.spawn(session, { cwd: '/o', command: 'agent' });
-        return { session };
-      },
-    };
-    const d = {
-      tasks, tmux, bus: new EventBus(), spawn, clock: new FakeClock(0),
-      fallback: { program: 'claude-code', model: 'sonnet' },
-    } as unknown as ServerDeps;
-
-    const res = await createSessionService(d, new KeyedMutex(), () => '/o').launchManual(task, undefined);
-
-    expect(res.ok).toBe(false);
-    expect(await tmux.list()).toEqual([]); // no agent left running against a task that no longer exists
+    const { app, token, deps, control } = await makeTestApp();
+    deps.tasks.create({ id: 'sess-1', project_id: 1, title: 'T' });
+    // A concurrent DELETE /tasks/sess-1 lands while the agent is starting: it kills a session that
+    // does not exist yet, so nothing stops the worker this launch is about to bring up.
+    vi.spyOn(control.spawn(), 'launch').mockImplementation((async (input: { agentName: string }) => {
+      deps.tasks.delete('sess-1');
+      const session = `elowen-${input.agentName}`;
+      await deps.tmux.spawn(session, { cwd: '/o', command: 'agent' });
+      return { session };
+    }) as never);
+    const res = await app.request('/sessions', post(token, { taskId: 'sess-1' }));
+    expect(res.status).toBe(500);
+    expect(await deps.tmux.list()).toEqual([]); // no agent left running against a task that no longer exists
   });
 
   it('keeps the session when the claim survived the spawn', async () => {
-    const db = openDb(':memory:');
-    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-    const tasks = new TaskStore(db);
-    const task = tasks.create({ id: 'sess-2', project_id: 1, title: 'T' });
-    const tmux = new FakeTmuxDriver();
-    const spawn = {
-      launch: async (input: { agentName: string }) => {
-        const session = `elowen-${input.agentName}`;
-        await tmux.spawn(session, { cwd: '/o', command: 'agent' });
-        return { session };
-      },
-    };
-    const d = {
-      tasks, tmux, bus: new EventBus(), spawn, clock: new FakeClock(0),
-      fallback: { program: 'claude-code', model: 'sonnet' },
-    } as unknown as ServerDeps;
-
-    const res = await createSessionService(d, new KeyedMutex(), () => '/o').launchManual(task, undefined);
-
-    expect(res.ok).toBe(true);
-    expect(tasks.get('sess-2')?.status).toBe('in_progress');
-    expect(await tmux.list()).toHaveLength(1);
+    const { app, token, deps } = await makeTestApp();
+    deps.tasks.create({ id: 'sess-2', project_id: 1, title: 'T' });
+    const res = await app.request('/sessions', post(token, { taskId: 'sess-2' }));
+    expect(res.status).toBe(201);
+    expect(deps.tasks.get('sess-2')?.status).toBe('in_progress');
+    expect(await deps.tmux.list()).toHaveLength(1);
   });
 });
+

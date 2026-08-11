@@ -5,6 +5,7 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -21,12 +22,21 @@ function setup() {
   const amy = users.create('amy', 'pw');      // id 2
   const config = new ConfigStore(db);
   const tickets = createTicketStore();
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
     tickets,
+    // '/sessions' is plugin-served now; the terminals seam hands the plugin THIS ticket store.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, terminals: {
+      advisorStop: async () => {}, chatTerminalStop: async () => {},
+      brainWorkerLive: () => false, brainWorkerAbort: async () => {},
+      ticketIssue: (session, userId) => tickets.issue({ session, userId }),
+    } }),
   });
   return { app, tickets, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id), amyId: amy.id };
 }

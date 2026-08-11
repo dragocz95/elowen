@@ -271,7 +271,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush,
+    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -416,6 +416,16 @@ export async function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
+  // Terminal/session controls for the agents plugin's '/sessions' surface: teardown that must run
+  // through the owning service (advisor autostart flag, chat-terminal token revocation), the embedded
+  // brain-worker session controls, and the SAME ticket store /ws/terminal redeems.
+  setPluginHostTerminals({
+    advisorStop: async (userId) => { await advisor?.stop(userId); },
+    chatTerminalStop: async (userId, session) => { await brainTerminal?.stop(userId, session); },
+    brainWorkerLive: (session) => brainWorkers.isLive(session),
+    brainWorkerAbort: async (session) => { await brainWorkers.abort(session); },
+    ticketIssue: (session, userId) => tickets.issue({ session, userId }),
+  });
   // The plugin marketplace: install/update/remove plugins from the curated GitHub registry into the
   // writable user plugin dir (pluginDirs[1]), applied live via the brain's plugin hot-reload. The registry
   // repo is a shallow-clone cache next to the DB; ELOWEN_PLUGIN_REGISTRY overrides the repo URL (tests).

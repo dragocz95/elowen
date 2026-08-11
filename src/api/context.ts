@@ -3,7 +3,6 @@ import { usagePath } from '../integrations/usage/usagePath.js';
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
 import { createReviewService, type ReviewService } from './services/reviewService.js';
-import { createSessionService, type SessionService } from './services/sessionService.js';
 import { createAskService, type AskService } from './services/askService.js';
 import { createGuideService, type GuideService } from './services/guideService.js';
 import { createSkillService, type SkillService } from './services/skillService.js';
@@ -100,7 +99,6 @@ export interface RouteContext {
   /** The post-done review workflow (gate, verdict apply, commit/self-heal/escalate) for task close. */
   reviewService: ReviewService;
   /** Manual session launch (atomic checkout claim + snapshot baseline + spawn) for POST /sessions. */
-  sessionService: SessionService;
   /** The free-text worker↔autopilot exchange behind `elowen ask` (mission overseer → human window → sentinel). */
   askService: AskService;
   /** Renders the context-aware control guide an agent fetches with `elowen help` (GET /tasks/:id/guide). */
@@ -329,7 +327,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
 
   // Manual session launch (the atomic single-writer claim + snapshot baseline + spawn) lives in its own
   // service so the check-and-claim sequence is testable without the HTTP surface.
-  const sessionService = createSessionService(d, gitLock, pathFor);
 
   // The free-text worker↔autopilot exchange (`elowen ask`) shares the overseer's decision queue, so a
   // worker's question reaches the same parked overseer that answers prompts/reviews.
@@ -361,6 +358,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects, missionAccessible,
     taskForSession, eventDeps, sessionAccessible, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, sessionService, askService, guideService, skillService, memoryService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, askService, guideService, skillService, memoryService,
   };
 }

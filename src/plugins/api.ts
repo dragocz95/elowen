@@ -465,10 +465,31 @@ export interface PluginHost {
   /** The web-push transport (send only — recipients are the plugin's own concern via usersRead).
    *  Gated by `reads:['push']`; wired late by bootstrap like the brain worker. */
   push(): PluginHostPush;
+  /** Core-owned terminal/session machinery the '/sessions' surface needs beyond tmux: advisor and chat
+   *  terminal teardown (which also persist flags / revoke tokens — a bare tmux.kill would leak both),
+   *  the embedded brain-worker session controls, and the single-use terminal WebSocket tickets (the
+   *  SAME store the unauthenticated /ws/terminal upgrade redeems). Gated by `reads:['terminals']`;
+   *  wired late by bootstrap like the brain worker. */
+  terminals(): PluginHostTerminals;
 }
 
 /** Send-only view of the core PushSender (see PluginHost.push). */
 export interface PluginHostPush { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
+
+/** Core terminal/session controls (see PluginHost.terminals). */
+export interface PluginHostTerminals {
+  /** Stop a user's advisor session AND persist advisor_autostart=false (else it resurrects on login). */
+  advisorStop(userId: number): Promise<void>;
+  /** Stop an admin's chat terminal via its service (revokes the per-terminal token + drops the durable
+   *  binding). `userId` is the CALLER — the service re-checks the binding's owner defensively. */
+  chatTerminalStop(userId: number, session: string): Promise<void>;
+  /** Whether this session name is a live EMBEDDED brain-worker run (no tmux pane to kill). */
+  brainWorkerLive(session: string): boolean;
+  /** Abort a live embedded brain-worker session. */
+  brainWorkerAbort(session: string): Promise<void>;
+  /** Mint a single-use ticket for the terminal WebSocket upgrade to redeem. */
+  ticketIssue(session: string, userId: number | null): string;
+}
 
 /** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
  *  content hash (pins the immutable serving URL — a stale hash 404s), and the manifest's menu metadata. */

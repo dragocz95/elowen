@@ -5,6 +5,7 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -34,12 +35,22 @@ function setup(opts: { spawnFails?: boolean } = {}) {
     fallback: { program: 'claude-code', model: 'sonnet' },
     url: 'http://localhost:4400', mcpUrl: 'http://localhost:4400/mcp', advisorDir: () => '/tmp/advisor',
   });
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
     advisor,
+    // DELETE /sessions/<advisor> is plugin-served now — the terminals seam routes it to THIS service.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux, terminals: {
+      advisorStop: (userId) => advisor.stop(userId),
+      chatTerminalStop: async () => {},
+      brainWorkerLive: () => false, brainWorkerAbort: async () => {},
+      ticketIssue: () => 'test-ticket',
+    } }),
   });
   return { app, users, amy, amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent') };
 }

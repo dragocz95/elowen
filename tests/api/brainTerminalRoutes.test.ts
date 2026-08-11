@@ -5,6 +5,7 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -35,13 +36,24 @@ function setup() {
     tmux, users, store: brainStore, url: 'http://localhost:4400', cliArgv: ['elowen'],
     terminalDir: (id) => `/tmp/terminal/${id}`,
   });
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects,
+    clock: new FakeClock(0), config,
+    users, projects, userProjects,
     brain: {} as never, brainTerminal, brainStore,
+    // '/sessions' is plugin-served now — DELETE of a chat terminal routes to THIS service.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux, terminals: {
+      advisorStop: async () => {},
+      chatTerminalStop: (userId, session) => brainTerminal.stop(userId, session),
+      brainWorkerLive: () => false, brainWorkerAbort: async () => {},
+      ticketIssue: () => 'test-ticket',
+    } }),
   });
   return {
     app, brainTerminal, tmux, users, brainStore, sessionId,

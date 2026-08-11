@@ -53,12 +53,11 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     expect(missions.get('m-e1')?.state).toBe('active'); // untouched
   });
 
-  it('manual session launch answers 503 and leaves the task open', async () => {
+  it('manual session launch answers 404 and leaves the task open', async () => {
     const { app, tasks, tok } = setup();
     tasks.create({ id: 't1', project_id: 1, title: 'T' });
     const res = await app.request('/sessions', post(tok, { taskId: 't1' }));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'agents plugin is disabled' });
+    expect(res.status).toBe(404); // the plugin's /sessions mount is absent entirely
     expect(tasks.get('t1')!.status).toBe('open'); // not claimed then stranded
   });
 

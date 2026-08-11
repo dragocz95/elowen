@@ -15,7 +15,8 @@
       "config",
       "inference",
       "git",
-      "push"
+      "push",
+      "terminals"
     ],
     "mutates": [
       "prompt",
@@ -24,7 +25,8 @@
   },
   "provides": {
     "apiRoutes": [
-      "/missions"
+      "/missions",
+      "/sessions"
     ]
   }
 }
