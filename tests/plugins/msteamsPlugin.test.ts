@@ -110,6 +110,18 @@ describe('msteams identity + role mapping', () => {
       .toEqual(['aad-1', '29:enc', 'alex@contoso.com', 'a:conv1']);
   });
 
+  it('offers the bare channel id too, so a policy from a Teams deep link matches a channel post', async () => {
+    const { senderIds } = await import(join(repoRoot, 'plugins/msteams/index.mjs')) as {
+      senderIds: (f: unknown, c: string, u?: string) => string[];
+    };
+    // A team-channel activity appends the thread: only the bare id is copyable from a deep link.
+    expect(senderIds({ aadObjectId: 'aad-1' }, '19:chan@thread.tacv2;messageid=1700000000000'))
+      .toEqual(['aad-1', '19:chan@thread.tacv2;messageid=1700000000000', '19:chan@thread.tacv2']);
+    // A conversation id with no thread suffix must not be duplicated.
+    expect(senderIds({ aadObjectId: 'aad-1' }, '19:chan@thread.tacv2'))
+      .toEqual(['aad-1', '19:chan@thread.tacv2']);
+  });
+
   it('grants access by first matching policy and drops unmapped senders', async () => {
     const { adapter } = await makeAdapter({ rolePolicies: [
       { roleId: 'a:conv1', name: 'Dev', projectIds: [2], prompt: 'Be terse.' },
