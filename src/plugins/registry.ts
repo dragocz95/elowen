@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
@@ -71,6 +71,9 @@ export class PluginRegistry {
   /** Inbound webhook mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/hooks` router. The
    *  key embeds the owning plugin's name, so two plugins can never contest one mount by construction. */
   readonly httpRoutes = new Map<string, { plugin: string; handler: PluginHttpRoute['handler'] }>();
+  /** Authenticated API mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/plugins/:name/api`
+   *  router. A key holds every method variant registered on that path (exact method beats method-less). */
+  readonly apiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
   readonly controls = new Map<string, PluginControl>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
@@ -141,6 +144,8 @@ export class PluginRegistry {
       if (prior && prior.plugin !== v.plugin) { warn?.(`http route "/hooks/${k}" from "${v.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
       this.httpRoutes.set(k, v);
     }
+    // Keys embed the plugin name, so cross-plugin collisions cannot happen by construction — copy as-is.
+    for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
     this.skillOwners.push(...other.skillOwners);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
@@ -160,6 +165,30 @@ export class PluginRegistry {
     while (at > 0) {
       const hit = this.httpRoutes.get(clean.slice(0, at));
       if (hit) return { handler: hit.handler, remainder: clean.slice(at + 1) };
+      at = clean.lastIndexOf('/', at - 1);
+    }
+    return undefined;
+  }
+
+  /** Resolve the handler for an authenticated `/plugins/<plugin>/api/<path>` request: exact mount first,
+   *  then the longest declared prefix on a `/` boundary (the remainder reaches the handler). Within one
+   *  mount an exact-method route beats a method-less one; no method match = undefined (the router 404s,
+   *  which for a declared path with the wrong verb is indistinguishable from an unknown path — fine,
+   *  nothing here is a discovery surface). */
+  apiRoute(plugin: string, pathAfterApi: string, method: string): { handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string } | undefined {
+    const clean = pathAfterApi.replace(/^\/+|\/+$/g, '');
+    const pick = (key: string, remainder: string) => {
+      const entry = this.apiRoutes.get(`${plugin}/${key}`);
+      if (!entry) return undefined;
+      const route = entry.routes.find((r) => r.method === method) ?? entry.routes.find((r) => r.method === undefined);
+      return route ? { handler: route.handler, access: route.access, remainder } : undefined;
+    };
+    const exact = pick(clean, '');
+    if (exact) return exact;
+    let at = clean.lastIndexOf('/');
+    while (at > 0) {
+      const hit = pick(clean.slice(0, at), clean.slice(at + 1));
+      if (hit) return hit;
       at = clean.lastIndexOf('/', at - 1);
     }
     return undefined;
@@ -348,6 +377,28 @@ export class PluginRegistry {
           return;
         }
         this.httpRoutes.set(`${name}/${clean}`, { plugin: name, handler: route.handler });
+      },
+      // Same STRICT deny-by-default as webhooks: an authenticated route is still new HTTP surface, so it
+      // must be declared in `provides.apiRoutes`. The access level is validated here so a typo cannot
+      // silently register a route the dispatcher would then treat as its default.
+      registerApiRoute: (route) => {
+        const clean = route.path?.trim().replace(/^\/+|\/+$/g, '') ?? '';
+        if (!/^[a-z0-9][a-z0-9\-/]*$/.test(clean) || clean.split('/').some((seg) => !seg)) {
+          scoped.warn(`registerApiRoute('${route.path}') refused: path must be lowercase slash-separated segments`);
+          return;
+        }
+        if (!provides?.apiRoutes?.includes(clean)) {
+          scoped.warn(`registerApiRoute('${clean}') refused: not declared in manifest provides.apiRoutes`);
+          return;
+        }
+        if (route.access !== 'admin' && route.access !== 'user' && route.access !== 'agent') {
+          scoped.warn(`registerApiRoute('${clean}') refused: access must be admin, user or agent`);
+          return;
+        }
+        const key = `${name}/${clean}`;
+        const entry = this.apiRoutes.get(key) ?? { plugin: name, routes: [] };
+        entry.routes.push({ ...(route.method ? { method: route.method.toUpperCase() } : {}), access: route.access, handler: route.handler });
+        this.apiRoutes.set(key, entry);
       },
       assertPathAllowed,
       allowedRoots,

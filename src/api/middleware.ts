@@ -34,6 +34,10 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
       if (/^\/tasks\/[^/]+\/ask\/[^/]+$/.test(path)) return true; // long-poll an ask's reply (elowen ask)
       if (/^\/tasks\/[^/]+\/guide$/.test(path)) return true; // fetch the agent control guide (elowen help)
     }
+    // Authenticated plugin API surface: pass the scope through — the pluginApi dispatcher then refuses
+    // any route that did not declare `access: 'agent'` (deny-by-default stays intact; this only moves
+    // the decision to where the declared access level is known).
+    if (/^\/plugins\/[^/]+\/api\//.test(path)) return true;
     if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
     if (method === 'POST') {
       if (path === '/notes') return true; // leave a handoff note for later phases (elowen note add)

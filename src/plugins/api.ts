@@ -254,6 +254,44 @@ export interface PluginHttpRoute {
   handler: (req: PluginHttpRequest) => Promise<PluginHttpResponse>;
 }
 
+/** Who may call an authenticated plugin API route. `user` is any authenticated user, `admin` only the
+ *  instance admin (setup-tolerant, like the core config routes). `agent` additionally admits the spawned
+ *  agents' service tokens — those run with skipped permissions, so a route is reachable by them ONLY
+ *  when it opts in here (deny-by-default at the dispatcher, exactly like the core agent allow-list). */
+export type PluginApiAccess = 'admin' | 'user' | 'agent';
+
+/** The verified caller identity the dispatcher attaches to an authenticated plugin API request. The
+ *  daemon's global auth/tenancy middleware ran before the handler, so these values are trusted. */
+export interface PluginApiAuth {
+  /** The authenticated user id, or null for an agent service token / open (userless) mode. */
+  userId: number | null;
+  admin: boolean;
+  tokenScope: 'user' | 'agent';
+  /** The task an agent token is bound to (spawned workers), null for user tokens / unbound agents.
+   *  Task-level pinning is the HANDLER's job — the core cannot know what a plugin route's path means. */
+  agentTask: string | null;
+  /** Project ids the caller may see, or null for unrestricted (admin / open mode). */
+  accessibleProjects: number[] | null;
+}
+
+/** An authenticated inbound request to `/plugins/<plugin>/api/<path>`. */
+export interface PluginApiRequest extends PluginHttpRequest {
+  auth: PluginApiAuth;
+}
+
+/** An AUTHENTICATED API route a plugin exposes at `/plugins/<plugin>/api/<path>` — the first-class
+ *  sibling of the public `/hooks` webhook surface. The daemon's bearer + tenancy middleware run before
+ *  the handler and the declared `access` level is enforced by the dispatcher, so the handler starts from
+ *  a verified identity instead of re-implementing auth. */
+export interface PluginApiRoute {
+  /** Mount path RELATIVE to `/plugins/<plugin>/api/` — lowercase segments; longest prefix wins. */
+  path: string;
+  /** Exact HTTP method (GET/POST/…); omitted = any method. */
+  method?: string;
+  access: PluginApiAccess;
+  handler: (req: PluginApiRequest) => Promise<PluginHttpResponse>;
+}
+
 /** A channel-scoped conversation reference — the SAME identity an adapter reports to `listen` (so a slash
  *  command targets the exact session a message from that channel would). */
 export interface ChannelRef { platform: string; channelId: string; threadId?: string }
@@ -494,6 +532,11 @@ export interface PluginContext {
    *  be declared in the manifest's `provides.httpRoutes`. The mount skips bearer auth — the handler owns
    *  its own authentication (see {@link PluginHttpRoute}). */
   registerHttpRoute(route: PluginHttpRoute): void;
+  /** Expose an AUTHENTICATED API route on the daemon at `/plugins/<plugin>/api/<path>`. Deny-by-default:
+   *  the path must be declared in the manifest's `provides.apiRoutes`. The daemon's bearer + tenancy
+   *  middleware run first and the dispatcher enforces the declared access level, so the handler receives
+   *  a verified {@link PluginApiAuth} instead of re-implementing auth (see {@link PluginApiRoute}). */
+  registerApiRoute(route: PluginApiRoute): void;
   /** Resolve + assert a filesystem path is inside the current user's accessible repos, returning the
    *  absolute path (throws otherwise). File/terminal tools call this before any disk access. Evaluated at
    *  tool-call time against the per-session Policy carried on AsyncLocalStorage. */

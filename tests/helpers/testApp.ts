@@ -91,5 +91,5 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     return { missionId: mission.id, epicId: epic.id, childId: p1.id, nextId: p2.id };
   };
 
-  return { app, token, deps: { tasks, readiness, missions, config, planJobs, decisionQueue, bus, tmux, engine, seedMissionWithChild, seedMissionWithChain } };
+  return { app, token, deps: { tasks, readiness, missions, config, users, planJobs, decisionQueue, bus, tmux, engine, seedMissionWithChild, seedMissionWithChain } };
 }

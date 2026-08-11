@@ -69,7 +69,7 @@ export interface PluginManifest {
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
-  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; httpRoutes?: string[] };
+  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; httpRoutes?: string[]; apiRoutes?: string[] };
   /** Per-tool display icons (emoji), keyed by tool name — surfaced in the chat clients' tool-call lines.
    *  Overrides the core default icon map; a tool without an entry falls back to it, then to a generic glyph. */
   icons?: Record<string, string>;
@@ -113,6 +113,7 @@ const ManifestSchema = Type.Object({
     skills: Type.Optional(Type.Array(Type.String())),
     platforms: Type.Optional(Type.Array(Type.String())),
     httpRoutes: Type.Optional(Type.Array(Type.String())),
+    apiRoutes: Type.Optional(Type.Array(Type.String())),
   })),
   icons: Type.Optional(Type.Record(Type.String(), Type.String())),
   showOutput: Type.Optional(Type.Array(Type.String())),
