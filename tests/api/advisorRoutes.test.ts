@@ -30,7 +30,7 @@ function setup(opts: { spawnFails?: boolean } = {}) {
     },
   };
   const advisor = new AdvisorService({
-    spawn: spawn as never, tmux, users, config,
+    spawn: () => spawn as never, tmux, users, config,
     fallback: { program: 'claude-code', model: 'sonnet' },
     url: 'http://localhost:4400', mcpUrl: 'http://localhost:4400/mcp', advisorDir: () => '/tmp/advisor',
   });

@@ -51,6 +51,8 @@ export function registerMissionRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(files);
   });
   app.post('/missions', async c => {
+    // The engine lives in the agents plugin — without it there is nothing to engage.
+    if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
     // Validate the epic up front: an absent/unknown epicId would otherwise create a zombie mission
     // (id `m-undefined`, no epic to tick) that reports `active` over SSE but never progresses.
     const b = await parseBody(c, engageMissionSchema);
@@ -75,11 +77,13 @@ export function registerMissionRoutes(app: ElowenApp, ctx: RouteContext): void {
     const mission = d.missions.get(id);
     if (!mission) return c.json({ error: 'mission not found' }, 404);
     if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
+    const engine = d.engine;
+    if (!engine) return c.json({ error: 'agents plugin is disabled' }, 503);
     const { action } = await parseBody(c, missionActionSchema);
     if (action === 'pause') {
-      await d.engine.pause(id); // kills running agents + reverts their tasks, then marks paused
+      await engine.pause(id); // kills running agents + reverts their tasks, then marks paused
     } else if (action === 'resume') {
-      await d.engine.resume(id); // flips active, re-parks the overseer, then ticks
+      await engine.resume(id); // flips active, re-parks the overseer, then ticks
     }
     return c.json(d.missions.get(id));
   });
@@ -87,6 +91,7 @@ export function registerMissionRoutes(app: ElowenApp, ctx: RouteContext): void {
     const mission = d.missions.get(c.req.param('id'));
     if (!mission) return c.json({ error: 'mission not found' }, 404);
     if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
     await d.engine.disengage(c.req.param('id'));
     return c.json({ ok: true });
   });

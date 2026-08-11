@@ -138,6 +138,9 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
     job.epicId = epic.id;
     planJobs.setPhases(jobId, phases);
     if (job.engage) {
+      // The plan routes refuse engage without the engine up front; this covers a plugin disabled (or
+      // reloading) in the async window — fail the engage loudly rather than silently skipping it.
+      if (!d.engine) throw new Error('agents plugin is disabled');
       await d.engine.engage({
         epicId: epic.id, autonomy: job.engage.autonomy, maxSessions: job.engage.maxSessions,
         preserveReviewBudget: job.engage.preserveReviewBudget, createdBy: job.createdBy,
@@ -145,7 +148,8 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
       });
     } else {
       const missionId = `m-${epic.id}`;
-      if (d.engine?.isActive(missionId)) await d.engine.tick(missionId); // replan into a live mission
+      const engine = d.engine;
+      if (engine?.isActive(missionId)) await engine.tick(missionId); // replan into a live mission
     }
     d.bus.publish({ type: 'plan', jobId, status: 'done', epicId: epic.id, phases: created.map((t) => ({ title: t.title, type: t.type })) });
     reapPilotSession(job);

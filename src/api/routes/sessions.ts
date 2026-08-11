@@ -31,6 +31,7 @@ export function registerSessionRoutes(app: ElowenApp, ctx: RouteContext): void {
     const result = await sessionService.launchManual(task, exec);
     if (!result.ok) {
       if (result.reason === 'busy') return c.json({ error: 'checkout busy' }, 409);
+      if (result.reason === 'disabled') return c.json({ error: 'agents plugin is disabled' }, 503);
       return c.json({ error: `spawn failed: ${result.message}` }, 500);
     }
     return c.json({ session: result.session }, 201);

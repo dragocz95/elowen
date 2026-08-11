@@ -15,7 +15,7 @@ const log = logger('api');
  *  status code (busy → 409, spawn-failed/gone → 500). Keeps HTTP concerns out of the service. */
 type LaunchOutcome =
   | { ok: true; session: string }
-  | { ok: false; reason: 'busy' | 'spawn-failed' | 'gone'; message: string };
+  | { ok: false; reason: 'busy' | 'spawn-failed' | 'gone' | 'disabled'; message: string };
 
 export interface SessionService {
   /** Manually (re)launch a worker for a task into its project checkout: claim the shared checkout
@@ -31,6 +31,10 @@ export interface SessionService {
  *  re-homed project resolves identically here and at the scheduler's baseline read. */
 export function createSessionService(d: ServerDeps, gitLock: AgentsGitLock, pathFor: (projectId: number) => string): SessionService {
   async function launchManual(task: Task, exec: string | undefined): Promise<LaunchOutcome> {
+    // The spawn service lives in the agents plugin — checked BEFORE any state is claimed, so a launch
+    // with the plugin disabled leaves the task untouched instead of flipping it in_progress first.
+    const spawn = d.spawn;
+    if (!spawn) return { ok: false, reason: 'disabled', message: 'agents plugin is disabled' };
     const spec = resolveExecutor(exec ? [`exec:${exec}`] : [], d.fallback);
     const projectId = task.project_id;
     const taskId = task.id;
@@ -63,7 +67,7 @@ export function createSessionService(d: ServerDeps, gitLock: AgentsGitLock, path
     const resumeNote = d.tasks.get(taskId)?.resume_note ?? undefined;
     let session: string;
     try {
-      ({ session } = await d.spawn.launch({ projectId, projectPath: cwd, taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote, epicId: task.parent_id ?? undefined, resume, ownerId: resolveOwnerId(d, { taskId }) }));
+      ({ session } = await spawn.launch({ projectId, projectPath: cwd, taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote, epicId: task.parent_id ?? undefined, resume, ownerId: resolveOwnerId(d, { taskId }) }));
     } catch (e) {
       // The task was already flipped to in_progress above; a spawn failure (bad cwd, missing tmux,
       // name collision) would otherwise leave it stuck with no live session until the stuck detector

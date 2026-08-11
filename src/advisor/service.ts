@@ -1,4 +1,4 @@
-import type { SpawnService } from '../spawn/spawn.js';
+import type { AgentsSpawn } from '../plugins/api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { UserStore } from '../store/userStore.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -13,7 +13,10 @@ import { logger } from '../shared/logger.js';
 const log = logger('advisor');
 
 export interface AdvisorDeps {
-  spawn: SpawnService;
+  /** The agents plugin's spawn seam, resolved LIVE per launch (the plugin loads after this service is
+   *  constructed, and a reload swaps the instance). Undefined ⇒ the plugin is disabled — start() then
+   *  fails with a clear error while the embedded-brain advisor keeps working. */
+  spawn: () => AgentsSpawn | undefined;
   tmux: TmuxDriver;
   users: UserStore;
   config: ConfigStore;
@@ -61,6 +64,8 @@ export class AdvisorService {
   }
 
   async start(userId: number, exec: string): Promise<{ session: string }> {
+    const spawn = this.d.spawn();
+    if (!spawn) throw new Error('agents plugin is disabled');
     if (!this.execAllowed(userId, exec)) throw new Error('exec not allowed for user');
     const name = this.session(userId);
     if ((await this.d.tmux.list()).includes(name)) return { session: name }; // already live — idempotent
@@ -83,7 +88,7 @@ export class AdvisorService {
     // agentName `advisor-<id>` → SpawnService names the tmux session `elowen-advisor-<id>`. The full
     // advisor token overrides the daemon's agent service token via extraEnv, so the advisor acts with
     // the user's own rights. The cwd is a neutral per-user dir, not a project checkout.
-    await this.d.spawn.launch({
+    await spawn.launch({
       projectId: this.d.projectId ?? 0,
       projectPath: cwd,
       taskId: name,

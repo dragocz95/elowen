@@ -75,7 +75,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (t.type === 'epic') {
         const missionId = `m-${t.id}`;
         const mission = d.missions.get(missionId);
-        if (mission && mission.state !== 'disengaged') await d.engine.disengage(missionId).catch(() => { /* best-effort */ });
+        if (mission && mission.state !== 'disengaged') await d.engine?.disengage(missionId).catch(() => { /* best-effort */ });
         await d.missionGit?.cleanup(missionId).catch(() => { /* best-effort */ });
         continue;
       }

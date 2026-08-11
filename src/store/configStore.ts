@@ -587,13 +587,15 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // Everything that works without being configured first ships on, so a fresh install behaves like a
   // tuned one instead of like a stripped one. elowen-docs is how the agent answers questions about
   // Elowen itself and looks a setting up before changing it; codebase and mcp stay inert until an
-  // embedding provider resp. a server is configured. The chat platforms stay OFF because each declares
-  // a required credential, and a plugin that ships on may not open by asking for one — the fresh-default
-  // suite enforces exactly that. Also off: dev-commands and formatters, which act on the repo unasked.
+  // embedding provider resp. a server is configured; agents is the extracted tmux-agent/mission
+  // subsystem (previously core — a fresh install must behave like the pre-extraction daemon). The chat
+  // platforms stay OFF because each declares a required credential, and a plugin that ships on may not
+  // open by asking for one — the fresh-default suite enforces exactly that. Also off: dev-commands and
+  // formatters, which act on the repo unasked.
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp',
+      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents',
     ],
     removed: [],
   },
@@ -623,6 +625,9 @@ interface Stored {
   /** Enabled plugin names, soft-removed (hidden) bundled plugin names, + each plugin's own config slice
    *  (secrets included, never serialized to API). */
   plugins: { enabled: string[]; removed: string[]; config: Record<string, Record<string, unknown>> };
+  /** One-shot upgrade marker: the `agents` plugin (the extracted, previously-core tmux-agent/mission
+   *  subsystem) has been auto-enabled for this pre-existing install. See migrateAgentsEnabled(). */
+  agentsConfigMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -684,6 +689,9 @@ const defaultStored = (): Stored => ({
   webPush: null,
   webPushContact: '',
   plugins: { enabled: [...DEFAULT_CONFIG.plugins.enabled], removed: [], config: {} },
+  // A fresh row already enables `agents` via the defaults above — mark it migrated so a later boot's
+  // one-shot sweep never re-adds the plugin after an admin deliberately disables it.
+  agentsConfigMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -773,6 +781,7 @@ export class ConfigStore {
                 ? (p.plugins.config as Record<string, Record<string, unknown>>) : {},
             }
           : legacyEmptyPlugins(),
+        agentsConfigMigrated: p.agentsConfigMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -871,6 +880,24 @@ export class ConfigStore {
     return !!this.db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
   }
 
+  /** One-shot upgrade: enable the `agents` plugin for EXISTING installs.
+   *
+   *  This is a DELIBERATE exception to the legacyEmptyPlugins rule ("an upgrade must never silently
+   *  turn new default plugins on"): `agents` is not a new capability but the extracted, previously-CORE
+   *  tmux-agent/mission subsystem — without this, upgrading a daemon with running missions would
+   *  silently stop every engine tick, scheduler spawn and overseer, i.e. the upgrade would break
+   *  behaviour the install already had. Runs once per install (the persisted marker), so an admin who
+   *  later disables the plugin stays disabled; a fresh install never gets here (no settings row — the
+   *  defaults already enable it and defaultStored() carries the marker). Daemon-only (the sub-agent
+   *  runner opens the DB read-only for schema and must not race a second writer). */
+  migrateAgentsEnabled(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.agentsConfigMigrated) return;
+    const enabled = cur.plugins.enabled.includes('agents') ? cur.plugins.enabled : [...cur.plugins.enabled, 'agents'];
+    this.write({ ...cur, plugins: { ...cur.plugins, enabled }, agentsConfigMigrated: true });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -912,6 +939,7 @@ export class ConfigStore {
         // Merge per-plugin config so a patch touching one plugin never wipes another's slice.
         config: patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
       },
+      agentsConfigMigrated: cur.agentsConfigMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

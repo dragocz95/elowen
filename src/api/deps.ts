@@ -35,10 +35,11 @@ export interface ServerDeps {
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
-  /** The agents subsystem's mission engine (structural — see AgentsControl). */
-  engine: AgentsMissionEngine;
-  /** The agents subsystem's spawn seam (structural — see AgentsControl). */
-  spawn: AgentsSpawn;
+  /** The agents plugin's mission engine (structural — see AgentsControl). Absent while the plugin is
+   *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
+  engine?: AgentsMissionEngine;
+  /** The agents plugin's spawn seam. Absent while the plugin is disabled → manual launches answer 503. */
+  spawn?: AgentsSpawn;
   tmux: TmuxDriver; bus: EventBus;
   /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
   missionGit?: AgentsMissionGit;

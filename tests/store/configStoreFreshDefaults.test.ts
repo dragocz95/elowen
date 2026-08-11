@@ -10,8 +10,11 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
  *  with no embedding model configured it ranks by keyword instead of failing — so it still answers "how
- *  do I set this up?" on the fresh install where nothing is set up yet. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp'];
+ *  do I set this up?" on the fresh install where nothing is set up yet.
+ *
+ *  agents qualifies too: it replaces the formerly-core tmux-agent/mission subsystem, needs no config
+ *  field to load, and every optional capability (relay, PR mode) degrades the same way it did in core. */
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents'];
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {

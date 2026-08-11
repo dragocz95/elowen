@@ -298,7 +298,8 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // of waiting for the next scheduled tick — same pattern as insert-phases below.
     if (typeof b.parent_id === 'string') {
       const missionId = `m-${b.parent_id}`;
-      if (d.engine?.isActive(missionId)) await d.engine.tick(missionId);
+      const engine = d.engine;
+      if (engine?.isActive(missionId)) await engine.tick(missionId);
     }
     return c.json(d.tasks.get(id));
   });
@@ -361,7 +362,7 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // un-freezes it. Resume so the released dependents spawn now instead of the mission sitting idle —
     // a stalled mission no longer ticks itself, so without this the approval would release the gate but
     // nothing would ever pick the work up. The phase's parent IS the epic; mission id is `m-<epicId>`.
-    if (existing.parent_id) void d.engine.resumeStalled(`m-${existing.parent_id}`).catch((e) => log.error('approve-gate resume failed', e));
+    if (existing.parent_id) void d.engine?.resumeStalled(`m-${existing.parent_id}`).catch((e) => log.error('approve-gate resume failed', e));
     return c.json({ released });
   });
 
@@ -461,7 +462,12 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       // genuinely failed. Deleting the epic then would strand live agents and an on-disk worktree
       // against a mission that no longer exists in the DB, with nothing left to find them by.
       try {
-        if (mission && mission.state !== 'disengaged') await d.engine.disengage(missionId);
+        if (mission && mission.state !== 'disengaged') {
+          // Teardown must SUCCEED before the rows go — with the agents plugin disabled there is
+          // nothing that could stop the mission's agents, so refuse rather than strand them.
+          if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
+          await d.engine.disengage(missionId);
+        }
         await d.missionGit?.cleanup(missionId);
       } catch (e) {
         log.error(`epic ${id} not deleted — mission teardown failed`, e);
@@ -508,8 +514,12 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // elowen- sessions (manual launches / zombies) so no agent keeps running against deleted tasks.
     // A teardown that FAILS aborts the wipe: erasing every task and mission row while an agent is
     // still live leaves it editing checkouts with nothing left in the DB to find or stop it by.
+    const liveMissions = d.missions.live();
+    // Same teardown-first invariant as the epic delete: a live mission with no engine (agents plugin
+    // disabled) cannot be stopped, so the wipe must refuse instead of erasing rows under live agents.
+    if (liveMissions.length > 0 && !d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
     try {
-      for (const m of d.missions.live()) await d.engine.disengage(m.id);
+      for (const m of liveMissions) await d.engine?.disengage(m.id);
     } catch (e) {
       log.error('cleanup aborted — mission disengage failed', e);
       return c.json({ error: 'mission teardown failed' }, 500);
@@ -549,6 +559,8 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // auto-enables PR-native mode, unless the user explicitly turned it off (then we honour their choice).
     if ((b.maxSessions ?? 1) > 1 && prEnabled === null) prEnabled = true;
     if (!goal) return c.json({ error: 'goal required' }, 400);
+    // Engaging needs the mission engine (agents plugin); a pure plan (epic + phases) does not.
+    if (b.engage === true && !d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
     if (b.exec && !d.config.get().allowedExecs.includes(b.exec)) return c.json({ error: 'exec not allowed' }, 400);
     if (b.exec && !execAllowedForUser(c, b.exec)) return c.json({ error: 'exec not allowed for user' }, 403);
     for (const override of [b.pilotExec, b.overseerExec]) {
@@ -569,7 +581,8 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       job.epicId = epic.id;
       planJobs.setPhases(job.id, phases);
       let mission;
-      if (b.engage === true) mission = await d.engine.engage({ epicId: epic.id, autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1, createdBy: c.get('user')?.id ?? null, pilotExec: b.pilotExec, overseerExec: b.overseerExec });
+      const engine = d.engine;
+      if (b.engage === true && engine) mission = await engine.engage({ epicId: epic.id, autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1, createdBy: c.get('user')?.id ?? null, pilotExec: b.pilotExec, overseerExec: b.overseerExec });
       return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)), mission }, 201);
     }
 
@@ -662,7 +675,8 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       job.phases = phases;
       const { phases: created } = persistPlan(job);
       const missionId = `m-${epicId}`;
-      if (d.engine?.isActive(missionId)) await d.engine.tick(missionId); // pick up the new ready phase
+      const engine = d.engine;
+      if (engine?.isActive(missionId)) await engine.tick(missionId); // pick up the new ready phase
       return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)) }, 201);
     }
     if (!(b.goal ?? '').trim()) return c.json({ error: 'phases or goal required' }, 400);

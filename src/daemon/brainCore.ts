@@ -3,9 +3,7 @@ import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
-import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
-import { SpawnService } from '../spawn/spawn.js';
 import type { PluginBrainWorker, PluginHostPush } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
@@ -158,9 +156,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
-  const tasks = new TaskStore(db); const agents = new AgentStore(db);
+  const tasks = new TaskStore(db);
   const missions = new MissionStore(db); const readiness = new Readiness(db);
   const config = new ConfigStore(db);
+  // One-shot upgrade: auto-enable the extracted `agents` plugin for pre-existing installs (it replaces
+  // previously-core behaviour — see migrateAgentsEnabled). Daemon-only, like schema migrations: the
+  // sub-agent runner attaches to a database the daemon already prepared and must not write settings.
+  if (opts.migrate !== false) config.migrateAgentsEnabled();
   // Seed the daemon-wide LSP manager from the persisted toggle — before this, /lsp silently reset to
   // "on" at every daemon restart. Runtime flips (the /lsp command, PUT /config) keep both in sync.
   lspManager().setEnabled(config.get().lspEnabled);
@@ -214,7 +216,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const tokenForTask = (taskId: string): string | undefined =>
     serviceUserId !== null && tasks.get(taskId) ? users.ensureAgentTokenForTask(serviceUserId, taskId) : undefined;
   const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken, tokenForTask };
-  const spawn = new SpawnService({ tmux, agents, elowen: elowenCli, providers: (program) => config.get().providers[program], prompts, tddMode: () => config.get().autopilot.tddMode });
+  // NOTE: the SpawnService (and the AgentStore it records into) is owned by the agents plugin now —
+  // the daemon reaches it through the 'agents' control; nothing here launches agent sessions.
   const bus = new EventBus();
   const events = new EventStore(db);
   const notes = new NoteStore(db);
@@ -592,9 +595,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       })
     : undefined;
   return {
-    db, tasks, agents, missions, readiness, config, users, homeProject, projects, userProjects,
+    db, tasks, missions, readiness, config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, taskUsage, git,
-    cli, cliArgv, elowenCli, spawn, bus, events, notes,
+    cli, cliArgv, elowenCli, bus, events, notes,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
     embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore,

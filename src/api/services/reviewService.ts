@@ -140,7 +140,7 @@ export function createReviewService({ d, log, gitLock, decisionQueue, checkoutPa
                 // the mission if it stalled while the verdict was pending — otherwise the freeze would
                 // swallow this tick and the approved work would never run.
                 releaseGatedDependents(id);
-                void d.engine.resumeStalled(mission.id).catch((e) => log.error('post-review resume failed', e));
+                void d.engine?.resumeStalled(mission.id).catch((e) => log.error('post-review resume failed', e));
                 return;
               }
               // Rejected. L3 (full autonomy) self-heals: re-open the phase with the review
@@ -160,19 +160,19 @@ export function createReviewService({ d, log, gitLock, decisionQueue, checkoutPa
                 d.tasks.setResumeNote(id, `[Review rejected — previous attempt was not accepted]: ${verdict.rationale}\nFix the issue and close the task again.`);
                 // Reap the worker if it outlived its task close, so the re-spawn doesn't collide with a
                 // still-live `elowen-<agent>` session ("duplicate session" → endless failed re-spawns).
-                await d.engine.stopTask(id);
+                await d.engine?.stopTask(id);
                 d.tasks.setStatus(id, 'open'); // re-open so the engine tick re-spawns it (its deps are already satisfied)
                 d.bus.publish({ type: 'task', taskId: id, status: 'open' });
                 // Self-heal is autonomous continuation, not an escalation — resume (un-freeze if it
                 // stalled in the verdict window) so the re-opened phase actually re-spawns.
-                void d.engine.resumeStalled(mission.id).catch((e) => log.error('post-review self-heal resume failed', e));
+                void d.engine?.resumeStalled(mission.id).catch((e) => log.error('post-review self-heal resume failed', e));
               } else {
                 // Not self-healed (overseer timeout, L1/L2 human-in-the-loop, or self-heal budget
                 // spent): leave the phase closed and its dependents blocked for a human. Tick so the
                 // mission flips to 'stalled' ("needs attention") now instead of reading 'active' until
                 // the next 90s interval — the escalation must be visible, and the mission waits, never
                 // disengages, until the human resolves it (approve-gate / re-run on the Escalations page).
-                void d.engine.tick(mission.id).catch((e) => log.error('post-review escalation tick failed', e));
+                void d.engine?.tick(mission.id).catch((e) => log.error('post-review escalation tick failed', e));
               }
             })
             // Fire-and-forget review must never crash the daemon — the verdict apply (or the enqueue

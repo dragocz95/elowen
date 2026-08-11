@@ -21,7 +21,7 @@ function makeAdvisor(opts: { allowed: string[] }) {
     },
   };
   const svc = new AdvisorService({
-    spawn: spawn as never, tmux, users, config,
+    spawn: () => spawn as never, tmux, users, config,
     fallback: { program: 'claude-code', model: 'sonnet' },
     url: 'http://localhost:4400',
     mcpUrl: 'http://localhost:4400/mcp',

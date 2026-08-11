@@ -119,10 +119,30 @@ export interface RouteContext {
  *  closure, so tenancy/path semantics are unchanged. */
 export function createRouteContext(d: ServerDeps): RouteContext {
   const log = logger('api');
-  const planJobs = d.planJobs ?? new PlanJobStore();
-  const decisionQueue = d.decisionQueue ?? new DecisionQueue();
+  // planJobs/decisionQueue/gitLock resolve LIVE through `d` on every call, behind stable facade
+  // objects: with the agents plugin the deps fields are getters over the loaded registry's control,
+  // which is undefined until the plugin loads and is REPLACED by a plugin reload — a value captured
+  // here would strand the routes on a dead generation's stores (the parked overseer would long-poll a
+  // queue the engine no longer enqueues into). The local fallbacks keep plugin-less wiring (tests,
+  // plugin disabled) working exactly as before.
+  const localPlanJobs = new PlanJobStore();
+  const livePlanJobs = (): AgentsPlanJobs => d.planJobs ?? localPlanJobs;
+  const planJobs: AgentsPlanJobs = {
+    create: (input) => livePlanJobs().create(input),
+    get: (id) => livePlanJobs().get(id),
+    setPhases: (id, phases) => livePlanJobs().setPhases(id, phases),
+    fail: (id, error) => livePlanJobs().fail(id, error),
+  };
+  const localDecisionQueue = new DecisionQueue();
+  const liveDecisionQueue = (): AgentsDecisionQueue => d.decisionQueue ?? localDecisionQueue;
+  const decisionQueue: AgentsDecisionQueue = {
+    enqueue: (missionId, kind, context) => liveDecisionQueue().enqueue(missionId, kind, context),
+    next: (missionId, timeoutMs) => liveDecisionQueue().next(missionId, timeoutMs),
+    resolve: (missionId, id, result) => liveDecisionQueue().resolve(missionId, id, result),
+  };
   const tickets = d.tickets ?? createTicketStore();
-  const gitLock = d.gitLock ?? new KeyedMutex();
+  const localGitLock = new KeyedMutex();
+  const gitLock: AgentsGitLock = { run: (key, fn) => (d.gitLock ?? localGitLock).run(key, fn) };
 
   // The projects an AGENT-scoped token may touch. The shared service token is owned by the admin user,
   // so without this it would inherit admin's cross-project bypass and a prompt-injected agent could
