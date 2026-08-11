@@ -84,6 +84,21 @@ A type's `tools` spec is either a preset — `read-only`, `all`, or `inherit` �
 
 The sub-agent plugin's detail card in **Settings → Plugins** lists the built-in and user agents and lets an admin create, edit, and delete their own (built-ins are read-only). Each write is validated with the real agent parser before it lands and hot-reloads, so the catalog refreshes live.
 
+## The agents plugin
+
+The tmux-agent and missions subsystem — spawning coding agents into tmux
+sessions, the autopilot mission engine, the overseer, escalations, and the
+Sessions/Escalations web pages — ships as the bundled `agents` plugin. It is
+enabled by default, and an existing install is enabled automatically on
+upgrade so running missions continue uninterrupted.
+
+Disabling it turns that whole layer off: no missions, no agent sessions, the
+`/missions` and `/sessions` API paths answer 404, the web app hides the
+Sessions and Escalations pages, and its Settings section disappears. Chat,
+tasks, projects, memory, and every other core surface keep working. Its
+settings (overseer model, PR base branch, auto-open, verify command) live in
+**Settings → Agents & Autopilot**, stored under the plugin's own config slice.
+
 ## Reload behavior
 
 Changing plugin enablement or configuration reloads the registry so future turns use the current contributions. Existing live work is not rewritten retroactively. Keep plugin work inside the plugin directory; shared transport, policy, and runtime behavior belongs in `src/`.

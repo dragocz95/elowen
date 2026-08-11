@@ -5,6 +5,37 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+The tmux-agent and missions subsystem — spawning coding agents into tmux, the autopilot mission engine,
+the overseer, escalations, and their web pages — now ships as the bundled `agents` plugin, on a plugin
+platform any plugin can build on. An existing install is enabled automatically on upgrade (a running
+mission continues across it), and disabling the plugin cleanly turns the whole layer off while chat,
+tasks, projects and memory keep working.
+
+### Added
+- **Plugin platform (daemon).** Plugins can now mount authenticated API routes (including root mounts
+  that grandfather formerly-core paths such as `/missions` and `/sessions`; core routes always win and a
+  disabled plugin answers 404), contribute host-managed background services, fixed-period intervals and
+  idempotent boot reconciles, apply their own versioned database migrations (bookkept per plugin, with
+  grandfathering of pre-existing tables), register editable prompt templates that respect existing user
+  overrides, declare typed runtime controls, and read a per-plugin config slice with schema-driven
+  Settings fields.
+- **Plugin platform (web).** A plugin can ship browser pages, sidebar navigation and a Settings section
+  as one built ESM bundle: the manifest's `web` block declares entry/nav/settings (localizable per
+  locale), the daemon serves the bundle on an immutable content-hash URL, and pages render under
+  `/p/<plugin>/…` on the host's `window.ElowenUiRuntime` (the app's React instance plus curated
+  components, data hooks and helpers — one react-query cache, one SSE invalidation path). The
+  `@elowen/plugin-ui-kit` package builds `plugins/*/web-src/` sources via `npm run build:plugins-web`.
+- **Agents subsystem as a plugin.** The whole tmux-agent + missions subsystem moved into
+  `plugins/agents`: engine/scheduler/deriver run as plugin services, the `/missions`, `/sessions` and
+  ask/guide API surfaces are plugin root mounts on unchanged paths, the eleven worker/pilot/overseer
+  prompt templates are plugin prompts (user overrides keep working), `ElowenListMissions` and
+  `ElowenListSessions` are plugin tools, and the Sessions + Escalations web pages ship in the plugin's
+  bundle (`/sessions` and `/escalations` redirect, deep links included). Plugin-owned settings
+  (overseer model, PR base branch/auto-open/verify command) live under the plugin's config slice with a
+  one-shot copy migration — `autopilot.*` keeps its values for a lossless rollback — and subsystem log
+  lines now reach the admin per-plugin log view. The migration E2E suite proves a DB with a running
+  mission upgrades with the plugin auto-enabled and nothing lost.
+
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the
   child transcript, and returns cleanly to the parent only when the child cannot be resolved.

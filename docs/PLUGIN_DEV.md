@@ -229,6 +229,128 @@ the caller itself (the msteams plugin validates Microsoft's JWT signature).
 When deploying behind nginx, proxy `/hooks/` to the daemon port (see
 DEPLOYMENT.md).
 
+## Daemon platform surfaces
+
+Beyond tools and webhooks, a plugin can own whole daemon subsystems. These are
+the surfaces the bundled `agents` plugin (the extracted tmux-agent + missions
+subsystem) runs on; any plugin may use them.
+
+### Authenticated API routes (`registerApiRoute`)
+
+`registerHttpRoute` is for unauthenticated inbound webhooks under `/hooks/`.
+`registerApiRoute` mounts routes on the daemon's AUTHENTICATED API instead:
+
+```javascript
+ctx.registerApiRoute({
+  path: 'jobs',            // mounted at /plugins/<plugin-name>/api/jobs
+  method: 'GET',
+  access: 'user',          // 'user' | 'admin' | 'agent'
+  handler: async (req) => ({ status: 200, body: { jobs: [] } }),
+});
+```
+
+The daemon's bearer auth runs BEFORE the handler and the verified caller
+identity arrives on the request; `access` narrows further (`admin` requires an
+admin token; `agent` also admits agent-scoped task tokens — re-narrow inside
+the handler when a sub-path needs less than the mount grants). Declare the
+paths in the manifest's `provides.apiRoutes`.
+
+An admin-installed plugin may additionally set `rootMount` to claim a
+top-level path (e.g. the agents plugin keeps the pre-extraction `/missions`
+and `/sessions` paths so existing clients never re-learn URLs). Core routes
+always win: a root mount that collides with a core path logs a warning and is
+skipped, literal segments beat `:param` patterns, and a plugin reload cleanly
+unregisters the previous generation. A disabled plugin's root mounts answer
+404.
+
+### Services, intervals, and boot reconciles
+
+```javascript
+ctx.registerService({ name: 'poller', start: () => {…}, stop: () => {…} });
+ctx.registerInterval('sweep', () => {…}, 60_000);
+ctx.registerBootReconcile(() => {…});
+```
+
+Services start after boot reconcile on a full daemon start and stop on
+shutdown or plugin reload (newest registered stops first — register a teardown
+service FIRST so it runs LAST). Intervals are services with a fixed period.
+Boot reconciles run once per boot and again on plugin reload; keep them
+idempotent. A sub-agent runner loads enabled plugins for their tools but never
+starts services, so build heavyweight runtime state lazily (on first use, not
+in `register()`).
+
+### Plugin database migrations (`ctx.db()`)
+
+```javascript
+ctx.db().migrate([{ version: 1, up: (db) => db.exec('CREATE TABLE IF NOT EXISTS …') }]);
+```
+
+`ctx.db()` requires the `reads: ["db"]` capability. Schema steps are bookkept
+per plugin (`plugin_migrations`) and applied exactly once in the daemon; in a
+read-only sub-agent runner `migrate()` is a logged no-op. Use `IF NOT EXISTS`
+forms when adopting tables that predate the plugin (grandfathering), and never
+rename or move existing rows on upgrade.
+
+### Prompt templates (`registerPrompts`)
+
+```javascript
+ctx.registerPrompts({ dir: myPromptsDir, entries: ['worker', 'reviewer'] });
+```
+
+Registers markdown templates (`<name>.md` under `dir`) that the core prompt
+renderer resolves by bare name and the account UI catalogs as editable. Gated
+by `mutates: ["prompt"]`. Resolution order: a user's saved override wins, then
+the plugin file, then a core file. Registering under the same bare names a
+template had before an extraction keeps existing user overrides working.
+
+### Controls (`registerControl`)
+
+A control is a typed, live runtime surface other daemon code resolves from the
+registry (e.g. `registry.control('agents')` hands the task routes the mission
+engine). Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
+registry narrows to function-valued members, so accessor methods are the
+idiomatic shape — the first call can lazily build the runtime.
+
+### Browser UI bundles (manifest `web` block)
+
+A plugin can ship pages, sidebar navigation, and a Settings section for the
+web app as ONE built ESM bundle:
+
+```json
+"web": {
+  "entry": "web/index.js",
+  "requiresApiVersion": 1,
+  "nav": [{ "label": "Sessions", "icon": "SquareTerminal", "route": "sessions" }],
+  "settings": [{ "id": "agents", "label": "Agents & Autopilot", "icon": "Bot" }]
+}
+```
+
+The daemon serves the bundle on an immutable content-hash URL and lists it via
+`GET /plugins/ui`; the web app builds its menus from that listing (labels
+localized per the `web` block in `i18n/<lang>.json`) and loads the bundle only
+when a page is visited. Pages render under `/p/<plugin>/<route>` inside the
+app shell; a disabled plugin's pages show an unavailable placeholder.
+
+The bundle registers itself on load:
+
+```javascript
+window.__elowenRegisterPluginUi?.('my-plugin', {
+  requiresApiVersion: 1,
+  pages: { '': RootPage, 'sessions': SessionsPage },
+  settings: { 'my-plugin': SettingsSection },
+});
+```
+
+Everything the bundle needs comes from `window.ElowenUiRuntime`: the HOST's
+React instance (never bundle your own — the build aliases `react` to it), a
+curated `components`/`hooks`/`utils` surface, an authenticated same-origin
+`api(path, init)` fetch, and SPA `navigate(href)`. Build with
+`@elowen/plugin-ui-kit` (`packages/plugin-ui-kit`): write sources under
+`<plugin>/web-src/` and let `npm run build:plugins-web` emit
+`<plugin>/web/index.js` (part of `npm run build`). The runtime contract's
+types live in the kit's `index.d.ts`; narrow the untyped records locally in
+the bundle instead of importing from `web/` sources.
+
 ## Capabilities and hooks
 
 Capabilities are deny-by-default. Declare only what the plugin needs:
