@@ -67,6 +67,8 @@ describe('Sidebar (registry-driven)', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
     client.setQueryData(['tasks'], []);
+    // Sessions is a plugin world now — seed the /plugins/ui listing the nav model consumes.
+    client.setQueryData(['plugin-ui', 'en'], [{ name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }] }]);
     render(<Wrapper><Sidebar mode="drawer" drawerOpen /></Wrapper>);
     expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Kanban' })).toBeInTheDocument();

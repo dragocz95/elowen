@@ -23,7 +23,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
     ? t.nav[world.id]
     : pathname.startsWith('/account') || pathname.startsWith('/settings') || pathname.startsWith('/users')
       ? t.nav.system
-      : pathname.startsWith('/escalations')
+      : pathname.startsWith('/p/agents/escalations')
         ? t.sidebar.notifications
         : undefined;
 

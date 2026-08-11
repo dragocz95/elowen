@@ -98,7 +98,7 @@ export function NotificationBell() {
                 {/* Human decisions share one inbox: overseer escalations and parked agent asks. */}
                 {inboxCount > 0 && (
                   <Link
-                    href="/escalations"
+                    href="/p/agents/escalations"
                     onClick={() => setOpen(false)}
                     className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/[0.06] px-2.5 py-2 transition-colors hover:bg-warning/10"
                   >

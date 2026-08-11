@@ -35,7 +35,7 @@ describe('NotificationBell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Notifications' }));
 
     const inbox = await screen.findByRole('link', { name: /Escalations \(1\).*Choose the database/ });
-    expect(inbox).toHaveAttribute('href', '/escalations');
+    expect(inbox).toHaveAttribute('href', '/p/agents/escalations');
     expect(screen.queryByText('No agents waiting for approval.')).not.toBeInTheDocument();
   });
 });

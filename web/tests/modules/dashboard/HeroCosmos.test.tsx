@@ -54,7 +54,7 @@ describe('HeroCosmos', () => {
     expect(within(nav).getByText('Next run')).toBeTruthy();
     expect(within(nav).getByText('This month')).toBeTruthy();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/escalations', '/sessions', '/settings?section=cron', '/stats']);
+    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/settings?section=cron', '/stats']);
   });
 
   it('tones the decisions pod as an alert while asks are pending', async () => {

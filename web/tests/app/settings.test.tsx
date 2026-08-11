@@ -234,26 +234,25 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('saves the GitHub PR-native fields from the GitHub section', async () => {
+  it('keeps only the shared GitHub keys in the core section (the PR knobs moved to the agents plugin)', async () => {
     localStorage.setItem('elowen.settings.category', 'github');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('Verify command')).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('switch', { name: /PR workflow/ })).toBeInTheDocument());
 
-    // The PR fields live in their own GitHub section now; the default toggle starts off. The pod's
-    // orb shares the row's accessible name, so target the switch role explicitly.
-    expect(screen.getByRole('switch', { name: /PR workflow/ })).not.toBeChecked();
-    expect(screen.getByText('Verify command')).toBeTruthy();
+    // Base branch / auto-open / verify command are plugin-owned config (plugins.config.agents) and
+    // edit in the agents plugin's settings deck now — core must not render or save them.
+    expect(screen.queryByText('Verify command')).toBeNull();
+    expect(screen.queryByText('Base branch')).toBeNull();
 
     putBody = null;
     fireEvent.click(screen.getByRole('switch', { name: /PR workflow/ }));
-    // The verify command edits in the shared GitHub drawer — open it via the pod's orb first.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Verify command' })[0]);
-    fireEvent.change(await screen.findByPlaceholderText('e.g. npm test'), { target: { value: 'npm test' } });
     await waitFor(() => {
-      const ap = (putBody as { autopilot: { prEnabled: boolean; prVerifyCommand: string } }).autopilot;
+      const ap = (putBody as { autopilot: Record<string, unknown> }).autopilot;
       expect(ap.prEnabled).toBe(true);
-      expect(ap.prVerifyCommand).toBe('npm test');
+      expect('prVerifyCommand' in ap).toBe(false);
+      expect('prBaseBranch' in ap).toBe(false);
+      expect('prAutoOpen' in ap).toBe(false);
     });
   });
 

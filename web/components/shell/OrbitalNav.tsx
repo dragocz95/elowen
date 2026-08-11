@@ -17,10 +17,19 @@ import type { NavEntry } from './NavItem';
  *  Home first and the admin surfaces last, so the axis reads in the order you actually use it. */
 const SPATIAL_ROUTE_ORDER = [
   '/dash', '/chat',                               // home, then chat
-  '/tasks', '/kanban', '/sessions', '/timeline',  // the work
+  '/tasks', '/kanban', '/p/agents', '/timeline',  // the work
   '/projects', '/editor', '/memory', '/stats',    // what the work runs on
   '/account', '/settings', '/users',              // administration
 ];
+/** Where an entry parks on the axis. Prefix-matched, not exact: a plugin world links to its first
+ *  page (e.g. /p/agents/sessions), which must claim its plugin's slot ('/p/agents') — an unmatched
+ *  entry would fall past the administration block and become the wheel's last stop. */
+function spatialOrderIndex(href: string | undefined): number {
+  if (!href) return Number.MAX_SAFE_INTEGER;
+  const index = SPATIAL_ROUTE_ORDER.findIndex((route) => href === route || href.startsWith(`${route}/`));
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
 /** The public site's rail spacing — the look this rail matches. */
 const SPACING = 66;
 /** Vertical room the largest (active) node needs, so the end destinations never clip. */
@@ -65,11 +74,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
     ...systemItems.flatMap((group) => group.subItems?.length
       ? group.subItems.map((item) => ({ ...item, icon: item.icon ?? group.icon }))
       : [group]),
-  ].sort((a, b) => {
-    const ai = SPATIAL_ROUTE_ORDER.indexOf(a.href ?? '');
-    const bi = SPATIAL_ROUTE_ORDER.indexOf(b.href ?? '');
-    return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi);
-  }), [worlds, systemItems]);
+  ].sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href)), [worlds, systemItems]);
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
   const stageRef = useRef<HTMLDivElement>(null);
   const stageHeight = useElementHeight(stageRef);

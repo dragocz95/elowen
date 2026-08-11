@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { GitPullRequest, GitBranch, TerminalSquare, KeyRound } from 'lucide-react';
+import { GitPullRequest, KeyRound } from 'lucide-react';
 import { GithubStatusBanner } from './GithubStatusBanner';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
@@ -21,9 +21,6 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
   const { t } = useTranslation();
   const [ghToken, setGhToken] = useState('');
   const [prEnabled, setPrEnabled] = useState(false);
-  const [prBaseBranch, setPrBaseBranch] = useState('');
-  const [prAutoOpen, setPrAutoOpen] = useState(false);
-  const [prVerifyCommand, setPrVerifyCommand] = useState('');
   // The GitHub text fields edit in one side drawer opened via pod orbs.
   const [githubOpen, setGithubOpen] = useState(false);
 
@@ -34,22 +31,21 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
     if (config && !seeded) {
       setSeeded(true);
       setPrEnabled(config.autopilot.prEnabled ?? false);
-      setPrBaseBranch(config.autopilot.prBaseBranch ?? '');
-      setPrAutoOpen(config.autopilot.prAutoOpen ?? false);
-      setPrVerifyCommand(config.autopilot.prVerifyCommand ?? '');
     }
   }, [config, seeded]);
 
   // GitHub / PR-native settings live in their own section. The global prEnabled is the DEFAULT for new
   // projects; each project can override it. The ghToken is write-only — sent only when freshly typed.
+  // The PR lifecycle knobs (base branch, auto-open, verify command) moved to the agents plugin's
+  // settings deck — they are plugin-owned config (plugins.config.agents) since the F2 config split.
   const saveGithub = async () => {
     try {
-      await update.mutateAsync({ autopilot: { prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ...(ghToken ? { ghToken } : {}) } });
+      await update.mutateAsync({ autopilot: { prEnabled, ...(ghToken ? { ghToken } : {}) } });
       if (ghToken) setGhToken('');
     } catch (error) { toast(String(error), 'error'); throw error; }
   };
 
-  const { status, retry } = useAutoSaveStatus([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready: seeded });
+  const { status, retry } = useAutoSaveStatus([prEnabled, ghToken], saveGithub, { ready: seeded });
   useEffect(() => {
     onSaveState?.('github', status, status === 'error' ? retry : undefined);
   }, [status, onSaveState, retry]);
@@ -70,17 +66,6 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
       <SettingsRow label={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
         <Toggle checked={prEnabled} onChange={setPrEnabled} label={t.settings.prEnabled} />
       </SettingsRow>
-      <SettingsRow label={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
-        <span className="max-w-full truncate font-mono text-sm text-text-muted">{prBaseBranch || t.settings.prBaseBranchPlaceholder}</span>
-        <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prBaseBranch} onClick={() => setGithubOpen(true)} />
-      </SettingsRow>
-      <SettingsRow label={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
-        <Toggle checked={prAutoOpen} onChange={setPrAutoOpen} label={t.settings.prAutoOpen} />
-      </SettingsRow>
-      <SettingsRow label={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
-        <span className="max-w-full truncate font-mono text-sm text-text-muted">{prVerifyCommand || '—'}</span>
-        <button type="button" data-selection-manage className="hidden" aria-label={t.settings.prVerifyCommand} onClick={() => setGithubOpen(true)} />
-      </SettingsRow>
       </SettingsGroup>
       {githubOpen ? (
         <WorkspaceDetailRail label={t.settings.github} closeLabel={t.common.close} onClose={() => setGithubOpen(false)}>
@@ -88,14 +73,6 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
             <div className="flex flex-col gap-1.5">
               <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.settings.ghToken}</span>
               <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} aria-label={t.settings.ghToken} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.settings.prBaseBranch}</span>
-              <input value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} placeholder={t.settings.prBaseBranchPlaceholder} className={inputClass} aria-label={t.settings.prBaseBranch} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.settings.prVerifyCommand}</span>
-              <input value={prVerifyCommand} onChange={(e) => setPrVerifyCommand(e.target.value)} placeholder={t.settings.prVerifyCommandPlaceholder} className={`${inputClass} font-mono text-xs`} aria-label={t.settings.prVerifyCommand} />
             </div>
           </div>
         </WorkspaceDetailRail>

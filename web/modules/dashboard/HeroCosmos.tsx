@@ -97,7 +97,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       label: t.dashboard.signalDecisionsWaiting,
       value: String(decisions),
       detail: decisions > 0 ? t.dashboard.decisionsUnit : t.dashboard.allClear,
-      href: '/escalations',
+      href: '/p/agents/escalations',
       alert: decisions > 0,
     },
     {
@@ -106,7 +106,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       label: t.dashboard.signalAgentsActive,
       value: String(agents),
       detail: agents > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet,
-      href: '/sessions',
+      href: '/p/agents/sessions',
     },
     {
       id: 'cron',

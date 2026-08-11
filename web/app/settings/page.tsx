@@ -197,7 +197,6 @@ export default function SettingsPage() {
   // The Elowen AI model whose context-window override is being edited (null = editor closed).
   const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
   const [model, setModel] = useState('');
-  const [overseerModel, setOverseerModel] = useState('');
   const [pilotExec, setPilotExec] = useState('');
   const [overseerExec, setOverseerExec] = useState('');
   // Autopilot backend is an either/or: 'relay' (planner+overseer via API) or 'agents' (CLI agents
@@ -259,7 +258,6 @@ export default function SettingsPage() {
       setModelWindows(config.data.brain?.modelContextWindows ?? {});
       setHiddenPresets(config.data.hiddenPresets ?? []);
       setModel(config.data.autopilot.model);
-      setOverseerModel(config.data.autopilot.overseerModel ?? '');
       setPilotExec(config.data.autopilot.pilotExec ?? '');
       setOverseerExec(config.data.autopilot.overseerExec ?? '');
       setReviewOnDone(config.data.autopilot.reviewOnDone ?? false);
@@ -288,7 +286,7 @@ export default function SettingsPage() {
     try {
       await update.mutateAsync({ autopilot: reasoningMode === 'agents'
         ? { pilotExec, overseerExec, reviewOnDone, tddMode, notes }
-        : { model, overseerModel, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } });
+        : { model, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } });
       if (apiKey) setApiKey('');
     } catch (error) { toast(String(error), 'error'); throw error; }
   };
@@ -319,7 +317,7 @@ export default function SettingsPage() {
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // The apiKey secret rides along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
-  const autopilotSave = useAutoSaveStatus([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
+  const autopilotSave = useAutoSaveStatus([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
   const providersSave = useAutoSaveStatus([providers], saveProviders, { ready });
   const defaultsSave = useAutoSaveStatus([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
   // Per-model context windows auto-persist like every other model setting (no Save button).
@@ -691,13 +689,6 @@ export default function SettingsPage() {
                     : relayModelChip(model, t.settings.plannerModel)}
                 </SettingsRow>
               );
-              const rowOverseerRelay = (
-                <SettingsRow label={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
-                  {relayHasCatalog
-                    ? <ModelCatalogField value={overseerModel} onChange={setOverseerModel} catalog={apCatalog} title={t.settings.overseerModel} subtitle={t.help.overseerModel} />
-                    : relayModelChip(overseerModel, t.settings.overseerModel)}
-                </SettingsRow>
-              );
               const apiUrlInput = <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} aria-label={t.settings.apiUrl} />;
               const apiKeyInput = <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} aria-label={t.settings.apiKey} />;
               // No provider picked → enter an endpoint + key directly. A chosen provider supplies both,
@@ -764,7 +755,6 @@ export default function SettingsPage() {
                 <>
                   {rowApProvider}
                   {rowPlannerRelay}
-                  {rowOverseerRelay}
                   {apProviderId === '' ? <>{rowApiUrl}{rowApiKey}</> : null}
                 </>
               );
@@ -775,7 +765,6 @@ export default function SettingsPage() {
                     {reasoningMode === 'relay' && !relayHasCatalog ? (
                       <>
                         {drawerField(t.settings.plannerModel, <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />)}
-                        {drawerField(t.settings.overseerModel, <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />)}
                       </>
                     ) : null}
                     {reasoningMode === 'relay' && apProviderId === '' ? (

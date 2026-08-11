@@ -197,10 +197,13 @@ async function main() {
     // a 500 means a broken build/bundle. We assert 200 AND that the body is the HTML document.
     // There is deliberately no /onboarding: setup happens in the terminal installer, and a visitor
     // with no account is shown the installer command by the login gate rather than a separate route.
+    // /sessions and /escalations survive as client-side redirects to the agents plugin pages
+    // (/p/agents/…) — still a 200 HTML shell here; the router.replace happens in the browser.
     const PAGES = [
       '/', '/dash', '/settings', '/users', '/stats', '/kanban', '/tasks',
       '/chat', '/sessions', '/projects', '/memory', '/timeline', '/escalations', '/account',
       '/editor', '/terminal/e2e', // dynamic route [name] — arbitrary segment must still render
+      '/p/agents/sessions', // plugin UI host route [plugin] — serves the shell even for a deep page
     ];
     for (const path of PAGES) {
       const r = await http('GET', WEB, path);

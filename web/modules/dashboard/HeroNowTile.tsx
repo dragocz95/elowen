@@ -52,7 +52,7 @@ export function HeroNowTile({ now }: { now: number }) {
           </div>
 
           {presence.primary ? (
-            <Link href={task ? `/tasks?select=${encodeURIComponent(task.id)}` : '/sessions'} className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(255_82_54_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
+            <Link href={task ? `/tasks?select=${encodeURIComponent(task.id)}` : '/p/agents/sessions'} className="group flex items-center gap-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3 shadow-[0_0_24px_rgb(255_82_54_/_0.07)] transition-[border-color,background-color] hover:border-accent/40 hover:bg-accent/[0.07]">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-sm font-medium text-text">{task?.title ?? agentDisplayName(primaryName)}</span>
