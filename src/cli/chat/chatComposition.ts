@@ -27,7 +27,7 @@ import {
 import { TelemetryPanel } from './telemetryPanel.js';
 import { ArgOverlay, MentionOverlay, SlashOverlay, type SuggestionItem, type SuggestionOverlay } from './suggestionOverlay.js';
 import { scoreModels, type ModelOption } from './fuzzy.js';
-import { WORK_MODE_NOTICE } from './brainClient.js';
+import { workModeNotice } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import { foregroundWork, type StreamCoordinatorPort } from './streamCoordinator.js';
@@ -1003,7 +1003,7 @@ export function createChatComposition(
   };
 
   const root = new Container();
-  root.addChild(new TopRule(() => rt.conversationTitle));
+  root.addChild(new TopRule(() => rt.conversationTitle, () => rt.brand.productName));
   root.addChild(new MainColumn(panelReserve, () => {
     if (!hasMessages()) return [startScreen];
     const budget = refreshLayoutBudget(); // one authoritative geometry/state preparation per root frame
@@ -1192,7 +1192,7 @@ export function createChatComposition(
         }
         case 'mode_toggle': {
           rt.workMode = rt.workMode === 'build' ? 'plan' : rt.workMode === 'plan' ? 'workflow' : 'build';
-          rt.notice = color.dim(WORK_MODE_NOTICE[rt.workMode]);
+          rt.notice = color.dim(workModeNotice(rt.workMode, rt.brand.agentName));
           render('input:mode-toggle');
           return;
         }

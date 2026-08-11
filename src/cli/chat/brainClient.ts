@@ -48,11 +48,19 @@ export type BrainWorkMode = 'build' | 'plan' | 'workflow';
 /** Single source of truth for the chat work-mode label (status chip / modal) and the toggle notice.
  *  Keyed by BrainWorkMode so adding a mode is one edit here, not scattered ternaries. */
 export const WORK_MODE_LABEL: Record<BrainWorkMode, string> = { build: 'Build', plan: 'Plan', workflow: 'Workflow' };
-export const WORK_MODE_NOTICE: Record<BrainWorkMode, string> = {
-  build: 'build mode: Elowen can implement with tools',
-  plan: 'plan mode: Elowen will reason through approach, risks and tests before editing',
-  workflow: 'workflow mode: Elowen orchestrates the task as a DAG of sub-agents',
-};
+export function workModeNotice(mode: BrainWorkMode, agentName = 'Elowen'): string {
+  const notices: Record<BrainWorkMode, string> = {
+    build: `build mode: ${agentName} can implement with tools`,
+    plan: `plan mode: ${agentName} will reason through approach, risks and tests before editing`,
+    workflow: `workflow mode: ${agentName} orchestrates the task as a DAG of sub-agents`,
+  };
+  return notices[mode];
+}
+
+/** The instance's user-facing brand from the unauthenticated GET /public/theme. `themed` distinguishes
+ *  a white-labeled daemon (the CLI then drops the built-in flame art) from the stock Elowen brand. */
+export interface PublicBrand { agentName: string; productName: string; themed: boolean }
+export const DEFAULT_PUBLIC_BRAND: PublicBrand = { agentName: 'Elowen', productName: 'Elowen', themed: false };
 export interface BrainRateLimitWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 export interface BrainRateLimits {
   provider: string;
@@ -426,6 +434,19 @@ export class BrainClient {
     const body = (await res.json()) as { runtime?: { limits?: { localShellTimeoutMs?: unknown } } };
     const value = body.runtime?.limits?.localShellTimeoutMs;
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  /** The instance brand from GET /public/theme (white-label). Falls back to the built-in Elowen brand
+   *  on any failure — including an older daemon without the route — so branding can never block a chat. */
+  async publicBrand(): Promise<PublicBrand> {
+    try {
+      const res = await this.f(`${this.o.base}/public/theme`, { headers: this.headers() });
+      if (!res.ok) return DEFAULT_PUBLIC_BRAND;
+      const body = (await res.json()) as { brand?: { agentName?: unknown; productName?: unknown }; v?: unknown };
+      const agentName = typeof body.brand?.agentName === 'string' && body.brand.agentName ? body.brand.agentName : 'Elowen';
+      const productName = typeof body.brand?.productName === 'string' && body.brand.productName ? body.brand.productName : 'Elowen';
+      return { agentName, productName, themed: typeof body.v === 'string' && body.v !== 'builtin' };
+    } catch { return DEFAULT_PUBLIC_BRAND; }
   }
 
   /** Current global TDD mission mode flag from the public daemon config (the `/tdd` command). */

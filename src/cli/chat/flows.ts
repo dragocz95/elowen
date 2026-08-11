@@ -52,7 +52,7 @@ export function createFlows(
       return;
     }
     const handle = runAskFlow({
-      tui, slot: editorSlot, editor, questions,
+      tui, slot: editorSlot, editor, questions, agentName: rt.brand.agentName,
       onComplete: (answers) => {
         settled(id);
         lifetime.runSession(() => client.answer(id, answers), () => {}, () => { /* turn may have gone */ });

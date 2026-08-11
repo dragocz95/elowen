@@ -30,6 +30,8 @@ export interface AskChoiceDockOpts {
   question: AskQuestion;
   index: number;
   total: number;
+  /** The assistant's display name for the dock title (white-label); 'Elowen' when absent. */
+  agentName?: string;
   selected?: string[];
   onSubmit: (selected: string[]) => void;
   onOther: (selected: string[]) => void;
@@ -193,7 +195,7 @@ export class AskChoiceDock implements Component, Focusable {
     }));
     const choiceRows = choiceGroups.flat();
     const progress = `${this.opts.index + 1}/${this.opts.total}`;
-    const titleRow = row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, inlineText(this.opts.question.header || 'AskUserQuestion'))}  ${open(theme.faint, progress)}`);
+    const titleRow = row(`  ${open(theme.text, `${inlineText(this.opts.agentName || 'Elowen')} needs a decision`)}  ${open(theme.faint, inlineText(this.opts.question.header || 'AskUserQuestion'))}  ${open(theme.faint, progress)}`);
     const questionRows = wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4))
       .map((line) => row(`  ${open(theme.text, line)}`));
     const actionSegments = [
@@ -293,6 +295,8 @@ export interface AskFlowOpts {
   slot: Container;
   editor: Editor;
   questions: AskQuestion[];
+  /** The assistant's display name for the dock titles (white-label); 'Elowen' when absent. */
+  agentName?: string;
   /** All questions answered — deliver the picks (aligned to `questions`). */
   onComplete: (answers: AskAnswer[]) => void;
   /** User bailed (Esc) — the caller aborts the parked turn so it doesn't wait for the timeout. */
@@ -354,6 +358,7 @@ export function runAskFlow(o: AskFlowOpts): { close(): void } {
       question: q,
       index: answers.length,
       total: o.questions.length,
+      ...(o.agentName ? { agentName: o.agentName } : {}),
       selected,
       onCancel: cancel,
       onOther: (picked) => askOther(q, picked),

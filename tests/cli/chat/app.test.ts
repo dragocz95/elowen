@@ -444,6 +444,7 @@ describe('ChatApplication shutdown ownership', () => {
       terminalSettings: vi.fn(async () => null),
       commands: vi.fn(async () => []),
       localShellTimeoutMs: vi.fn(async () => null),
+      publicBrand: vi.fn(async () => ({ agentName: 'Elowen', productName: 'Elowen', themed: false })),
       history: vi.fn(() => { enteredHistory(); return delayedHistory; }),
       rateLimitsAll: vi.fn(async () => ({})),
       mcpServers: vi.fn(async () => []),

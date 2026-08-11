@@ -1,7 +1,8 @@
 import type { BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
-import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView } from './brainClient.js';
+import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView, PublicBrand } from './brainClient.js';
+import { DEFAULT_PUBLIC_BRAND } from './brainClient.js';
 import type { FrecencyMap, PendingImage } from './mentions.js';
 import type { ComposeLocale } from './composeLabels.js';
 
@@ -27,6 +28,7 @@ export interface ChatStateSeed {
   goal?: GoalView | null;
   showThoughts?: boolean;
   showMascot?: boolean;
+  brand?: PublicBrand;
   mentionFrecency?: FrecencyMap;
   /** Locale for localized action labels (the composing-tool hint). Defaults to English. */
   locale?: ComposeLocale;
@@ -78,6 +80,8 @@ export class ChatState {
   showThoughts: boolean;
   /** Show the flame mascot (start screen + rail). Local CLI-only chrome, toggled by `/maskot`. */
   showMascot: boolean;
+  /** The instance's white-label brand (GET /public/theme); the built-in Elowen brand when unthemed. */
+  readonly brand: PublicBrand;
   /** Locale for localized CLI action labels — resolved once at startup, read by the render frame loop. */
   readonly locale: ComposeLocale;
   pendingImages: PendingImage[] = [];
@@ -105,6 +109,7 @@ export class ChatState {
     this.currentGoal = seed.goal ?? null;
     this.showThoughts = seed.showThoughts ?? true;
     this.showMascot = seed.showMascot ?? true;
+    this.brand = seed.brand ?? DEFAULT_PUBLIC_BRAND;
     this.locale = seed.locale ?? 'en';
     this.mentionFrecency = seed.mentionFrecency ?? {};
   }

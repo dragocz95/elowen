@@ -171,13 +171,15 @@ export class ChatApplication {
     const locale = resolveLocale(prefs);
     let showThoughts = prefs.showThoughts !== false;
     // Local-only chrome: default shown, no server mirror (unlike showThoughts, which terminalSettings
-    // can override below). Nobody's view changes until they run /maskot to hide it.
-    const showMascot = prefs.showMascot !== false;
+    // can override below). Nobody's view changes until they run /maskot to hide it. The final value is
+    // resolved after the boot fetch: a white-labeled daemon drops the built-in Elowen flame art
+    // entirely — showing another product's mascot would defeat the rebrand.
+    const mascotPref = prefs.showMascot !== false;
     const client = this.client;
     await client.start({ provider: options.model, session: options.session, fresh: options.fresh });
     if (this.stopped) return;
     const bootHydration = new AbortController();
-    const [boot, processes, termSettings, initialTranscript, serverCommands, shellTimeoutMs] = await Promise.all([
+    const [boot, processes, termSettings, initialTranscript, serverCommands, shellTimeoutMs, brand] = await Promise.all([
       client.status().catch(() => null),
       client.processes().catch(() => []),
       client.terminalSettings().catch(() => null),
@@ -186,6 +188,8 @@ export class ChatApplication {
       // The operator's `!` timeout. A failed/absent value keeps the built-in default — the local shell must
       // stay usable against an older daemon, and offline is not a reason to refuse to run a command.
       client.localShellTimeoutMs().catch(() => null),
+      // White-label: the instance brand for the chat chrome (already default-safe on any failure).
+      client.publicBrand(),
     ]);
     bootHydration.abort();
     if (this.stopped) return;
@@ -234,7 +238,8 @@ export class ChatApplication {
       queued: boot?.queued ?? [],
       processes,
       showThoughts,
-      showMascot,
+      showMascot: mascotPref && !brand.themed,
+      brand,
       locale,
       mentionFrecency: loadMentionFrecency(process.cwd()),
     });

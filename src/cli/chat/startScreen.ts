@@ -10,16 +10,20 @@ export const PANEL_GUTTER_COLUMNS = 3;
 const BANNER_ROWS = MASCOT_ART.length;
 export class TopRule implements Component {
   /** `getTitle` supplies the active conversation's name; falls back to the brand when it's still empty
-   *  (a brand-new, not-yet-titled chat). Kept as a getter so the rule re-renders when the title lands. */
-  constructor(private readonly getTitle: () => string = () => '') {}
+   *  (a brand-new, not-yet-titled chat). Kept as a getter so the rule re-renders when the title lands.
+   *  `getBrand` supplies the instance's product name (white-label) — 'Elowen' when unthemed. */
+  constructor(
+    private readonly getTitle: () => string = () => '',
+    private readonly getBrand: () => string = () => 'Elowen',
+  ) {}
   invalidate(): void { /* stateless */ }
   render(width: number): string[] {
     const title = inlineText(this.getTitle());
     const label = title
       ? ` ${color.accent(glyph.whale)} ${color.text(truncateToWidth(title, Math.max(8, width - 12), '…'))} `
-      // The brand fallback is 28 visible chars — on a narrower terminal it MUST clip too, or pi-tui's
+      // The brand fallback is ~28 visible chars — on a narrower terminal it MUST clip too, or pi-tui's
       // width assert throws and takes the whole TUI down (leaving mouse reporting on).
-      : truncateToWidth(` ${color.accent('Elowen Chat')} ${color.faint('new conversation')} `, width, '…');
+      : truncateToWidth(` ${color.accent(`${inlineText(this.getBrand())} Chat`)} ${color.faint('new conversation')} `, width, '…');
     return [`${label}${color.accent('─'.repeat(Math.max(0, width - visibleWidth(label))))}`];
   }
 }
