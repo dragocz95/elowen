@@ -452,7 +452,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker,
+    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -500,6 +500,8 @@ export async function buildApp(opts: BuildOpts) {
   // Contact is read per send, so changing it in Settings reaches the next notification without a restart.
   const pushSender = new PushSender(pushSubscriptions, () => config.webPushKeys(), undefined,
     () => ({ configured: config.get().webPushContact, instanceUrl: elowenCli.url }));
+  // …and the plugin host's late binding, so ctx.host.push() resolves (the agents plugin's dispatcher).
+  setPluginHostPush(pushSender);
   new PushDispatcher({ missions, tasks, users, sender: pushSender, missionGit }).subscribe(bus);
   // Snapshot each task's token/cost usage into task_usage as it settles, so the stats page reads
   // DB aggregates instead of re-scanning the CLIs' session stores. Resolve the same path the live

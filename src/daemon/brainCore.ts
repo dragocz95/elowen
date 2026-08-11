@@ -6,7 +6,7 @@ import { Readiness } from '../store/readiness.js';
 import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
-import type { PluginBrainWorker } from '../plugins/api.js';
+import type { PluginBrainWorker, PluginHostPush } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -328,6 +328,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Late binding for ctx.host.brainWorker(): the BrainWorkerService is constructed in bootstrap AFTER
   // this factory returns (it needs the brain store + bus), mirroring SpawnService.attachBrainWorker.
   let hostBrainWorker: PluginBrainWorker | undefined;
+  // Same late binding for the push transport: the PushSender is a bootstrap construct (it needs the
+  // subscriptions store + web-push keys wired there).
+  let hostPush: PluginHostPush | undefined;
   // Status reads verify a `running` workflow row against the ENGINE (the subagent plugin's `workflow`
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
@@ -468,6 +471,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         elowenCli: { cli, cliArgv, url: elowenCli.url, token: elowenCli.token, tokenForTask },
         stores: {
           tasks, projects,
+          // Live row read: `homeProject` may be the narrow bootstrap fallback {id,slug,path}, but the
+          // row always exists (inserted at open), so the store yields the full Project shape.
+          homeProject: () => projects.get(homeProject.id) ?? { id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', pr_enabled: null },
           usersRead: {
             list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
             isAdmin: (id) => users.isAdmin(id),
@@ -489,6 +495,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         },
         relayClient: (cfg) => new RelayClient(cfg),
         git: { projectHead, projectRangeDiff },
+        push: () => hostPush,
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
@@ -598,5 +605,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     loadedPlugins: () => loadedPluginRegistry,
     // Bootstrap hands the constructed BrainWorkerService here so ctx.host.brainWorker() resolves.
     setPluginHostBrainWorker: (worker: PluginBrainWorker) => { hostBrainWorker = worker; },
+    setPluginHostPush: (sender: PluginHostPush) => { hostPush = sender; },
   };
 }

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -73,6 +73,8 @@ export interface PluginHostWiring {
   config?: PluginHostConfig;
   relayClient?: (cfg: RelayConfig) => InferenceClient;
   git?: PluginHost['git'] extends () => infer G ? G : never;
+  /** Live accessor — the PushSender is constructed after the plugin load (bootstrap late wiring). */
+  push?: () => PluginHostPush | undefined;
 }
 
 export class PluginRegistry {
@@ -554,6 +556,12 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('git')) throw new Error(`plugin "${name}" did not declare the reads:['git'] capability`);
           if (!host?.git) throw new Error('no git reader wired for plugins in this process');
           return host.git;
+        },
+        push: () => {
+          if (!capabilities.reads?.includes('push')) throw new Error(`plugin "${name}" did not declare the reads:['push'] capability`);
+          const sender = host?.push?.();
+          if (!sender) throw new Error('the push transport is not available in this process (daemon-only, wired after boot)');
+          return sender;
         },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as

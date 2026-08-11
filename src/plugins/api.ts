@@ -9,12 +9,14 @@ import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainWorkerLauncher } from '../spawn/spawn.js';
-import type { Task, CreateTaskInput, TaskStatus } from '../store/types.js';
+import type { Task } from '../store/types.js';
 import type { Project } from '../store/projectStore.js';
+import type { TaskStore } from '../store/taskStore.js';
+import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { ElowenConfig } from '../store/configStore.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { CommitFileChange } from '../integrations/projectFiles.js';
-import type { TokenUsage } from '../integrations/usage/types.js';
+import type { PushPayload } from '../push/messages.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 export type { DelegatedChildSummary };
@@ -363,20 +365,14 @@ export interface PluginUserView { id: number; username: string; isAdmin: boolean
  *  core stores (one shared SQLite underneath — see PluginDb), NOT the store classes themselves: the
  *  seam is the documented contract, and users are read-only by design. */
 export interface PluginHostStores {
-  tasks: {
-    get(id: string): Task | null;
-    list(filter?: { status?: TaskStatus; project_id?: number }): Task[];
-    create(input: CreateTaskInput): Task;
-    setStatus(id: string, status: TaskStatus): void;
-    close(id: string, opts?: { summary?: string | null; outcome?: string | null }): void;
-    children(parentId: string): Task[];
-    descendants(rootId: string): Task[];
-    addLabel(id: string, label: string): void;
-    removeLabel(id: string, label: string): void;
-    depsFor(taskId: string): string[];
-    transaction<T>(fn: () => T): T;
-  };
+  /** The FULL task store — typed as the core class (structural), not a hand-picked subset: the agents
+   *  extraction grandfathers the whole task workflow (stuck/nudge counters, resume notes, review-fix
+   *  budgets, agent/exec binding, change snapshots), and a re-spelled 30-method interface would only
+   *  drift from the class it mirrors. Type-only import; the instance is the daemon's own store. */
+  tasks: TaskStore;
   projects: { get(id: number): Project | null; list(): Project[] };
+  /** The daemon's home project row (its own checkout) — the spawn fallback cwd. */
+  homeProject(): Project;
   usersRead: {
     list(): PluginUserView[];
     isAdmin(id: number): boolean;
@@ -386,8 +382,8 @@ export interface PluginHostStores {
   };
   /** Dependency-cleared open tasks (the mission engine / scheduler working set). */
   readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
-  /** Per-task token usage snapshots (written by the usage recorder, read by the task detail). */
-  taskUsage: { record(taskId: string, projectId: number, exec: string, usage: TokenUsage): void; get(taskId: string): TokenUsage | null };
+  /** Per-task token usage snapshots — the full core store (same structural-typing rationale as tasks). */
+  taskUsage: TaskUsageStore;
 }
 
 /** The embedded (Elowen AI) worker executor as the agents subsystem needs it: launching, plus the
@@ -444,7 +440,13 @@ export interface PluginHost {
     projectHead(root: string): Promise<string>;
     projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]>;
   };
+  /** The web-push transport (send only — recipients are the plugin's own concern via usersRead).
+   *  Gated by `reads:['push']`; wired late by bootstrap like the brain worker. */
+  push(): PluginHostPush;
 }
+
+/** Send-only view of the core PushSender (see PluginHost.push). */
+export interface PluginHostPush { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
 
 /** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
  *  content hash (pins the immutable serving URL — a stale hash 404s), and the manifest's menu metadata. */
