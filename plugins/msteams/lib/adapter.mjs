@@ -400,6 +400,10 @@ export class MsTeamsAdapter {
       if (replyText) this.recordHistory(conv.id, { name: this.cfg.agentName || 'Elowen', text: replyText });
     } catch (e) {
       clearInterval(typing);
+      // Logged as well as replied. A turn that fails here reaches the person who asked and NOBODY else:
+      // the caller only logs when the whole webhook promise rejects, which this catch prevents, so an
+      // operator reading the daemon log sees a healthy service while every turn is dying in the chat.
+      this.log.error(`msteams turn failed in ${conv.id}: ${e?.stack ?? e?.message ?? e}`);
       if (stream) await stream.fail(e?.message ?? e); // settle live tools before the error reply lands below them
       await this.tmSend(conv.id, this.msg.error(e?.message ?? e), { replyToId: m.id }).catch(() => {});
     }

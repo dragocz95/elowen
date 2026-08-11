@@ -46,8 +46,10 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
 } = {}) {
   const { MsTeamsAdapter } = await import(join(repoRoot, 'plugins/msteams/lib/adapter.mjs')) as AdapterModule;
   const state = new MemoryState();
+  const errors: string[] = [];
+  const logger = { ...log, error: (m: string) => { errors.push(m); } };
   const adapter = new MsTeamsAdapter(
-    { ...CREDS, ...cfg }, log, state, async () => opts.models ?? [], [], () => null,
+    { ...CREDS, ...cfg }, logger, state, async () => opts.models ?? [], [], () => null,
     (id, answers) => { (opts.answers ??= []).push({ id, answers }); return true; },
     () => [],
   );
@@ -64,7 +66,7 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
     download: async () => Buffer.from('img'),
     token: async () => 'tok',
   });
-  return { adapter, state, calls };
+  return { adapter, state, calls, errors };
 }
 
 const activity = (over: Record<string, unknown> = {}) => ({
@@ -517,6 +519,17 @@ describe('msteams per-chat overrides', () => {
     await adapter.onCardAction(activity({ value: { ep: 'model', v: 'anthropic claude-opus-4-8' } }));
     // Fast is a provider capability, not a portable preference: it must not survive the move.
     expect(state.get('a:conv1')).toMatchObject({ model: { provider: 'anthropic', model: 'claude-opus-4-8' }, fast: false });
+  });
+
+  it('logs a failed turn as well as replying with it', async () => {
+    // Replying only would leave the failure visible to the one person who asked, and to no operator:
+    // the daemon log would show a healthy service while every turn died in the chat.
+    const { adapter, calls, errors } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    adapter.listen(async () => { throw new Error('brain exploded'); });
+    await adapter.onActivity(activity());
+    const replies = calls.filter((c) => c.kind === 'reply').map((c) => (c.args[3] as { text?: string })?.text ?? '');
+    expect(replies.some((t) => t.includes('brain exploded'))).toBe(true);
+    expect(errors.some((e) => e.includes('brain exploded') && e.includes('a:conv1'))).toBe(true);
   });
 
   it('drops a question that timed out instead of leaving its card answerable', async () => {
