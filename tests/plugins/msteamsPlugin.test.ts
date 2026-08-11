@@ -429,7 +429,20 @@ describe('msteams conversation history backfill', () => {
     // Off is the default, and off must mean nothing is written to disk at all — this transcript persists
     // message text, unlike Discord's fetch-on-demand.
     expect((state.get('a:conv1') as { log?: unknown[] }).log).toBeUndefined();
-    expect((srcs[0]!.history as () => string)()).toBe('');
+    expect(await (srcs[0]!.history as () => Promise<string>)()).toBe('');
+  });
+
+  it('hands the brain a promise, which is what it calls .catch() on', async () => {
+    // The SessionSource contract is `history?: () => Promise<string>`. A synchronous string satisfies
+    // every assertion about its CONTENT and still breaks the first turn of every new conversation,
+    // because the brain does `await opts.history().catch(…)` — and a string has no .catch.
+    const { adapter } = await makeAdapter({ historyLimit: 10, ...policy });
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'ok'; });
+    await adapter.onActivity(activity());
+    const returned = (srcs[0]!.history as () => unknown)();
+    expect(typeof (returned as { catch?: unknown })?.catch).toBe('function');
+    expect(await (returned as Promise<string>)).toBe('');
   });
 
   it('seeds a new conversation with both sides, minus the message being answered', async () => {
@@ -439,8 +452,8 @@ describe('msteams conversation history backfill', () => {
     await adapter.onActivity(activity({ id: 'in-1', text: 'first question' }));
     await adapter.onActivity(activity({ id: 'in-2', text: 'second question' }));
 
-    expect((srcs[0]!.history as () => string)()).toBe(''); // nothing preceded the very first message
-    const block = (srcs[1]!.history as () => string)();
+    expect(await (srcs[0]!.history as () => Promise<string>)()).toBe(''); // nothing preceded the first message
+    const block = await (srcs[1]!.history as () => Promise<string>)();
     expect(block).toContain('[Alex Rivera] first question');
     expect(block).toContain('[Elowen] the answer');
     // The message being answered was recorded a moment earlier; carrying it would duplicate the prompt.

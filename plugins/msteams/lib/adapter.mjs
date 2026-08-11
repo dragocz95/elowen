@@ -385,7 +385,9 @@ export class MsTeamsAdapter {
           channelId: convoKey, access: turnAccess,
           channelName: kind !== 'personal' ? (conv.name || undefined) : undefined,
           images: images.length ? images : undefined,
-          history: () => this.buildHistory(conv.id, m.id),
+          // MUST be async: the brain calls `opts.history().catch(…)` on the result, so a plain string
+          // throws before the first turn of every new conversation ever reaches the model.
+          history: async () => this.buildHistory(conv.id, m.id),
         },
         promptSlash ?? prefixed,
         onEvent,
