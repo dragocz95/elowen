@@ -1,6 +1,6 @@
-import type { TaskStore } from '../store/taskStore.js';
-import { projectHead, projectRangeDiff } from '../integrations/projectFiles.js';
-import { logger } from '../shared/logger.js';
+import type { TaskStore } from '../../store/taskStore.js';
+import { projectHead, projectRangeDiff } from '../../integrations/projectFiles.js';
+import { logger } from '../../shared/logger.js';
 
 const log = logger('snapshot');
 

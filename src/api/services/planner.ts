@@ -1,9 +1,9 @@
-import type { InferenceClient } from '../inference/types.js';
-import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
+import type { InferenceClient } from '../../inference/types.js';
+import { defaultPromptTemplate } from '../../prompts/plannerDefault.js';
 import { extractJson } from './llmParse.js';
 // Phase is part of the CORE event contract (rides the `plan` SSE event) — defined in shared/, only
 // re-exported here so the planner's own callers keep their import path until the extraction moves them.
-import type { Phase } from '../shared/agentEvents.js';
+import type { Phase } from '../../shared/agentEvents.js';
 
 export type { Phase };
 

@@ -12,7 +12,7 @@ import { parseBody, queryInt } from '../validation.js';
 import { LOG_DIR, logger } from '../../shared/logger.js';
 import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES } from '../../integrations/logFiles.js';
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
-import { resolveExecutor } from '../../overseer/routing.js';
+import { resolveExecutor } from '../../shared/execRouting.js';
 import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseElowenExec } from '../../shared/execs.js';
 import type { ElowenEvent } from '../sse.js';
 import type { ElowenApp, RouteContext } from '../context.js';

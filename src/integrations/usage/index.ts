@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import type { AgentSpec } from '../../spawn/commandBuilder.js';
+import type { AgentSpec } from '../../shared/execRouting.js';
 import { opencodeUsage } from './opencode.js';
 import { claudeUsage } from './claude.js';
 import { codexUsage } from './codex.js';

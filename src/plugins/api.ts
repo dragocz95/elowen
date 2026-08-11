@@ -8,7 +8,7 @@ import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import type { TmuxDriver } from '../tmux/types.js';
-import type { BrainWorkerLauncher } from '../spawn/spawn.js';
+import type { AgentSpec } from '../shared/execRouting.js';
 import type { Task } from '../store/types.js';
 import type { DecisionKind, DecisionResult, Mission, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
 import type { Project } from '../store/projectStore.js';
@@ -390,6 +390,13 @@ export interface PluginHostStores {
 /** The embedded (Elowen AI) worker executor as the agents subsystem needs it: launching, plus the
  *  live-session views the stuck detector / zombie reconcile / session routes read (an embedded worker
  *  has no tmux pane, so without these it would be reaped as dead). */
+/** The subset of the agents plugin's SpawnService.launch input a brain worker needs (no tmux/CLI
+ *  concerns). Lives here since part 2 of the extraction deleted the core SpawnService — the daemon's
+ *  embedded worker implements it, the plugin's spawn resolves it late through ctx.host.brainWorker(). */
+export interface BrainWorkerLauncher {
+  launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; rawPrompt?: string; ownerId?: number | null; tddMode?: boolean }): Promise<{ session: string }>;
+}
+
 export interface PluginBrainWorker extends BrainWorkerLauncher {
   liveSessionNames(): string[];
   isLive(session: string): boolean;

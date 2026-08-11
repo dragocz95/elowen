@@ -1,6 +1,6 @@
 import { projectReviewDiff } from '../../integrations/projectFiles.js';
-import { buildReviewContext } from '../../overseer/reviewContext.js';
-import { snapshotTaskChanges } from '../../overseer/taskSnapshot.js';
+import { buildReviewContext } from './reviewContext.js';
+import { snapshotTaskChanges } from './taskSnapshot.js';
 import { logger } from '../../shared/logger.js';
 import type { AgentsDecisionQueue, AgentsGitLock } from '../../plugins/api.js';
 import type { Task } from '../../store/types.js';

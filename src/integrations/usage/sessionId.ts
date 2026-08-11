@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import type { Program } from '../../shared/execs.js';
-import type { AgentSpec } from '../../spawn/commandBuilder.js';
+import type { AgentSpec } from '../../shared/execRouting.js';
 import { locateClaudeSession } from './claude.js';
 import { locateCodexSession, codexSessionId } from './codex.js';
 import { locateOpencodeSession } from './opencode.js';

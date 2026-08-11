@@ -1,4 +1,4 @@
-import type { Program } from '../../shared/execs.js';
+import type { Program } from '../execs.js';
 
 /** How a provider splices a resume into its launch command. Internal to this module — consumers go
  *  through `ResumeProvider.resumeArgs`. */

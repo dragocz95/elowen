@@ -1,6 +1,6 @@
-import { resolveExecutor } from '../../overseer/routing.js';
-import { checkoutBusy, checkoutOf } from '../../overseer/checkout.js';
-import { parseResumeLabel } from '../../spawn/resume/index.js';
+import { resolveExecutor } from '../../shared/execRouting.js';
+import { checkoutBusy, checkoutOf } from './checkout.js';
+import { parseResumeLabel } from '../../shared/resume/index.js';
 import { resolveOwnerId } from '../../prompts/owner.js';
 import { projectHead } from '../../integrations/projectFiles.js';
 import { uniqueName } from '../../daemon/uniqueName.js';

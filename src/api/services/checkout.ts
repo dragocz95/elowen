@@ -1,4 +1,4 @@
-import { usagePath } from '../integrations/usage/usagePath.js';
+import { usagePath } from '../../integrations/usage/usagePath.js';
 
 /** Resolves the pieces needed to map a task to the checkout its agent writes in. */
 export interface CheckoutResolver {

@@ -1,5 +1,5 @@
 import { authMiddleware } from './auth.js';
-import { classifySession } from '../overseer/sessionInfo.js';
+import { classifySession } from '../shared/sessionInfo.js';
 import type { ElowenApp, RouteContext } from './context.js';
 
 /** Register the authentication + tenancy guards as global (`*`) middleware. MUST run before any route

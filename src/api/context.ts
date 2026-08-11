@@ -1,4 +1,4 @@
-import { classifySession } from '../overseer/sessionInfo.js';
+import { classifySession } from '../shared/sessionInfo.js';
 import { usagePath } from '../integrations/usage/usagePath.js';
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
@@ -10,8 +10,8 @@ import { createSkillService, type SkillService } from './services/skillService.j
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
-import { PlanJobStore } from '../overseer/planJob.js';
-import { DecisionQueue } from '../overseer/decisionQueue.js';
+import { PlanJobStore } from './planJobStore.js';
+import { DecisionQueue } from './decisionQueue.js';
 import { createTicketStore, type TicketStore } from '../terminal/ticketStore.js';
 import type { AgentsDecisionQueue, AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
 import type { Phase, PlanJob } from '../shared/agentEvents.js';

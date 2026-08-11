@@ -1,5 +1,7 @@
-import type { AgentSpec } from '../spawn/commandBuilder.js';
-import { PROGRAM_PREFIXES, BARE_WITH_SLASH_PROGRAM, BARE_PLAIN_PROGRAM } from '../shared/execs.js';
+/** Program + model an agent session runs — the exec spec every routing/usage path shares. Moved
+ *  here from the plugin-owned spawn command builder (part 2 of the agents extraction). */
+export interface AgentSpec { program: string; model: string }
+import { PROGRAM_PREFIXES, BARE_WITH_SLASH_PROGRAM, BARE_PLAIN_PROGRAM } from './execs.js';
 
 export function resolveExecutor(labels: string[], fallback: AgentSpec): AgentSpec {
   const label = labels.find(l => l.startsWith('exec:'));

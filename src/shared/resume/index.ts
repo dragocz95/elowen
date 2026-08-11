@@ -1,4 +1,4 @@
-import type { Program } from '../../shared/execs.js';
+import type { Program } from '../execs.js';
 import type { ResumeProvider } from './types.js';
 import { claudeResume } from './claude.js';
 import { codexResume } from './codex.js';

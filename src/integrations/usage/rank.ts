@@ -1,5 +1,5 @@
-import { resolveExecutor } from '../../overseer/routing.js';
-import type { AgentSpec } from '../../spawn/commandBuilder.js';
+import { resolveExecutor } from '../../shared/execRouting.js';
+import type { AgentSpec } from '../../shared/execRouting.js';
 import type { Task } from '../../store/types.js';
 import { SESSION_MATCH_SKEW_MS } from './types.js';
 import { parseDbTs } from '../../shared/time.js';

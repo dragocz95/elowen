@@ -1,5 +1,5 @@
 import { streamSSE } from 'hono/streaming';
-import { classifySession } from '../../overseer/sessionInfo.js';
+import { classifySession } from '../../shared/sessionInfo.js';
 import { parseBody } from '../validation.js';
 import { launchSessionSchema, sessionKeysSchema, sessionInputSchema, sessionResizeSchema } from '../schemas/sessions.js';
 import type { ElowenApp, RouteContext } from '../context.js';
