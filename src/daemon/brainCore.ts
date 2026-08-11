@@ -6,7 +6,7 @@ import { Readiness } from '../store/readiness.js';
 import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
-import type { BrainWorkerLauncher } from '../spawn/spawn.js';
+import type { PluginBrainWorker } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -22,7 +22,8 @@ import { UserPromptStore } from '../store/userPromptStore.js';
 import { UserSettingStore } from '../store/userSettingStore.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
-import { setPluginPromptSources } from '../prompts/index.js';
+import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
+import { projectHead, projectRangeDiff } from '../integrations/projectFiles.js';
 import { TaskUsageStore } from '../store/taskUsageStore.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -326,7 +327,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   let loadedPluginRegistry: PluginRegistry | undefined;
   // Late binding for ctx.host.brainWorker(): the BrainWorkerService is constructed in bootstrap AFTER
   // this factory returns (it needs the brain store + bus), mirroring SpawnService.attachBrainWorker.
-  let hostBrainWorker: BrainWorkerLauncher | undefined;
+  let hostBrainWorker: PluginBrainWorker | undefined;
   // Status reads verify a `running` workflow row against the ENGINE (the subagent plugin's `workflow`
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
@@ -470,9 +471,26 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           usersRead: {
             list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
             isAdmin: (id) => users.isAdmin(id),
+            allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
           },
+          readiness, taskUsage,
         },
+        prompts: {
+          render: (name, vars, userId) => prompts.render(name, vars ?? {}, userId),
+          rawTemplate,
+        },
+        config: {
+          get: () => {
+            const c = config.get();
+            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers };
+          },
+          autopilotRelay: () => config.autopilotRelay(),
+          ghToken: () => config.ghToken(),
+        },
+        relayClient: (cfg) => new RelayClient(cfg),
+        git: { projectHead, projectRangeDiff },
       },
+      subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
     }).then((registry) => {
       // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the
@@ -579,6 +597,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     // read plugin contributions without awaiting the provider (e.g. event tenancy resolvers).
     loadedPlugins: () => loadedPluginRegistry,
     // Bootstrap hands the constructed BrainWorkerService here so ctx.host.brainWorker() resolves.
-    setPluginHostBrainWorker: (worker: BrainWorkerLauncher) => { hostBrainWorker = worker; },
+    setPluginHostBrainWorker: (worker: PluginBrainWorker) => { hostBrainWorker = worker; },
   };
 }

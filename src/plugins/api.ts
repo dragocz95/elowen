@@ -11,6 +11,10 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainWorkerLauncher } from '../spawn/spawn.js';
 import type { Task, CreateTaskInput, TaskStatus } from '../store/types.js';
 import type { Project } from '../store/projectStore.js';
+import type { ElowenConfig } from '../store/configStore.js';
+import type { InferenceClient, RelayConfig } from '../inference/types.js';
+import type { CommitFileChange } from '../integrations/projectFiles.js';
+import type { TokenUsage } from '../integrations/usage/types.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 export type { DelegatedChildSummary };
@@ -373,7 +377,45 @@ export interface PluginHostStores {
     transaction<T>(fn: () => T): T;
   };
   projects: { get(id: number): Project | null; list(): Project[] };
-  usersRead: { list(): PluginUserView[]; isAdmin(id: number): boolean };
+  usersRead: {
+    list(): PluginUserView[];
+    isAdmin(id: number): boolean;
+    /** The user's personal exec whitelist (empty = everything the global list allows), or null for an
+     *  unknown user. Read-only — the identity view stays immutable by construction. */
+    allowedExecs(userId: number): readonly string[] | null;
+  };
+  /** Dependency-cleared open tasks (the mission engine / scheduler working set). */
+  readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
+  /** Per-task token usage snapshots (written by the usage recorder, read by the task detail). */
+  taskUsage: { record(taskId: string, projectId: number, exec: string, usage: TokenUsage): void; get(taskId: string): TokenUsage | null };
+}
+
+/** The embedded (Elowen AI) worker executor as the agents subsystem needs it: launching, plus the
+ *  live-session views the stuck detector / zombie reconcile / session routes read (an embedded worker
+ *  has no tmux pane, so without these it would be reaped as dead). */
+export interface PluginBrainWorker extends BrainWorkerLauncher {
+  liveSessionNames(): string[];
+  isLive(session: string): boolean;
+  abort(session: string): Promise<void>;
+}
+
+/** User-override-aware prompt rendering (the core PromptService): resolves a user's saved prompt
+ *  override before the file default — the file default itself may come from this plugin's own
+ *  registerPrompts() overlay. */
+export interface PluginHostPrompts {
+  render(name: string, vars?: Record<string, string>, userId?: number | null): string;
+  rawTemplate(name: string): string;
+}
+
+/** The workspace-config slice the agents subsystem reads, plus its secret accessors. The `get()` view
+ *  is the SANITIZED config (apiKeySet booleans, never key material); the secrets flow only through the
+ *  purpose-built accessors, mirroring how the core threads them today. */
+export interface PluginHostConfig {
+  get(): Pick<ElowenConfig, 'autopilot' | 'allowedExecs' | 'modelNotes' | 'defaults' | 'providers'>;
+  /** The autopilot relay credentials (provider-bound or legacy apiUrl+key), or null when unconfigured. */
+  autopilotRelay(): { baseUrl: string; apiKey: string } | null;
+  /** The GitHub token for mission PR automation, or null. */
+  ghToken(): string | null;
 }
 
 /** Host capabilities for extracting a core subsystem into a plugin (the agents extraction): the tmux
@@ -385,11 +427,23 @@ export interface PluginHost {
   tmux(): TmuxDriver;
   /** The embedded (Elowen AI) worker executor. Gated by `reads:['brain-worker']`; present only in the
    *  daemon and only after bootstrap wired it. */
-  brainWorker(): BrainWorkerLauncher;
+  brainWorker(): PluginBrainWorker;
   /** Agent CLI invocation + daemon URL + agent-scoped tokens. Gated by `reads:['elowen-cli']`. */
   elowenCli(): PluginElowenCli;
   /** Typed seams over the core stores. Gated by `reads:['stores']`. */
   stores(): PluginHostStores;
+  /** User-override-aware prompt rendering. Gated by `reads:['prompts']`. */
+  prompts(): PluginHostPrompts;
+  /** Workspace config slice + secret accessors. Gated by `reads:['config']`. */
+  config(): PluginHostConfig;
+  /** Build a relay inference client (the overseer/planner/decision LLM path). Gated by
+   *  `reads:['inference']`. */
+  relayClient(cfg: RelayConfig): InferenceClient;
+  /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
+  git(): {
+    projectHead(root: string): Promise<string>;
+    projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]>;
+  };
 }
 
 /** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
@@ -686,6 +740,11 @@ export interface PluginContext {
    *  cannot (the data moved into this plugin). Consulted after core, first non-null wins, exceptions
    *  fail closed. Gated by `mutates:['events']` — resolution decides tenant visibility. */
   registerEventProjectResolver(resolve: (event: ElowenEvent) => number | null): void;
+  /** Subscribe to the daemon's event bus (usage recording, push dispatch — bus CONSUMERS that moved
+   *  into a plugin). Gated by `mutates:['events']`. Returns the unsubscribe; the host also detaches
+   *  every subscription of the OLD registry on a plugin reload, so a stale closure can never
+   *  double-handle events beside its replacement. */
+  subscribeEvents(fn: (event: ElowenEvent) => void): () => void;
   /** Run once BEFORE the daemon starts serving platform turns — and again after every plugin reload —
    *  to reconcile durable state with reality (re-park watchers, terminalize orphans). Must be
    *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not

@@ -2,9 +2,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
-import type { BrainWorkerLauncher } from '../spawn/spawn.js';
+import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
@@ -66,9 +66,13 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
  *  bootstrap constructs it after the plugin load (late wiring, same as SpawnService.attachBrainWorker). */
 export interface PluginHostWiring {
   tmux?: TmuxDriver;
-  brainWorker?: () => BrainWorkerLauncher | undefined;
+  brainWorker?: () => PluginBrainWorker | undefined;
   elowenCli?: PluginElowenCli;
   stores?: PluginHostStores;
+  prompts?: PluginHostPrompts;
+  config?: PluginHostConfig;
+  relayClient?: (cfg: RelayConfig) => InferenceClient;
+  git?: PluginHost['git'] extends () => infer G ? G : never;
 }
 
 export class PluginRegistry {
@@ -98,6 +102,10 @@ export class PluginRegistry {
   /** Plugin-contributed event→project resolvers (tenancy for core-shaped events whose data moved into a
    *  plugin). Consulted by eventProjectId after the core lookups; first non-null wins. */
   readonly eventProjectResolvers: { plugin: string; fn: (e: ElowenEvent) => number | null }[] = [];
+  /** Live bus subscriptions this registry's plugins hold (ctx.subscribeEvents). Owned by the registry
+   *  so a reload can detach the WHOLE old generation — a stale closure must never double-handle events
+   *  beside its replacement. */
+  readonly busSubscriptions: { plugin: string; off: () => void }[] = [];
   /** Browser UI bundles (manifest-declared, loader-resolved): absolute bundle path + content hash (pins
    *  the immutable serving URL) + the manifest's nav/settings menu metadata. */
   readonly webUi = new Map<string, PluginWebUi>();
@@ -176,6 +184,7 @@ export class PluginRegistry {
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
+    this.busSubscriptions.push(...other.busSubscriptions);
     for (const [k, v] of other.webUi) this.webUi.set(k, v);
     for (const p of other.promptEntries) {
       const prior = this.promptSources.get(p.entry.name);
@@ -190,6 +199,14 @@ export class PluginRegistry {
     this.turnContextOwners.push(...other.turnContextOwners);
     this.platformOwners.push(...other.platformOwners);
     for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
+  }
+
+  /** Detach every live bus subscription this registry's plugins hold — called on the OLD registry
+   *  during a plugin reload, before the new generation subscribes. Idempotent. */
+  disposeEventSubscriptions(): void {
+    for (const s of this.busSubscriptions.splice(0)) {
+      try { s.off(); } catch { /* the bus already dropped it */ }
+    }
   }
 
   /** Resolve the handler for a `/hooks/…` request path (everything after `/hooks/`): exact mount first,
@@ -301,7 +318,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -458,6 +475,18 @@ export class PluginRegistry {
         if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventProjectResolver refused: missing mutates:['events'] capability`); return; }
         this.eventProjectResolvers.push({ plugin: name, fn });
       },
+      subscribeEvents: (fn) => {
+        if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);
+        if (!subscribeEvents) throw new Error('no event bus wired for plugins in this process');
+        const off = subscribeEvents(fn);
+        const entry = { plugin: name, off };
+        this.busSubscriptions.push(entry);
+        return () => {
+          off();
+          const at = this.busSubscriptions.indexOf(entry);
+          if (at >= 0) this.busSubscriptions.splice(at, 1);
+        };
+      },
       // Editable prompt templates. Shadowing what the model reads is a prompt mutation, so it rides the
       // existing mutates:['prompt'] grant. Names stay BARE (`worker`, not `agents/worker`) — the
       // override key in `user_prompts` must survive a template migrating from core into a plugin.
@@ -505,6 +534,26 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('stores')) throw new Error(`plugin "${name}" did not declare the reads:['stores'] capability`);
           if (!host?.stores) throw new Error('no store seams wired for plugins in this process');
           return host.stores;
+        },
+        prompts: () => {
+          if (!capabilities.reads?.includes('prompts')) throw new Error(`plugin "${name}" did not declare the reads:['prompts'] capability`);
+          if (!host?.prompts) throw new Error('no prompt service wired for plugins in this process');
+          return host.prompts;
+        },
+        config: () => {
+          if (!capabilities.reads?.includes('config')) throw new Error(`plugin "${name}" did not declare the reads:['config'] capability`);
+          if (!host?.config) throw new Error('no workspace config wired for plugins in this process');
+          return host.config;
+        },
+        relayClient: (cfg) => {
+          if (!capabilities.reads?.includes('inference')) throw new Error(`plugin "${name}" did not declare the reads:['inference'] capability`);
+          if (!host?.relayClient) throw new Error('no relay client factory wired for plugins in this process');
+          return host.relayClient(cfg);
+        },
+        git: () => {
+          if (!capabilities.reads?.includes('git')) throw new Error(`plugin "${name}" did not declare the reads:['git'] capability`);
+          if (!host?.git) throw new Error('no git reader wired for plugins in this process');
+          return host.git;
         },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as

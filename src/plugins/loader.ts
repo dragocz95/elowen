@@ -143,6 +143,9 @@ export interface LoadPluginsOptions {
   /** Host capabilities exposed to plugins as ctx.host.* (tmux, brain worker, agent CLI credentials,
    *  typed store seams) — each accessor behind its own `reads` grant. Wired by the daemon core. */
   host?: PluginHostWiring;
+  /** Event-bus SUBSCRIBE sink exposed as ctx.subscribeEvents() — gated by `mutates:['events']`. The
+   *  registry tracks the subscriptions so a reload detaches the whole old generation. */
+  subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void;
   logger: PluginLogger;
 }
 
@@ -196,7 +199,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // Reverse mutation belongs exclusively to the bundled workflow owner. Do not hand arbitrary enabled
           // plugins a client that can mutate daemon-owned DAGs from a runner turn.
           name === 'subagent' ? opts.workflowExpansionRpc : undefined,
-          opts.pluginDb, opts.publishEvent, opts.host);
+          opts.pluginDb, opts.publishEvent, opts.host, opts.subscribeEvents);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest

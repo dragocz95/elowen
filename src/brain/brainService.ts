@@ -1249,7 +1249,10 @@ export class BrainService {
         this.d.subagentRunner?.reset('plugins reloaded');
         // Old plugin services hold pre-swap closures — stop them before the registry swap takes effect
         // for the adapters, and bring the NEW registry's services up only after its reconciles ran
-        // (reconciles are idempotent by contract; a reload replays them like a boot).
+        // (reconciles are idempotent by contract; a reload replays them like a boot). The old
+        // generation's bus subscriptions detach with them, so a stale closure never double-handles
+        // events beside its replacement.
+        before?.disposeEventSubscriptions();
         await this.pluginServices.stopAll();
         this.platforms.stopAll();
         await this.pluginServices.runBootReconciles();
