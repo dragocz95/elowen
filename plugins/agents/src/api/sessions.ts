@@ -5,7 +5,7 @@ import { resolveExecutor } from '../overseer/routing.js';
 import { parseResumeLabel } from '../spawn/resume/index.js';
 import { resolveOwnerId } from '../lib/owner.js';
 import { uniqueName } from '../lib/uniqueName.js';
-import { json, canProject, type ApiAuth } from './http.js';
+import { json, canProject, agentForbidden, type ApiAuth } from './http.js';
 import type { PluginApiRequest, PluginContext, PluginHttpResponse } from '../../../../src/plugins/api.js';
 import type { Task } from '../../../../src/store/types.js';
 import type { AgentsRuntime } from '../runtime.js';
@@ -208,6 +208,8 @@ export function registerSessionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
     rootMount: '/sessions', path: '', method: 'GET', access: 'agent',
     handler: async (req) => {
       const segs = req.path === '' ? [] : req.path.split('/');
+      // Agent tokens may reach ONLY the list (the exact verb the core allow-list admitted).
+      if (agentForbidden(req.auth, segs.length === 0)) return json({ error: 'forbidden' }, 403);
       if (segs.length === 0) return list(req.auth);
       const name = decodeURIComponent(segs[0]!);
       if (segs.length === 2 && segs[1] === 'pane') {

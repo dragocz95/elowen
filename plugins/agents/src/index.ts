@@ -18,6 +18,7 @@ import { AGENTS_MIGRATIONS } from './store/migrations.js';
 import { buildAgentsRuntime, AGENTS_INTERVAL_MS, type AgentsRuntime } from './runtime.js';
 import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
+import { registerAsksApi } from './api/asks.js';
 import { stripPrefix } from './lib/text.js';
 import type { Logger } from './lib/logger.js';
 
@@ -121,6 +122,7 @@ export function register(ctx: PluginContext): void {
   // The grandfathered '/missions' + '/sessions' API surfaces (root-mounted; 404 while disabled).
   registerMissionsApi(ctx, rt);
   registerSessionsApi(ctx, rt);
+  registerAsksApi(ctx, rt);
 
   // The control surface the daemon routes/services/advisor drive (deps getters resolve it live from
   // the loaded registry). Accessor methods so the registry's function-shape narrowing applies and so

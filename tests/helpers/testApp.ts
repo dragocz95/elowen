@@ -37,6 +37,8 @@ export function agentsPluginProvider(w: {
   /** Core terminal controls (advisor/chat teardown, brain workers, ws tickets). Tests exercising those
    *  paths pass their real services here; the default is a no-op fake. */
   terminals?: PluginHostTerminals;
+  /** Override the prompt seam (default: the core file renderer, no per-user overrides). */
+  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
 }): PluginRegistryProvider {
   const bus = w.bus ?? new EventBus();
   return new PluginRegistryProvider(() => loadPlugins({
@@ -62,7 +64,7 @@ export function agentsPluginProvider(w: {
         readiness: w.readiness,
         taskUsage: new TaskUsageStore(w.db),
       },
-      prompts: { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
+      prompts: w.prompts ?? { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
       config: w.config as unknown as PluginHostConfig,
       relayClient: () => ({ decide: async () => ({ text: '' }) }) as never,
       git: { projectHead, projectRangeDiff } as never,

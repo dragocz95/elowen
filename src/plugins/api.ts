@@ -293,6 +293,9 @@ export interface PluginApiAuth {
 /** An authenticated inbound request to `/plugins/<plugin>/api/<path>`. */
 export interface PluginApiRequest extends PluginHttpRequest {
   auth: PluginApiAuth;
+  /** Values of ':param' segments when the route was registered with a PATTERN rootMount (e.g.
+   *  '/tasks/:id/ask' → { id }); empty object everywhere else. Already URL-decoded. */
+  params: Record<string, string>;
 }
 
 /** An AUTHENTICATED API route a plugin exposes at `/plugins/<plugin>/api/<path>` — the first-class
@@ -399,6 +402,10 @@ export interface PluginHostStores {
   readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
   /** Per-task token usage snapshots — the full core store (same structural-typing rationale as tasks). */
   taskUsage: TaskUsageStore;
+  /** Read-only activity-log view: the `message` turns of a task's `elowen ask` conversation (stamped by
+   *  the daemon's bus recorder). Optional — absent in a process without an EventStore (:memory: tests),
+   *  where the ask history degrades to empty exactly as the core service did. */
+  eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
 }
 
 /** The embedded (Elowen AI) worker executor as the agents subsystem needs it: launching, plus the
@@ -429,7 +436,7 @@ export interface PluginHostPrompts {
  *  is the SANITIZED config (apiKeySet booleans, never key material); the secrets flow only through the
  *  purpose-built accessors, mirroring how the core threads them today. */
 export interface PluginHostConfig {
-  get(): Pick<ElowenConfig, 'autopilot' | 'allowedExecs' | 'modelNotes' | 'defaults' | 'providers'>;
+  get(): Pick<ElowenConfig, 'autopilot' | 'allowedExecs' | 'modelNotes' | 'defaults' | 'providers' | 'brain'>;
   /** The autopilot relay credentials (provider-bound or legacy apiUrl+key), or null when unconfigured. */
   autopilotRelay(): { baseUrl: string; apiKey: string } | null;
   /** The GitHub token for mission PR automation, or null. */

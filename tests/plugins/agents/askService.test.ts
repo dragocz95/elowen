@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { DecisionQueue } from '../../src/api/decisionQueue.js';
-import { createAskService, ASK_SENTINEL } from '../../src/api/services/askService.js';
+import { DecisionQueue } from '../../../plugins/agents/src/overseer/decisionQueue.js';
+import { createAskService, ASK_SENTINEL } from '../../../plugins/agents/src/api/askService.js';
 
 /** Minimal deps for the ask exchange: a task under an active mission, a parked overseer (overseerExec
  *  set), an in-memory event recorder doubling as the message-history source. */
@@ -11,11 +11,12 @@ function setup(opts: { overseerExec?: string; mission?: boolean; askHistoryTurns
     tasks: { get: (id: string) => (id === 't1' ? { id, parent_id: 'e1' } : undefined) },
     missions: { activeForEpic: (epicId: string) => (opts.mission === false ? null : (epicId === 'e1' ? { id: 'm-e1', epic_id: 'e1' } : null)) },
     config: { get: () => ({ autopilot: { overseerExec: opts.overseerExec ?? 'sonnet' }, brain: { limits: { askHistoryTurns: opts.askHistoryTurns ?? 30 } } }) },
-    clock: { now: () => 1000 },
-    bus: { publish: (e: { type: string; taskId: string; role: string; text: string }) => { if (e.type === 'message') recorded.push(e); } },
-    events: { list: (q: { target: string }) => recorded.filter((e) => e.taskId === q.target).map((e) => ({ detail: JSON.stringify({ role: e.role, text: e.text }) })) },
+    now: () => 1000,
+    publishEvent: (e: { type: string; taskId: string; role: string; text: string }) => { if (e.type === 'message') recorded.push(e); },
+    eventsRead: { list: (q: { target?: string }) => recorded.filter((e) => e.taskId === q.target).map((e) => ({ detail: JSON.stringify({ role: e.role, text: e.text }) })) },
+    decisionQueue: dq,
   } as never;
-  return { svc: createAskService({ d, decisionQueue: dq }), dq, recorded };
+  return { svc: createAskService(d), dq, recorded };
 }
 
 describe('askService', () => {

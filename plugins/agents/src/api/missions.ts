@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { assembleMissionDetail } from './missionDetail.js';
-import { json, canProject, type ApiAuth } from './http.js';
+import { json, canProject, agentForbidden, type ApiAuth } from './http.js';
 import type { PluginApiRequest, PluginContext, PluginHttpResponse } from '../../../../src/plugins/api.js';
 import type { AgentsRuntime } from '../runtime.js';
 
@@ -199,6 +199,8 @@ export function registerMissionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
     rootMount: '/missions', path: '', method: 'GET', access: 'agent',
     handler: async (req) => {
       const segs = req.path === '' ? [] : req.path.split('/');
+      // Agent tokens may reach ONLY the overseer long-poll (the exact set the core allow-list admitted).
+      if (agentForbidden(req.auth, segs.length === 3 && segs[1] === 'overseer' && segs[2] === 'next')) return json({ error: 'forbidden' }, 403);
       if (segs.length === 0) return list(req.auth);
       const id = decodeURIComponent(segs[0]!);
       if (segs.length === 1) return detail(req.auth, id);
@@ -211,6 +213,8 @@ export function registerMissionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
     rootMount: '/missions', path: '', method: 'POST', access: 'agent',
     handler: async (req) => {
       const segs = req.path === '' ? [] : req.path.split('/');
+      // Agent tokens may reach ONLY the overseer decide verb.
+      if (agentForbidden(req.auth, segs.length === 3 && segs[1] === 'overseer' && segs[2] === 'decide')) return json({ error: 'forbidden' }, 403);
       if (segs.length === 0) return engage(req);
       const id = decodeURIComponent(segs[0]!);
       if (segs.length === 2 && segs[1] === 'pr') return openPr(req.auth, id);

@@ -3,8 +3,6 @@ import { usagePath } from '../integrations/usage/usagePath.js';
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
 import { createReviewService, type ReviewService } from './services/reviewService.js';
-import { createAskService, type AskService } from './services/askService.js';
-import { createGuideService, type GuideService } from './services/guideService.js';
 import { createSkillService, type SkillService } from './services/skillService.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
@@ -100,9 +98,7 @@ export interface RouteContext {
   reviewService: ReviewService;
   /** Manual session launch (atomic checkout claim + snapshot baseline + spawn) for POST /sessions. */
   /** The free-text worker↔autopilot exchange behind `elowen ask` (mission overseer → human window → sentinel). */
-  askService: AskService;
   /** Renders the context-aware control guide an agent fetches with `elowen help` (GET /tasks/:id/guide). */
-  guideService: GuideService;
   /** Installs/verifies the `elowen-workflow` skill across the agent providers (System panel + startup). */
   skillService: SkillService;
   /** Vector retrieval + anti-duplication over the memory store, for the retrieval-debugging route. Built
@@ -330,11 +326,9 @@ export function createRouteContext(d: ServerDeps): RouteContext {
 
   // The free-text worker↔autopilot exchange (`elowen ask`) shares the overseer's decision queue, so a
   // worker's question reaches the same parked overseer that answers prompts/reviews.
-  const askService = createAskService({ d, decisionQueue });
 
   // The on-demand control guide an agent fetches with `elowen help` — rendered from the task's live state
   // (standalone vs mission phase), so the worker preamble can stay short and not duplicate the tutorial.
-  const guideService = createGuideService(d);
 
   // Installs/verifies the `elowen-workflow` skill into the agent providers' skills dirs. Stateless (resolves
   // the spawning user's HOME itself), so it needs no deps from `d`. Injectable for tests (no real FS writes).
@@ -358,6 +352,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects, missionAccessible,
     taskForSession, eventDeps, sessionAccessible, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, askService, guideService, skillService, memoryService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, skillService, memoryService,
   };
 }

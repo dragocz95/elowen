@@ -18,7 +18,7 @@ const log = logger('plugin-api');
 async function dispatchPluginApi(
   c: ElowenContext,
   ctx: RouteContext,
-  match: { handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string },
+  match: { handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params?: Record<string, string> },
 ) {
   // Declared access, enforced centrally. An agent service token reaches ONLY a route that opted into
   // `access: 'agent'` (it runs with skipped permissions — same deny-by-default as the core agent
@@ -38,6 +38,7 @@ async function dispatchPluginApi(
     path: match.remainder,
     query: c.req.query(),
     headers,
+    params: match.params ?? {},
     body: () => Promise.resolve(raw),
     json: <T = unknown>() => Promise.resolve(JSON.parse(raw.toString('utf8')) as T),
     auth: {
@@ -111,8 +112,10 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
     .map((r) => ({ method: r.method, segs: r.path.split('/').filter(Boolean) }));
   const coversMount = (mount: string): boolean => {
     const segs = mount.split('/').filter(Boolean);
+    // Params wildcard on EITHER side: a pattern mount ('/tasks/:id/ask') conflicts with a core route
+    // only when every segment pair is compatible (equal literals, or a param on either side).
     return corePatterns.some((p) =>
-      p.segs.length === segs.length && p.segs.every((seg, i) => seg.startsWith(':') || seg === segs[i]));
+      p.segs.length === segs.length && p.segs.every((seg, i) => seg.startsWith(':') || segs[i]!.startsWith(':') || seg === segs[i]));
   };
   // Conflict validation runs once per registry GENERATION (object identity): a reload re-validates,
   // a steady state costs one map lookup per request.

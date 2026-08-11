@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import type { AgentsDecisionQueue } from '../../plugins/api.js';
-import type { ServerDeps } from '../deps.js';
+import type { DecisionQueue } from '../overseer/decisionQueue.js';
+import type { MissionStore } from '../store/missionStore.js';
+import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { ElowenEvent } from '../../../../src/api/sse.js';
 
 /** One poll's max hold before returning a heartbeat so the worker's CLI re-polls (mirrors the overseer
  *  long-poll heartbeat). Kept under common proxy idle timeouts. */
@@ -41,8 +43,15 @@ interface PendingAsk {
 }
 
 export interface AskServiceDeps {
-  d: ServerDeps;
-  decisionQueue: AgentsDecisionQueue;
+  tasks: TaskStore;
+  missions: MissionStore;
+  decisionQueue: DecisionQueue;
+  publishEvent: (e: ElowenEvent) => void;
+  /** Read-only activity-log view (host eventsRead) — absent in a process without an EventStore. */
+  eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
+  /** Live config reads: the overseer exec (parked-agent path) and the ask-history window. */
+  config: { get(): { autopilot: { overseerExec?: string }; brain: { limits: { askHistoryTurns: number } } } };
+  now: () => number;
 }
 
 export interface AskService {
@@ -64,16 +73,16 @@ export interface AskService {
  *  question on a HUMAN and waits — no auto-answer, no sentinel fallback (the worker holds until a person
  *  replies on the Escalations page, or its own tool timeout gives up). Each turn (question + reply) is
  *  published as a `message` event on the task so the detail pane renders the conversation. */
-export function createAskService({ d, decisionQueue }: AskServiceDeps): AskService {
+export function createAskService(d: AskServiceDeps): AskService {
   const exchanges = new Map<string, Exchange>();
 
   function record(taskId: string, role: AskRole, text: string): void {
-    d.bus.publish({ type: 'message', taskId, role, text });
+    d.publishEvent({ type: 'message', taskId, role, text });
   }
   /** Transient ping so the Escalations inbox refetches its pending-ask list (open ↔ resolved). Not
    *  persisted — the `message` turns are the durable record; this only nudges the live view. */
   function pingPending(taskId: string): void {
-    d.bus.publish({ type: 'ask', taskId });
+    d.publishEvent({ type: 'ask', taskId });
   }
 
   function finalize(askId: string, role: AskRole, text: string): void {
@@ -99,7 +108,7 @@ export function createAskService({ d, decisionQueue }: AskServiceDeps): AskServi
     const ex = exchanges.get(askId);
     if (!ex || ex.finalText !== undefined) return;
     ex.humanResolve = (text) => finalize(askId, 'human', text);
-    ex.openedAt = d.clock.now();
+    ex.openedAt = d.now();
     pingPending(ex.taskId); // surface it on the Escalations inbox
   }
 
@@ -109,7 +118,7 @@ export function createAskService({ d, decisionQueue }: AskServiceDeps): AskServi
    *  The window is read per call rather than captured at construction: the service outlives a settings
    *  save, so a captured value would keep the old window until the daemon restarted. */
   function history(taskId: string): { role: AskRole; text: string }[] {
-    const turns = (d.events?.list({ target: taskId, type: 'message' }) ?? [])
+    const turns = (d.eventsRead?.list({ target: taskId, type: 'message' }) ?? [])
       .map((e) => { try { const p = JSON.parse(e.detail) as { role: AskRole; text: string }; return p.role && typeof p.text === 'string' ? p : null; } catch { return null; } })
       .filter((p): p is { role: AskRole; text: string } => p !== null);
     return turns.slice(-d.config.get().brain.limits.askHistoryTurns); // newest turns, still oldest-first
@@ -124,7 +133,7 @@ export function createAskService({ d, decisionQueue }: AskServiceDeps): AskServi
     if (overseerParked) {
       // Hand the overseer the whole thread (the just-asked question is its last entry) so it can answer
       // a follow-up in context, not just the latest line in isolation.
-      const verdict = await decisionQueue.enqueue(mission!.id, 'message', { question, taskId, history: history(taskId) });
+      const verdict = await d.decisionQueue.enqueue(mission!.id, 'message', { question, taskId, history: history(taskId) });
       const reply = verdict.message?.trim();
       if (reply) { finalize(askId, 'autopilot', reply); return; }
       // No reply ⇒ the overseer escalated or timed out → hand it to a human.

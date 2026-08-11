@@ -481,6 +481,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
           },
           readiness, taskUsage,
+          ...(events ? { eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) } } : {}),
         },
         prompts: {
           render: (name, vars, userId) => prompts.render(name, vars ?? {}, userId),
@@ -489,7 +490,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         config: {
           get: () => {
             const c = config.get();
-            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers };
+            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers, brain: c.brain };
           },
           autopilotRelay: () => config.autopilotRelay(),
           ghToken: () => config.ghToken(),

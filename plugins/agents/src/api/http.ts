@@ -10,3 +10,9 @@ export const json = (body: object, status = 200): PluginHttpResponse => ({ statu
  *  token carries its live working set — the same semantics the core canAccessProject had. */
 export const canProject = (auth: ApiAuth, projectId: number): boolean =>
   auth.accessibleProjects === null || auth.accessibleProjects.includes(projectId);
+
+/** Deny an agent-scoped token unless the specific sub-path is one the old core allow-list admitted.
+ *  A pattern root mount is coarser than the core middleware's path allow-list, so each handler
+ *  re-narrows: the mount-level access:'agent' only opens the door, THIS decides per verb. */
+export const agentForbidden = (auth: ApiAuth, allowed: boolean): boolean =>
+  auth.tokenScope === 'agent' && !allowed;

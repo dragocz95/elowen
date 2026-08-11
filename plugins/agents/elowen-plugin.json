@@ -26,7 +26,10 @@
   "provides": {
     "apiRoutes": [
       "/missions",
-      "/sessions"
+      "/sessions",
+      "/tasks/:id/ask",
+      "/tasks/:id/guide",
+      "/asks/pending"
     ]
   }
 }

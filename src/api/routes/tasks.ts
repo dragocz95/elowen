@@ -8,7 +8,7 @@ import { resolvePrEnabled } from '../../shared/prMode.js';
 import { RelayClient } from '../../inference/client.js';
 import { shortId } from '../../shared/id.js';
 import { parseBody, queryInt } from '../validation.js';
-import { createTaskSchema, patchTaskSchema, planSchema, insertPhasesSchema, askSchema } from '../schemas/tasks.js';
+import { createTaskSchema, patchTaskSchema, planSchema, insertPhasesSchema } from '../schemas/tasks.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { TokenUsage, CostSource } from '../../integrations/usage/types.js';
 
@@ -64,7 +64,7 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     d, log, planJobs,
     canAccessProject, notAdmin, accessibleProjects, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, askService, guideService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService,
   } = ctx;
   app.get('/tasks', c => {
     const allowed = accessibleProjects(c);
@@ -364,73 +364,6 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // nothing would ever pick the work up. The phase's parent IS the epic; mission id is `m-<epicId>`.
     if (existing.parent_id) void d.engine?.resumeStalled(`m-${existing.parent_id}`).catch((e) => log.error('approve-gate resume failed', e));
     return c.json({ released });
-  });
-
-  // `elowen ask`: a running worker posts a free-text question for the autopilot and blocks on the reply.
-  // Authenticated by the spawn-time token; gated by the task's project. The reply is produced async
-  // (overseer → human window → sentinel) so this returns an ask id the worker then long-polls below.
-  app.post('/tasks/:id/ask', async c => {
-    const id = c.req.param('id');
-    const task = d.tasks.get(id);
-    if (!task) return c.json({ error: 'task not found' }, 404);
-    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
-    // Bound the per-task conversation so a prompt-injected worker in a loop can't inflate the events
-    // table — the same guard the notes route applies (both sides of the thread count). Size is capped
-    // by askSchema.text.max(); this caps the turn count.
-    const MAX_ASK_TURNS = 200;
-    if ((d.events?.list({ target: id, type: 'message' }) ?? []).length >= MAX_ASK_TURNS) return c.json({ error: 'too many questions on this task' }, 429);
-    const b = await parseBody(c, askSchema);
-    return c.json(askService.start(id, b.text));
-  });
-  // Long-poll an ask's reply: returns `{ text }` once the autopilot/human answers (or the sentinel
-  // fires), else `{}` every ~25s so the worker's CLI re-polls. The ask id must belong to this task.
-  app.get('/tasks/:id/ask/:askId', async c => {
-    const id = c.req.param('id');
-    const task = d.tasks.get(id);
-    if (!task) return c.json({ error: 'task not found' }, 404);
-    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
-    if (askService.taskFor(c.req.param('askId')) !== id) return c.json({ error: 'no such ask' }, 404);
-    const raw = Number(c.req.query('timeoutMs'));
-    const timeoutMs = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 30_000) : undefined;
-    const text = await askService.poll(c.req.param('askId'), timeoutMs);
-    return c.json(text === null ? {} : { text });
-  });
-  // Human reply to an agent's open question (the fast-follow UI box / a curl). Resolves the same
-  // pending exchange the worker is polling; only valid while the human window is open.
-  app.post('/tasks/:id/ask/:askId/reply', async c => {
-    const id = c.req.param('id');
-    const task = d.tasks.get(id);
-    if (!task) return c.json({ error: 'task not found' }, 404);
-    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
-    if (askService.taskFor(c.req.param('askId')) !== id) return c.json({ error: 'no such ask' }, 404);
-    const b = await parseBody(c, askSchema);
-    return askService.reply(c.req.param('askId'), b.text) ? c.json({ ok: true }) : c.json({ error: 'ask already answered' }, 409);
-  });
-  // Every `elowen ask` currently parked on a human (overseer escalated / no overseer), for the Escalations
-  // inbox — enriched with the task title + epic, scoped to the projects the caller may see. Not in the
-  // agent allow-list: this is a human surface, so a worker token never reaches it.
-  app.get('/asks/pending', c => {
-    const items = askService.pending()
-      .map((a) => { const task = d.tasks.get(a.taskId); return task ? { ...a, title: task.title, epicId: task.parent_id, projectId: task.project_id } : null; })
-      .filter((a): a is NonNullable<typeof a> => a !== null && canAccessProject(c, a.projectId));
-    return c.json(items);
-  });
-
-  // `elowen help` (with ELOWEN_TASK set): a running agent fetches its context-aware control guide — how to
-  // work, ask the autopilot, leave handoff notes and close out (plus the epic, for a mission phase). The
-  // guide is rendered from the task's live state, so the spawn preamble stays short. In the agent
-  // allow-list (a worker token may reach it); still gated by the task's project.
-  app.get('/tasks/:id/guide', c => {
-    const id = c.req.param('id');
-    const task = d.tasks.get(id);
-    if (!task) return c.json({ error: 'task not found' }, 404);
-    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
-    const text = guideService.render(id);
-    if (text === null) return c.json({ error: 'task not found' }, 404);
-    // Lightweight observability: surfaces whether agents actually pull the guide (vs skipping it), so a
-    // "the agent never ran `elowen help`" reliability gap is visible in the daemon log.
-    log.info(`guide fetched for ${id}${c.get('tokenScope') === 'agent' ? ' (agent)' : ''}`);
-    return c.json({ text });
   });
 
   app.get('/tasks/:id/deps', c => {

@@ -267,7 +267,7 @@ export class PluginRegistry {
   /** Resolve a ROOT-mounted plugin route for an absolute request path — longest mount prefix at a
    *  segment boundary wins, exact method beats method-less (same rules as {@link apiRoute}). Returns
    *  the owning mount too, so the dispatcher can apply its core-conflict skip set per mount. */
-  rootApiRoute(path: string, method: string): { mount: string; plugin: string; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string } | undefined {
+  rootApiRoute(path: string, method: string): { mount: string; plugin: string; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params: Record<string, string> } | undefined {
     const clean = '/' + path.replace(/^\/+|\/+$/g, '');
     const pick = (mount: string, remainder: string) => {
       const entry = this.rootApiRoutes.get(mount);
@@ -276,12 +276,38 @@ export class PluginRegistry {
       return route ? { mount, plugin: entry.plugin, handler: route.handler, access: route.access, remainder } : undefined;
     };
     const exact = pick(clean, '');
-    if (exact) return exact;
+    if (exact) return { ...exact, params: {} };
     let at = clean.lastIndexOf('/');
     while (at > 0) {
       const hit = pick(clean.slice(0, at), clean.slice(at + 1));
-      if (hit) return hit;
+      if (hit) return { ...hit, params: {} };
       at = clean.lastIndexOf('/', at - 1);
+    }
+    // Pattern mounts (':param' segments, e.g. '/tasks/:id/ask'): match the path's leading segments
+    // against each pattern; the LONGEST match wins, literals over params on a tie. Checked after the
+    // literal mounts so a literal mount always beats a pattern of the same shape.
+    const parts = clean.slice(1).split('/');
+    let best: { mount: string; remainder: string; params: Record<string, string>; literals: number; len: number } | undefined;
+    for (const mount of this.rootApiRoutes.keys()) {
+      if (!mount.includes('/:')) continue;
+      const msegs = mount.slice(1).split('/');
+      if (msegs.length > parts.length) continue;
+      const params: Record<string, string> = {};
+      let literals = 0;
+      let ok = true;
+      for (let i = 0; i < msegs.length; i++) {
+        const seg = msegs[i]!;
+        if (seg.startsWith(':')) params[seg.slice(1)] = decodeURIComponent(parts[i]!);
+        else if (seg === parts[i]) literals++;
+        else { ok = false; break; }
+      }
+      if (!ok) continue;
+      if (best && (msegs.length < best.len || (msegs.length === best.len && literals <= best.literals))) continue;
+      best = { mount, remainder: parts.slice(msegs.length).join('/'), params, literals, len: msegs.length };
+    }
+    if (best) {
+      const hit = pick(best.mount, best.remainder);
+      if (hit) return { ...hit, params: best.params };
     }
     return undefined;
   }
@@ -491,8 +517,12 @@ export class PluginRegistry {
           // plugin serves. Trust: plugins are admin-installed by definition (bundled or marketplace),
           // so the root namespace is not a wider grant than the namespaced one — just a wider PATH.
           const mount = route.rootMount.trim().replace(/\/+$/g, '');
-          if (!/^\/[a-z0-9][a-z0-9\-/]*$/.test(mount) || mount.slice(1).split('/').some((seg) => !seg)) {
-            scoped.warn(`registerApiRoute rootMount '${route.rootMount}' refused: must be an absolute lowercase path`);
+          // Segments are lowercase literals or ':param' placeholders (e.g. '/tasks/:id/ask') — a
+          // pattern mount lets a plugin grandfather a core path family with an id in the middle.
+          const segsOk = mount.startsWith('/') && mount.slice(1).split('/').every((seg) =>
+            /^[a-z0-9][a-z0-9\-]*$/.test(seg) || /^:[a-zA-Z][a-zA-Z0-9]*$/.test(seg));
+          if (!segsOk) {
+            scoped.warn(`registerApiRoute rootMount '${route.rootMount}' refused: must be an absolute lowercase path (segments may be ':param')`);
             return;
           }
           const full = clean ? `${mount}/${clean}` : mount;
