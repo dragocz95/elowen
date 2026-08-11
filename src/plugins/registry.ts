@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginService, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
@@ -74,6 +74,10 @@ export class PluginRegistry {
   /** Authenticated API mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/plugins/:name/api`
    *  router. A key holds every method variant registered on that path (exact method beats method-less). */
   readonly apiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
+  /** Host-managed background services (started after boot reconcile, cycled around plugin reloads) and
+   *  boot reconciles (run sequentially BEFORE platforms serve turns). Both carry their owner for logs. */
+  readonly services: { plugin: string; service: PluginService }[] = [];
+  readonly bootReconciles: { plugin: string; fn: () => void | Promise<void> }[] = [];
   readonly controls = new Map<string, PluginControl>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
@@ -146,6 +150,8 @@ export class PluginRegistry {
     }
     // Keys embed the plugin name, so cross-plugin collisions cannot happen by construction — copy as-is.
     for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
+    this.services.push(...other.services);
+    this.bootReconciles.push(...other.bootReconciles);
     this.skillOwners.push(...other.skillOwners);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
@@ -399,6 +405,36 @@ export class PluginRegistry {
         const entry = this.apiRoutes.get(key) ?? { plugin: name, routes: [] };
         entry.routes.push({ ...(route.method ? { method: route.method.toUpperCase() } : {}), access: route.access, handler: route.handler });
         this.apiRoutes.set(key, entry);
+      },
+      registerService: (service) => {
+        if (!service?.name?.trim() || typeof service.start !== 'function' || typeof service.stop !== 'function') {
+          scoped.warn('registerService refused: a service needs a name and start/stop functions');
+          return;
+        }
+        this.services.push({ plugin: name, service });
+      },
+      registerBootReconcile: (fn) => { this.bootReconciles.push({ plugin: name, fn }); },
+      // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as
+      // a native module), so a plugin-held setInterval is untestable and easy to leak. Unref'd — a
+      // plugin tick must never keep a draining process alive.
+      registerInterval: (intervalName, fn, ms) => {
+        let timer: ReturnType<typeof setInterval> | null = null;
+        this.services.push({
+          plugin: name,
+          service: {
+            name: intervalName,
+            start: () => {
+              timer = setInterval(() => {
+                try {
+                  const out = fn();
+                  if (out && typeof (out as Promise<void>).catch === 'function') (out as Promise<void>).catch((e) => scoped.warn(`interval '${intervalName}' tick failed: ${e instanceof Error ? e.message : String(e)}`));
+                } catch (e) { scoped.warn(`interval '${intervalName}' tick failed: ${e instanceof Error ? e.message : String(e)}`); }
+              }, ms);
+              timer.unref?.();
+            },
+            stop: () => { if (timer) { clearInterval(timer); timer = null; } },
+          },
+        });
       },
       assertPathAllowed,
       allowedRoots,

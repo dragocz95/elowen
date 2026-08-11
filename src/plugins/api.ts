@@ -292,6 +292,18 @@ export interface PluginApiRoute {
   handler: (req: PluginApiRequest) => Promise<PluginHttpResponse>;
 }
 
+/** A long-running background worker a plugin contributes — mission loops, sweepers, watchers. The host
+ *  owns the lifecycle: started after boot reconcile on a full daemon start (never in a sub-agent
+ *  runner), stopped and restarted around a plugin reload, and abandoned at process exit (the daemon
+ *  drains turns, not plugin loops). `stop` must be prompt — a stop that exceeds the host's grace window
+ *  is logged and abandoned so one plugin cannot wedge a reload. */
+export interface PluginService {
+  /** Short name for logs, unique within the plugin (e.g. 'mission-engine'). */
+  name: string;
+  start(): void | Promise<void>;
+  stop(): void | Promise<void>;
+}
+
 /** A channel-scoped conversation reference — the SAME identity an adapter reports to `listen` (so a slash
  *  command targets the exact session a message from that channel would). */
 export interface ChannelRef { platform: string; channelId: string; threadId?: string }
@@ -537,6 +549,19 @@ export interface PluginContext {
    *  middleware run first and the dispatcher enforces the declared access level, so the handler receives
    *  a verified {@link PluginApiAuth} instead of re-implementing auth (see {@link PluginApiRoute}). */
   registerApiRoute(route: PluginApiRoute): void;
+  /** Contribute a host-managed background service (see {@link PluginService}): started after boot
+   *  reconcile on a full daemon start, stopped/restarted around plugin reloads. The first-class home for
+   *  what plugins used to smuggle into fake platform adapters' connect/disconnect. */
+  registerService(service: PluginService): void;
+  /** Run once BEFORE the daemon starts serving platform turns — and again after every plugin reload —
+   *  to reconcile durable state with reality (re-park watchers, terminalize orphans). Must be
+   *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not
+   *  block the boot (same contract as the core boot reconciles). */
+  registerBootReconcile(fn: () => void | Promise<void>): void;
+  /** Sugar over {@link registerService} for the common periodic-tick shape: the host owns a real timer
+   *  (unref'd — a plugin tick must not keep the process alive), starts it with the services and clears
+   *  it on stop/reload. A tick that throws is logged and the interval keeps running. */
+  registerInterval(name: string, fn: () => void | Promise<void>, ms: number): void;
   /** Resolve + assert a filesystem path is inside the current user's accessible repos, returning the
    *  absolute path (throws otherwise). File/terminal tools call this before any disk access. Evaluated at
    *  tool-call time against the per-session Policy carried on AsyncLocalStorage. */

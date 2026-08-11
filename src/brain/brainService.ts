@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { PluginHookBus } from '../plugins/hookBus.js';
+import { PluginServiceRunner } from '../plugins/serviceRunner.js';
 import type { DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
@@ -86,6 +87,8 @@ export class BrainService {
   private identity: IdentityResolver;
   private channelService: ChannelSessionService;
   private platforms: PlatformOrchestrator;
+  /** Plugin-contributed background services + boot reconciles — cycled with the platforms. */
+  private pluginServices: PluginServiceRunner;
   /** Where a delegated turn EXECUTES: on this event loop, or in the forked sub-agent runner. */
   private subagents: SubagentDispatch;
   /** Set only in the sub-agent runner — see attachDelegatedEdgeReporter. */
@@ -316,6 +319,7 @@ export class BrainService {
       // process — only the process holding the PI session can inject into its running turn.
       ...(d.subagentRunner ? { steerRemote: (channelId: string, text: string) => d.subagentRunner?.steer(channelId, text) ?? Promise.resolve({ outcome: 'idle' as const }) } : {}),
     });
+    this.pluginServices = new PluginServiceRunner(() => this.resolvePlugins());
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
       platformOwner: d.platformOwner,
@@ -1243,8 +1247,14 @@ export class BrainService {
         // The old runners are idle now, but still hold the old tool registry; reset so the next delegation
         // forks against the new build/config without interrupting any work.
         this.d.subagentRunner?.reset('plugins reloaded');
+        // Old plugin services hold pre-swap closures — stop them before the registry swap takes effect
+        // for the adapters, and bring the NEW registry's services up only after its reconciles ran
+        // (reconciles are idempotent by contract; a reload replays them like a boot).
+        await this.pluginServices.stopAll();
         this.platforms.stopAll();
+        await this.pluginServices.runBootReconciles();
         await this.platforms.startAll();
+        await this.pluginServices.startAll();
         const after = await this.d.plugins?.get();
         if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
       });
@@ -1283,7 +1293,11 @@ export class BrainService {
    *  nested delegation fails outright), while a second Discord/WhatsApp gateway from a child process
    *  would answer the operator's rooms twice. */
   async startPlatforms(log?: { info(m: string): void; error(m: string): void }, only?: readonly string[]): Promise<void> {
+    // Plugin background services belong ONLY to the full daemon: a runner narrowed to `only` platforms
+    // must not grow a second mission engine / sweeper fleet beside the daemon's.
+    if (!only) await this.pluginServices.runBootReconciles();
     await this.platforms.startAll(log, only);
+    if (!only) await this.pluginServices.startAll();
   }
 
   /** Execute ONE delegated turn in THIS process. The single delegated entry point: the daemon reaches it
