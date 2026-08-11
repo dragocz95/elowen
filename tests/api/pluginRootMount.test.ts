@@ -121,4 +121,18 @@ describe('root-mounted plugin API routes', () => {
     const { app, token } = await makeTestApp({ extra: { plugins: provider } });
     expect((await app.request('/rooty-nope', auth(token))).status).toBe(404);
   });
+
+  it('falls through to a route registered AFTER the dispatcher (the /ws/terminal pattern)', async () => {
+    // daemon/index.ts registers the /ws/terminal upgrade on the app AFTER bootstrap built it — i.e.
+    // after the root-mount dispatcher. A terminal catch-all would answer 404 before that handler
+    // ever ran (a real regression: the terminal WS died); the dispatcher must be pass-through.
+    const { provider } = rootPluginProvider();
+    const { app, token } = await makeTestApp({ extra: { plugins: provider } });
+    app.get('/registered-later', (c) => c.json({ late: true }));
+    const res = await app.request('/registered-later', auth(token));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ late: true });
+    // The plugin mount itself still answers — fall-through did not disable dispatch.
+    expect((await app.request('/rooty', auth(token))).status).toBe(200);
+  });
 });

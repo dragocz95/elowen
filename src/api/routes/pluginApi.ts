@@ -132,12 +132,16 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
       }
     }
   };
-  app.all('*', async (c) => {
+  // Middleware with fall-through, NOT a terminal `app.all('*')`: an unmatched path must continue to
+  // whatever is registered AFTER this dispatcher (daemon/index.ts adds the /ws/terminal upgrade on the
+  // returned app) and then to Hono's own notFound. The terminal catch-all swallowed exactly those —
+  // the WS upgrade answered 404 and the terminal stream died (caught by api-e2e's ticket gate).
+  app.use(async (c, next) => {
     const registry = await d.plugins?.get().catch(() => undefined);
-    if (!registry) return c.json({ error: 'not found' }, 404);
+    if (!registry) return next();
     validate(registry);
     const match = registry.rootApiRoute(c.req.path, c.req.method);
-    if (!match || skipped.has(match.mount)) return c.json({ error: 'not found' }, 404);
+    if (!match || skipped.has(match.mount)) return next();
     return dispatchPluginApi(c, ctx, match);
   });
 }
