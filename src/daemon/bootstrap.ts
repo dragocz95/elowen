@@ -8,7 +8,6 @@ import { SystemClock } from '../shared/clock.js';
 import { ensureVapidKeys } from '../push/vapid.js';
 import { PushSender } from '../push/pushSender.js';
 import { buildTurnDone } from '../push/messages.js';
-import { stripPrefix } from '../shared/text.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { lifecycleNotice } from './lifecycleNotices.js';
 import { logger, setLogSink } from '../shared/logger.js';
@@ -312,23 +311,15 @@ export async function buildApp(opts: BuildOpts) {
   // …and the plugin host's late binding, so ctx.host.push() resolves (the agents plugin's dispatcher).
   setPluginHostPush(pushSender);
 
-  // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
-  // so pick the MOST RECENT match (list is created_at ASC). Kept core-side for the event tenancy
-  // resolver below — it is a pure task-store read, not subsystem state.
-  const taskForSession = (session: string) => {
-    const name = stripPrefix(session, 'elowen-');
-    const matches = tasks.list().filter((t) => t.labels.includes(`agent:${name}`));
-    return matches[matches.length - 1] ?? null;
-  };
   // Persist every bus event into the activity log, stamping its owning project (resolved for ALL event
   // types, not just task/review) so the timeline can be scoped per-tenant. The event store is
   // core-owned; it keeps recording plugin-published events through the shared bus unchanged.
+  // `signal`/`plan` tenancy (session→task via the agent:<name> label, plan job → its runtime record)
+  // deliberately has NO core lookup here: the agents plugin's registered event resolver is the sole
+  // source — with the plugin disabled those events resolve null and the rows record admin-only,
+  // matching the rest of the disabled-plugin degradation.
   const eventDeps: EventProjectDeps = {
     taskProject: (id) => tasks.get(id)?.project_id ?? null,
-    sessionProject: (s) => taskForSession(s)?.project_id ?? null,
-    // Plan jobs live in the agents plugin's runtime — read them through the live control (null when
-    // the plugin is disabled; the plugin's own event resolver covers the same lookup anyway).
-    jobProject: (id) => agentsControl()?.planJobs().get(id)?.projectId ?? null,
     // Live registry read (not a snapshot): a plugin reload swaps the resolver set with it.
     pluginResolvers: () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn),
   };
