@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
+import { activeSkin } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
 // the next reload. This CANNOT be left to the `no-store` fetch inside fetchThemePayload: its failure
@@ -48,11 +49,16 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // login screen — rendered before any token exists — already carries the instance brand.
   const theme = await fetchThemePayload();
   const themeStyle = buildThemeStyle(theme);
+  // Compiled-in design skin (ELOWEN_SKIN env). All skins ship in every build scoped under
+  // `:root[data-skin='…']`; without the attribute none of their rules match, so a skinless instance
+  // renders byte-identical markup to a build from before skins existed.
+  const skin = activeSkin();
   return (
     <html
       lang="en"
       className={`${GeistSans.variable} ${GeistMono.variable}`}
       data-theme="dark"
+      {...(skin ? { 'data-skin': skin } : {})}
       data-effects-mode="auto"
       data-effects="full"
       style={{ backgroundColor: '#000000' }}

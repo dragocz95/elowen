@@ -1,0 +1,5 @@
+/* CSS side of the skin registry. Every skin listed in web/lib/skins.ts (SKINS) has exactly ONE @import
+ * here — a contract test holds the list, the folders and these imports in sync. All skins ship in every
+ * build; each one scopes every rule under `:root[data-skin='<name>']`, so on an instance without that
+ * skin active none of its rules match and the built-in ember design renders untouched. */
+@import "./midnight/skin.css";

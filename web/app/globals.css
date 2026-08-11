@@ -4,6 +4,9 @@
 @import "./styles/components.css";
 @import "./styles/animations.css";
 @import "./styles/markdown.css";
+/* Compiled-in design skins, LAST on purpose: their rules override the base styles above by both
+ * cascade order and the higher specificity of the `:root[data-skin]` scope. */
+@import "../skins/index.css";
 
 /* Brain chat markdown: compact typography for the assistant bubbles (marked + DOMPurify output). */
 .chat-markdown p { margin: 0 0 .5em; }

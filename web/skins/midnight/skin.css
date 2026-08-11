@@ -1,0 +1,54 @@
+/* "midnight" — the demo skin proving the mechanism, and the template for real ones (Chetty etc.).
+ *
+ * A skin is CODE: full CSS over the whole app, shipped and upgraded with it. Unlike a runtime theme it
+ * may restructure anything — but every rule MUST stay scoped under `:root[data-skin='midnight']`, or it
+ * would leak into instances running other designs from the same build.
+ *
+ * The token block does the heavy lifting: Tailwind v4 utilities reference these variables at runtime
+ * (`.rounded-lg { border-radius: var(--radius-lg) }`), so overriding a token here restyles every
+ * consumer without touching a component. Reach for component/structural rules only where no token
+ * exists — and expect THOSE to need a review after upgrades, since class names are not a stable API. */
+
+:root[data-skin='midnight'] {
+  /* Cold graphite canvas instead of OLED ember. */
+  --color-bg: #05070b;
+  --color-document: #070a10;
+  --color-surface: #0b0f16;
+  --color-elevated: #10151f;
+  --color-overlay: #161c28;
+  --color-border: #1e2634;
+  --color-border-strong: #2c3648;
+  --color-accent: #38bdf8;
+  --color-accent-hot: #7dd3fc;
+  --color-ember: #a5e3ff;
+  --color-text: #eef2f7;
+  --color-text-muted: #8b95a5;
+  --color-text-subtle: #5d6675;
+  --accent-rgb: 56 189 248;
+
+  /* Square, flat, engineering-drawing look: no rounding, no glow — hairlines carry the structure. */
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --shadow-ember: none;
+  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.55);
+  --glow-soft: none;
+  --shadow-card: none;
+  --shadow-raised: 0 18px 48px rgb(0 0 0 / 0.5);
+  --hairline: 1px solid rgb(148 163 184 / 0.14);
+}
+
+/* Structural: drop the ember atmosphere entirely — flat canvas, no radial washes. */
+:root[data-skin='midnight'] body { background-image: none; }
+
+/* Structural: the decorative organics (orbit rings, falling embers, dashboard beams) belong to the
+ * ember identity, not to this one. */
+:root[data-skin='midnight'] .cosmos-ring,
+:root[data-skin='midnight'] .dash-beam,
+:root[data-skin='midnight'] .ember-fall { display: none; }
+
+/* The section rail reads as a plain ruled line instead of a glowing gradient track. */
+:root[data-skin='midnight'] .spatial-section-rail__track::before { background: var(--color-border); }
