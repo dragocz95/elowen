@@ -1,9 +1,21 @@
 {
   "compilerOptions": {
-    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "strict": true, "noUncheckedIndexedAccess": true, "esModuleInterop": true,
-    "outDir": "dist", "rootDir": "src",     "noUnusedLocals": true, "noUnusedParameters": true, "skipLibCheck": true,
-    "composite": true, "declaration": true
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "composite": true,
+    "declaration": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }
