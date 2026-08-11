@@ -85,7 +85,12 @@ async function expectReply(fake, daemonBase, text, pred, label, timeoutMs = 45_0
 }
 
 async function main() {
-  const model = await startModelServer({ firstText: FIRST_TEXT, finalText: FINAL_TEXT });
+  // The scripted tool name is deliberately UNKNOWN to the daemon: the unknown-tool error result is the
+  // one deterministic way a channel turn edits its trace bubble in place (the "needs attention" row).
+  // The old default (ElowenListMissions) only produced that edit by accident — the tool was absent from
+  // channel sessions pre-extraction; the agents plugin now composes it everywhere and refuses with a
+  // clean text result, whose hidden output re-renders the row identically (no PUT to observe).
+  const model = await startModelServer({ toolName: 'E2eProbeMissingTool', firstText: FIRST_TEXT, finalText: FINAL_TEXT });
   const fake = await startFakeBotFramework();
   let daemon = null;
   try {
