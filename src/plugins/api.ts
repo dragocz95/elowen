@@ -292,6 +292,20 @@ export interface PluginApiRoute {
   handler: (req: PluginApiRequest) => Promise<PluginHttpResponse>;
 }
 
+/** One editable prompt template a plugin contributes — the shape of a core catalog entry
+ *  (src/prompts/catalog.ts). `name` is the bare template name (== `<name>.md` in the registered dir, and
+ *  the per-user override key in `user_prompts`); `group` may extend the account UI's grouping. */
+export interface PluginPromptEntry {
+  name: string;
+  group: string;
+  /** Placeholders the template substitutes — surfaced in the editor so users keep them intact. */
+  vars: string[];
+  /** The model output is parsed as JSON downstream; the editor warns before an override. */
+  jsonContract: boolean;
+  /** The user's saved text is APPENDED to the default instead of replacing it. */
+  appendOnly?: boolean;
+}
+
 /** A prepared statement over the shared main database, narrowed to what a plugin needs. Parameters are
  *  positional; results are untyped rows the plugin validates itself. */
 export interface PluginDbStatement {
@@ -581,6 +595,9 @@ export interface PluginContext {
   /** The shared main database (see {@link PluginDb}). Throws unless the manifest declares the
    *  `reads:['db']` capability — DB reach is a real grant, not a default. */
   db(): PluginDb;
+  /** Contribute editable prompt templates: `<name>.md` files under `dir`, catalogued for the account UI
+   *  and resolved user override → plugin file → core file. Gated by `mutates:['prompt']`. */
+  registerPrompts(opts: { dir: string; entries: PluginPromptEntry[] }): void;
   /** Run once BEFORE the daemon starts serving platform turns — and again after every plugin reload —
    *  to reconcile durable state with reality (re-park watchers, terminalize orphans). Must be
    *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not

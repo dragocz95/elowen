@@ -1,8 +1,8 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginService, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
@@ -78,6 +78,11 @@ export class PluginRegistry {
    *  boot reconciles (run sequentially BEFORE platforms serve turns). Both carry their owner for logs. */
   readonly services: { plugin: string; service: PluginService }[] = [];
   readonly bootReconciles: { plugin: string; fn: () => void | Promise<void> }[] = [];
+  /** Plugin-contributed editable prompt templates: catalog entries (merged into the account UI catalog)
+   *  and template sources keyed by BARE template name — bare so existing per-user overrides in
+   *  `user_prompts` keep matching when a template migrates from core into a plugin. */
+  readonly promptEntries: { plugin: string; entry: PluginPromptEntry }[] = [];
+  readonly promptSources = new Map<string, { plugin: string; file: string }>();
   readonly controls = new Map<string, PluginControl>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
@@ -152,6 +157,13 @@ export class PluginRegistry {
     for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
+    for (const p of other.promptEntries) {
+      const prior = this.promptSources.get(p.entry.name);
+      if (prior && prior.plugin !== p.plugin) { warn?.(`prompt "${p.entry.name}" from "${p.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
+      this.promptEntries.push(p);
+      const src = other.promptSources.get(p.entry.name);
+      if (src) this.promptSources.set(p.entry.name, src);
+    }
     this.skillOwners.push(...other.skillOwners);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
@@ -414,6 +426,23 @@ export class PluginRegistry {
         this.services.push({ plugin: name, service });
       },
       registerBootReconcile: (fn) => { this.bootReconciles.push({ plugin: name, fn }); },
+      // Editable prompt templates. Shadowing what the model reads is a prompt mutation, so it rides the
+      // existing mutates:['prompt'] grant. Names stay BARE (`worker`, not `agents/worker`) — the
+      // override key in `user_prompts` must survive a template migrating from core into a plugin.
+      registerPrompts: ({ dir, entries }) => {
+        if (!capabilities.mutates?.includes('prompt')) { scoped.warn(`registerPrompts refused: missing mutates:['prompt'] capability`); return; }
+        for (const entry of entries) {
+          const clean = entry.name?.trim() ?? '';
+          if (!/^[a-z0-9][a-z0-9/_-]*$/.test(clean)) { scoped.warn(`registerPrompts refused: bad template name "${entry.name}"`); continue; }
+          const file = join(dir, `${clean}.md`);
+          // Fail at register time, not first render: a missing template would otherwise surface as a
+          // mid-turn read error long after the toggle that broke it.
+          if (!existsSync(file)) { scoped.warn(`registerPrompts refused: "${clean}" has no template file at ${file}`); continue; }
+          if (this.promptSources.has(clean)) { scoped.warn(`registerPrompts refused: duplicate template "${clean}"`); continue; }
+          this.promptSources.set(clean, { plugin: name, file });
+          this.promptEntries.push({ plugin: name, entry: { ...entry, name: clean } });
+        }
+      },
       // DB reach is a real grant: deny-by-default via `reads:['db']`, and throwing (not warning) because
       // a plugin that expected a database cannot degrade meaningfully — better one clear load error.
       db: () => {

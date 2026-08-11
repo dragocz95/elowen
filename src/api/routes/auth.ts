@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from '
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
-import { EDITABLE_PROMPTS, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
+import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
@@ -90,7 +90,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.get('/auth/me/prompts', (c) => {
     const u = c.get('user');
     const overrides = d.userPrompts?.getAll(u.id) ?? {};
-    return c.json(EDITABLE_PROMPTS.map((p) => ({
+    return c.json(editablePrompts().map((p) => ({
       name: p.name, group: p.group, vars: p.vars, jsonContract: p.jsonContract,
       appendOnly: p.appendOnly === true,
       // Append-only templates are system-managed: the shipped text stays server-side (the user only

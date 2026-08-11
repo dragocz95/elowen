@@ -19,6 +19,8 @@ import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import { UserPromptStore } from '../store/userPromptStore.js';
 import { UserSettingStore } from '../store/userSettingStore.js';
 import { PromptService } from '../prompts/promptService.js';
+import { setPluginPromptCatalog } from '../prompts/catalog.js';
+import { setPluginPromptSources } from '../prompts/index.js';
 import { TaskUsageStore } from '../store/taskUsageStore.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -454,6 +456,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       // current set — refreshed on every reload (a plugin toggle invalidates this provider), so a newly
       // enabled plugin's `showOutput` applies without a daemon restart.
       pluginOutputShowPatterns = [...registry.toolShowOutput];
+      // Same snapshot discipline for plugin prompt templates: the (sync) prompt renderer + catalog read
+      // module state, refreshed whole on every (re)load so a plugin toggle swaps templates live.
+      setPluginPromptCatalog(registry.promptEntries.map((p) => p.entry));
+      setPluginPromptSources(new Map([...registry.promptSources].map(([n, s]) => [n, s.file])));
       loadedPluginRegistry = registry;
       return registry;
     });

@@ -4,12 +4,11 @@
  *  parser is hardened with a repair pass, see overseer/jsonRepair). `planner-fallback` is intentionally
  *  excluded: it's the built-in safety net used only when `planner` is unreadable, not a user surface. */
 
-type PromptGroup = 'workers' | 'pilot' | 'overseer' | 'advisor' | 'cli';
-
 export interface PromptCatalogEntry {
   /** Template name == the `.md` filename without suffix; the override key in `user_prompts`. */
   name: string;
-  group: PromptGroup;
+  /** Grouping in the account UI. Core uses workers|pilot|overseer|advisor|cli; a plugin may extend. */
+  group: string;
   /** Placeholders the template substitutes — surfaced in the editor so users keep them intact. */
   vars: string[];
   /** The model output is parsed as JSON downstream; editing this risks the contract (repair softens it). */
@@ -55,14 +54,29 @@ export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
 
 const EDITABLE_NAMES = new Set(EDITABLE_PROMPTS.map((p) => p.name));
 
+/** Plugin-contributed catalog entries, swapped in whole on every plugin (re)load. A name colliding with
+ *  a core entry is dropped here — the core catalog metadata stays authoritative — while the plugin's
+ *  template FILE may still back the name through the prompt-source overlay (transition path for a core
+ *  subsystem extracted into a plugin). */
+let pluginPrompts: PromptCatalogEntry[] = [];
+
+export function setPluginPromptCatalog(entries: PromptCatalogEntry[]): void {
+  pluginPrompts = entries.filter((e) => !EDITABLE_NAMES.has(e.name));
+}
+
+/** The full editable-prompt catalog: core entries + plugin contributions (account UI + override API). */
+export function editablePrompts(): PromptCatalogEntry[] {
+  return [...EDITABLE_PROMPTS, ...pluginPrompts];
+}
+
 /** Whether a template name is a user-overridable prompt (guards the override API + resolution path). */
 export function isEditablePrompt(name: string): boolean {
-  return EDITABLE_NAMES.has(name);
+  return EDITABLE_NAMES.has(name) || pluginPrompts.some((p) => p.name === name);
 }
 
 const APPEND_ONLY = new Set(EDITABLE_PROMPTS.filter((p) => p.appendOnly).map((p) => p.name));
 
 /** True when the user's saved text appends to the default instead of replacing it. */
 export function isAppendOnlyPrompt(name: string): boolean {
-  return APPEND_ONLY.has(name);
+  return APPEND_ONLY.has(name) || pluginPrompts.some((p) => p.name === name && p.appendOnly === true);
 }

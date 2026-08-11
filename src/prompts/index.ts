@@ -22,6 +22,18 @@ function resolvePromptsDir(): string {
 const promptsDir = resolvePromptsDir();
 const cache = new Map<string, string>();
 
+/** Plugin template overlay: bare template name → absolute `.md` path. A registered name shadows the
+ *  core file (resolution: user override → plugin file → core file); swapped whole on plugin reload. */
+let pluginSources = new Map<string, string>();
+
+/** Install the plugin prompt-source overlay (from the merged plugin registry). Drops the read cache for
+ *  every name leaving OR entering the overlay so a reload re-resolves them from the right file. */
+export function setPluginPromptSources(sources: ReadonlyMap<string, string>): void {
+  for (const name of pluginSources.keys()) cache.delete(name);
+  for (const name of sources.keys()) cache.delete(name);
+  pluginSources = new Map(sources);
+}
+
 /** Absolute path to a file under the resolved prompts dir (works in dist + src). Single source for
  *  locating bundled prompt assets — e.g. the `skills/elowen-workflow/SKILL.md` master the skillService
  *  installs — so callers don't re-implement the dist/src probe. */
@@ -33,7 +45,7 @@ export function promptsPath(...segments: string[]): string {
 function readTemplate(name: string): string {
   const cached = cache.get(name);
   if (cached !== undefined) return cached;
-  const text = readFileSync(join(promptsDir, `${name}.md`), 'utf-8').trim();
+  const text = readFileSync(pluginSources.get(name) ?? join(promptsDir, `${name}.md`), 'utf-8').trim();
   cache.set(name, text);
   return text;
 }
