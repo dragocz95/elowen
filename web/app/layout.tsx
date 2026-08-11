@@ -6,6 +6,13 @@ import type { ReactNode } from 'react';
 import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
 
+// Every route renders per request — the brand payload is fetched live, so a theme switch must land on
+// the next reload. This CANNOT be left to the `no-store` fetch inside fetchThemePayload: its failure
+// backoff returns early WITHOUT touching fetch, and a render that hits that path uses no dynamic API at
+// all, so Next classifies the route as static and bakes the built-in brand into the full route cache
+// (exactly what happened when `next build` ran while the daemon was down).
+export const dynamic = 'force-dynamic';
+
 // Icons come from Next file conventions: app/icon.png → <link rel="icon"> and app/apple-icon.png →
 // <link rel="apple-touch-icon">. Do NOT set metadata.icons here — declaring it overrides the file
 // convention and drops the auto-generated favicon link.
