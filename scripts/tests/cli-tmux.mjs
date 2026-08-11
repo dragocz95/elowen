@@ -130,6 +130,7 @@ async function waitFor(label, predicate, timeoutMs = 10_000) {
     await sleep(40);
   }
   const suffix = lastError ? ` (${lastError.message})` : '';
+  try { saveCapture('99-timeout-debug'); } catch { /* diagnostics only */ }
   throw new Error(`timed out waiting for ${label}${suffix}`);
 }
 
@@ -812,7 +813,9 @@ try {
   assert.equal(Number(streamQuery.generation), startBody.generation, 'SSE must attach the current generation');
   assert.equal(stopBody.client, startBody.client, 'Ctrl+C stop must release the current stable client');
   assert.equal(stopBody.session, 'e2e-session', 'Ctrl+C stop must target the bound session');
-  assert.ok(entries().filter((entry) => entry.kind === 'request').every((entry) => entry.authorization === 'ok'), 'every mock request must be authenticated');
+  // /public/theme is the daemon's unauthenticated brand route — the CLI calls it with no bearer by
+  // design (boot runs before login state matters), so it is the one legitimate exemption here.
+  assert.ok(entries().filter((entry) => entry.kind === 'request' && entry.path !== '/public/theme').every((entry) => entry.authorization === 'ok'), 'every mock request must be authenticated');
 
   const perfEntries = readFileSync(perfLog, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const perfFrames = perfEntries.filter((entry) => entry.type === 'frame');

@@ -361,6 +361,14 @@ const server = createServer(async (req, res) => {
     authorization: req.headers.authorization === `Bearer ${TOKEN}` ? 'ok' : 'missing-or-wrong',
   });
 
+  // Mirrors the real daemon's public allowlist: the login/boot brand payload is served WITHOUT auth
+  // (the CLI deliberately sends no bearer there), and the harness's every-request-authenticated
+  // assertion exempts it the same way.
+  if (req.method === 'GET' && url.pathname === '/public/theme') {
+    json(res, 200, { brand: { agentName: 'Elowen', productName: 'Elowen' }, colors: {}, fonts: {}, text: {}, assets: {}, v: 'builtin' });
+    return;
+  }
+
   if (req.headers.authorization !== `Bearer ${TOKEN}`) {
     json(res, 401, { error: 'unauthorized' });
     return;
@@ -376,6 +384,9 @@ const server = createServer(async (req, res) => {
       sessionId: SESSION_ID,
       title: 'E2E Harness',
       model: 'mock/e2e-model',
+      // The CLI keys the telemetry Limits section by this provider identity since the drill-in change
+      // (rateLimitsByProvider[status.provider]) — without it the section silently never renders.
+      provider: 'mock',
       usage: { tokens: 1200, contextWindow: 100000, percent: 1.2, totalTokens: 1200, cost: 0.01 },
       statusline: null,
       thinkingLevel: 'high',
@@ -430,14 +441,21 @@ const server = createServer(async (req, res) => {
     ] });
     return;
   }
+  const RATE_LIMITS = {
+    provider: 'openai-codex', planType: 'pro', fetchedAt: 1_900_000_000_000, stale: false,
+    windows: [
+      { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
+      { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+    ],
+  };
   if (req.method === 'GET' && url.pathname === '/brain/rate-limits') {
-    json(res, 200, {
-      provider: 'openai-codex', planType: 'pro', fetchedAt: 1_900_000_000_000, stale: false,
-      windows: [
-        { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
-        { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
-      ],
-    });
+    json(res, 200, RATE_LIMITS);
+    return;
+  }
+  // The per-provider map the CLI actually consumes since the drill-in change; keyed by the SAME
+  // provider identity /brain/status reports, exactly like the real daemon.
+  if (req.method === 'GET' && url.pathname === '/brain/rate-limits/all') {
+    json(res, 200, { mock: RATE_LIMITS });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/plugins/mcp/servers') {
