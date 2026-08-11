@@ -23,3 +23,8 @@ export const BUILTIN_THEME: ThemePayload = {
 
 /** The browser reaches daemon paths through the same-origin BFF proxy. */
 export const themeAssetUrl = (daemonPath: string): string => `/api${daemonPath}`;
+
+/** The only asset-path shape the daemon ever emits. Both the server style injection and the client
+ *  useBrand() re-check payload paths against it, so a hostile payload cannot steer an <img>/url() at an
+ *  arbitrary daemon route. */
+export const THEME_ASSET_PATH_RE = /^\/public\/theme\/assets\/[a-z0-9-]+\.png\?v=[0-9a-f]{16}$/;

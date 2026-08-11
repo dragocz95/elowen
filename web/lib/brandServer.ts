@@ -1,7 +1,7 @@
 // Server-side only (imported from the root layout / manifest route — never from client components).
 import { cache } from 'react';
 import { daemonUrl } from './proxy';
-import { BUILTIN_THEME, themeAssetUrl, type ThemePayload } from './brandShared';
+import { BUILTIN_THEME, themeAssetUrl, THEME_ASSET_PATH_RE, type ThemePayload } from './brandShared';
 
 /** Fetch the instance's white-label payload for server rendering (layout + manifest). `no-store`
  *  because the payload carries its own content version and a theme switch must land on the next
@@ -29,7 +29,7 @@ export const fetchThemePayload = cache(async (): Promise<ThemePayload> => {
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const RGB_TRIPLE_RE = /^\d{1,3} \d{1,3} \d{1,3}$/;
 const FONT_STACK_RE = /^[\w \-,'"]{1,200}$/;
-const ASSET_PATH_RE = /^\/public\/theme\/assets\/[a-z0-9-]+\.png\?v=[0-9a-f]{16}$/;
+const ASSET_PATH_RE = THEME_ASSET_PATH_RE;
 
 /** A theme icon's browser URL (through the BFF proxy), or null when the theme does not carry it. */
 export function themeIcon(theme: ThemePayload, slot: 'icon192' | 'icon512'): string | null {

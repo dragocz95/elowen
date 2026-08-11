@@ -439,13 +439,20 @@ export class BrainClient {
   /** The instance brand from GET /public/theme (white-label). Falls back to the built-in Elowen brand
    *  on any failure — including an older daemon without the route — so branding can never block a chat. */
   async publicBrand(): Promise<PublicBrand> {
+    // The value comes over the wire and lands in terminal output, so strip control characters (escape
+    // sequences would be an OSC/title injection) and cap the length here, not just on the daemon.
+    const clean = (v: unknown): string =>
+      // eslint-disable-next-line no-control-regex
+      typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 80) : '';
     try {
       const res = await this.f(`${this.o.base}/public/theme`, { headers: this.headers() });
       if (!res.ok) return DEFAULT_PUBLIC_BRAND;
       const body = (await res.json()) as { brand?: { agentName?: unknown; productName?: unknown }; v?: unknown };
-      const agentName = typeof body.brand?.agentName === 'string' && body.brand.agentName ? body.brand.agentName : 'Elowen';
-      const productName = typeof body.brand?.productName === 'string' && body.brand.productName ? body.brand.productName : 'Elowen';
-      return { agentName, productName, themed: typeof body.v === 'string' && body.v !== 'builtin' };
+      return {
+        agentName: clean(body.brand?.agentName) || 'Elowen',
+        productName: clean(body.brand?.productName) || 'Elowen',
+        themed: typeof body.v === 'string' && body.v !== 'builtin',
+      };
     } catch { return DEFAULT_PUBLIC_BRAND; }
   }
 

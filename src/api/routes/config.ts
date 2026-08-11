@@ -230,6 +230,10 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     };
   };
   app.get('/public/theme', (c) => c.json(publicThemePayload()));
+  // Unauthenticated route serving up-to-2 MiB files: the bytes are cached in memory keyed by the asset's
+  // mtime so a request flood cannot grind the event loop with repeated disk reads. Bounded by the fixed
+  // whitelist (4 entries max); a swapped file changes the mtime and naturally evicts its stale bytes.
+  const assetBytesCache = new Map<string, { mtimeMs: number; bytes: Uint8Array<ArrayBuffer> }>();
   app.get('/public/theme/assets/:file', (c) => {
     const cfg = d.config.get();
     const file = c.req.param('file');
@@ -239,10 +243,16 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     const asset = d.themes?.resolveAsset(cfg.theme.active, file);
     if (!asset) return c.json({ error: 'not found' }, 404);
     try {
-      const body = readFileSync(asset.path);
+      const key = `${cfg.theme.active}/${file}`;
+      let cached = assetBytesCache.get(key);
+      if (!cached || cached.mtimeMs !== asset.mtimeMs) {
+        cached = { mtimeMs: asset.mtimeMs, bytes: new Uint8Array(readFileSync(asset.path)) };
+        if (assetBytesCache.size > 8) assetBytesCache.clear(); // theme switch left stale keys behind
+        assetBytesCache.set(key, cached);
+      }
       // `immutable` is safe because every served URL carries the theme-version query param — new bytes
       // arrive under a new URL. `nosniff` because the bytes are operator-supplied.
-      return c.body(new Uint8Array(body), 200, {
+      return c.body(cached.bytes, 200, {
         'content-type': 'image/png',
         'cache-control': 'public, max-age=31536000, immutable',
         'x-content-type-options': 'nosniff',

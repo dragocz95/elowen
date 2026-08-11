@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, type ReactNode } from 'react';
 import { useLocaleSafe } from './i18n/context';
-import { BUILTIN_THEME, themeAssetUrl, type ThemePayload } from './brandShared';
+import { BUILTIN_THEME, themeAssetUrl, THEME_ASSET_PATH_RE, type ThemePayload } from './brandShared';
 
 export { BUILTIN_THEME, type ThemePayload } from './brandShared';
 
@@ -17,10 +17,14 @@ export function useBrand(): { appName: string; agentName: string; iconSrc: strin
   const theme = useContext(BrandContext);
   const locale = useLocaleSafe();
   const appName = theme.text[locale]?.appName ?? theme.brand.productName;
+  // Same shape check the server injection applies — a payload path that is not the daemon's own asset
+  // route never becomes an <img> src.
+  const asset = (path: string | undefined, fallback: string): string =>
+    path && THEME_ASSET_PATH_RE.test(path) ? themeAssetUrl(path) : fallback;
   return {
     appName,
     agentName: theme.brand.agentName,
-    iconSrc: theme.assets.icon ? themeAssetUrl(theme.assets.icon) : '/icon.png',
-    logoSrc: theme.assets.logo ? themeAssetUrl(theme.assets.logo) : '/elowen-logo.png',
+    iconSrc: asset(theme.assets.icon, '/icon.png'),
+    logoSrc: asset(theme.assets.logo, '/elowen-logo.png'),
   };
 }

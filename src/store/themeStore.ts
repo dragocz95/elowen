@@ -78,8 +78,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/** Strip C0/C1 control characters — a brand name reaches terminals (CLI notices, tmux) where an
+ *  escape sequence would be a title/OSC injection, and no legitimate display name contains them. */
 function cleanName(v: unknown, max: number): string | undefined {
-  return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined;
+  if (typeof v !== 'string') return undefined;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim();
+  return cleaned ? cleaned.slice(0, max) : undefined;
 }
 
 /** Validate + normalize a parsed theme.json. Throws with a human reason on the first violation —
@@ -130,7 +135,8 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
       for (const [key, value] of Object.entries(entries)) {
         if (!TEXT_KEY_RE.test(key)) throw new Error(`text key "${key}" is not a valid dictionary key`);
         if (typeof value !== 'string') throw new Error(`text.${lang}.${key} must be a string`);
-        out[key] = value.slice(0, TEXT_VALUE_MAX);
+        // eslint-disable-next-line no-control-regex
+        out[key] = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, TEXT_VALUE_MAX);
       }
       text[lang] = out;
     }

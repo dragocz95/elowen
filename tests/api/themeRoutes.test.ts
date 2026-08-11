@@ -109,13 +109,14 @@ describe('PUT /config theme patch + live brand apply', () => {
     body: JSON.stringify(body),
   });
 
-  it('persists theme.active, treats null as a real value, and drops a malformed name', async () => {
+  it('persists theme.active, treats null as a real value, and rejects a malformed name with 400', async () => {
     const { app, token, deps } = await makeApp();
     expect((await app.request('/config', put(token, { theme: { active: 'acme' } }))).status).toBe(200);
     expect(deps.config.get().theme.active).toBe('acme');
-    expect((await app.request('/config', put(token, { theme: { active: '../etc' } }))).status).toBe(200);
-    expect(deps.config.get().theme.active).toBeNull(); // bad grammar → sanitized to null, never persisted
-    deps.config.update({ theme: { active: 'acme' } });
+    // Bad grammar answers 400 AND leaves the selection untouched — silently deactivating the theme
+    // while reporting success would be a lie to the settings UI.
+    expect((await app.request('/config', put(token, { theme: { active: '../etc' } }))).status).toBe(400);
+    expect(deps.config.get().theme.active).toBe('acme');
     expect((await app.request('/config', put(token, { theme: { active: null } }))).status).toBe(200);
     expect(deps.config.get().theme.active).toBeNull();
   });
