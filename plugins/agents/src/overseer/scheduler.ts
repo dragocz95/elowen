@@ -1,6 +1,6 @@
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import type { SpawnService } from '../spawn/spawn.js';
-import type { EventBus } from '../../../../src/api/sse.js';
+import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { Clock } from '../lib/clock.js';
 import { KeyedMutex } from '../lib/keyedMutex.js';

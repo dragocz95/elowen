@@ -1,5 +1,5 @@
 import type { TaskStore } from '../../../../src/store/taskStore.js';
-import type { EventBus } from '../../../../src/api/sse.js';
+import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { Task } from '../../../../src/store/types.js';
 import { parseDbTs } from '../lib/time.js';
 

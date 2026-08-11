@@ -1,4 +1,5 @@
-import type { ElowenEvent, EventBus } from '../../../../src/api/sse.js';
+import type { ElowenEvent } from '../../../../src/api/sse.js';
+import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { MissionStore } from '../store/missionStore.js';
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import { recipientsForMission, type PushUsersView } from './recipients.js';

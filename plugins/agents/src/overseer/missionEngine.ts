@@ -6,7 +6,7 @@ import type { MissionStore, Mission } from '../store/missionStore.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../../../../src/tmux/types.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
-import type { EventBus } from '../../../../src/api/sse.js';
+import type { AgentsBus as EventBus } from '../lib/bus.js';
 import { resolveExecutor } from './routing.js';
 import { parseResumeLabel } from '../spawn/resume/index.js';
 import type { GitReader } from '../lib/git.js';

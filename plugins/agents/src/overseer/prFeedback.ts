@@ -1,6 +1,6 @@
 import type { MissionPrStore } from '../store/missionPrStore.js';
 import type { MissionStore } from '../store/missionStore.js';
-import type { EventBus } from '../../../../src/api/sse.js';
+import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { MissionGit } from './missionGit.js';
 import { logger } from '../lib/logger.js';
 
