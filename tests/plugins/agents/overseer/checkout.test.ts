@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkoutOf, busySharedCheckouts } from '../../../../src/api/services/checkout.js';
+import { checkoutOf, busySharedCheckouts } from '../../../../plugins/agents/src/overseer/checkout.js';
 
 const projectPath = (id: number) => (id === 1 ? '/o' : '/p2');
 

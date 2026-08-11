@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOwnerId, type OwnerDeps } from '../../src/prompts/owner.js';
+import { resolveOwnerId, type OwnerDeps } from '../../../plugins/agents/src/lib/owner.js';
 
 function deps(over: Partial<{ tasks: Record<string, { created_by: number | null; parent_id: string | null }>; missions: Record<string, { created_by: number | null }>; users: number[] }> = {}): OwnerDeps {
   const tasks = over.tasks ?? {};

@@ -10,7 +10,6 @@ import { makeTestApp } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { KeyedMutex } from '../../src/shared/keyedMutex.js';
 import type { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
 import type { ServerDeps } from '../../src/api/deps.js';
 

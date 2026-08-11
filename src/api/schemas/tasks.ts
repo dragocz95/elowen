@@ -38,7 +38,6 @@ export const patchTaskSchema = z.object({
 /** A worker's free-text question to the autopilot (`elowen ask`), or a human's reply to one. text is
  *  required-non-empty so an empty turn can't be recorded or block on nothing, and capped so a
  *  prompt-injected agent can't store a huge blob per turn (the route also caps the turn count). */
-export const askSchema = z.object({ text: z.string().min(1).max(4000) });
 
 /** A planner phase as it arrives over the wire (manual mode / playground). The handler trims and
  *  validates the type against VALID_TYPES, so the shape here is permissive. */

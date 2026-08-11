@@ -1,6 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '../../src/prompts/index.js';
-const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { openDb } from '../../src/store/db.js';
@@ -13,8 +11,6 @@ import type { ElowenEvent } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { makeTestApp } from '../helpers/testApp.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
-import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
 import { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';

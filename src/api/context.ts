@@ -34,7 +34,7 @@ export type ElowenContext = Context<{ Variables: ElowenVariables }>;
 
 /** Minimal structural view of the request context the access predicates read (the real Hono context
  *  satisfies it). Overloaded `get` so a caller can read both the user and the token scope. */
-export type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): TokenScope | undefined } };
+type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): TokenScope | undefined } };
 
 /** Narrower context shape for the admin/user-only predicates that read just the user. */
 type UserCtx = { get: (k: 'user') => User | undefined };
