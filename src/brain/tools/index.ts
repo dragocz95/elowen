@@ -1,5 +1,5 @@
 import type { ElowenToolCtx } from './elowenTools.js';
-import { elowenListTasks, elowenCreateTask, elowenUpdateTask, elowenPlan, elowenListMissions, elowenListSessions, elowenGetTask, elowenStopTask, elowenTaskOutput } from './elowenTools.js';
+import { elowenListTasks, elowenCreateTask, elowenUpdateTask, elowenPlan, elowenGetTask, elowenStopTask, elowenTaskOutput } from './elowenTools.js';
 import { buildMemoryTools } from './memoryTools.js';
 import { buildLspTools } from './lspTools.js';
 import { buildShareImageTool } from './shareImageTool.js';
@@ -48,7 +48,9 @@ export const BUILTIN_TOOL_OUTPUT_SHOWN: string[] = [
  *  Deliberately NOT `prefix*` patterns, unlike the icon/output lists above — `Elowen*` reads AND writes
  *  (ElowenCreateTask), `Memory*` likewise (MemoryDelete), so only exact names can be right. */
 export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
-  'ElowenListTasks', 'ElowenListMissions', 'ElowenListSessions',
+  // ElowenListMissions/ElowenListSessions live in the agents plugin now; its manifest `planSafe`
+  // declares them, so the composed plan-mode set is unchanged while the plugin is enabled.
+  'ElowenListTasks',
   'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
   'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover', 'LspDocumentSymbol', 'LspWorkspaceSymbol',
   // Showing the user a screenshot is exactly what planning a UI change needs, and it mutates nothing: the
@@ -64,7 +66,7 @@ export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
  *  new REST endpoint needs no changes here beyond adding one more thin wrapper. Bundles the LSP
  *  diagnostics tool (owner-chat only, like the Elowen* control plane). */
 export function buildElowenTools(ctx: ElowenToolCtx) {
-  return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenListMissions(ctx), elowenListSessions(ctx), elowenGetTask(ctx), elowenStopTask(ctx), elowenTaskOutput(ctx), ...buildLspTools()];
+  return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenGetTask(ctx), elowenStopTask(ctx), elowenTaskOutput(ctx), ...buildLspTools()];
 }
 
 /** Name/label/group for every BUILT-IN (native, non-plugin) brain tool, derived from the real tool

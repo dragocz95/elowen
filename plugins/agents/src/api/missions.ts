@@ -28,6 +28,22 @@ const overseerDecideSchema = z.object({
   restart: z.boolean().optional(),
 });
 
+/** The '/missions' list payload: live missions plus disengaged ones whose PR is still pending (the
+ *  manual "Open PR" affordance), visibility-filtered to the caller's projects, each with PR-native
+ *  metadata attached. Shared by the GET route and the ElowenListMissions brain tool. */
+export function missionsListPayload(r: AgentsRuntime, tasks: { get(id: string): { project_id: number } | null | undefined }, auth: ApiAuth): object[] {
+  const live = r.missions.live();
+  const liveIds = new Set(live.map((m) => m.id));
+  const extra = r.missionGit.pendingPrMissionIds()
+    .filter((id) => !liveIds.has(id))
+    .map((id) => r.missions.get(id))
+    .filter((m): m is NonNullable<typeof m> => m != null);
+  const all = [...live, ...extra];
+  const allowed = auth.accessibleProjects;
+  const visible = allowed ? all.filter((m) => { const epic = tasks.get(m.epic_id); return epic && allowed.includes(epic.project_id); }) : all;
+  return visible.map((m) => ({ ...m, pr: r.missionGit.prInfo(m.id) ?? null }));
+}
+
 /** Mission lifecycle + the overseer long-poll, ROOT-mounted at the grandfathered '/missions' paths the
  *  web BFF and CLI already call: list/detail, engage, pause/resume, disengage, manual PR open/merge,
  *  and the parked overseer's next/decide endpoints — every route gated by the mission's own project
@@ -46,23 +62,7 @@ export function registerMissionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
     return !!epic && canProject(auth, epic.project_id);
   };
 
-  const list = (auth: ApiAuth): PluginHttpResponse => {
-    const r = rt();
-    const live = r.missions.live();
-    // Also surface DISENGAGED missions whose PR is still pending (ready to open / open) so a completed
-    // PR-native mission keeps its branch/PR affordance in the UI — the manual "Open PR" lives here.
-    const liveIds = new Set(live.map((m) => m.id));
-    const extra = r.missionGit.pendingPrMissionIds()
-      .filter((id) => !liveIds.has(id))
-      .map((id) => r.missions.get(id))
-      .filter((m): m is NonNullable<typeof m> => m != null);
-    const all = [...live, ...extra];
-    const allowed = auth.accessibleProjects;
-    const visible = allowed ? all.filter((m) => { const epic = tasks().get(m.epic_id); return epic && allowed.includes(epic.project_id); }) : all;
-    // Attach PR-native metadata (branch/PR url+state) so the tasks view can show a badge + "Open PR"
-    // without a per-mission detail fetch. Null for non-PR missions.
-    return json(visible.map((m) => ({ ...m, pr: r.missionGit.prInfo(m.id) ?? null })));
-  };
+  const list = (auth: ApiAuth): PluginHttpResponse => json(missionsListPayload(rt(), tasks(), auth));
 
   const detail = (auth: ApiAuth, id: string): PluginHttpResponse => {
     const r = rt();

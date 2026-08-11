@@ -3,6 +3,13 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 import { builtinToolMetas, BUILTIN_TOOL_PLAN_SAFE } from '../../src/brain/tools/index.js';
+import { openDb } from '../../src/store/db.js';
+import { makePluginDb } from '../../src/store/pluginDb.js';
+import { TaskStore } from '../../src/store/taskStore.js';
+import { Readiness } from '../../src/store/readiness.js';
+import { ConfigStore } from '../../src/store/configStore.js';
+import { ProjectStore } from '../../src/store/projectStore.js';
+import { agentsTestHost } from '../helpers/testApp.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -24,7 +31,17 @@ const CONFIG = {
 
 async function loadEveryBundledPlugin() {
   const names = discoverPlugins([pluginDir]).map((p) => p.manifest.name);
-  return loadPlugins({ dirs: [pluginDir], enabled: names, logger: log, config: CONFIG });
+  // The agents plugin needs a database and host seams at register() time (schema migration, tmux for
+  // its '/sessions' surface) — without them it fails load and its declared tools would silently drop
+  // out of the parity comparison below. Everything deeper is resolved lazily and never touched here.
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const host = agentsTestHost({ db, tasks: new TaskStore(db), readiness: new Readiness(db), config: new ConfigStore(db), projects: new ProjectStore(db) });
+  return loadPlugins({
+    dirs: [pluginDir], enabled: names, logger: log, config: CONFIG,
+    pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
+    host,
+  });
 }
 
 describe('tool naming convention', () => {

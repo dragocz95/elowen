@@ -21,6 +21,7 @@ import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
+import { registerAgentsTools } from './tools.js';
 import type { Logger } from './lib/logger.js';
 
 export function register(ctx: PluginContext): void {
@@ -128,6 +129,9 @@ export function register(ctx: PluginContext): void {
   registerMissionsApi(ctx, rt);
   registerSessionsApi(ctx, rt);
   registerAsksApi(ctx, rt);
+
+  // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
+  registerAgentsTools(ctx, rt);
 
   // The control surface the daemon routes/services/advisor drive (deps getters resolve it live from
   // the loaded registry). Accessor methods so the registry's function-shape narrowing applies and so

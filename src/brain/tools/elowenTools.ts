@@ -89,23 +89,8 @@ export function elowenPlan(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenListMissions(ctx: ElowenToolCtx) {
-  return defineTool({
-    name: 'ElowenListMissions', label: 'List missions',
-    description: 'List Elowen autopilot missions.',
-    parameters: Type.Object({}),
-    execute: async () => call(ctx, 'GET', '/missions'),
-  });
-}
-
-export function elowenListSessions(ctx: ElowenToolCtx) {
-  return defineTool({
-    name: 'ElowenListSessions', label: 'List sessions',
-    description: 'List the running Elowen agent sessions — the background worker/pilot/overseer agents launched in tmux for your projects, each with its role and project. This is NOT the list of CLI chat clients or brain conversations: an empty result means no agent is currently running, not that nobody is connected. Use it to see what agent work is live before spawning more or stopping one.',
-    parameters: Type.Object({}),
-    execute: async () => call(ctx, 'GET', '/sessions'),
-  });
-}
+// ElowenListMissions + ElowenListSessions moved to the agents plugin (plugins/agents/src/tools.ts):
+// they read exclusively the subsystem's surface, so they ride the plugin and vanish with it.
 
 export function elowenGetTask(ctx: ElowenToolCtx) {
   return defineTool({

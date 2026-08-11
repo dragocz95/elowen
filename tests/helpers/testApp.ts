@@ -22,6 +22,51 @@ import type { MissionStore } from '../../plugins/agents/src/store/missionStore.j
 import type { PlanJob } from '../../src/api/planJobStore.js';
 import type { PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
 
+/** The host seam wiring the agents plugin needs to load in tests — brainCore's shape with fakes for
+ *  tmux/inference/push. Shared by agentsPluginProvider below and by tests that load EVERY bundled
+ *  plugin (toolNaming) and only need the agents plugin to get past register(). */
+export function agentsTestHost(w: {
+  db: ReturnType<typeof openDb>;
+  tasks: TaskStore;
+  readiness: Readiness;
+  config: ConfigStore;
+  projects: ProjectStore;
+  users?: UserStore;
+  tmux?: FakeTmuxDriver;
+  terminals?: PluginHostTerminals;
+  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
+}) {
+  return {
+    tmux: w.tmux ?? new FakeTmuxDriver(),
+    brainWorker: () => undefined,
+    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined },
+    stores: {
+      tasks: w.tasks,
+      projects: w.projects,
+      homeProject: () => w.projects.list()[0] ?? { id: 1, slug: 'elowen', path: '/o', notes: '', icon: '', pr_enabled: null },
+      usersRead: {
+        list: () => (w.users?.list() ?? []).map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
+        isAdmin: (id: number) => w.users?.isAdmin(id) ?? true,
+        allowedExecs: (id: number) => w.users?.list().find((u) => u.id === id)?.allowed_execs ?? null,
+      },
+      readiness: w.readiness,
+      taskUsage: new TaskUsageStore(w.db),
+    },
+    prompts: w.prompts ?? { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
+    config: w.config as unknown as PluginHostConfig,
+    relayClient: () => ({ decide: async () => ({ text: '' }) }) as never,
+    git: { projectHead, projectRangeDiff } as never,
+    push: () => ({ sendToUsers: async () => {} }),
+    terminals: () => w.terminals ?? {
+      advisorStop: async () => {},
+      chatTerminalStop: async () => {},
+      brainWorkerLive: () => false,
+      brainWorkerAbort: async () => {},
+      ticketIssue: () => 'test-ticket',
+    },
+  };
+}
+
 /** Build a PluginRegistryProvider that loads the REAL agents plugin (its dist build) over the given
  *  stores — the host wiring shape brainCore builds, with test fakes for tmux/inference/push. Local
  *  createServer tests pass the result as `plugins` so the root-mounted '/missions' (…) surfaces serve;
@@ -49,35 +94,7 @@ export function agentsPluginProvider(w: {
     pluginDb: (plugin) => makePluginDb(w.db, plugin, { canMigrate: true }),
     publishEvent: (e) => bus.publish(e),
     subscribeEvents: (fn) => bus.subscribe(fn),
-    host: {
-      tmux: w.tmux ?? new FakeTmuxDriver(),
-      brainWorker: () => undefined,
-      elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined },
-      stores: {
-        tasks: w.tasks,
-        projects: w.projects,
-        homeProject: () => w.projects.list()[0] ?? { id: 1, slug: 'elowen', path: '/o', notes: '', icon: '', pr_enabled: null },
-        usersRead: {
-          list: () => (w.users?.list() ?? []).map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
-          isAdmin: (id: number) => w.users?.isAdmin(id) ?? true,
-          allowedExecs: (id: number) => w.users?.list().find((u) => u.id === id)?.allowed_execs ?? null,
-        },
-        readiness: w.readiness,
-        taskUsage: new TaskUsageStore(w.db),
-      },
-      prompts: w.prompts ?? { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
-      config: w.config as unknown as PluginHostConfig,
-      relayClient: () => ({ decide: async () => ({ text: '' }) }) as never,
-      git: { projectHead, projectRangeDiff } as never,
-      push: () => ({ sendToUsers: async () => {} }),
-      terminals: () => w.terminals ?? {
-        advisorStop: async () => {},
-        chatTerminalStop: async () => {},
-        brainWorkerLive: () => false,
-        brainWorkerAbort: async () => {},
-        ticketIssue: () => 'test-ticket',
-      },
-    },
+    host: agentsTestHost(w),
     logger: { info() {}, warn() {}, error() {} },
   }).then((registry) => {
     // Mirror brainCore's post-load snapshot: the plugin owns the agents templates now, so the core

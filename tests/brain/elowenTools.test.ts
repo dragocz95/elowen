@@ -19,8 +19,9 @@ const toolNamed = (f: typeof fetch, name: string) =>
 describe('buildElowenTools', () => {
   it('exposes the expected tool names (elowen control plane + the owner-chat LSP probe)', () => {
     const names = buildElowenTools({ url: 'http://x', token: 't' }).map((t) => t.name).sort();
+    // ElowenListMissions/ElowenListSessions moved to the agents plugin (registered via its manifest).
     expect(names).toEqual([
-      'ElowenCreateTask', 'ElowenGetTask', 'ElowenListMissions', 'ElowenListSessions', 'ElowenListTasks',
+      'ElowenCreateTask', 'ElowenGetTask', 'ElowenListTasks',
       'ElowenPlan', 'ElowenStopTask', 'ElowenTaskOutput', 'ElowenUpdateTask',
       'LspDiagnostics', 'LspDocumentSymbol', 'LspFindReferences', 'LspGoToDefinition', 'LspHover', 'LspWorkspaceSymbol',
     ]);
@@ -148,7 +149,7 @@ describe('buildElowenTools', () => {
 
   it('surfaces API errors as text instead of throwing', async () => {
     const f = fakeFetch(500, { error: 'boom' });
-    const tool = buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListMissions')!;
+    const tool = buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListTasks')!;
     const res = await tool.execute('call-3', {});
     expect(res.content[0]!.text).toContain('HTTP 500');
   });

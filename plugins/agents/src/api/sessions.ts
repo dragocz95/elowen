@@ -30,6 +30,44 @@ type LaunchOutcome =
   | { ok: true; session: string }
   | { ok: false; reason: 'busy' | 'spawn-failed' | 'gone'; message: string };
 
+/** Ownership guard for the session-control routes. The caller must be able to access the project the
+ *  session's task belongs to; admin passes — but an advisor session is owner-or-admin, a chat terminal
+ *  is OWNER-ONLY (a second admin is refused), and an agent-scoped token reaches neither. The same
+ *  shape the core sessionAccessible had; open mode (no user rows) has no tenancy boundary. */
+function sessionAccessibleFor(rt: () => AgentsRuntime, auth: ApiAuth, name: string): boolean {
+  if (auth.userId === null) return true; // open / single-user mode
+  const info = classifySession(name);
+  if (info.role === 'advisor') {
+    if (auth.tokenScope === 'agent') return false;
+    return auth.userId === info.userId || auth.admin;
+  }
+  if (info.role === 'chat') {
+    if (auth.tokenScope === 'agent') return false;
+    return auth.userId === info.userId;
+  }
+  // Admin sees every session — but NOT via an agent-scoped token (it stays confined to its working
+  // set; fall through to the project check below).
+  if (auth.tokenScope !== 'agent' && auth.admin) return true;
+  const task = rt().taskForSession(name);
+  return !!task && canProject(auth, task.project_id);
+}
+
+/** The '/sessions' list payload: live `elowen-*` tmux sessions the caller may control, each classified
+ *  (role/agent/mission) and tagged with its project from the agent registry. Shared by the GET route
+ *  and the ElowenListSessions brain tool. */
+export async function sessionsListPayload(tmux: { list(): Promise<string[]> }, rt: () => AgentsRuntime, auth: ApiAuth): Promise<object[]> {
+  return (await tmux.list())
+    .filter((s) => s.startsWith('elowen-'))
+    // Visibility mirrors operability: a caller only sees sessions it may control (its projects'
+    // agents, its own advisor; admin sees all).
+    .filter((s) => sessionAccessibleFor(rt, auth, s))
+    .map((s) => {
+      const info = classifySession(s);
+      // Tag each session with its project from the agent store (every role upserts there at spawn).
+      return { ...info, projectId: rt().agents.projectFor(s.slice('elowen-'.length)) ?? undefined };
+    });
+}
+
 /** Live tmux session surface, ROOT-mounted at the grandfathered '/sessions' paths: list, manual
  *  launch, kill, keystrokes/raw input, resize, pane capture, the live ANSI stream and a single-use
  *  ticket for the terminal WebSocket. Every control route is ownership-gated by sessionAccessible; a
@@ -39,27 +77,7 @@ export function registerSessionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
   const tmux = ctx.host.tmux();
   const tasks = () => ctx.host.stores().tasks;
 
-  // Ownership guard for the session-control routes. The caller must be able to access the project the
-  // session's task belongs to; admin passes — but an advisor session is owner-or-admin, a chat terminal
-  // is OWNER-ONLY (a second admin is refused), and an agent-scoped token reaches neither. The same
-  // shape the core sessionAccessible had; open mode (no user rows) has no tenancy boundary.
-  const sessionAccessible = (auth: ApiAuth, name: string): boolean => {
-    if (auth.userId === null) return true; // open / single-user mode
-    const info = classifySession(name);
-    if (info.role === 'advisor') {
-      if (auth.tokenScope === 'agent') return false;
-      return auth.userId === info.userId || auth.admin;
-    }
-    if (info.role === 'chat') {
-      if (auth.tokenScope === 'agent') return false;
-      return auth.userId === info.userId;
-    }
-    // Admin sees every session — but NOT via an agent-scoped token (it stays confined to its working
-    // set; fall through to the project check below).
-    if (auth.tokenScope !== 'agent' && auth.admin) return true;
-    const task = rt().taskForSession(name);
-    return !!task && canProject(auth, task.project_id);
-  };
+  const sessionAccessible = (auth: ApiAuth, name: string): boolean => sessionAccessibleFor(rt, auth, name);
 
   // Per-user model allow-list: a non-admin whose allowed_execs is non-empty may only use those execs.
   // Open mode, admins, or an empty list → unrestricted. The global config.allowedExecs check still
@@ -131,16 +149,7 @@ export function registerSessionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
     return { ok: true, session };
   };
 
-  const list = async (auth: ApiAuth): Promise<PluginHttpResponse> => json((await tmux.list())
-    .filter((s) => s.startsWith('elowen-'))
-    // Visibility mirrors operability: a caller only sees sessions it may control (its projects'
-    // agents, its own advisor; admin sees all).
-    .filter((s) => sessionAccessible(auth, s))
-    .map((s) => {
-      const info = classifySession(s);
-      // Tag each session with its project from the agent store (every role upserts there at spawn).
-      return { ...info, projectId: rt().agents.projectFor(s.slice('elowen-'.length)) ?? undefined };
-    }));
+  const list = async (auth: ApiAuth): Promise<PluginHttpResponse> => json(await sessionsListPayload(tmux, rt, auth));
 
   const launch = async (req: PluginApiRequest): Promise<PluginHttpResponse> => {
     const { taskId, exec } = launchSessionSchema.parse(await req.json());
