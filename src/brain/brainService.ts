@@ -1155,9 +1155,11 @@ export class BrainService {
    *  UI already shows the new one. Instance-wide variant of applyPersonalityChange — the brand is
    *  global, so every active owner session restarts and every channel session resets. History rehydrates
    *  from SQLite; the full prompt-prefix change means a complete prompt-cache re-warm, which is why the
-   *  Settings UI warns before switching. Serialized on its own key so overlapping saves queue safely. */
+   *  Settings UI warns before switching. Serialized on the SAME key as reloadPlugins — both loops restart
+   *  the same sessions, and a brand sweep slipping between a reload's registry swap and its restart loop
+   *  would respawn sessions against a half-replaced registry only for the reload to dispose them again. */
   async applyBrandChange(): Promise<void> {
-    await this.serial('brand-change', async () => {
+    await this.serial('plugins-reload', async () => {
       for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
       await this.channelService.resetChannels('brand changed');
     });

@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { logger } from '../shared/logger.js';
+import { stripControlChars } from '../shared/text.js';
 import type { ThemeBrand } from '../shared/brand.js';
 
 /** White-label theme packages: one folder per theme under `<dataDir>/themes/<name>/`, holding a
@@ -12,8 +13,11 @@ import type { ThemeBrand } from '../shared/brand.js';
 
 const log = logger('theme');
 
-/** Same shape the plugin/marketplace name rule enforces — one path segment, no traversal possible. */
-const THEME_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** One lowercase path segment, no traversal possible. Slightly looser than the plugin/marketplace name
+ *  rule (`{1,63}` there — two chars minimum): a one-letter theme name is fine. Exported so the config
+ *  store reuses the SAME object for `theme.active` — the two grammars drifting apart would fail silently
+ *  (a name one layer accepts and the other rejects resolves to the built-in brand with no error). */
+export const THEME_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** The only files a theme may serve as assets. A fixed whitelist (not a pattern) because these names are
  *  part of the public URL contract and nothing else in the folder must ever be reachable. */
@@ -40,9 +44,16 @@ const RGB_TRIPLE_RE = /^\d{1,3} \d{1,3} \d{1,3}$/;
 /** Font stacks are free-ish text but still CSS-embedded: names, quotes, commas, hyphens — no braces,
  *  no semicolons, no url()/expression() material. */
 const FONT_STACK_RE = /^[\w \-,'"]{1,200}$/;
+/** An UNBALANCED quote in a font stack opens a CSS bad-string that eats the rest of the rule — not an
+ *  escape, but it silently kills every later declaration in the injected `<style>` block. */
+function quotesBalanced(v: string): boolean {
+  return (v.match(/"/g) ?? []).length % 2 === 0 && (v.match(/'/g) ?? []).length % 2 === 0;
+}
 
 const MANIFEST_MAX_BYTES = 32 * 1024;
-const ASSET_MAX_BYTES = 2 * 1024 * 1024;
+/** Exported because the asset route re-checks the byte count AFTER reading — the stat-time check alone
+ *  is TOCTOU-racy (a file grown between stat and read would be buffered and cached whole). */
+export const ASSET_MAX_BYTES = 2 * 1024 * 1024;
 const TEXT_LANG_RE = /^[a-z]{2}$/;
 const TEXT_KEY_RE = /^[a-zA-Z0-9.]{1,64}$/;
 const TEXT_VALUE_MAX = 200;
@@ -78,12 +89,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** Strip C0/C1 control characters — a brand name reaches terminals (CLI notices, tmux) where an
- *  escape sequence would be a title/OSC injection, and no legitimate display name contains them. */
+/** Brand names cross two sensitive sinks: terminals (control chars would be a title/OSC injection) and
+ *  the system prompt, where `agentName` lands inside `<name>…</name>` — so `<`/`>` are stripped too, or a
+ *  40-char name like `</name><system>…` could break the prompt's structure. No legitimate display name
+ *  contains either class. */
 function cleanName(v: unknown, max: number): string | undefined {
   if (typeof v !== 'string') return undefined;
-  // eslint-disable-next-line no-control-regex
-  const cleaned = v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim();
+  const cleaned = stripControlChars(v).replace(/[<>]/g, '').trim();
   return cleaned ? cleaned.slice(0, max) : undefined;
 }
 
@@ -108,8 +120,10 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
     for (const [key, value] of Object.entries(raw.colors)) {
       if (!COLOR_KEY_SET.has(key)) throw new Error(`unknown color key "${key}"`);
       if (typeof value !== 'string') throw new Error(`color "${key}" must be a string`);
-      const ok = key === 'accent-rgb' ? RGB_TRIPLE_RE.test(value) : HEX_COLOR_RE.test(value);
-      if (!ok) throw new Error(`color "${key}" must be ${key === 'accent-rgb' ? 'an "R G B" triple' : 'a hex color'}`);
+      const ok = key === 'accent-rgb'
+        ? RGB_TRIPLE_RE.test(value) && value.split(' ').every((n) => Number(n) <= 255)
+        : HEX_COLOR_RE.test(value);
+      if (!ok) throw new Error(`color "${key}" must be ${key === 'accent-rgb' ? 'an "R G B" triple (0-255 each)' : 'a hex color'}`);
       colors[key] = value;
     }
   }
@@ -120,7 +134,7 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
     for (const slot of ['sans', 'mono'] as const) {
       const value = raw.fonts[slot];
       if (value === undefined) continue;
-      if (typeof value !== 'string' || !FONT_STACK_RE.test(value)) throw new Error(`font "${slot}" must be a plain font-family string`);
+      if (typeof value !== 'string' || !FONT_STACK_RE.test(value) || !quotesBalanced(value)) throw new Error(`font "${slot}" must be a plain font-family string with balanced quotes`);
       fonts[slot] = value;
     }
   }
@@ -135,8 +149,7 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
       for (const [key, value] of Object.entries(entries)) {
         if (!TEXT_KEY_RE.test(key)) throw new Error(`text key "${key}" is not a valid dictionary key`);
         if (typeof value !== 'string') throw new Error(`text.${lang}.${key} must be a string`);
-        // eslint-disable-next-line no-control-regex
-        out[key] = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, TEXT_VALUE_MAX);
+        out[key] = stripControlChars(value).slice(0, TEXT_VALUE_MAX);
       }
       text[lang] = out;
     }
@@ -188,7 +201,10 @@ export class ThemeStore {
     const assetStamps: string[] = [];
     for (const file of THEME_ASSET_FILES) {
       try {
-        const stat = statSync(join(this.themesDir, name, file));
+        // lstat, not stat: a SYMLINK at an asset name must not count. stat follows it, and a link like
+        // `logo.png -> ../../elowen.db` would otherwise export any daemon-readable file ≤ 2 MiB through
+        // the unauthenticated asset route. lstat reports the link itself, so isFile() rejects it.
+        const stat = lstatSync(join(this.themesDir, name, file));
         if (stat.isFile() && stat.size <= ASSET_MAX_BYTES) {
           assets.push(file);
           assetStamps.push(`${file}:${stat.mtimeMs}:${stat.size}`);
@@ -209,14 +225,22 @@ export class ThemeStore {
     if (!theme || !(THEME_ASSET_FILES as readonly string[]).includes(file)) return null;
     if (!theme.assets.includes(file as ThemeAssetFile)) return null;
     const path = join(this.themesDir, name, file);
-    try { return { path, mtimeMs: statSync(path).mtimeMs }; } catch { return null; }
+    try {
+      const stat = lstatSync(path); // no symlink following — see the asset loop in get()
+      return stat.isFile() ? { path, mtimeMs: stat.mtimeMs } : null;
+    } catch { return null; }
   }
 
   private load(name: string): CacheEntry | null {
+    // The theme folder itself must be a REAL directory: a symlinked folder would make every path below
+    // resolve inside an attacker-chosen tree (lstat on the leaf cannot see an intermediate link).
+    try {
+      if (!lstatSync(join(this.themesDir, name)).isDirectory()) return null;
+    } catch { return null; }
     const manifestPath = join(this.themesDir, name, 'theme.json');
     let mtimeMs: number;
     try {
-      const stat = statSync(manifestPath);
+      const stat = lstatSync(manifestPath); // symlinked theme.json rejected below via isFile()
       if (!stat.isFile() || stat.size > MANIFEST_MAX_BYTES) {
         const error = stat.size > MANIFEST_MAX_BYTES ? `theme.json exceeds ${MANIFEST_MAX_BYTES} bytes` : 'theme.json is not a file';
         return { mtimeMs: 0, manifest: null, error };

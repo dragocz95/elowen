@@ -18,6 +18,7 @@ import { ChoiceField } from '../../components/ui/ChoiceField';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills, useLogFiles, useThemes } from '../../lib/queries';
+import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { formatLogSize } from '../../modules/settings/logFilter';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -112,6 +113,7 @@ export default function SettingsPage() {
   const installSkills = useInstallSkills();
   const cleanup = useCleanupAll();
   const me = useMe();
+  const brand = useBrand();
   const brainModels = useBrainModels();
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -140,8 +142,10 @@ export default function SettingsPage() {
   // Only while the Data section is on screen — the log summary is a nicety, not a reason to query the
   // daemon from every other settings tab.
   const logFiles = useLogFiles(category === 'data');
-  // Same scoping for the white-label theme list (System section only).
-  const themes = useThemes(category === 'system');
+  // Same scoping for the white-label theme list (System section only) — plus the admin gate: /themes is
+  // admin-only on the daemon, so a non-admin opening Settings would fire a guaranteed 403 otherwise
+  // (the page renders its admin stop only later, after the hooks already ran).
+  const themes = useThemes(category === 'system' && me.data?.user?.is_admin === true);
   const isValidCat = (c: string | null): c is Category => !!c && (CATEGORY_VALUES as readonly string[]).includes(c);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
@@ -889,7 +893,7 @@ export default function SettingsPage() {
                 : <Badge tone="success">{t.settings.upToDate}</Badge>;
               const rowVersion = (
                 <SettingsRow
-                  label={t.common.appName}
+                  label={brand.appName}
                   description={system.data?.lastUpdatedAt ? t.settings.lastUpdated.replace('{date}', new Date(system.data.lastUpdatedAt).toLocaleString()) : undefined}
                   icon={Sparkles}
                   status={<span className="flex flex-wrap items-center gap-2"><span className="font-mono">{system.data?.version ?? '—'}</span>{updateBadge}</span>}
@@ -931,6 +935,7 @@ export default function SettingsPage() {
                     className={inputClass}
                     value={config.data?.theme?.active ?? ''}
                     aria-label={t.settings.whiteLabelTheme.label}
+                    disabled={update.isPending}
                     onChange={(e) => {
                       update.mutate({ theme: { active: e.target.value || null } }, {
                         onSuccess: () => { toast(t.settings.whiteLabelTheme.applied); window.setTimeout(() => window.location.reload(), 800); },
@@ -940,7 +945,9 @@ export default function SettingsPage() {
                   >
                     <option value="">{t.settings.whiteLabelTheme.builtin}</option>
                     {(themes.data?.themes ?? []).map((th) => (
-                      <option key={th.name} value={th.name} disabled={!th.valid}>
+                      // `title` carries the rejection reason — the whole point of the daemon returning it
+                      // is that a hand-written theme is debuggable from this list.
+                      <option key={th.name} value={th.name} disabled={!th.valid} title={th.error}>
                         {th.displayName}{th.valid ? '' : ` (${t.settings.whiteLabelTheme.invalid})`}
                       </option>
                     ))}

@@ -10,5 +10,8 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   // The same-origin daemon proxy is now the `app/api/[...path]` route handler, which (unlike a plain
   // rewrite) injects the daemon bearer from the httpOnly session cookie server-side. No rewrite needed.
+  // Migration shim: PWAs installed before the dynamic manifest keep `/manifest.json` in their install
+  // record forever — without this rewrite they would 404 on every launch and never pick up a rename.
+  rewrites: async () => [{ source: '/manifest.json', destination: '/manifest.webmanifest' }],
 };
 export default nextConfig;

@@ -65,6 +65,9 @@ export interface StartScreenState {
   statusLeft: string;
   /** Plain version string, rendered faint in the bottom-right corner. */
   version: string;
+  /** Product label preceding the version ('elowen' when unthemed) — the corner is user-visible brand,
+   *  not technical identity, so a white-labeled instance shows its own name there. */
+  productLabel?: string;
   /** User's `/maskot` preference. When false the flame wordmark is dropped and the layout centers
    *  without it. Optional so structural callers default to shown (the product default). */
   showMascot?: boolean;
@@ -159,7 +162,7 @@ export class StartScreen implements Component {
     ];
     const sidePad = Math.min(2, Math.max(0, Math.floor((width - 1) / 4)));
     const available = Math.max(0, width - sidePad * 2);
-    let versionLabel = truncateToWidth(color.faint(`elowen v${st.version}`), Math.floor(available * 0.45), '…');
+    let versionLabel = truncateToWidth(color.faint(`${inlineText(st.productLabel ?? 'elowen')} v${st.version}`), Math.floor(available * 0.45), '…');
     let statusLeft = truncateToWidth(st.statusLeft, Math.max(0, available - visibleWidth(versionLabel) - 1), '…');
     if (!statusLeft && available > 0) {
       versionLabel = truncateToWidth(versionLabel, available, '…');

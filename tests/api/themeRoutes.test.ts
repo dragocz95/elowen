@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeTestApp } from '../helpers/testApp.js';
@@ -63,6 +63,37 @@ describe('GET /public/theme', () => {
     const body = await (await app.request('/public/theme')).json() as { v: string };
     expect(body.v).toBe('builtin');
   });
+
+  // The only unauthenticated route touching DB + filesystem: without shared caching a request flood
+  // pays the full stat/hash cost every time; the ETag covers a persona rename with no theme (where `v`
+  // alone stays 'builtin').
+  it('carries a shared max-age and answers a matching If-None-Match with 304', async () => {
+    const { app } = await makeApp();
+    const res = await app.request('/public/theme');
+    expect(res.headers.get('cache-control')).toContain('max-age=60');
+    const etag = res.headers.get('etag');
+    expect(etag).toMatch(/^"[0-9a-f]{16}"$/);
+    const revalidated = await app.request('/public/theme', { headers: { 'if-none-match': etag! } });
+    expect(revalidated.status).toBe(304);
+  });
+
+  // The client (web layout + CLI useBrand re-check) validates asset paths against the shape published in
+  // web/lib/brandShared.ts. The daemon composes its URLs by string interpolation, so the agreement would
+  // otherwise be accidental — extract the web regex from source and hold both sides together.
+  it('every emitted asset URL matches the web client re-validation shape', async () => {
+    writeTheme('acme');
+    for (const f of ['icon.png', 'icon-192.png', 'icon-512.png']) writeFileSync(join(dir, 'acme', f), Buffer.from('png'));
+    const { app, deps } = await makeApp();
+    deps.config.update({ theme: { active: 'acme' } });
+    const src = readFileSync(join(__dirname, '..', '..', 'web', 'lib', 'brandShared.ts'), 'utf-8');
+    const shape = src.match(/THEME_ASSET_PATH_RE = \/([^\n]+)\/;/)?.[1];
+    expect(shape, 'THEME_ASSET_PATH_RE not found in web/lib/brandShared.ts').toBeTruthy();
+    const webRe = new RegExp(shape!.replace(/\\\//g, '/'));
+    const body = await (await app.request('/public/theme')).json() as { assets: Record<string, string> };
+    const urls = Object.values(body.assets);
+    expect(urls).toHaveLength(4);
+    for (const url of urls) expect(url, `web boundary would reject "${url}"`).toMatch(webRe);
+  });
 });
 
 describe('GET /public/theme/assets/:file', () => {
@@ -87,6 +118,30 @@ describe('GET /public/theme/assets/:file', () => {
     expect((await app.request('/public/theme/assets/icon.png')).status).toBe(404);
     deps.config.update({ theme: { active: null } });
     expect((await app.request('/public/theme/assets/logo.png')).status).toBe(404);
+  });
+
+  // The response is `immutable` for a year — only honest if a versioned URL can never change meaning. A
+  // `?v=` from another theme generation (stale tab, shared-cache replay after a switch) must 404 rather
+  // than silently bind the OLD URL to the NEW theme's bytes in every cache along the way.
+  it('404s a version query from a different theme generation, serves the current one', async () => {
+    writeTheme('acme');
+    const { app, deps } = await makeApp();
+    deps.config.update({ theme: { active: 'acme' } });
+    const body = await (await app.request('/public/theme')).json() as { assets: { logo: string } };
+    expect((await app.request(body.assets.logo)).status).toBe(200);
+    expect((await app.request('/public/theme/assets/logo.png?v=' + '0'.repeat(16))).status).toBe(404);
+  });
+
+  // Pins the byte cache's mtime key: mutating the freshness check to `if (!cached)` (stale bytes served
+  // forever after a logo swap) turns this red.
+  it('serves fresh bytes after an asset is swapped on disk', async () => {
+    writeTheme('acme');
+    const { app, deps } = await makeApp();
+    deps.config.update({ theme: { active: 'acme' } });
+    expect(Buffer.from(await (await app.request('/public/theme/assets/logo.png')).arrayBuffer()).toString()).toBe('png');
+    writeFileSync(join(dir, 'acme', 'logo.png'), Buffer.from('png-v2'));
+    utimesSync(join(dir, 'acme', 'logo.png'), new Date(), new Date(Date.now() + 5000));
+    expect(Buffer.from(await (await app.request('/public/theme/assets/logo.png')).arrayBuffer()).toString()).toBe('png-v2');
   });
 });
 
@@ -132,6 +187,24 @@ describe('PUT /config theme patch + live brand apply', () => {
     expect(applyBrandChange).toHaveBeenCalledTimes(2); // unrelated save must not respawn every session
     // Saving the SAME value again is not a change — the respawn is expensive (full prompt re-cache).
     await app.request('/config', put(token, { theme: { active: 'acme' } }));
+    expect(applyBrandChange).toHaveBeenCalledTimes(2);
+  });
+
+  // Each sweep restarts EVERY session (full prompt-cache re-warm), and in setup mode the PUT is reachable
+  // unauthenticated — so N rapid saves must collapse to the running sweep plus ONE trailing one that
+  // re-reads the fresh config, never a queue of N.
+  it('rapid brand changes collapse to one running + one trailing sweep', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const applyBrandChange = vi.fn(() => gate);
+    const { app, token } = await makeTestApp({ extra: { themes: new ThemeStore(dir), brain: { applyBrandChange } as never } });
+    await app.request('/config', put(token, { theme: { active: 'aa' } }));
+    await app.request('/config', put(token, { theme: { active: 'bb' } }));
+    await app.request('/config', put(token, { theme: { active: 'cc' } }));
+    expect(applyBrandChange).toHaveBeenCalledTimes(1); // first sweep still running, the rest queued
+    release();
+    await vi.waitFor(() => expect(applyBrandChange).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 10)); // give a hypothetical third run the chance to fire
     expect(applyBrandChange).toHaveBeenCalledTimes(2);
   });
 });

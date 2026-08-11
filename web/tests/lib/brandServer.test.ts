@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { buildThemeStyle, themeIcon, fetchThemePayload } from '../../lib/brandServer';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { buildThemeStyle, themeIcon } from '../../lib/brandServer';
 import { BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 
 const theme = (over: Partial<ThemePayload>): ThemePayload => ({ ...BUILTIN_THEME, ...over });
@@ -9,16 +9,22 @@ describe('buildThemeStyle', () => {
     expect(buildThemeStyle(BUILTIN_THEME)).toBe('');
   });
 
-  it('emits token overrides, the accent triple and the logo swap', () => {
+  // Whole-string assert on purpose: `toContain` alone would let a duplicate declaration, an extra rule
+  // or a changed selector slip through the injection boundary unnoticed.
+  it('emits exactly the token overrides, the accent triple and the logo swap', () => {
     const css = buildThemeStyle(theme({
       colors: { accent: '#ff0000', 'accent-rgb': '255 0 0' },
       fonts: { sans: "'Inter', sans-serif" },
       assets: { logo: '/public/theme/assets/logo.png?v=0123456789abcdef' },
     }));
-    expect(css).toContain('--color-accent: #ff0000;');
-    expect(css).toContain('--accent-rgb: 255 0 0;');
-    expect(css).toContain("--font-sans: 'Inter', sans-serif;");
-    expect(css).toContain(".logo-adaptive { content: url('/api/public/theme/assets/logo.png?v=0123456789abcdef'); }");
+    expect(css).toBe([
+      ':root[data-theme] {',
+      '--color-accent: #ff0000;',
+      '--accent-rgb: 255 0 0;',
+      "--font-sans: 'Inter', sans-serif;",
+      '}',
+      ":root[data-theme] .logo-adaptive { content: url('/api/public/theme/assets/logo.png?v=0123456789abcdef'); }",
+    ].join('\n'));
   });
 
   // This string lands inside a server-rendered <style> block. The daemon validates too, but the web
@@ -35,6 +41,15 @@ describe('buildThemeStyle', () => {
     expect(css).not.toContain('--font-mono');
     expect(css).not.toContain('logo-adaptive');
   });
+
+  it('drops an unbalanced font quote (a CSS bad-string would eat the rest of its line)', () => {
+    expect(buildThemeStyle(theme({ fonts: { sans: '"Inter' } }))).toBe('');
+  });
+
+  it('drops an out-of-range accent triple and a color key outside the token shape', () => {
+    expect(buildThemeStyle(theme({ colors: { 'accent-rgb': '999 0 0' } }))).toBe('');
+    expect(buildThemeStyle(theme({ colors: { 'Bad_Key': '#000000' } }))).toBe('');
+  });
 });
 
 describe('themeIcon', () => {
@@ -46,9 +61,53 @@ describe('themeIcon', () => {
   });
 });
 
+// fetchThemePayload holds module state (last-known-good + failure backoff), so each test imports a
+// FRESH module instance — and fetch is always stubbed: a test hitting the real network would silently
+// change meaning with whatever daemon happens to run on the box.
 describe('fetchThemePayload', () => {
-  it('falls back to the built-in brand when the daemon is unreachable', async () => {
-    // The test env has no daemon on ELOWEN_DAEMON_URL — the fetch rejects and the fallback must hold.
-    expect(await fetchThemePayload()).toEqual(BUILTIN_THEME);
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const importFresh = async () => (await import('../../lib/brandServer')).fetchThemePayload;
+  const themedBody = {
+    brand: { agentName: 'Acme Bot', productName: 'Acme' },
+    colors: { accent: '#ff0000' }, fonts: {}, text: {}, assets: {}, v: 'a'.repeat(16),
+  };
+  const okResponse = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
+
+  it('falls back to the built-in brand when the fetch rejects and when the daemon answers non-OK', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+    expect(await (await importFresh())()).toEqual(BUILTIN_THEME);
+    vi.resetModules();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as Response));
+    expect(await (await importFresh())()).toEqual(BUILTIN_THEME);
+  });
+
+  it('parses a themed payload and keeps serving it as last-known-good across a later failure', async () => {
+    const fetchMock = vi.fn(async () => okResponse(themedBody));
+    vi.stubGlobal('fetch', fetchMock);
+    const fetchThemePayload = await importFresh();
+    expect((await fetchThemePayload()).brand.productName).toBe('Acme');
+    // The daemon goes away mid-flight (restart during deploy): the shell must keep the ACTIVE brand,
+    // not flash back to Elowen on the next request.
+    fetchMock.mockImplementation(async () => { throw new Error('down'); });
+    expect((await fetchThemePayload()).brand.productName).toBe('Acme');
+  });
+
+  it('backs off after a failure instead of paying the timeout on every document', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('down'); });
+    vi.stubGlobal('fetch', fetchMock);
+    const fetchThemePayload = await importFresh();
+    await fetchThemePayload();
+    await fetchThemePayload();
+    await fetchThemePayload();
+    // Only the FIRST call may touch the network inside the backoff window — a hanging daemon otherwise
+    // adds its full abort timeout to the TTFB of every page, the login screen included.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a payload without the brand shape', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ hello: 'world' })));
+    expect(await (await importFresh())()).toEqual(BUILTIN_THEME);
   });
 });

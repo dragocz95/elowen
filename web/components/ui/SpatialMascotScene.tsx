@@ -95,7 +95,7 @@ function EmberScene({ state, iconSrc, onReady }: { state: SpatialMascotState; ic
 }
 
 /** The Canvas itself owns no pointer events; visibility and document state control its render loop. */
-export function SpatialMascotScene({ state, iconSrc = '/icon.png', onReady }: { state: SpatialMascotState; iconSrc?: string; onReady: () => void }) {
+export function SpatialMascotScene({ state, iconSrc, onReady }: { state: SpatialMascotState; iconSrc: string; onReady: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [intersecting, setIntersecting] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(true);

@@ -3435,8 +3435,10 @@ describe('BrainService', () => {
     await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-sched',
       access: { admin: true, projectIds: [], scheduled: true } }, 'run the scheduled task');
 
+    // No productName here: the scheduled template never mentions the product, and the prompt-editor
+    // catalog advertises exactly the vars the render call passes.
     expect(d.prompts.render).toHaveBeenCalledWith('scheduled',
-      { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen', productName: 'Elowen' }, 1);
+      { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen' }, 1);
     const rendered = d.prompts.render.mock.calls.map((c) => c[0]);
     expect(rendered).not.toContain('elowen'); // no coding-agent base for a scheduled turn
     expect(rendered).not.toContain('elowen-platform'); // no multi-user channel overlay either

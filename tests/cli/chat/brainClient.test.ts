@@ -588,3 +588,58 @@ describe('BrainClient', () => {
     await expect(c.setTddMode(false)).rejects.toBeInstanceOf(Unauthorized);
   });
 });
+
+// The brand payload comes over the wire from a possibly foreign daemon and lands in raw terminal
+// output (TopRule, notices, ask-dock titles) — every pin below guards the CLI-side boundary, because
+// the daemon's own sanitization must not be TRUSTED from here.
+describe('publicBrand', () => {
+  const brandResponse = (over: Record<string, unknown> = {}) =>
+    j(200, { brand: { agentName: 'Acme Bot', productName: 'Acme' }, v: 'a'.repeat(16), ...over });
+
+  it('parses a themed payload and derives themed from the PRODUCT actually being rebranded', async () => {
+    const f = vi.fn(async () => brandResponse()) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    expect(await c.publicBrand()).toEqual({ agentName: 'Acme Bot', productName: 'Acme', themed: true });
+  });
+
+  it('a colors-only theme (brand left at Elowen) must NOT suppress the mascot', async () => {
+    // `v` says a theme is active, but the product is still Elowen — keying `themed` off `v` here would
+    // hide the flame and permanently disable /maskot for an install that only changed colors.
+    const f = vi.fn(async () => brandResponse({ brand: { agentName: 'Elowen', productName: 'Elowen' } })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    expect((await c.publicBrand()).themed).toBe(false);
+  });
+
+  it('strips control characters (terminal OSC injection) and caps length by code points', async () => {
+    const f = vi.fn(async () => brandResponse({
+      brand: { agentName: 'A\u001b]0;pwn\u0007cme', productName: '🦊'.repeat(90) },
+    })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    const brand = await c.publicBrand();
+    expect(brand.agentName).toBe('A]0;pwncme');
+    // 80 code points, and no LONE surrogate anywhere (String#slice would halve the emoji at the cut —
+    // spread yields a halved pair as a single-unit surrogate "character", a whole pair as two units).
+    const points = [...brand.productName];
+    expect(points).toHaveLength(80);
+    expect(points.every((ch) => !/^[\uD800-\uDFFF]$/.test(ch))).toBe(true);
+  });
+
+  it('falls back to the built-in brand on a non-OK answer and on a network failure', async () => {
+    const notFound = vi.fn(async () => j(404, {})) as unknown as typeof fetch;
+    expect(await new BrainClient({ base: 'http://x', token: 't', fetchImpl: notFound }).publicBrand())
+      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false });
+    const down = vi.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    expect(await new BrainClient({ base: 'http://x', token: 't', fetchImpl: down }).publicBrand())
+      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false });
+  });
+
+  it('carries a hard timeout so a hanging daemon cannot hold the boot batch', async () => {
+    let signal: AbortSignal | undefined;
+    const f = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return brandResponse();
+    }) as unknown as typeof fetch;
+    await new BrainClient({ base: 'http://x', token: 't', fetchImpl: f }).publicBrand();
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+});

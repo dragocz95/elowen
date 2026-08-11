@@ -1,6 +1,7 @@
 import { writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { stripControlChars } from '../../shared/text.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
@@ -437,22 +438,29 @@ export class BrainClient {
   }
 
   /** The instance brand from GET /public/theme (white-label). Falls back to the built-in Elowen brand
-   *  on any failure — including an older daemon without the route — so branding can never block a chat. */
+   *  on any failure — including an older daemon without the route — so branding can never block a chat.
+   *  "Never block" needs a hard timeout too, not just the catch: this call sits in the boot batch, and a
+   *  daemon that ACCEPTS but never answers would otherwise hold the whole chat on a blank screen. */
   async publicBrand(): Promise<PublicBrand> {
     // The value comes over the wire and lands in terminal output, so strip control characters (escape
-    // sequences would be an OSC/title injection) and cap the length here, not just on the daemon.
+    // sequences would be an OSC/title injection) and cap the length here, not just on the daemon. The
+    // cap counts code points, not UTF-16 units — String#slice could halve a surrogate pair.
     const clean = (v: unknown): string =>
-      // eslint-disable-next-line no-control-regex
-      typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 80) : '';
+      typeof v === 'string' ? [...stripControlChars(v).trim()].slice(0, 80).join('') : '';
     try {
-      const res = await this.f(`${this.o.base}/public/theme`, { headers: this.headers() });
+      const timeout = AbortSignal.timeout(2000);
+      // No auth header: the route is public by design, and boot calls this before login state matters.
+      const res = await this.f(`${this.o.base}/public/theme`, {
+        signal: this.lifetimeSignal ? AbortSignal.any([timeout, this.lifetimeSignal]) : timeout,
+      });
       if (!res.ok) return DEFAULT_PUBLIC_BRAND;
-      const body = (await res.json()) as { brand?: { agentName?: unknown; productName?: unknown }; v?: unknown };
-      return {
-        agentName: clean(body.brand?.agentName) || 'Elowen',
-        productName: clean(body.brand?.productName) || 'Elowen',
-        themed: typeof body.v === 'string' && body.v !== 'builtin',
-      };
+      const body = (await res.json()) as { brand?: { agentName?: unknown; productName?: unknown } };
+      const agentName = clean(body.brand?.agentName) || 'Elowen';
+      const productName = clean(body.brand?.productName) || 'Elowen';
+      // The flame art is the ELOWEN PRODUCT mascot — suppress it only when the product is actually
+      // rebranded. A theme that changes colors alone (brand left at Elowen) keeps the mascot; keying
+      // this off "any theme active" would also permanently disable /maskot for such an install.
+      return { agentName, productName, themed: productName !== 'Elowen' };
     } catch { return DEFAULT_PUBLIC_BRAND; }
   }
 

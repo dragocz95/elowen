@@ -251,8 +251,10 @@ export class LiveSessionSpawner {
     // Otherwise: shared platform channels (Discord, WhatsApp) get a thin overlay appended to the base
     // prompt, since the senders are OTHER people and the base single-user framing would misaddress the
     // room; owner chat gets the base alone.
+    // `scheduled` deliberately gets no productName: its template never mentions the product (that keeps
+    // its render byte-stable), and the prompt-editor catalog advertises exactly the vars passed here.
     const persona = opts.scheduled
-      ? this.d.prompts.render('scheduled', { userName, personality, agentName, productName }, ownerUserId)
+      ? this.d.prompts.render('scheduled', { userName, personality, agentName }, ownerUserId)
       : opts.channel
         ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, ownerUserId)
           + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, ownerUserId)

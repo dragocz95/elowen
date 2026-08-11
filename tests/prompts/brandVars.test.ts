@@ -17,11 +17,10 @@ describe('advisor prompts with the built-in brand', () => {
     expect(out).toContain('`ElowenListTasks` lists tasks.');
   });
 
-  it('platform overlay and scheduled prompt substitute cleanly too', () => {
+  it('platform overlay substitutes cleanly too', () => {
     const overlay = render('elowen-platform', { ownerName: 'Filip', agentName: 'Elowen', productName: 'Elowen' });
     expect(overlay).toContain('who operates this Elowen instance');
     expect(overlay).not.toContain('{{productName}}');
-    expect(render('scheduled', defaults)).not.toContain('{{productName}}');
   });
 
   it('a themed productName rebrands the prose while tool names stay literal', () => {

@@ -1,14 +1,15 @@
 import { streamSSE } from 'hono/streaming';
 import { accessSync, constants, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { resolveBrand } from '../../shared/brand.js';
-import { THEME_ASSET_FILES, type ThemeAssetFile } from '../../store/themeStore.js';
+import { THEME_ASSET_FILES, ASSET_MAX_BYTES, type ThemeAssetFile } from '../../store/themeStore.js';
 import { isNewer } from '../../cli/version.js';
 import { handleMcpRequest } from '../../mcp/server.js';
 import { eventProjectId } from '../eventProject.js';
 import { ELOWEN_VERSION, ELOWEN_INSTALLED_AT, ELOWEN_PORT, defaultLatestVersion, defaultStartUpdate, defaultStartRestart } from '../version.js';
 import { parseBody, queryInt } from '../validation.js';
-import { LOG_DIR } from '../../shared/logger.js';
+import { LOG_DIR, logger } from '../../shared/logger.js';
 import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES } from '../../integrations/logFiles.js';
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
 import { resolveExecutor } from '../../overseer/routing.js';
@@ -229,7 +230,15 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       v: theme ? theme.version : 'builtin',
     };
   };
-  app.get('/public/theme', (c) => c.json(publicThemePayload()));
+  // The only unauthenticated route touching both the config DB and the filesystem, so it must not be
+  // free to hammer: a short shared max-age plus an ETag (hash of the exact payload — `v` alone would
+  // miss a persona rename with no theme active) lets browsers and any fronting proxy absorb repeats.
+  app.get('/public/theme', (c) => {
+    const payload = publicThemePayload();
+    const etag = `"${createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 16)}"`;
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, { etag });
+    return c.json(payload, 200, { etag, 'cache-control': 'public, max-age=60' });
+  });
   // Unauthenticated route serving up-to-2 MiB files: the bytes are cached in memory keyed by the asset's
   // mtime so a request flood cannot grind the event loop with repeated disk reads. Bounded by the fixed
   // whitelist (4 entries max); a swapped file changes the mtime and naturally evicts its stale bytes.
@@ -240,13 +249,22 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Whitelist check before any filesystem access; only the ACTIVE theme's assets are ever served, so
     // this route enumerates nothing and a stale URL after a theme switch turns into a plain 404.
     if (!cfg.theme.active || !(THEME_ASSET_FILES as readonly string[]).includes(file)) return c.json({ error: 'not found' }, 404);
+    // The response below is `immutable` for a year, which is only honest if a versioned URL can never
+    // change meaning. A `?v=` from a DIFFERENT theme generation (stale tab after a switch, shared cache
+    // replay) must therefore 404 instead of silently binding the old URL to the new theme's bytes.
+    const requestedV = c.req.query('v');
+    if (requestedV !== undefined && requestedV !== d.themes?.get(cfg.theme.active)?.version) return c.json({ error: 'not found' }, 404);
     const asset = d.themes?.resolveAsset(cfg.theme.active, file);
     if (!asset) return c.json({ error: 'not found' }, 404);
     try {
       const key = `${cfg.theme.active}/${file}`;
       let cached = assetBytesCache.get(key);
       if (!cached || cached.mtimeMs !== asset.mtimeMs) {
-        cached = { mtimeMs: asset.mtimeMs, bytes: new Uint8Array(readFileSync(asset.path)) };
+        const bytes = new Uint8Array(readFileSync(asset.path));
+        // Re-check AFTER the read: the stat-time size limit is advisory (TOCTOU) — a file grown between
+        // stat and read would otherwise be buffered, cached and served whole.
+        if (bytes.byteLength > ASSET_MAX_BYTES) return c.json({ error: 'not found' }, 404);
+        cached = { mtimeMs: asset.mtimeMs, bytes };
         if (assetBytesCache.size > 8) assetBytesCache.clear(); // theme switch left stale keys behind
         assetBytesCache.set(key, cached);
       }
@@ -272,6 +290,24 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     const registry = await d.plugins?.get();
     return c.json(buildToolDeferralCatalog(registry, d.config.get().runtime));
   });
+  // Live brand re-apply, collapsed to at most one running + one trailing sweep: every qualifying save
+  // needs the change APPLIED, but N rapid saves do not need N instance-wide restarts — the trailing run
+  // re-reads the fresh config and covers them all. Matters because a full sweep re-warms every session's
+  // prompt cache, and in setup mode (no users yet) the PUT is reachable unauthenticated, so an unbounded
+  // queue would be a cheap DoS. Failures go through the logger so they reach the /system/logs files.
+  let brandChangeRunning = false;
+  let brandChangeQueued = false;
+  const queueBrandChange = (): void => {
+    if (brandChangeRunning) { brandChangeQueued = true; return; }
+    brandChangeRunning = true;
+    void (async () => {
+      try {
+        do { brandChangeQueued = false; await d.brain?.applyBrandChange(); } while (brandChangeQueued);
+      } catch (e) {
+        logger('config').warn(`live brand re-apply failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally { brandChangeRunning = false; }
+    })();
+  };
   app.put('/config', async (c) => {
     // Editing the daemon config is admin-only (the Administration surface); reads stay open so the
     // app can populate model pickers etc. During setup (no users yet) it's open so onboarding can
@@ -290,10 +326,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Respawn live sessions so the chat does not keep speaking as the old name while the UI shows the
     // new one. Fire-and-forget for the same reason cli-settings does it: restart waits for in-flight
     // turns, and the save response must not hang on that.
-    if (updated.theme.active !== before.theme.active || updated.brain.agentName !== before.brain.agentName) {
-      void Promise.resolve(d.brain?.applyBrandChange())
-        .catch((e) => console.warn(`config: live brand re-apply failed: ${e instanceof Error ? e.message : String(e)}`));
-    }
+    if (updated.theme.active !== before.theme.active || updated.brain.agentName !== before.brain.agentName) queueBrandChange();
     return c.json(updated);
   });
 

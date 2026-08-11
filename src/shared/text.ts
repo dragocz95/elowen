@@ -24,6 +24,16 @@ export function containsWholeToken(haystack: string, needle: string): boolean {
   return new RegExp(`(?:^|${boundary})${escapeRegExp(needle)}(?:${boundary}|$)`, 'u').test(haystack);
 }
 
+/** Strip C0/C1 control characters. This is a security boundary, not cosmetics: brand/display names
+ *  cross into terminals (CLI notices, tmux titles) where an ESC/OSC sequence is a title or clipboard
+ *  injection, and no legitimate display string contains control characters. Kept as ONE shared helper
+ *  because the daemon (theme manifests, config names) and the CLI (payloads from a possibly foreign
+ *  daemon) must enforce the exact same class — a drifted copy would fail only in production. */
+export function stripControlChars(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+}
+
 /** Remove a literal `prefix` from the start of `value`, if present; otherwise return `value` unchanged.
  *  The anchored `^` + escapeRegExp spelling keeps the prefix literal — e.g. session ids `elowen-…` —
  *  and a prefix appearing mid-string is deliberately left alone. */

@@ -407,6 +407,7 @@ export function createChatComposition(
       notice: rt.notice,
       statusLeft: `${color.dim(resources.cwdLabel)}${resources.branchLabel ? color.faint(` · ${resources.branchLabel}`) : ''}`,
       version: ELOWEN_CLI_VERSION,
+      productLabel: rt.brand.productName.toLowerCase(),
       showMascot: rt.showMascot,
     }),
   );

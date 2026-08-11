@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -195,10 +195,17 @@ describe('transparent icons', () => {
   }
 });
 
-// The manifest is generated per request from app/manifest.ts (white-label). In this test env the daemon
-// fetch fails, so what renders is exactly the built-in Elowen brand — the same output every un-themed
-// install serves.
+// The manifest is generated per request from app/manifest.ts (white-label). The theme fetch is STUBBED
+// to fail: without the stub this test would hit whatever daemon happens to listen on this box and change
+// meaning with its state (a live themed daemon would turn it red). With the fetch down, what renders is
+// exactly the built-in Elowen brand — the same output every un-themed install serves.
 describe('web app manifest', () => {
+  beforeEach(() => {
+    vi.resetModules(); // brandServer holds a failure-backoff/last-known-good state — start clean
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no daemon in tests'); }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
   const buildManifest = async (): Promise<Record<string, unknown>> => {
     const { default: manifest } = await import('../../app/manifest');
     return await manifest() as unknown as Record<string, unknown>;

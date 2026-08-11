@@ -1,4 +1,6 @@
 import type { Db } from './db.js';
+import { THEME_NAME_RE } from './themeStore.js';
+import { stripControlChars } from '../shared/text.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
@@ -726,10 +728,21 @@ export interface ConfigPatch {
   theme?: { active?: string | null };
 }
 
-/** A theme name is a single folder segment under `<dataDir>/themes/` — same grammar the ThemeStore
- *  enforces on disk. Anything else (including a traversal attempt persisted by hand) reads as null. */
+/** A theme name is a single folder segment under `<dataDir>/themes/` — the SAME RegExp object the
+ *  ThemeStore enforces on disk, so the two layers cannot drift. Anything else (including a traversal
+ *  attempt persisted by hand) reads as null. */
 function sanitizeThemeActive(v: unknown): string | null {
-  return typeof v === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(v) ? v : null;
+  return typeof v === 'string' && THEME_NAME_RE.test(v) ? v : null;
+}
+
+/** The agent display name feeds the same sinks a theme's brand name does — terminals (control chars =
+ *  OSC injection) and the `<name>…</name>` slot of the system prompt (`<`/`>` would break its structure)
+ *  — so it gets the same cleanup the ThemeStore applies, or the config half of one and the same value
+ *  would be the unguarded path. */
+function sanitizeAgentName(v: unknown, fallback: string): string {
+  if (typeof v !== 'string') return fallback;
+  const cleaned = stripControlChars(v).replace(/[<>]/g, '').trim();
+  return cleaned ? cleaned.slice(0, 40) : fallback;
 }
 
 export class ConfigStore {
@@ -782,7 +795,7 @@ export class ConfigStore {
           : legacyEmptyPlugins(),
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
-          agentName: typeof p.brain?.agentName === 'string' && p.brain.agentName.trim() ? p.brain.agentName.trim().slice(0, 40) : 'Elowen',
+          agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
           maxSteps: clampMaxSteps(p.brain?.maxSteps, d.brain.maxSteps),
           modelContextWindows: sanitizeContextWindows(p.brain?.modelContextWindows),
           limits: clampBrainLimits(p.brain?.limits, d.brain.limits),
@@ -931,9 +944,7 @@ export class ConfigStore {
               apiKey: p.apiKey ?? cur.brain.providers.find((c) => c.id === p.id)?.apiKey ?? null,
             }))
           : cur.brain.providers,
-        agentName: typeof patch.brain?.agentName === 'string' && patch.brain.agentName.trim()
-          ? patch.brain.agentName.trim().slice(0, 40)
-          : cur.brain.agentName,
+        agentName: sanitizeAgentName(patch.brain?.agentName, cur.brain.agentName),
         maxSteps: clampMaxSteps(patch.brain?.maxSteps, cur.brain.maxSteps),
         // Context-window overrides replace wholesale (the UI edits the full map).
         modelContextWindows: patch.brain?.modelContextWindows !== undefined

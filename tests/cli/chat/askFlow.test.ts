@@ -29,6 +29,7 @@ describe('AskChoiceDock', () => {
       question: question(),
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       selected: ['Run focused tests'],
       onSubmit: vi.fn(),
       onOther: vi.fn(),
@@ -46,6 +47,7 @@ describe('AskChoiceDock', () => {
       question: { ...question(), question: long },
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit: vi.fn(),
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -61,6 +63,7 @@ describe('AskChoiceDock', () => {
       question: { ...question(), options: [{ label: longLabel }] },
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit: vi.fn(),
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -80,6 +83,7 @@ describe('AskChoiceDock', () => {
       },
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit: vi.fn(),
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -98,6 +102,7 @@ describe('AskChoiceDock', () => {
       question: question(),
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit,
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -121,6 +126,7 @@ describe('AskChoiceDock', () => {
       },
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit: vi.fn(),
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -148,6 +154,7 @@ describe('AskChoiceDock', () => {
       },
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit: vi.fn(),
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -172,6 +179,7 @@ describe('AskChoiceDock', () => {
       question: question(false),
       index: 0,
       total: 1,
+      agentName: 'Elowen',
       onSubmit,
       onOther: vi.fn(),
       onCancel: vi.fn(),
@@ -196,7 +204,7 @@ describe('AskChoiceDock — option previews', () => {
   });
 
   const dockFor = (question: AskQuestion): AskChoiceDock => new AskChoiceDock({
-    tui: fakeTui(), question, index: 0, total: 1,
+    tui: fakeTui(), question, index: 0, total: 1, agentName: 'Elowen',
     onSubmit: vi.fn(), onOther: vi.fn(), onCancel: vi.fn(),
   });
 
@@ -286,6 +294,7 @@ describe('runAskFlow', () => {
       slot,
       editor,
       questions: [question()],
+      agentName: 'Elowen',
       onComplete,
       onCancel: vi.fn(),
     });

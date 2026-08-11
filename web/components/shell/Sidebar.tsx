@@ -127,7 +127,7 @@ export function Sidebar({
         <div className="shrink-0 border-t border-border/80 bg-bg/20">
           {expanded ? (
             <div className="px-4 py-3 text-center font-mono text-[9px] uppercase tracking-[0.14em] text-text-muted/45">
-              Elowen {data?.version ?? '—'}
+              {brand.appName} {data?.version ?? '—'}
             </div>
           ) : null}
         </div>

@@ -1,21 +1,35 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useState } from 'react';
+import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useBrand } from '../../lib/brand';
 import type { SpatialMascotState } from './SpatialMascot.types';
 
 export type { SpatialMascotState } from './SpatialMascot.types';
 
 function StaticMascot({ state, iconSrc }: { state: SpatialMascotState; iconSrc: string }) {
+  // A themed icon URL can go stale (it carries `?v=`; a tab open across a theme switch gets 404s) —
+  // degrade to the built-in icon instead of an empty mascot box.
+  const [src, setSrc] = useState(iconSrc);
+  useEffect(() => setSrc(iconSrc), [iconSrc]);
   return (
     <div className={`spatial-mascot-fallback spatial-mascot-fallback--${state}`} aria-hidden>
       <span className="spatial-mascot-fallback__ring spatial-mascot-fallback__ring--outer" />
       <span className="spatial-mascot-fallback__ring spatial-mascot-fallback__ring--inner" />
       {/* eslint-disable-next-line @next/next/no-img-element -- the instance's mascot asset (themeable). */}
-      <img src={iconSrc} alt="" draggable={false} />
+      <img src={src} alt="" draggable={false} onError={() => { if (src !== '/icon.png') setSrc('/icon.png'); }} />
     </div>
   );
+}
+
+/** The WebGL scene's texture loads with a thrown-promise loader: a FAILED load (that same stale `?v=`
+ *  URL) throws to the nearest error boundary, and without one it would take the whole page tree down.
+ *  This boundary contains it so the static mascot simply stays. */
+class SceneBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
+  override componentDidCatch(): void { this.props.onError(); }
+  override render(): ReactNode { return this.state.failed ? null : this.props.children; }
 }
 
 /** The mascot WITHOUT the WebGL layer, for boxes too small to frame the scene.
@@ -54,7 +68,9 @@ export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }
   const warm = sceneWarmedUp && renderWebGl;
   const [ready, setReady] = useState(warm);
   const [fallbackVisible, setFallbackVisible] = useState(!warm);
+  const [sceneFailed, setSceneFailed] = useState(false);
   const markReady = useCallback(() => { sceneWarmedUp = true; setReady(true); }, []);
+  const failScene = useCallback(() => { setSceneFailed(true); setReady(false); setFallbackVisible(true); }, []);
 
   useEffect(() => {
     if (!ready || !fallbackVisible) return;
@@ -65,9 +81,11 @@ export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }
   return (
     <div className={`spatial-mascot ${ready ? 'spatial-mascot--ready' : ''}`} role="img" aria-label={appName}>
       {fallbackVisible ? <StaticMascot state={state} iconSrc={iconSrc} /> : null}
-      {renderWebGl ? (
+      {renderWebGl && !sceneFailed ? (
         <div className="spatial-mascot__webgl" aria-hidden>
-          <SpatialMascotScene state={state} iconSrc={iconSrc} onReady={markReady} />
+          <SceneBoundary onError={failScene}>
+            <SpatialMascotScene state={state} iconSrc={iconSrc} onReady={markReady} />
+          </SceneBoundary>
         </div>
       ) : null}
     </div>
