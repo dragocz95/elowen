@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Phase } from './planner.js';
-
-export type PlanJobStatus = 'planning' | 'done' | 'failed';
+// Part of the core event contract (rides the `plan` SSE event) — the definition lives in shared/.
+import type { PlanJobStatus } from '../shared/agentEvents.js';
 export interface PlanJob {
   id: string; epicId: string | null; goal: string; projectId: number; exec?: string; autoModel?: boolean;
   /** Per-mission Autopilot overrides; absent/empty inherits Settings. */

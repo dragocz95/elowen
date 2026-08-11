@@ -1,5 +1,5 @@
-export type DerivedSignal =
-  | { type: 'working' }
-  | { type: 'complete' }
-  | { type: 'needs_input'; question: string; options: { id: string; label: string }[]; context: string };
-export interface SignalSink { emit(session: string, s: DerivedSignal): void }
+// Part of the core event contract (rides the `signal` SSE event) — defined in shared/, re-exported
+// here so the deriver's own modules keep their import path until the extraction moves them.
+import type { DerivedSignal, SignalSink } from '../shared/agentEvents.js';
+
+export type { DerivedSignal, SignalSink };

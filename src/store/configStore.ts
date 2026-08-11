@@ -1,6 +1,6 @@
 import type { Db } from './db.js';
 import { stripControlChars } from '../shared/text.js';
-import { defaultPromptTemplate } from '../overseer/planner.js';
+import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { BrainLimits, RuntimeConfig, RuntimeLimits, ToolDeferralOverrides } from '../shared/wireContract.js';

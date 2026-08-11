@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parsePhases, decompose, planPrompt, modelsBlock, parallelismBlock, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
+import { parsePhases, decompose, planPrompt, modelsBlock, parallelismBlock } from '../../src/overseer/planner.js';
+import { defaultPromptTemplate, _resetDefaultCache } from '../../src/prompts/plannerDefault.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 describe('planner.parsePhases', () => {

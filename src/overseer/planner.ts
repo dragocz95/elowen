@@ -1,32 +1,14 @@
 import type { InferenceClient } from '../inference/types.js';
-import { rawTemplate, _resetPromptCache } from '../prompts/index.js';
+import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
 import { extractJson } from './llmParse.js';
+// Phase is part of the CORE event contract (rides the `plan` SSE event) — defined in shared/, only
+// re-exported here so the planner's own callers keep their import path until the extraction moves them.
+import type { Phase } from '../shared/agentEvents.js';
 
-/** Default planner prompt template (editable in Settings). Read from prompts/planner.md, with a
- *  built-in fallback (prompts/planner-fallback.md) if the default cannot be read (e.g. not copied
- *  into dist). The loader caches both, so repeated calls do not re-touch disk. */
-export function defaultPromptTemplate(): string {
-  try { return rawTemplate('planner'); }
-  catch { return rawTemplate('planner-fallback'); }
-}
-
-/** Drop the cached template so the next read re-loads planner.md. For tests (the loader cache
- *  otherwise leaks across cases) and for picking up an on-disk template edit without a restart. */
-export function _resetDefaultCache(): void { _resetPromptCache(); }
+export type { Phase };
 
 /** Task types a phase may take; anything else is coerced to 'task'. */
 export const VALID_TYPES = new Set(['task', 'feature', 'bug', 'chore']);
-
-export interface Phase {
-  title: string; type: string; agent?: string; details?: string; exec?: string;
-  /** Planner-local slug, unique within this plan. Lets `dependsOn` reference sibling phases so
-   *  persistPlan can build a real DAG (independent branches) instead of a forced linear chain.
-   *  Absent → the whole plan falls back to the legacy prev→next chain (back-compat). */
-  id?: string;
-  /** Ids of phases (within THIS plan) that must finish before this one starts. `[]` = no ordering
-   *  need → starts immediately (parallel). Undefined when the planner omitted it. */
-  dependsOn?: string[];
-}
 
 /** Sanitize a model-supplied agent name into a tmux-safe single token. Keeps `_` and `-` (both legal
  *  in tmux session names) so multi-word names like "code-reviewer" survive instead of collapsing to

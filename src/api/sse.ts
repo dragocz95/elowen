@@ -1,6 +1,7 @@
-import type { SignalSink, DerivedSignal } from '../deriver/types.js';
-import type { PlanJobStatus } from '../overseer/planJob.js';
-import type { Phase } from '../overseer/planner.js';
+// The event-contract types deliberately come from shared/, NOT from deriver/overseer: SSE consumers
+// depend on their shape regardless of where the producer runs (the agents extraction moves the
+// producers into a plugin; this import must not drag the subsystem back into the core graph).
+import type { SignalSink, DerivedSignal, PlanJobStatus, Phase } from '../shared/agentEvents.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('sse');
