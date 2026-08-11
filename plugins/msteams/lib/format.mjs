@@ -9,13 +9,14 @@ export const CHUNK = 20000;
 /** Split a Teams reply into ≤CHUNK pieces without breaking a fenced code block (shared core + our size). */
 export const splitContent = (text) => splitAtChunk(text, CHUNK);
 
-/** The markup Teams' runtime footer is wrapped in. Bot messages have no small-text style there, and a
- *  plain trailing line reads as one more sentence of the answer — Teams renders the paragraph break
- *  before it far tighter than Discord does. A blockquote is the one muted BLOCK that Teams documents as
- *  supported on desktop, iOS and Android alike (headers and horizontal rules are not), so the footer
- *  gets its own quoted strip the way Discord subtext does, italic inside for the same hierarchy.
+/** The markup Teams' runtime footer is wrapped in. Bot messages there have no small-text style at all —
+ *  Teams documents only bold, italic, strikethrough, monospace, blockquote and links for text-only
+ *  messages, so nothing can actually shrink the type the way Discord's `-#` subtext does. What is left is
+ *  weight: a blockquote draws a full-width bordered strip that dwarfs a one-line footer, so the footer is
+ *  an em-dash lead-in in italic instead — the same shape the Telegram adapter uses, with no box around it.
+ *  The dash follows the opening `*` with no space so Teams cannot read the line as a bullet item.
  *  Named and passed like every other surface's fence so the footer itself stays one shared shape. */
-const FOOTER_FENCE = { open: '> *', close: '*' };
+const FOOTER_FENCE = { open: '*— ', close: '*' };
 
 /** The runtime footer under a final reply: `model · context %` from the idle event, or ''. */
 export const footerLine = (idle) => runtimeFooter(idle, FOOTER_FENCE);

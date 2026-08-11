@@ -403,11 +403,16 @@ describe('msteams mentions + runtime footer', () => {
     expect(sent.entities).toBeUndefined();
   });
 
-  it('sets the runtime footer apart as its own quoted line', async () => {
+  it('sets the runtime footer apart as a dashed italic line, never a quoted block', async () => {
     const { footerLine } = await import(join(repoRoot, 'plugins/msteams/lib/format.mjs')) as {
       footerLine: (idle: unknown) => string;
     };
-    expect(footerLine({ model: 'openai/gpt-5', usage: { percent: 42 } })).toBe('> *gpt-5 · 42 %*');
+    const line = footerLine({ model: 'openai/gpt-5', usage: { percent: 42 } });
+    expect(line).toBe('*— gpt-5 · 42 %*');
+    // Teams draws a blockquote as a full-width bordered strip that dwarfs a one-line footer, and a `* `
+    // opener would turn the line into a bullet item.
+    expect(line.startsWith('>')).toBe(false);
+    expect(line.startsWith('* ')).toBe(false);
     expect(footerLine({})).toBe('');
   });
 });
