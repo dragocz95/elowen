@@ -15,6 +15,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 
 function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const db = openDb(':memory:');
@@ -25,13 +26,18 @@ function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const userProjects = new UserProjectStore(db);
   const tasks = new TaskStore(db);
   const tmux = new FakeTmuxDriver();
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     missionGit: extra.missionGit as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects,
+    clock: new FakeClock(0), config,
+    users, projects, userProjects,
+    // The /missions surface is served by the agents plugin's root-mounted routes now.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux }),
   });
   return { app, db, users, userProjects, tasks, tmux, admin, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../src/store/db.js';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import { assembleMissionDetail } from '../../src/store/missionDetail.js';
+import { openDb } from '../../../src/store/db.js';
+import { TaskStore } from '../../../src/store/taskStore.js';
+import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
+import { assembleMissionDetail } from '../../../plugins/agents/src/api/missionDetail.js';
 
 let tasks: TaskStore; let missions: MissionStore;
 beforeEach(() => {

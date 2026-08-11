@@ -1,7 +1,7 @@
-import type { Task } from './types.js';
-import type { TaskStore } from './taskStore.js';
-import type { Mission } from '../shared/agentEvents.js';
-import type { AgentsMissions } from '../plugins/api.js';
+import type { Task } from '../../../../src/store/types.js';
+import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { Mission } from '../../../../src/shared/agentEvents.js';
+import type { MissionStore } from '../store/missionStore.js';
 
 interface MissionProgress {
   total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number;
@@ -18,7 +18,7 @@ export interface MissionDetail {
 }
 
 export function assembleMissionDetail(
-  stores: { missions: AgentsMissions; tasks: TaskStore },
+  stores: { missions: MissionStore; tasks: TaskStore },
   missionId: string,
 ): MissionDetail | null {
   const mission = stores.missions.get(missionId);

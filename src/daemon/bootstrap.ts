@@ -219,6 +219,10 @@ export interface BuildOpts {
   tmux?: TmuxDriver;
   bootstrap?: { username: string; password: string } | null;
   allowOpen?: boolean;
+  /** Override the plugin scan roots (bundled + user dir). Tests run from TS sources, where the default
+   *  bundled-dir resolution (relative to the compiled dist layout) finds no plugins — a bootstrap test
+   *  that needs the real bundled plugins passes the repo's plugins/ dir here. */
+  pluginDirs?: string[];
 }
 
 export async function buildApp(opts: BuildOpts) {
@@ -273,6 +277,7 @@ export async function buildApp(opts: BuildOpts) {
     project: opts.project,
     tmux,
     bootstrap: opts.bootstrap,
+    ...(opts.pluginDirs ? { pluginDirs: opts.pluginDirs } : {}),
     ...(subagentRunner ? { subagentRunner } : {}),
     // An owner turn finished with the device it was sent from off screen → push it to the user's phone.
     // No subscription registered ⇒ sendToUsers is a no-op, so this needs no separate enable flag. Web push

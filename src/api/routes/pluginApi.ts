@@ -1,6 +1,7 @@
 import { streamSSE } from 'hono/streaming';
+import { ZodError } from 'zod';
 import { logger } from '../../shared/logger.js';
-import { bodyLimitBytes } from '../validation.js';
+import { bodyLimitBytes, formatZodError } from '../validation.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 import type { PluginApiAccess, PluginApiRequest, PluginApiRoute } from '../../plugins/api.js';
@@ -62,6 +63,10 @@ async function dispatchPluginApi(
     if (body instanceof Uint8Array) return c.body(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, status, res.headers ?? {});
     return c.json(body, status, res.headers ?? {});
   } catch (error) {
+    // Body-shape failures map exactly like the core route families' onError, so a grandfathered
+    // root-mounted route keeps its clients' 400 contract (invalid JSON / zod shape errors).
+    if (error instanceof SyntaxError) return c.json({ error: 'invalid JSON body' }, 400);
+    if (error instanceof ZodError) return c.json({ error: formatZodError(error) }, 400);
     // The failure detail stays daemon-side — same rule as /hooks: a caller learns nothing about the
     // handler's internals from the response.
     log.warn(`plugin api handler failed for ${c.req.path}: ${error instanceof Error ? error.message : String(error)}`);

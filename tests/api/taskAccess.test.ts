@@ -10,6 +10,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 
 // Two projects: bob is assigned to #1 only; admin sees both. Cross-project task/mission access
 // must be gated per-resource (by the resource's own project), not just by home-project membership.
@@ -28,12 +29,17 @@ function setup() {
   tasks.create({ id: 'epic2', project_id: 2, title: 'E2', type: 'epic' });
   const missions = new MissionStore(db);
   missions.create({ id: 'm2', epic_id: 'epic2', autonomy: 'L3', max_sessions: 1 });
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions, bus: new EventBus(),
+    tasks, readiness, missions, bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects,
+    clock: new FakeClock(0), config,
+    users, projects, userProjects,
+    // The /missions surface is served by the agents plugin's root-mounted routes now.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
   });
   return { app, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }

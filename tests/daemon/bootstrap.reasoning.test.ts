@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
 import { buildApp } from '../../src/daemon/bootstrap.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 
@@ -11,7 +12,7 @@ describe('bootstrap reasoning wiring', () => {
 
   it('serves the new plan-job and overseer routes (relay path, no agent backends configured)', async () => {
     const tmux = new FakeTmuxDriver();
-    const { app } = await buildApp({ dbPath: ':memory:', project: { id: 1, slug: 'p', path: '/tmp' }, relay: null, tmux, allowOpen: true });
+    const { app } = await buildApp({ dbPath: ':memory:', project: { id: 1, slug: 'p', path: '/tmp' }, relay: null, tmux, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
     // Overseer long-poll heartbeat: nothing pending → {} (short timeout so the test doesn't block).
     const next = await app.request('/missions/m-x/overseer/next?timeoutMs=20');
     expect(next.status).toBe(200);

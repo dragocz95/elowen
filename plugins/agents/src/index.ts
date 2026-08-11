@@ -16,6 +16,7 @@ import type { AgentsControl, PluginContext } from '../../../src/plugins/api.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import { AGENTS_MIGRATIONS } from './store/migrations.js';
 import { buildAgentsRuntime, AGENTS_INTERVAL_MS, type AgentsRuntime } from './runtime.js';
+import { registerMissionsApi } from './api/missions.js';
 import { stripPrefix } from './lib/text.js';
 import type { Logger } from './lib/logger.js';
 
@@ -115,6 +116,9 @@ export function register(ctx: PluginContext): void {
     if (e.type === 'plan') return runtime?.planJobs.get(e.jobId)?.projectId ?? null;
     return null;
   });
+
+  // The grandfathered '/missions' API surface (root-mounted; 404 while the plugin is disabled).
+  registerMissionsApi(ctx, rt);
 
   // The control surface the daemon routes/services/advisor drive (deps getters resolve it live from
   // the loaded registry). Accessor methods so the registry's function-shape narrowing applies and so
