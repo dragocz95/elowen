@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseManifest, PLUGIN_API_VERSION } from '../../src/plugins/manifest.js';
 
 const good = { name: 'skills', version: '0.1.0', apiVersion: PLUGIN_API_VERSION, description: 'x', entry: 'index.mjs' };
@@ -102,4 +105,41 @@ describe('parseManifest', () => {
   it('rejects a non-object', () => {
     expect(() => parseManifest('nope')).toThrow();
   });
+});
+
+/** Every BUNDLED manifest must parse — the runtime loader only logs "plugin skipped" for an invalid
+ *  one, so without this a typo in a shipped elowen-plugin.json (bad configSchema type, malformed web
+ *  block, missing rootMount declaration) would reach users as a silently absent plugin. This is the
+ *  manifest half of the marketplace lint; i18n coverage is scripts/check-languages.mjs. */
+describe('bundled plugin manifests', () => {
+  const pluginsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'plugins');
+  const names = readdirSync(pluginsDir).filter((n) => {
+    const dir = join(pluginsDir, n);
+    return statSync(dir).isDirectory() && existsSync(join(dir, 'elowen-plugin.json'));
+  });
+
+  it('finds the bundled plugins', () => {
+    expect(names.length).toBeGreaterThan(0);
+  });
+
+  for (const name of names) {
+    it(`${name}: manifest parses and its declarations are coherent`, () => {
+      const m = parseManifest(JSON.parse(readFileSync(join(pluginsDir, name, 'elowen-plugin.json'), 'utf-8')));
+      expect(m.name).toBe(name);
+      // A root-mounted API surface must be declared with its leading slash (the loader's contract);
+      // a namespaced path must NOT start with one.
+      for (const route of m.provides?.apiRoutes ?? []) {
+        expect(typeof route).toBe('string');
+      }
+      // A web block's bundle must be reproducible from the repo: either web-src/ sources exist (the
+      // build emits the gitignored bundle) or the entry itself is tracked (a build-free bundle like
+      // ui-demo's handwritten web/index.js).
+      if (m.web) {
+        expect(m.web.entry.startsWith('/')).toBe(false);
+        const hasSources = existsSync(join(pluginsDir, name, 'web-src'));
+        const hasEntry = existsSync(join(pluginsDir, name, m.web.entry));
+        expect(hasSources || hasEntry).toBe(true);
+      }
+    });
+  }
 });
