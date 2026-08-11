@@ -2,7 +2,7 @@
 import { useEffect, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { usePageHeader } from '../../lib/pageHeader';
-import { useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 
 /** Publishes the page title (+ optional count + icon) into the shell masthead, and renders only the
  *  page's actions/filters below it. If a page has no children/subtitle, nothing renders here. */
@@ -11,8 +11,7 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
   // (which this very effect writes), so listing it in the deps would re-run the effect after its own
   // update and loop forever, starving the transition-based router navigation.
   const setHeader = usePageHeader()?.setHeader;
-  const { t } = useTranslation();
-  const appName = t.common.appName;
+  const { appName } = useBrand();
   useEffect(() => {
     setHeader?.({ title, count, icon: Icon });
     // Reflect the page in the browser tab — "Elowen — <Page>". Every route funnels its title through

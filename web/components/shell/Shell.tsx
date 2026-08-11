@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT } from '../../lib/brainDock';
 import { Providers } from '../../app/providers';
 import { LanguageProvider } from '../../lib/i18n';
+import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
@@ -179,13 +180,14 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, theme }: { children: ReactNode; theme?: ThemePayload }) {
   return (
     <EffectsProvider>
       <Providers>
         <ThemeProvider>
         <UiScaleProvider>
         <LanguageProvider>
+        <BrandProvider theme={theme ?? BUILTIN_THEME}>
         <ConfiguredToastProvider>
           <PageHeaderProvider>
             <LoginGate>
@@ -193,6 +195,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </LoginGate>
           </PageHeaderProvider>
         </ConfiguredToastProvider>
+        </BrandProvider>
         </LanguageProvider>
         </UiScaleProvider>
         </ThemeProvider>

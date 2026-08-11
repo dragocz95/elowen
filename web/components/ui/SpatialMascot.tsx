@@ -2,17 +2,18 @@
 
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
+import { useBrand } from '../../lib/brand';
 import type { SpatialMascotState } from './SpatialMascot.types';
 
 export type { SpatialMascotState } from './SpatialMascot.types';
 
-function StaticMascot({ state }: { state: SpatialMascotState }) {
+function StaticMascot({ state, iconSrc }: { state: SpatialMascotState; iconSrc: string }) {
   return (
     <div className={`spatial-mascot-fallback spatial-mascot-fallback--${state}`} aria-hidden>
       <span className="spatial-mascot-fallback__ring spatial-mascot-fallback__ring--outer" />
       <span className="spatial-mascot-fallback__ring spatial-mascot-fallback__ring--inner" />
-      {/* eslint-disable-next-line @next/next/no-img-element -- local brand asset is the canonical mascot. */}
-      <img src="/icon.png" alt="" draggable={false} />
+      {/* eslint-disable-next-line @next/next/no-img-element -- the instance's mascot asset (themeable). */}
+      <img src={iconSrc} alt="" draggable={false} />
     </div>
   );
 }
@@ -25,9 +26,10 @@ function StaticMascot({ state }: { state: SpatialMascotState }) {
  *  rail-sized box shows only the middle of its face. This layer is sized in percentages, so it is correct
  *  at any size, and it keeps the per-state ember animation that makes the mascot read as alive. */
 export function MascotGlyph({ state = 'idle' }: { state?: SpatialMascotState }) {
+  const { appName, iconSrc } = useBrand();
   return (
-    <div className="spatial-mascot" role="img" aria-label="Elowen">
-      <StaticMascot state={state} />
+    <div className="spatial-mascot" role="img" aria-label={appName}>
+      <StaticMascot state={state} iconSrc={iconSrc} />
     </div>
   );
 }
@@ -45,6 +47,7 @@ let sceneWarmedUp = false;
 
 /** Lazy WebGL identity scene with the original mascot visible as an immediate static fallback. */
 export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }) {
+  const { appName, iconSrc } = useBrand();
   const renderWebGl = process.env.NODE_ENV !== 'test';
   // On a warm navigation the scene is already primed, so start ready with no fallback: show the WebGL layer
   // straight away and let it repaint (fast when warm) instead of flashing the plain static icon + crossfade.
@@ -60,11 +63,11 @@ export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }
   }, [ready, fallbackVisible]);
 
   return (
-    <div className={`spatial-mascot ${ready ? 'spatial-mascot--ready' : ''}`} role="img" aria-label="Elowen">
-      {fallbackVisible ? <StaticMascot state={state} /> : null}
+    <div className={`spatial-mascot ${ready ? 'spatial-mascot--ready' : ''}`} role="img" aria-label={appName}>
+      {fallbackVisible ? <StaticMascot state={state} iconSrc={iconSrc} /> : null}
       {renderWebGl ? (
         <div className="spatial-mascot__webgl" aria-hidden>
-          <SpatialMascotScene state={state} onReady={markReady} />
+          <SpatialMascotScene state={state} iconSrc={iconSrc} onReady={markReady} />
         </div>
       ) : null}
     </div>

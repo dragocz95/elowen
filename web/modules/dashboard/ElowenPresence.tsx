@@ -1,4 +1,5 @@
 'use client';
+import { useBrand } from '../../lib/brand';
 import type { AgentPresenceState } from './useAgentPresence';
 
 const PARTICLES = Array.from({ length: 10 }, (_, index) => index);
@@ -10,6 +11,7 @@ export function ElowenPresence({ state, compact = false, label }: {
   compact?: boolean;
   label: string;
 }) {
+  const { iconSrc } = useBrand();
   return (
     <div className={`elowen-presence elowen-presence--${state}${compact ? ' elowen-presence--compact' : ''}`} role="img" aria-label={label}>
       <span className="elowen-presence__aura" aria-hidden />
@@ -18,7 +20,7 @@ export function ElowenPresence({ state, compact = false, label }: {
       <span className="elowen-presence__ground" aria-hidden />
       {PARTICLES.map((index) => <span key={index} className={`elowen-presence__particle elowen-presence__particle--${index + 1}`} aria-hidden />)}
       {/* eslint-disable-next-line @next/next/no-img-element -- local brand asset, intentionally unmodified */}
-      <img src="/icon.png" alt="" className="elowen-presence__mascot" draggable={false} />
+      <img src={iconSrc} alt="" className="elowen-presence__mascot" draggable={false} />
       <style>{`
         .elowen-presence { --presence-hot: #ff5236; --presence-warm: #ff8a4c; position: relative; display: grid; place-items: center; width: min(100%, 25rem); aspect-ratio: 1; isolation: isolate; }
         .elowen-presence--compact { width: 8rem; }

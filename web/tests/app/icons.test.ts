@@ -195,23 +195,25 @@ describe('transparent icons', () => {
   }
 });
 
+// The manifest is generated per request from app/manifest.ts (white-label). In this test env the daemon
+// fetch fails, so what renders is exactly the built-in Elowen brand — the same output every un-themed
+// install serves.
 describe('web app manifest', () => {
-  const manifest: unknown = JSON.parse(read('public', 'manifest.json').toString('utf-8'));
-
-  const icons = (): ReadonlyArray<Record<string, unknown>> => {
-    expect(manifest).toBeTypeOf('object');
-    const list = (manifest as { icons?: unknown }).icons;
-    expect(Array.isArray(list)).toBe(true);
-    return list as ReadonlyArray<Record<string, unknown>>;
+  const buildManifest = async (): Promise<Record<string, unknown>> => {
+    const { default: manifest } = await import('../../app/manifest');
+    return await manifest() as unknown as Record<string, unknown>;
   };
 
-  it('stays on the black OLED canvas', () => {
-    expect(manifest).toMatchObject({ background_color: '#000000', theme_color: '#000000' });
+  it('stays on the black OLED canvas', async () => {
+    expect(await buildManifest()).toMatchObject({ background_color: '#000000', theme_color: '#000000' });
   });
 
-  it('declares every icon for both the plain and the maskable purpose', () => {
+  it('declares every icon for both the plain and the maskable purpose', async () => {
+    const manifest = await buildManifest();
+    const list = manifest.icons;
+    expect(Array.isArray(list)).toBe(true);
     const purposes = new Map<string, string[]>();
-    for (const icon of icons()) {
+    for (const icon of list as ReadonlyArray<Record<string, unknown>>) {
       const src = String(icon.src);
       purposes.set(src, [...(purposes.get(src) ?? []), String(icon.purpose)]);
     }

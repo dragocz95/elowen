@@ -4,16 +4,22 @@ import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
-import { en } from '../lib/i18n/dictionaries/en';
+import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
 
 // Icons come from Next file conventions: app/icon.png → <link rel="icon"> and app/apple-icon.png →
 // <link rel="apple-touch-icon">. Do NOT set metadata.icons here — declaring it overrides the file
 // convention and drops the auto-generated favicon link.
-export const metadata = {
-  title: en.common.appName,
-  manifest: '/manifest.json',
-  appleWebApp: { capable: true, title: en.common.appName, statusBarStyle: 'black' as const },
-};
+// Title and PWA name follow the instance brand (white-label theme), resolved per request so a theme
+// switch lands on the next reload without a rebuild.
+export async function generateMetadata() {
+  const theme = await fetchThemePayload();
+  const appName = theme.text.en?.appName ?? theme.brand.productName;
+  return {
+    title: appName,
+    manifest: '/manifest.webmanifest',
+    appleWebApp: { capable: true, title: appName, statusBarStyle: 'black' as const },
+  };
+}
 
 // Elowen is intentionally OLED-only. Browser chrome follows the same black canvas on every device.
 // `viewportFit: cover` lays the app edge-to-edge so `env(safe-area-inset-*)` resolves (notch / home
@@ -30,7 +36,11 @@ export const viewport = {
 // briefly playing entrance or ambient motion while React hydrates. Theme is fixed in the markup.
 const NO_FLASH_EFFECTS = `(function(){try{var m=localStorage.getItem('elowen:effects');m=m==='full'||m==='reduced'||m==='off'?m:'auto';var r=m==='auto'?(window.matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'):m;document.documentElement.setAttribute('data-effects-mode',m);document.documentElement.setAttribute('data-effects',r);}catch(e){}})();`;
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Server-rendered theme overrides: the values are in the markup before first paint (no FOUC), and the
+  // login screen — rendered before any token exists — already carries the instance brand.
+  const theme = await fetchThemePayload();
+  const themeStyle = buildThemeStyle(theme);
   return (
     <html
       lang="en"
@@ -41,8 +51,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       style={{ backgroundColor: '#000000' }}
       suppressHydrationWarning
     >
-      <head><script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} /></head>
-      <body style={{ backgroundColor: '#000000' }}><Shell>{children}</Shell></body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
+        {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
+      </head>
+      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme}>{children}</Shell></body>
     </html>
   );
 }

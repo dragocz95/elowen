@@ -49,11 +49,14 @@
   --text-caption: 0.6875rem;
   --text-tiny: 0.5625rem;
 
+  /* The accent as a bare R G B triple, so shadow/glow tokens can compose alpha variants — and so a
+     white-label theme can retint them by overriding this ONE variable instead of every baked shadow. */
+  --accent-rgb: 255 82 54;
   --shadow-card: 0 1px 0 rgb(255 255 255 / 0.025), 0 14px 40px rgb(0 0 0 / 0.2);
   --shadow-raised: 0 1px 0 rgb(255 255 255 / 0.04), 0 22px 64px rgb(0 0 0 / 0.48);
-  --shadow-ember: 0 16px 48px rgb(255 82 54 / 0.14);
-  --glow-active: 0 0 0 1px rgb(255 82 54 / 0.3), 0 0 24px rgb(255 82 54 / 0.22), 0 0 64px rgb(255 82 54 / 0.12);
-  --glow-soft: 0 0 44px rgb(255 82 54 / 0.1);
+  --shadow-ember: 0 16px 48px rgb(var(--accent-rgb) / 0.14);
+  --glow-active: 0 0 0 1px rgb(var(--accent-rgb) / 0.3), 0 0 24px rgb(var(--accent-rgb) / 0.22), 0 0 64px rgb(var(--accent-rgb) / 0.12);
+  --glow-soft: 0 0 44px rgb(var(--accent-rgb) / 0.1);
   --hairline: 1px solid rgb(255 255 255 / 0.075);
 
   --motion-instant: 80ms;

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
+import { useBrand } from '../../lib/brand';
 
 /** The "constellation" layout for settings-like sections. Inside a ConstellationScope the shared
  *  SpatialGroup/SpatialRow primitives render as an orbital field instead of stacked rows: the group
@@ -36,6 +37,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  *  re-runs on resize and on pod content changes; entrance animations replay whenever the cosmos
  *  becomes visible again (section rail navigation keeps panels mounted via <Activity>). */
 export function CosmosGroup({ core, children }: { core: string; children: ReactNode }) {
+  const { iconSrc } = useBrand();
   const rootRef = useRef<HTMLElement>(null);
   const podsRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -219,8 +221,8 @@ export function CosmosGroup({ core, children }: { core: string; children: ReactN
       <svg ref={svgRef} className="cosmos-filaments" aria-hidden="true" />
       <div ref={ringRef} className="cosmos-ring" aria-hidden="true" />
       <div ref={coreRef} className="cosmos-core" aria-hidden="true">
-        {/* eslint-disable-next-line @next/next/no-img-element -- local brand asset is the canonical mascot. */}
-        <img src="/icon.png" alt="" draggable={false} className="cosmos-core__mascot" />
+        {/* eslint-disable-next-line @next/next/no-img-element -- the instance's mascot asset (themeable). */}
+        <img src={iconSrc} alt="" draggable={false} className="cosmos-core__mascot" />
         <span className="cosmos-core__label">{core}</span>
       </div>
       <div ref={podsRef} className="cosmos-pods">{children}</div>

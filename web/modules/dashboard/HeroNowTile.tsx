@@ -4,6 +4,7 @@ import { ArrowRight, Clock3, Sparkles, WifiOff } from 'lucide-react';
 import { useTasks } from '../../lib/queries';
 import { taskForSession, agentDisplayName } from '../../lib/agentUtils';
 import { useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import { HeroCosmos } from './HeroCosmos';
 import { HomeComposer } from './HomeComposer';
 import { useAgentPresence, type AgentPresenceState } from './useAgentPresence';
@@ -12,6 +13,7 @@ import { useAgentPresence, type AgentPresenceState } from './useAgentPresence';
  *  untouched; the surrounding presence layers communicate whether Elowen is resting, working or waiting. */
 export function HeroNowTile({ now }: { now: number }) {
   const { t, locale } = useTranslation();
+  const { appName } = useBrand();
   const presence = useAgentPresence();
   const tasks = useTasks();
   const primaryName = presence.primary?.name ?? '';
@@ -78,7 +80,7 @@ export function HeroNowTile({ now }: { now: number }) {
         </div>
 
         <div className="flex min-h-72 flex-col justify-center @3xl:min-h-[25rem] @3xl:self-stretch">
-          <HeroCosmos now={now} state={presence.state} presenceLabel={`${t.common.appName}: ${stateLabel}`} />
+          <HeroCosmos now={now} state={presence.state} presenceLabel={`${appName}: ${stateLabel}`} />
         </div>
       </div>
     </section>

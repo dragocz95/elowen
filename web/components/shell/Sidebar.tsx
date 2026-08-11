@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useSidebarState } from '../../lib/useSidebarState';
 import { useHealth, useTasks } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import { NavGroup } from './NavGroup';
 import { CollapseHandle } from './CollapseHandle';
 import { useShellNavigation } from './useShellNavigation';
@@ -34,6 +35,7 @@ export function Sidebar({
   const { data } = useHealth();
   const tasks = useTasks();
   const { t } = useTranslation();
+  const brand = useBrand();
   const { worlds, systemItems } = useShellNavigation();
   const dragging = useRef(false);
 
@@ -84,9 +86,9 @@ export function Sidebar({
       >
         <div className={`flex h-16 shrink-0 items-center border-b border-border/80 ${expanded ? 'justify-between px-4' : 'justify-center px-2'}`}>
           {expanded ? (
-            <img src="/elowen-logo.png" alt={t.common.appName} className="logo-adaptive h-9 w-auto max-w-[152px]" />
+            <img src={brand.logoSrc} alt={brand.appName} className="logo-adaptive h-9 w-auto max-w-[152px]" />
           ) : (
-            <img src="/icon.png" alt={t.common.appName} className="h-8 w-8 rounded-lg" />
+            <img src={brand.iconSrc} alt={brand.appName} className="h-8 w-8 rounded-lg" />
           )}
           {expanded ? (
             <span

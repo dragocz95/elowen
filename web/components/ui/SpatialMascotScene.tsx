@@ -6,8 +6,8 @@ import { AdditiveBlending, Group, MathUtils, Sprite, TextureLoader } from 'three
 import type { SpatialMascotState } from './SpatialMascot.types';
 import { useEffects } from '../../lib/useEffects';
 
-function EmberScene({ state, onReady }: { state: SpatialMascotState; onReady: () => void }) {
-  const mascot = useLoader(TextureLoader, '/icon.png');
+function EmberScene({ state, iconSrc, onReady }: { state: SpatialMascotState; iconSrc: string; onReady: () => void }) {
+  const mascot = useLoader(TextureLoader, iconSrc);
   const group = useRef<Group>(null);
   const orbitOne = useRef<Group>(null);
   const orbitTwo = useRef<Group>(null);
@@ -95,7 +95,7 @@ function EmberScene({ state, onReady }: { state: SpatialMascotState; onReady: ()
 }
 
 /** The Canvas itself owns no pointer events; visibility and document state control its render loop. */
-export function SpatialMascotScene({ state, onReady }: { state: SpatialMascotState; onReady: () => void }) {
+export function SpatialMascotScene({ state, iconSrc = '/icon.png', onReady }: { state: SpatialMascotState; iconSrc?: string; onReady: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [intersecting, setIntersecting] = useState(true);
   const [documentVisible, setDocumentVisible] = useState(true);
@@ -127,7 +127,7 @@ export function SpatialMascotScene({ state, onReady }: { state: SpatialMascotSta
         camera={{ position: [0, 0, 10], zoom: 72 }}
         gl={{ alpha: true, antialias: true, powerPreference: 'low-power' }}
       >
-        <EmberScene state={state} onReady={onReady} />
+        <EmberScene state={state} iconSrc={iconSrc} onReady={onReady} />
       </Canvas>
     </div>
   );

@@ -34,6 +34,7 @@ export const QUERY_KEYS = {
   memoryCategories: ['memory-categories'] as const,
   categorizationSettings: ['categorization-settings'] as const,
   brainCommands: ['brain-commands'] as const,
+  themes: ['themes'] as const,
   brainRateLimits: ['brain-rate-limits'] as const,
   brainContextUsage: ['brain-context-usage'] as const,
 };
@@ -138,6 +139,10 @@ export const useHealth = () =>
 
 export const useConfig = () =>
   useQuery({ queryKey: QUERY_KEYS.config, queryFn: elowenClient.getConfig });
+
+/** The installable white-label themes + the active selection, for the System settings picker. */
+export const useThemes = (enabled = true) =>
+  useQuery({ queryKey: QUERY_KEYS.themes, queryFn: elowenClient.themes, enabled });
 
 /** Elowen's version + update posture for the System settings panel. Polled so an "update available"
  *  badge appears without a reload, and so the version flips after a manual/auto update + restart. */

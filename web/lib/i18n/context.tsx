@@ -58,3 +58,9 @@ export function useTranslation() {
   if (!ctx) throw new Error('useTranslation must be used within LanguageProvider');
   return ctx;
 }
+
+/** The current locale, tolerating a missing LanguageProvider (bare component tests, isolated mounts) —
+ *  brand/name resolution degrades to English instead of throwing where translations are not the point. */
+export function useLocaleSafe(): Locale {
+  return useContext(LangContext)?.locale ?? DEFAULT_LOCALE;
+}

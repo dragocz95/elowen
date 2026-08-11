@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { SquareTerminal } from 'lucide-react';
 import { agentDisplayName } from '../../../lib/agentUtils';
 import { useTranslation } from '../../../lib/i18n';
+import { useBrand } from '../../../lib/brand';
 
 // xterm references browser-only `self`; skip SSR so this chromeless window doesn't break prerender.
 const StreamTerminal = dynamic(() => import('../../../components/terminal/StreamTerminal').then((m) => m.StreamTerminal), { ssr: false });
@@ -14,10 +15,11 @@ const StreamTerminal = dynamic(() => import('../../../components/terminal/Stream
  *  other page — the Shell just skips its chrome for `/terminal/*` routes. */
 export default function TerminalWindow() {
   const { t } = useTranslation();
+  const { appName } = useBrand();
   const params = useParams<{ name: string }>();
   const name = decodeURIComponent(String(params.name));
   // Chromeless pop-out: no ModuleHeader (and no pageHeader provider), so set the tab title directly.
-  useEffect(() => { document.title = `${t.common.appName} — ${agentDisplayName(name)}`; }, [t.common.appName, name]);
+  useEffect(() => { document.title = `${appName} — ${agentDisplayName(name)}`; }, [appName, name]);
   return (
     <div className="flex h-dvh flex-col bg-bg">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 bg-surface px-4">

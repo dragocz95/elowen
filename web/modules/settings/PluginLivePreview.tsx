@@ -3,6 +3,7 @@ import { Bot, Check, Clock3, MessageCircle, TerminalSquare, Wrench } from 'lucid
 import { Badge } from '../../components/ui/Badge';
 import { PluginIcon } from './PluginIcon';
 import { useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import type { PluginConfigField, PluginDetail } from '../../lib/types';
 
 // One shared surface for every preview tile so the panel reads as a single clean card language instead of
@@ -21,6 +22,7 @@ function OnOff({ on }: { on: boolean }) {
 
 function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Record<string, unknown> }) {
   const { t } = useTranslation();
+  const { agentName } = useBrand();
   const tools = String(valueOf(detail, values, 'toolActivity') ?? 'status');
   const answer = String(valueOf(detail, values, 'answerMode') ?? 'final');
   const output = String(valueOf(detail, values, 'toolOutput') ?? 'summary');
@@ -59,7 +61,7 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
       <div data-testid="discord-preview-layout" className="grid grid-cols-1 gap-2.5 @lg:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)] @lg:items-stretch">
         {toolPanel}
         <div className={`${previewBox} text-xs leading-relaxed text-text`}>
-          <span className="mb-1 block font-medium text-accent">Elowen</span>
+          <span className="mb-1 block font-medium text-accent">{agentName}</span>
           {answer === 'live' ? t.pluginDetail.previewStreamingAnswer : t.pluginDetail.previewFinalAnswer}
         </div>
       </div>

@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
-import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search, Server, CalendarClock, ScrollText, BellRing } from 'lucide-react';
+import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search, Server, CalendarClock, ScrollText, BellRing, Palette } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { BackendPicker } from '../../components/ui/BackendPicker';
@@ -17,7 +17,7 @@ import { MemorySection } from '../../modules/settings/MemorySection';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
-import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills, useLogFiles } from '../../lib/queries';
+import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills, useLogFiles, useThemes } from '../../lib/queries';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { formatLogSize } from '../../modules/settings/logFilter';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -140,6 +140,8 @@ export default function SettingsPage() {
   // Only while the Data section is on screen — the log summary is a nicety, not a reason to query the
   // daemon from every other settings tab.
   const logFiles = useLogFiles(category === 'data');
+  // Same scoping for the white-label theme list (System section only).
+  const themes = useThemes(category === 'system');
   const isValidCat = (c: string | null): c is Category => !!c && (CATEGORY_VALUES as readonly string[]).includes(c);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
@@ -920,6 +922,31 @@ export default function SettingsPage() {
                   <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
                 </SettingsRow>
               );
+              // Saved immediately on selection (the daemon respawns live sessions with the new brand),
+              // then a full reload — the theme's colors and name are injected server-side in the root
+              // layout, so only a fresh document actually shows the new look.
+              const rowTheme = (
+                <SettingsRow label={t.settings.whiteLabelTheme.label} description={t.settings.whiteLabelTheme.hint} icon={Palette}>
+                  <select
+                    className={inputClass}
+                    value={config.data?.theme?.active ?? ''}
+                    aria-label={t.settings.whiteLabelTheme.label}
+                    onChange={(e) => {
+                      update.mutate({ theme: { active: e.target.value || null } }, {
+                        onSuccess: () => { toast(t.settings.whiteLabelTheme.applied); window.setTimeout(() => window.location.reload(), 800); },
+                        onError: () => toast(t.settings.whiteLabelTheme.saveError, 'error'),
+                      });
+                    }}
+                  >
+                    <option value="">{t.settings.whiteLabelTheme.builtin}</option>
+                    {(themes.data?.themes ?? []).map((th) => (
+                      <option key={th.name} value={th.name} disabled={!th.valid}>
+                        {th.displayName}{th.valid ? '' : ` (${t.settings.whiteLabelTheme.invalid})`}
+                      </option>
+                    ))}
+                  </select>
+                </SettingsRow>
+              );
               const rowPushContact = (
                 <SettingsRow label={t.settings.pushContact} description={t.help.pushContact} icon={BellRing}>
                   <input value={pushContact} onChange={(e) => setPushContact(e.target.value)} placeholder={t.settings.pushContactPlaceholder} className={inputClass} aria-label={t.settings.pushContact} />
@@ -991,6 +1018,7 @@ export default function SettingsPage() {
                     {rowVersion}
                     {serviceRows}
                     {rowAutoUpdate}
+                    {rowTheme}
                     {rowPushContact}
                     {rowTokenTtl}
                     {rowRetention}
