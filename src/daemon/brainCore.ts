@@ -161,6 +161,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // previously-core behaviour — see migrateAgentsEnabled). Daemon-only, like schema migrations: the
   // sub-agent runner attaches to a database the daemon already prepared and must not write settings.
   if (opts.migrate !== false) config.migrateAgentsEnabled();
+  // One-shot copy of the plugin-exclusive autopilot keys into plugins.config.agents (lossless —
+  // autopilot.* keeps its values for rollback). Same daemon-only discipline as above.
+  if (opts.migrate !== false) config.migrateAgentsPluginConfig();
   // Seed the daemon-wide LSP manager from the persisted toggle — before this, /lsp silently reset to
   // "on" at every daemon restart. Runtime flips (the /lsp command, PUT /config) keep both in sync.
   lspManager().setEnabled(config.get().lspEnabled);

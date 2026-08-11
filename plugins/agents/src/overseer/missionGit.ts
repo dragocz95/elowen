@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { MissionPrStore } from '../store/missionPrStore.js';
 import type { PluginHostConfig as ConfigStore } from '../../../../src/plugins/api.js';
+import type { AgentsPluginConfig } from '../config.js';
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import { logger } from '../lib/logger.js';
 import { createMissionWorktree, removeWorktree, commitAll, pushBranch, detectBaseBranch } from '../integrations/worktree.js';
@@ -25,6 +26,8 @@ export type FinishResult =
 export interface MissionGitDeps {
   prs: MissionPrStore;
   config: ConfigStore;
+  /** The plugin's own effective config (plugins.config.agents with autopilot fallback), read live. */
+  pluginConfig: () => AgentsPluginConfig;
   projects: { get(id: number): { id: number; slug: string; path: string; pr_enabled?: boolean | null } | null };
   tasks: TaskStore;
 }
@@ -82,7 +85,7 @@ export class MissionGit {
     // provisioned worktrees are read back from the `prs` row, never recomputed from the id.
     const dir = join(dirname(project.path), '.elowen-worktrees', `${slug}-${sanitize(missionId)}`);
     try {
-      const base = await detectBaseBranch(project.path, this.d.config.get().autopilot.prBaseBranch);
+      const base = await detectBaseBranch(project.path, this.d.pluginConfig().prBaseBranch);
       await createMissionWorktree(project.path, branch, base, dir);
       this.d.prs.create({ mission_id: missionId, branch, worktree: dir });
       log.info(`PR mode: mission ${missionId} → branch ${branch} @ ${dir}`);
@@ -173,7 +176,7 @@ export class MissionGit {
     const rec = this.d.prs.get(missionId);
     const project = this.projectFor(missionId);
     if (!rec || !project) return { state: 'off' };
-    const cfg = this.d.config.get().autopilot;
+    const cfg = this.d.pluginConfig();
     // Verify gate: a configured command must exit 0 in the worktree before any PR opens.
     if (cfg.prVerifyCommand.trim()) {
       const v = await this.runVerify(rec.worktree, cfg.prVerifyCommand);

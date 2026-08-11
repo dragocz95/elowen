@@ -628,6 +628,9 @@ interface Stored {
   /** One-shot upgrade marker: the `agents` plugin (the extracted, previously-core tmux-agent/mission
    *  subsystem) has been auto-enabled for this pre-existing install. See migrateAgentsEnabled(). */
   agentsConfigMigrated: boolean;
+  /** One-shot upgrade marker: the autopilot keys consumed exclusively by the agents plugin runtime
+   *  have been COPIED into plugins.config.agents. See migrateAgentsPluginConfig(). */
+  agentsPluginConfigMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -665,6 +668,27 @@ function mergeAutopilot(src: Partial<Stored['autopilot']> | undefined, fallback:
   return out;
 }
 
+/** The autopilot keys consumed EXCLUSIVELY by the agents plugin runtime (mission PR lifecycle + the
+ *  overseer's decision model). Copied — never moved — into plugins.config.agents by the one-shot
+ *  migrateAgentsPluginConfig(), and mirrored there on every autopilot patch while the Settings web
+ *  still edits the autopilot fields (until F3). The remaining autopilot keys stay shared: the core
+ *  plan/review paths read model/prompt/pilotExec/overseerExec/reviewOnDone/prEnabled/tddMode too. */
+export const AGENTS_PLUGIN_CONFIG_KEYS = ['overseerModel', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand'] as const;
+
+/** Mirror an autopilot patch's agents-plugin-owned keys into the plugins.config.agents slice (see
+ *  AGENTS_PLUGIN_CONFIG_KEYS). Returns `config` untouched when the patch carries none of them. */
+function mirrorAgentsPluginConfig(
+  config: Record<string, Record<string, unknown>>,
+  autopilotPatch: ConfigPatch['autopilot'],
+): Record<string, Record<string, unknown>> {
+  if (!autopilotPatch) return config;
+  const touched = AGENTS_PLUGIN_CONFIG_KEYS.filter((k) => autopilotPatch[k] !== undefined && autopilotPatch[k] !== null);
+  if (touched.length === 0) return config;
+  const slice = { ...config['agents'] };
+  for (const k of touched) slice[k] = autopilotPatch[k];
+  return { ...config, agents: slice };
+}
+
 /** The plugins block for a settings row that predates the plugin system (or whose plugins block is
  *  malformed): NO plugins enabled. This is a DELIBERATE asymmetry with `defaultStored()`, which enables
  *  `DEFAULT_CONFIG.plugins.enabled` for FRESH installs — an existing install must never have new default
@@ -692,6 +716,8 @@ const defaultStored = (): Stored => ({
   // A fresh row already enables `agents` via the defaults above — mark it migrated so a later boot's
   // one-shot sweep never re-adds the plugin after an admin deliberately disables it.
   agentsConfigMigrated: true,
+  // Fresh installs need no autopilot→plugin config copy: the plugin's own defaults apply.
+  agentsPluginConfigMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -782,6 +808,7 @@ export class ConfigStore {
             }
           : legacyEmptyPlugins(),
         agentsConfigMigrated: p.agentsConfigMigrated === true,
+        agentsPluginConfigMigrated: p.agentsPluginConfigMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -898,6 +925,26 @@ export class ConfigStore {
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, agentsConfigMigrated: true });
   }
 
+  /** One-shot upgrade: COPY (never move — autopilot.* keeps its values for a lossless rollback) the
+   *  autopilot keys consumed exclusively by the agents plugin runtime into plugins.config.agents,
+   *  where the plugin reads them via its own config slice. Existing plugins.config.agents values win
+   *  (an admin who already configured the plugin slice is not overwritten). Runs once per install;
+   *  daemon-only, like migrateAgentsEnabled(). */
+  migrateAgentsPluginConfig(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.agentsPluginConfigMigrated) return;
+    const slice: Record<string, unknown> = { ...cur.plugins.config['agents'] };
+    for (const k of AGENTS_PLUGIN_CONFIG_KEYS) {
+      if (slice[k] === undefined) slice[k] = cur.autopilot[k];
+    }
+    this.write({
+      ...cur,
+      plugins: { ...cur.plugins, config: { ...cur.plugins.config, agents: slice } },
+      agentsPluginConfigMigrated: true,
+    });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -936,10 +983,16 @@ export class ConfigStore {
       plugins: {
         enabled: sanitizeStringList(patch.plugins?.enabled ?? cur.plugins.enabled),
         removed: sanitizeStringList(patch.plugins?.removed ?? cur.plugins.removed),
-        // Merge per-plugin config so a patch touching one plugin never wipes another's slice.
-        config: patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
+        // Merge per-plugin config so a patch touching one plugin never wipes another's slice. Then
+        // mirror any autopilot patch of the agents-plugin-owned keys into plugins.config.agents:
+        // TRANSITIONAL until F3 moves the Settings web off the autopilot fields — it keeps the copy
+        // the plugin reads in sync with edits arriving through the unchanged autopilot surface.
+        config: mirrorAgentsPluginConfig(
+          patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
+          patch.autopilot),
       },
       agentsConfigMigrated: cur.agentsConfigMigrated,
+      agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

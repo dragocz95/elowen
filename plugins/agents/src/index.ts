@@ -22,6 +22,7 @@ import { registerAsksApi } from './api/asks.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
+import { agentsPluginConfig } from './config.js';
 import type { Logger } from './lib/logger.js';
 
 export function register(ctx: PluginContext): void {
@@ -61,6 +62,9 @@ export function register(ctx: PluginContext): void {
         },
         prompts: ctx.host.prompts(),
         config: ctx.host.config(),
+        // The plugin's own config slice (plugins.config.agents), resolved per read with the live
+        // autopilot values as fallback — a key the slice lacks behaves exactly as pre-extraction.
+        pluginConfig: () => agentsPluginConfig(ctx.config, ctx.host.config()),
         relayClient: (cfg) => ctx.host.relayClient(cfg),
         git: ctx.host.git(),
         elowenCli: ctx.host.elowenCli(),

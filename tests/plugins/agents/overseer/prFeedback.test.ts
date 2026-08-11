@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { agentsPluginConfig } from '../../../../plugins/agents/src/config.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,7 +41,7 @@ async function build(opts: { exec?: string } = {}) {
   const prs = new MissionPrStore(db);
   const missions = new MissionStore(db);
   missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
-  const missionGit = new MissionGit({ prs, config, projects, tasks });
+  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   await missionGit.onEngage('m-epic', 'epic');
   prs.setPr('m-epic', { number: 12, url: 'https://github.com/o/r/pull/12', state: 'open' }); // simulate an opened PR
   return { missionGit, prs, tasks, missions, projects };

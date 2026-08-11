@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { agentsPluginConfig } from '../../../../plugins/agents/src/config.js';
 import { projectHead, projectRangeDiff } from '../../../../src/integrations/projectFiles.js';
 
 // The plugin engine/scheduler take read-only git helpers as a host seam; the core functions
@@ -36,7 +37,7 @@ function setup(prEnabled: boolean) {
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled } });
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, config, projects, tasks });
+  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   const tmux = new FakeTmuxDriver();
   const launch = vi.fn().mockResolvedValue({ session: 'elowen-AgentX' });
   const engine = new MissionEngine({ git: gitSeam,

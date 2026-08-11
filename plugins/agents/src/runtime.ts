@@ -22,6 +22,7 @@ import { Deriver } from './deriver/deriver.js';
 import { detectAgentPrompt } from './deriver/shellPatterns/index.js';
 import { MissionEngine, type SummaryContext } from './overseer/missionEngine.js';
 import { MissionGit } from './overseer/missionGit.js';
+import type { AgentsPluginConfig } from './config.js';
 import { Scheduler } from './overseer/scheduler.js';
 import { sweepFinishedSessions } from './overseer/janitor.js';
 import { sweepPrFeedback, type PrFeedbackDeps } from './overseer/prFeedback.js';
@@ -67,6 +68,9 @@ export interface AgentsRuntimeDeps {
   };
   prompts: PluginHostPrompts;
   config: PluginHostConfig;
+  /** The plugin's own effective config: plugins.config.agents (the keys this runtime consumes
+   *  exclusively) with the live autopilot values as fallback. See config.ts. */
+  pluginConfig: () => AgentsPluginConfig;
   /** Build a relay inference client (the overseer/planner/decision LLM path) — ctx.host.relayClient. */
   relayClient: (cfg: RelayConfig) => InferenceClient;
   git: GitReader;
@@ -279,7 +283,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
   const overseerClient = (): InferenceClient | null => {
     const cfg = deps.config.get(); const relay = deps.config.autopilotRelay();
     if (!relay) return null;
-    return deps.relayClient({ baseUrl: relay.baseUrl, apiKey: relay.apiKey, model: cfg.autopilot.overseerModel || cfg.autopilot.model });
+    return deps.relayClient({ baseUrl: relay.baseUrl, apiKey: relay.apiKey, model: deps.pluginConfig().overseerModel || cfg.autopilot.model });
   };
   // Shared reasoning stores: the async planning job registry and the per-mission decision queue.
   // The Pilot spawns a repo-aware planning agent for agent-mode plan jobs (relay path needs none);
@@ -290,7 +294,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
 
   // PR-native git lifecycle (no-op unless Settings → PR workflow is enabled): each mission runs in an
   // isolated worktree on its own branch, commits per approved phase, and (later stages) opens a PR.
-  const missionGit = new MissionGit({ prs: missionPrs, config: deps.config, projects, tasks });
+  const missionGit = new MissionGit({ prs: missionPrs, config: deps.config, pluginConfig: deps.pluginConfig, projects, tasks });
 
   // The overseer must be parked INSIDE the mission's worktree (via missionGit) so its read-only
   // `git diff` judges the agent's actual work, not the unchanged main checkout.

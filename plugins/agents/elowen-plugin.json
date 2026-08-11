@@ -39,5 +39,50 @@
   "planSafe": [
     "ElowenListMissions",
     "ElowenListSessions"
+  ],
+  "configSchema": [
+    {
+      "key": "sec_overseer",
+      "label": "Overseer",
+      "type": "section",
+      "hint": "Decision model for the autopilot overseer."
+    },
+    {
+      "key": "overseerModel",
+      "label": "Overseer model",
+      "type": "string",
+      "placeholder": "(planner model)",
+      "default": "",
+      "hint": "Relay model for overseer decisions; empty falls back to the planner model."
+    },
+    {
+      "key": "sec_pr",
+      "label": "PR-native missions",
+      "type": "section",
+      "hint": "Branch, auto-open and verify gate for mission pull requests."
+    },
+    {
+      "key": "prBaseBranch",
+      "label": "PR base branch",
+      "type": "string",
+      "placeholder": "(auto-detect)",
+      "default": "",
+      "hint": "Base branch mission PRs target; empty auto-detects per repository."
+    },
+    {
+      "key": "prAutoOpen",
+      "label": "Open PR automatically",
+      "type": "boolean",
+      "default": false,
+      "hint": "Open a mission's PR as soon as its epic completes."
+    },
+    {
+      "key": "prVerifyCommand",
+      "label": "PR verify command",
+      "type": "string",
+      "placeholder": "(none)",
+      "default": "",
+      "hint": "Command that must exit 0 in the worktree before any PR opens; empty disables the gate."
+    }
   ]
 }

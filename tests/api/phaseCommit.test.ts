@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { agentsPluginConfig } from '../../plugins/agents/src/config.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -32,7 +33,7 @@ function build(prEnabled: boolean) {
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled } });
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, config, projects, tasks });
+  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   const app = createServer({
     tasks, readiness: new Readiness(db), missions, engine: { tick: async () => {}, isActive: () => false } as never,
     spawn: null as never, tmux: null as never, bus: new EventBus(), missionGit, projects,

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { agentsPluginConfig } from '../../../../plugins/agents/src/config.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -27,7 +28,7 @@ function build(opts: { prAutoOpen: boolean; verify: string }) {
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled: true, prAutoOpen: opts.prAutoOpen, prVerifyCommand: opts.verify, ghToken: 'tok' } });
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, config, projects, tasks });
+  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   return { missionGit, prs, tasks, projects, project };
 }
 

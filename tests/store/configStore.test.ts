@@ -390,3 +390,53 @@ describe('ConfigStore element-level sanitisation on corrupt stored JSON (finding
     expect(c.plugins.enabled).toEqual(['files']);
   });
 });
+
+describe('ConfigStore agents plugin config (F2 step 7)', () => {
+  const OLD_ROW = () => JSON.stringify({
+    allowedExecs: ['sonnet'],
+    autopilot: { model: 'm', apiUrl: 'u', overseerModel: 'ov-model', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test' },
+    plugins: { enabled: ['agents'], removed: [], config: {} },
+    agentsConfigMigrated: true,
+  });
+
+  it('migrateAgentsPluginConfig copies the plugin-exclusive autopilot keys once (old DB)', () => {
+    const db2 = openDb(':memory:');
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(OLD_ROW());
+    const cs = new ConfigStore(db2);
+    cs.migrateAgentsPluginConfig();
+    expect(cs.pluginConfig('agents')).toEqual({ overseerModel: 'ov-model', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test' });
+    // Lossless: the autopilot originals stay for rollback.
+    expect(cs.get().autopilot.prBaseBranch).toBe('main');
+    // Idempotent: a second run (and one after a slice edit) changes nothing.
+    cs.update({ plugins: { config: { agents: { ...cs.pluginConfig('agents'), prBaseBranch: 'develop' } } } });
+    cs.migrateAgentsPluginConfig();
+    expect(cs.pluginConfig('agents')['prBaseBranch']).toBe('develop');
+  });
+
+  it('migration never overwrites an existing plugins.config.agents value', () => {
+    const db2 = openDb(':memory:');
+    const row = JSON.parse(OLD_ROW());
+    row.plugins.config = { agents: { prBaseBranch: 'release' } };
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
+    const cs = new ConfigStore(db2);
+    cs.migrateAgentsPluginConfig();
+    expect(cs.pluginConfig('agents')['prBaseBranch']).toBe('release'); // admin's own value wins
+    expect(cs.pluginConfig('agents')['overseerModel']).toBe('ov-model'); // absent key copied
+  });
+
+  it('is a no-op on a fresh install (no settings row → defaults already carry the marker)', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.migrateAgentsPluginConfig();
+    expect(cs.pluginConfig('agents')).toEqual({});
+  });
+
+  it('mirrors an autopilot patch of a plugin-owned key into plugins.config.agents (transitional until F3)', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ autopilot: { prBaseBranch: 'trunk', prAutoOpen: true } });
+    expect(cs.pluginConfig('agents')).toEqual({ prBaseBranch: 'trunk', prAutoOpen: true });
+    expect(cs.get().autopilot.prBaseBranch).toBe('trunk');
+    // A patch not touching the mirrored keys leaves the slice alone.
+    cs.update({ autopilot: { notes: 'x' } });
+    expect(cs.pluginConfig('agents')).toEqual({ prBaseBranch: 'trunk', prAutoOpen: true });
+  });
+});
