@@ -1,35 +1,15 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { Component as ReactComponent, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle } from 'lucide-react';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
+import { PluginErrorBoundary, PluginPlaceholder as Placeholder } from '../../../../components/plugin/PluginUiGuards';
 import { usePluginUi } from '../../../../lib/queries';
 import { useTranslation } from '../../../../lib/i18n';
 import {
   PLUGIN_UI_API_VERSION, loadPluginUi, matchPluginPage, setPluginNavigate,
   type PluginUiRegistration,
 } from '../../../../lib/pluginUi';
-
-/** A plugin page is third-party code: one broken render must stay INSIDE this route, never take down
- *  the shell around it. Class component — error boundaries have no hook equivalent. */
-class PluginErrorBoundary extends ReactComponent<{ children: ReactNode; notice: string }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
-  render() {
-    if (this.state.failed) return <Placeholder text={this.props.notice} />;
-    return this.props.children;
-  }
-}
-
-function Placeholder({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-6 text-sm text-muted-foreground">
-      <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-      <span>{text}</span>
-    </div>
-  );
-}
 
 /** Host route for plugin browser UIs: /p/<plugin>/<...rest>. Resolves the plugin from the authed
  *  listing, loads its bundle once, and renders the matched page (or settings component under

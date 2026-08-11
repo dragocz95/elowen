@@ -28,6 +28,11 @@
         "./*"
       ]
     },
+    // @elowen/plugin-ui-kit is symlinked from ../packages and its d.ts imports react types. Resolved
+    // through the REAL path those would hit the root repo's @types/react copy — a second, incompatible
+    // type identity. Keeping the symlink un-resolved makes the kit's react references land in THIS
+    // app's node_modules, so the whole program sees one React type identity.
+    "preserveSymlinks": true,
     "allowJs": true
   },
   "include": [

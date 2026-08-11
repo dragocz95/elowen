@@ -41,7 +41,8 @@
   ],
   "scripts": {
     "prebuild": "npm run languages-check --silent && node scripts/dist-integrity.mjs clean",
-    "build": "tsc -b tsconfig.json tsconfig.plugins.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
+    "build": "tsc -b tsconfig.json tsconfig.plugins.json && npm run build:plugins-web --silent && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
+    "build:plugins-web": "node scripts/build-plugins-web.mjs",
     "postbuild": "node scripts/dist-integrity.mjs chmod-bins && node scripts/dist-integrity.mjs verify",
     "check:dist": "node scripts/dist-integrity.mjs verify",
     "models:refresh": "node scripts/refresh-model-capabilities.mjs",
@@ -115,6 +116,7 @@
     "protobufjs": "^7.6.5"
   },
   "devDependencies": {
+    "@elowen/plugin-ui-kit": "file:packages/plugin-ui-kit",
     "@next/eslint-plugin-next": "^16.2.12",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",

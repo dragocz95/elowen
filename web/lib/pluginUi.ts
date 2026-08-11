@@ -17,6 +17,11 @@ import * as React from 'react';
 import * as ReactDom from 'react-dom';
 import * as JsxRuntime from 'react/jsx-runtime';
 import type { ComponentType } from 'react';
+// The contract (runtime surface, registration shape, Window globals) lives in @elowen/plugin-ui-kit —
+// the SAME package plugin authors build against — so the two sides cannot drift. Types ONLY: a value
+// import would need Turbopack to resolve the symlinked package outside its root, while `import type`
+// is erased before bundling. Re-exported below for the app's own consumers.
+import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from '@elowen/plugin-ui-kit';
 import { BASE } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -25,26 +30,10 @@ import { Field } from '../components/ui/Field';
 import { HelpTip } from '../components/ui/HelpTip';
 import { Modal, ModalBody, ModalFooter } from '../components/ui/Modal';
 
-/** Bump on incompatible changes to the runtime surface below. A bundle requiring a NEWER major renders
- *  a placeholder instead of executing against a contract it was not built for. */
-export const PLUGIN_UI_API_VERSION = 1;
-
-/** Props every plugin page/settings component receives. */
-export interface PluginPageProps {
-  plugin: string;
-  /** Path params captured by `:name` segments of the matched route pattern. */
-  params: Record<string, string>;
-  /** The raw path segments under /p/<plugin>/. */
-  rest: string[];
-}
-
-/** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns
- *  (`''` = the root page, `detail/:id` captures params). */
-export interface PluginUiRegistration {
-  requiresApiVersion: number;
-  pages?: Record<string, ComponentType<PluginPageProps>>;
-  settings?: Record<string, ComponentType<PluginPageProps>>;
-}
+/** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
+ *  kit without updating this value is a type error, not a silent drift. */
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 1;
+export type { PluginPageProps, PluginUiRegistration };
 
 /** Same-origin JSON fetch against the daemon through the BFF (`/api` + path). Rejects on non-2xx. */
 async function api(path: string, init?: RequestInit): Promise<unknown> {
@@ -60,21 +49,6 @@ export function setPluginNavigate(fn: Navigate): void { navigateImpl = fn; }
 
 const registrations = new Map<string, PluginUiRegistration>();
 const pendingLoads = new Map<string, Promise<PluginUiRegistration | null>>();
-
-declare global {
-  interface Window {
-    ElowenUiRuntime?: {
-      apiVersion: number;
-      react: typeof React;
-      reactDom: typeof ReactDom;
-      jsxRuntime: typeof JsxRuntime;
-      components: Record<string, ComponentType<never>>;
-      api: (path: string, init?: RequestInit) => Promise<unknown>;
-      navigate: Navigate;
-    };
-    __elowenRegisterPluginUi?: (plugin: string, registration: PluginUiRegistration) => void;
-  }
-}
 
 /** Install the window globals exactly once. Idempotent — called from every bundle load. */
 function ensurePluginUiRuntime(): void {
