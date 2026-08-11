@@ -16,6 +16,7 @@ import type { TaskUsageStore } from '../../../src/store/taskUsageStore.js';
 import { AgentStore } from './store/agentStore.js';
 import { MissionStore } from './store/missionStore.js';
 import { MissionPrStore } from './store/missionPrStore.js';
+import { NoteStore } from './store/noteStore.js';
 import { SpawnService } from './spawn/spawn.js';
 import { Deriver } from './deriver/deriver.js';
 import { detectAgentPrompt } from './deriver/shellPatterns/index.js';
@@ -243,6 +244,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
   const agents = new AgentStore(deps.db);
   const missions = new MissionStore(deps.db);
   const missionPrs = new MissionPrStore(deps.db);
+  const notes = new NoteStore(deps.db);
 
   // The bus adapter: publish/subscribe ride the host seams; `emit` wraps a deriver signal into the
   // `signal` event exactly like the core EventBus does (EventBus.emit).
@@ -540,7 +542,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
 
   return {
     // stores (plugin-owned tables)
-    agents, missions, missionPrs,
+    agents, missions, missionPrs, notes,
     // services
     spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver,
     // resolution helpers (API routes and services build on these in later steps)

@@ -1,18 +1,8 @@
 import type { Db } from './db.js';
 import type { MissionState } from './types.js';
+import type { Mission } from '../shared/agentEvents.js';
 
-export type { MissionState };
-
-export interface Mission {
-  id: string; epic_id: string; autonomy: string; max_sessions: number;
-  state: MissionState;
-  /** The user who engaged the mission; null for legacy/system missions. Drives push-notification routing. */
-  created_by: number | null;
-  /** Empty means inherit the workspace Autopilot setting. */
-  pilot_exec: string;
-  /** Empty means inherit the workspace Autopilot setting. */
-  overseer_exec: string;
-}
+export type { MissionState, Mission };
 
 // Explicit column list everywhere: a pre-existing DB may still carry the dropped `cleared_guardrails`
 // column, so `SELECT *` would leak it — name the columns we actually map instead.

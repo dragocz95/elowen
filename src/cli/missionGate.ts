@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import { openDb } from '../store/db.js';
-import { MissionStore } from '../store/missionStore.js';
 import { dbPath } from '../shared/paths.js';
 
 /** Whether any mission is currently live (active or stalled), read FRESH from the daemon's DB — WAL lets
@@ -16,7 +15,14 @@ export function hasLiveMission(env: NodeJS.ProcessEnv): boolean {
   if (!existsSync(path)) return false;
   const db = openDb(path);
   try {
-    return new MissionStore(db).live().length > 0;
+    // Inline query (the MissionStore class lives in the agents plugin now; this is a separate CLI
+    // process with no plugin registry). Same live-set semantics as the plugin store's live(): active
+    // missions plus stalled ones still waiting on a human. The table may predate the plugin's first
+    // migration on a brand-new DB — no table means no mission has ever run.
+    try {
+      const row = db.prepare("SELECT COUNT(*) AS n FROM missions WHERE state IN ('active','stalled')").get() as { n: number };
+      return row.n > 0;
+    } catch { return false; }
   } finally {
     db.close();
   }

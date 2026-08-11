@@ -128,6 +128,8 @@ export function register(ctx: PluginContext): void {
     missionGit: () => rt().missionGit,
     agents: () => rt().agents,
     gitLock: () => rt().gitLock,
+    missions: () => rt().missions,
+    notes: () => rt().notes,
   } satisfies AgentsControl);
 
   ctx.logger.info('agents plugin loaded (runtime lazy; engine/scheduler/deriver via host services)');

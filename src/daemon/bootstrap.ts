@@ -262,9 +262,9 @@ export async function buildApp(opts: BuildOpts) {
   // no server, no platform gateway, no scheduler and no loop, so a second process can build the identical
   // brain by calling the same factory instead of re-deriving the wiring.
   const {
-    tasks, missions, readiness, config, users, homeProject, projects, userProjects,
+    tasks, readiness, config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, taskUsage, git,
-    cli, cliArgv, elowenCli, bus, events, notes,
+    cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
@@ -292,6 +292,17 @@ export async function buildApp(opts: BuildOpts) {
   // registry on every access: undefined until the plugin loads, swapped by a plugin reload, absent
   // for good when the operator disables the plugin (routes answer 503, the CLI/web degrade).
   const agentsControl = () => loadedPlugins()?.control('agents');
+
+  // The missions/notes TABLES belong to the agents plugin now (part 2 of the extraction deleted the
+  // core store classes). Core routes/tenancy read them through these live facades: each call resolves
+  // the control fresh (a plugin reload swaps the store instance), and with the plugin disabled reads
+  // degrade to empty — every mission WRITE already flows through the engine and answers 503 without it.
+  const missions: import('../plugins/api.js').AgentsMissions = {
+    get: (id) => agentsControl()?.missions().get(id) ?? null,
+    active: () => agentsControl()?.missions().active() ?? [],
+    live: () => agentsControl()?.missions().live() ?? [],
+    activeForEpic: (epicId) => agentsControl()?.missions().activeForEpic(epicId) ?? null,
+  };
 
   // Phone push TRANSPORT stays core: the sender owns the device subscriptions + VAPID keys. The agents
   // plugin's dispatcher resolves recipients and hands over ids + payload through ctx.host.push().
@@ -475,7 +486,8 @@ export async function buildApp(opts: BuildOpts) {
   // captured instance would strand the routes on a dead generation. Absent control ⇒ undefined ⇒ the
   // routes answer 503 ("agents plugin is disabled").
   const app = createServer({
-    tasks, readiness, missions, tmux, bus, events, notes,
+    tasks, readiness, missions, tmux, bus, events,
+    get notes() { return agentsControl()?.notes(); },
     get engine() { return agentsControl()?.engine(); },
     get spawn() { return agentsControl()?.spawn(); },
     get missionGit() { return agentsControl()?.missionGit(); },

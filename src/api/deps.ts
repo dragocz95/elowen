@@ -1,7 +1,6 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { MissionStore } from '../store/missionStore.js';
-import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsPlanJobs, AgentsRegistryView, AgentsSpawn } from '../plugins/api.js';
+import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsNotes, AgentsPlanJobs, AgentsRegistryView, AgentsSpawn } from '../plugins/api.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
@@ -11,7 +10,6 @@ import type { ConfigStore } from '../store/configStore.js';
 import type { UserStore } from '../store/userStore.js';
 import type { TicketStore } from '../terminal/ticketStore.js';
 import type { EventStore } from '../store/eventStore.js';
-import type { NoteStore } from '../store/noteStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
@@ -34,7 +32,10 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
-  tasks: TaskStore; readiness: Readiness; missions: MissionStore;
+  /** Read view of the agents plugin's missions table (a live facade over the control in the daemon;
+   *  the plugin's own store instance in tests). Reads degrade to empty while the plugin is disabled —
+   *  every mission WRITE goes through `engine` and answers 503 without it. */
+  tasks: TaskStore; readiness: Readiness; missions: AgentsMissions;
   /** The agents plugin's mission engine (structural — see AgentsControl). Absent while the plugin is
    *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
   engine?: AgentsMissionEngine;
@@ -56,7 +57,9 @@ export interface ServerDeps {
   config: ConfigStore;
   users?: UserStore;
   events?: EventStore;
-  notes?: NoteStore;
+  /** Inter-agent handoff notes (plugin-owned table). Absent while the agents plugin is disabled →
+   *  the activity notes routes degrade (list [], add 400), same as any other absent optional dep. */
+  notes?: AgentsNotes;
   projects?: ProjectStore;
   userProjects?: UserProjectStore;
   /** Per-user web-push device subscriptions. Absent → push subscribe/unsubscribe routes degrade to no-ops. */

@@ -84,3 +84,17 @@ export interface DecisionResult {
 
 /** One decision awaiting a verdict, as the overseer long-poll delivers it. */
 export interface PendingDecision { id: string; kind: DecisionKind; context: Record<string, unknown> }
+
+/** A mission row as the API serves it (list/detail/SSE) — the CORE side of the contract, like PlanJob
+ *  above: the store that writes it lives in the agents plugin, while core routes/tenancy keep reading
+ *  the same shape through the AgentsMissions port. */
+export interface Mission {
+  id: string; epic_id: string; autonomy: string; max_sessions: number;
+  state: import('../store/types.js').MissionState;
+  /** The user who engaged the mission; null for legacy/system missions. Drives push-notification routing. */
+  created_by: number | null;
+  /** Empty means inherit the workspace Autopilot setting. */
+  pilot_exec: string;
+  /** Empty means inherit the workspace Autopilot setting. */
+  overseer_exec: string;
+}

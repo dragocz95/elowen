@@ -3,7 +3,6 @@ import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
-import { MissionStore } from '../store/missionStore.js';
 import type { PluginBrainWorker, PluginHostPush } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
@@ -12,7 +11,6 @@ import { ThemeStore, activeThemeName } from '../store/themeStore.js';
 import { resolveBrand, type ResolvedBrand } from '../shared/brand.js';
 import { UserStore } from '../store/userStore.js';
 import { EventStore } from '../store/eventStore.js';
-import { NoteStore } from '../store/noteStore.js';
 import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
@@ -157,7 +155,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
   const tasks = new TaskStore(db);
-  const missions = new MissionStore(db); const readiness = new Readiness(db);
+  const readiness = new Readiness(db);
   const config = new ConfigStore(db);
   // One-shot upgrade: auto-enable the extracted `agents` plugin for pre-existing installs (it replaces
   // previously-core behaviour — see migrateAgentsEnabled). Daemon-only, like schema migrations: the
@@ -220,7 +218,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // the daemon reaches it through the 'agents' control; nothing here launches agent sessions.
   const bus = new EventBus();
   const events = new EventStore(db);
-  const notes = new NoteStore(db);
   // Activity trail: mirror every bus event into the log file as a readable one-liner, so the log on
   // its own tells the story of a run (spawns, advances, plans) without cross-referencing the DB.
   bus.subscribe((e) => log.info(describeEvent(e)));
@@ -595,9 +592,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       })
     : undefined;
   return {
-    db, tasks, missions, readiness, config, users, homeProject, projects, userProjects,
+    db, tasks, readiness, config, users, homeProject, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, prompts, taskUsage, git,
-    cli, cliArgv, elowenCli, bus, events, notes,
+    cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
     embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore,

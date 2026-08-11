@@ -10,8 +10,7 @@ import type { ElowenEvent } from '../api/sse.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainWorkerLauncher } from '../spawn/spawn.js';
 import type { Task } from '../store/types.js';
-import type { Mission } from '../store/missionStore.js';
-import type { DecisionKind, DecisionResult, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
+import type { DecisionKind, DecisionResult, Mission, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
 import type { Project } from '../store/projectStore.js';
 import type { TaskStore } from '../store/taskStore.js';
 import type { TaskUsageStore } from '../store/taskUsageStore.js';
@@ -715,6 +714,30 @@ export interface AgentsMissionGit {
 /** Read view over the plugin's agent registry (session name ↔ project tagging for the sessions list). */
 export interface AgentsRegistryView { projectFor(name: string): number | null }
 
+/** Read view of the plugin-owned missions table, as core routes/tenancy consume it (list/detail,
+ *  agent-token working set, session→task resolution). Read-only by design: every state CHANGE flows
+ *  through AgentsMissionEngine, so a route can never mutate a mission behind the engine's back. */
+export interface AgentsMissions {
+  get(id: string): Mission | null;
+  active(): Mission[];
+  /** Active + stalled — the set a human still cares about (and the self-update gate refuses to kill). */
+  live(): Mission[];
+  /** The ACTIVE mission driving a given epic, or null. */
+  activeForEpic(epicId: string): Mission | null;
+}
+
+/** A handoff note row, as the activity routes serve it (plugin-owned `notes` table). */
+export interface AgentsNote { id: number; scope: string; target: string; author: string; body: string; created_at: string }
+
+/** Inter-agent handoff notes over the plugin-owned table — the full core surface the activity routes
+ *  and epic-delete cleanup use. */
+export interface AgentsNotes {
+  add(input: { scope: string; target: string; author?: string; body: string }): AgentsNote;
+  list(scope: string, target: string): AgentsNote[];
+  count(scope: string, target: string): number;
+  deleteAllForTarget(target: string): void;
+}
+
 /** The shared per-checkout git serialization lock — the SAME instance the plugin's scheduler and
  *  mission engine use, so an API-side phase commit can't interleave with an agent's baseline read. */
 export interface AgentsGitLock { run<T>(key: string, fn: () => Promise<T>): Promise<T> }
@@ -734,6 +757,8 @@ export interface AgentsControl {
   missionGit(): AgentsMissionGit;
   agents(): AgentsRegistryView;
   gitLock(): AgentsGitLock;
+  missions(): AgentsMissions;
+  notes(): AgentsNotes;
 }
 
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
