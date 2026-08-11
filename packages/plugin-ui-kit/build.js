@@ -8,10 +8,13 @@ import { fileURLToPath } from 'node:url';
 const shim = (name) => fileURLToPath(new URL(`./shims/${name}.cjs`, import.meta.url));
 
 /** Bundle `entry` into the ESM file at `outfile`. Throws on any build error. */
-export async function buildPluginUiBundle({ entry, outfile, minify = false }) {
+export async function buildPluginUiBundle({ entry, outfile, minify = false, nodePaths }) {
   await build({
     entryPoints: [entry],
     outfile,
+    // Extra module resolution roots — e.g. the host web app's node_modules, so a bundle may use the
+    // SAME icon/library versions the app ships without duplicating them in the repo root.
+    ...(nodePaths && nodePaths.length > 0 ? { nodePaths } : {}),
     bundle: true,
     format: 'esm',
     platform: 'browser',

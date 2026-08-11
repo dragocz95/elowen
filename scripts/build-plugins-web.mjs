@@ -18,6 +18,7 @@ for (const name of readdirSync(pluginsDir)) {
   if (!existsSync(src)) continue;
   const entry = ENTRY_NAMES.map((f) => join(src, f)).find((f) => existsSync(f));
   if (!entry) throw new Error(`[build-plugins-web] ${name}: web-src/ exists but has no index.{tsx,ts,jsx,js} entry`);
-  await buildPluginUiBundle({ entry, outfile: join(dir, 'web', 'index.js') });
+  // Resolve shared browser deps (lucide-react…) from the web app's tree — one version, no root copy.
+  await buildPluginUiBundle({ entry, outfile: join(dir, 'web', 'index.js'), nodePaths: [join(pluginsDir, '..', 'web', 'node_modules')] });
   console.log(`[build-plugins-web] ${name}: web-src → web/index.js`);
 }

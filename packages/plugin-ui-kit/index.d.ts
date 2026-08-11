@@ -39,6 +39,12 @@ export interface ElowenUiRuntime {
   reactDom: typeof ReactDom;
   jsxRuntime: typeof JsxRuntime;
   components: Record<string, ComponentType<never>>;
+  /** Curated React hooks (i18n, toasts, the app's react-query data hooks). Safe across the boundary:
+   *  the bundle runs on the HOST's React instance, so the rules of hooks hold. A bundle narrows each
+   *  entry to the signature it expects; an absent name means the host predates the bundle. */
+  hooks: Record<string, unknown>;
+  /** Curated pure helpers (formatting, session/task mapping, error shaping) shared with bundles. */
+  utils: Record<string, unknown>;
   api: (path: string, init?: RequestInit) => Promise<unknown>;
   navigate: (href: string) => void;
 }

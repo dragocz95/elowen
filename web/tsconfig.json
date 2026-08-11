@@ -26,6 +26,21 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      // Plugin-bundle sources (../plugins/*/web-src) are compiled into this program by their tests;
+      // they sit OUTSIDE web/, so node-style resolution walking up from them would miss this app's
+      // node_modules. Pin their bare deps here to keep one copy (and one React type identity).
+      "lucide-react": [
+        "./node_modules/lucide-react"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/jsx-runtime": [
+        "./node_modules/@types/react/jsx-runtime"
+      ],
+      "react-dom": [
+        "./node_modules/@types/react-dom"
       ]
     },
     // @elowen/plugin-ui-kit is symlinked from ../packages and its d.ts imports react types. Resolved

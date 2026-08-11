@@ -22,13 +22,48 @@ import type { ComponentType } from 'react';
 // import would need Turbopack to resolve the symlinked package outside its root, while `import type`
 // is erased before bundling. Re-exported below for the app's own consumers.
 import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from '@elowen/plugin-ui-kit';
-import { BASE } from './elowenClient';
+import { BASE, apiErrorMessage } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Field } from '../components/ui/Field';
 import { HelpTip } from '../components/ui/HelpTip';
 import { Modal, ModalBody, ModalFooter } from '../components/ui/Modal';
+import { Toggle } from '../components/ui/Toggle';
+import { ModuleHeader } from '../components/ui/ModuleHeader';
+import { Segmented } from '../components/ui/Segmented';
+import { EntityList, EntityRow } from '../components/ui/EntityList';
+import { LoadingState, ErrorState, EmptyState } from '../components/ui/states';
+import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
+import { SpatialWorkspaceLayout, WorkspaceMetric } from '../components/ui/WorkspacePrimitives';
+import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
+import { ModelIcon } from '../components/ui/ModelIcon';
+import { OutcomeBadge } from '../components/ui/OutcomeBadge';
+import { ProjectPill } from '../components/ui/ProjectPill';
+import { IconButton } from '../components/ui/IconButton';
+import { ActionMenu } from '../components/ui/ActionMenu';
+import { ContextMenu, DIVIDER } from '../components/ui/ContextMenu';
+import { ChangeStrip } from '../components/ui/ChangeStrip';
+import { TaskUsageBadge } from '../components/ui/TaskUsageBadge';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { useToast } from '../components/ui/Toast';
+import { TerminalModal } from '../components/terminal/TerminalModal';
+import { LiveTail } from '../components/terminal/LiveTail';
+import { BrainSessionsPanel } from '../components/brain/BrainSessionsPanel';
+import { useTranslation } from './i18n';
+import { usePersistentState } from './usePersistentState';
+import {
+  useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
+  useEscalations, usePendingAsks,
+} from './queries';
+import {
+  useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
+  useUpdateConfig,
+} from './mutations';
+import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
+import { execModel } from './modelProvider';
+import { formatTaskTime } from './format';
+import { taskTypeMeta } from '../modules/tasks/taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
@@ -50,17 +85,42 @@ export function setPluginNavigate(fn: Navigate): void { navigateImpl = fn; }
 const registrations = new Map<string, PluginUiRegistration>();
 const pendingLoads = new Map<string, Promise<PluginUiRegistration | null>>();
 
-/** Install the window globals exactly once. Idempotent — called from every bundle load. */
-function ensurePluginUiRuntime(): void {
+/** Install the window globals exactly once. Idempotent — called from every bundle load, and
+ *  exported for tests that render plugin-bundle views against the real runtime surface. */
+export function ensurePluginUiRuntime(): void {
   if (typeof window === 'undefined' || window.ElowenUiRuntime) return;
   window.ElowenUiRuntime = {
     apiVersion: PLUGIN_UI_API_VERSION,
     react: React,
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
-    // Curated, deliberately small: what a plugin page needs to look native. Growing this list is cheap;
-    // shrinking it is a breaking change — so it starts minimal.
-    components: { Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter } as Record<string, ComponentType<never>>,
+    // Curated: what a plugin page needs to look native. Growing this list is cheap; shrinking it is a
+    // breaking change — so every addition is deliberate. The second block is the agents-extraction
+    // surface (F3): the workspace/control-surface primitives, terminal views and the brain
+    // conversations panel its moved pages compose.
+    components: {
+      Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
+      Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, ErrorState, EmptyState,
+      MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
+      ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
+      ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
+      TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail, BrainSessionsPanel,
+    } as Record<string, ComponentType<never>>,
+    // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
+    // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
+    // plugin page and the core tasks UI share one cache and one invalidation path.
+    hooks: {
+      useTranslation, useToast, usePersistentState,
+      useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
+      useEscalations, usePendingAsks,
+      useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
+      useUpdateConfig,
+    },
+    // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
+    utils: {
+      needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
+      execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
+    },
     api,
     navigate: (href) => navigateImpl(href),
   };
