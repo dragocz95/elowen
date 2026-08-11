@@ -11,8 +11,7 @@ import type { InferenceClient, RelayConfig } from '../../../src/inference/types.
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import type { TaskStore } from '../../../src/store/taskStore.js';
 import type { Task } from '../../../src/store/types.js';
-import type { ProjectStore } from '../../../src/store/projectStore.js';
-import type { Readiness } from '../../../src/store/readiness.js';
+import type { Project } from '../../../src/store/projectStore.js';
 import type { TaskUsageStore } from '../../../src/store/taskUsageStore.js';
 import { AgentStore } from './store/agentStore.js';
 import { MissionStore } from './store/missionStore.js';
@@ -57,8 +56,10 @@ export interface AgentsRuntimeDeps {
   db: PluginDbHandle;
   stores: {
     tasks: TaskStore;
-    projects: ProjectStore;
-    readiness: Readiness;
+    /** The host store seam's shape (PluginHostStores.projects) — reads only, no store class. */
+    projects: { get(id: number): Project | null; list(): Project[] };
+    /** Dependency-cleared open tasks (PluginHostStores.readiness shape). */
+    readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
     taskUsage: TaskUsageStore;
     /** Read-only user view with the admin flag (host usersRead rows adapted to is_admin shape). */
     users: { list(): { id: number; is_admin: boolean }[] };
@@ -213,6 +214,21 @@ function runLivenessSweep(d: LivenessDeps): void {
 /** One interval loop the host should drive (ctx.registerInterval in B2). `ms` values are carried over
  *  from bootstrap's startLoops verbatim. */
 export interface AgentsInterval { name: string; ms: number; fn: () => void }
+
+/** The interval periods, ms-for-ms what bootstrap's startLoops scheduled for this subsystem. Exported
+ *  as a standalone map so the plugin entry can register the host timers WITHOUT constructing the
+ *  runtime — construction stays lazy (the first tick builds it), which keeps a sub-agent runner
+ *  (register-only, services never started) from ever assembling a second mission engine. */
+export const AGENTS_INTERVAL_MS = {
+  'engine-tick': 90000,
+  'scheduler-tick': 30000,
+  'janitor': 60000,
+  'stuck-detector': 60000,
+  'overseer-watchdog': 60000,
+  'decision-sweep': DECISION_SWEEP_MS,
+  'pr-feedback': 60_000,
+} as const;
+export type AgentsIntervalName = keyof typeof AGENTS_INTERVAL_MS;
 
 /** Assemble the whole tmux-agent subsystem from host deps. Pure construction + bus subscriptions —
  *  no loop is started here (the deriver's 5s loop starts via `deriver.start()`, the intervals are
@@ -479,16 +495,17 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     return ok;
   };
 
-  // The interval definitions, ms-for-ms what bootstrap's startLoops schedules for this subsystem.
+  // The interval definitions, ms-for-ms what bootstrap's startLoops schedules for this subsystem
+  // (periods from AGENTS_INTERVAL_MS — one source shared with the plugin entry's timer registration).
   // (The deriver's own 5s loop is separate: `deriver.start()` returns its stop fn.)
   const intervals: AgentsInterval[] = [
     // Mission engine beat: tick every live mission.
-    { name: 'engine-tick', ms: 90000, fn: () => { for (const m of missions.live()) void engine.tick(m.id); } },
+    { name: 'engine-tick', ms: AGENTS_INTERVAL_MS['engine-tick'], fn: () => { for (const m of missions.live()) void engine.tick(m.id); } },
     // Scheduler: launch due autostart tasks + sync running tasks' change snapshots.
-    { name: 'scheduler-tick', ms: 30000, fn: () => { void scheduler.tick(); } },
+    { name: 'scheduler-tick', ms: AGENTS_INTERVAL_MS['scheduler-tick'], fn: () => { void scheduler.tick(); } },
     // Janitor: reap finished agents' zombie tmux sessions. Log what it reaps so the trail shows when a
     // session was cleaned up (and that the janitor is alive). Fire-and-forget — a sweep failure only logs.
-    { name: 'janitor', ms: 60000, fn: () => {
+    { name: 'janitor', ms: AGENTS_INTERVAL_MS['janitor'], fn: () => {
       void sweepFinishedSessions({ tmux, taskForSession })
         .then((reaped) => { if (reaped.length) log.info(`janitor reaped ${reaped.length} finished session(s): ${reaped.join(', ')}`); })
         .catch((e) => log.error('janitor sweep failed', e));
@@ -496,7 +513,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // Stuck detector: an agent that died without `elowen close` leaves its task in_progress with a dead
     // session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace covers the
     // spawn→session window; relaunch at most twice before escalating to a human. `now` is read per tick.
-    { name: 'stuck-detector', ms: 60000, fn: () => {
+    { name: 'stuck-detector', ms: AGENTS_INTERVAL_MS['stuck-detector'], fn: () => {
       void sweepStuckTasks({ tmux: liveSessions, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2,
         // Stamp the dead agent's session for resume so the relaunch continues it (best-effort).
         onReap: (t) => { try { captureResumeLabel({ tasks, pathFor: usagePathFor, fallback: resumeFallback }, t); } catch (e) { log.warn(`resume capture failed for stuck task ${t.id}`, e); } } })
@@ -510,11 +527,11 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // leave the mission running unsupervised until the next daemon restart. reconcileOverseers is
     // idempotent — it re-parks a missing overseer for each active mission and kills orphans — so run
     // it periodically, not just on boot.
-    { name: 'overseer-watchdog', ms: 60000, fn: () => { void reconcileOverseers().catch((e) => log.error('overseer watchdog failed', e)); } },
+    { name: 'overseer-watchdog', ms: AGENTS_INTERVAL_MS['overseer-watchdog'], fn: () => { void reconcileOverseers().catch((e) => log.error('overseer watchdog failed', e)); } },
     // Agent-liveness / parked-decision sweep (see runLivenessSweep above).
-    { name: 'decision-sweep', ms: DECISION_SWEEP_MS, fn: () => runLivenessSweep(livenessDeps) },
+    { name: 'decision-sweep', ms: AGENTS_INTERVAL_MS['decision-sweep'], fn: () => runLivenessSweep(livenessDeps) },
     // PR feedback loop (see replan above).
-    { name: 'pr-feedback', ms: 60_000, fn: () => {
+    { name: 'pr-feedback', ms: AGENTS_INTERVAL_MS['pr-feedback'], fn: () => {
       void sweepPrFeedback({ prs: missionPrs, missions, missionGit, bus, replan })
         .then((ids) => { if (ids.length) log.info(`PR feedback re-engaged ${ids.length} mission(s): ${ids.join(', ')}`); })
         .catch((e) => log.error('PR feedback sweep failed', e));

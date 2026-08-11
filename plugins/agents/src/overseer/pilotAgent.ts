@@ -1,6 +1,6 @@
 import type { SpawnService } from '../spawn/spawn.js';
 import type { PluginHostConfig as ConfigStore, PluginHostPrompts as PromptService } from '../../../../src/plugins/api.js';
-import type { ProjectStore } from '../../../../src/store/projectStore.js';
+import type { Project } from '../../../../src/store/projectStore.js';
 import type { TmuxDriver } from '../../../../src/tmux/types.js';
 import type { PlanJob, PlanJobStore } from './planJob.js';
 import type { RenderPrompt } from '../spawn/commandBuilder.js';
@@ -27,7 +27,7 @@ export function pilotPrompt(goal: string, jobId: string, renderPrompt: RenderPro
 /** Build the Pilot spawner: launches a repo-aware planning agent for an agent-mode plan job. The
  *  agent submits its plan back through the elowen CLI (`elowen plan submit`); the daemon never reads its
  *  stdout. Returns a function matching the `pilot` ServerDep. */
-export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: ProjectStore; planJobs: PlanJobStore; tmux: TmuxDriver; nameAgent: () => string; cli?: string; prompts: PromptService }): (job: PlanJob, projectPath: string) => Promise<void> {
+export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: { get(id: number): Project | null }; planJobs: PlanJobStore; tmux: TmuxDriver; nameAgent: () => string; cli?: string; prompts: PromptService }): (job: PlanJob, projectPath: string) => Promise<void> {
   return async (job, projectPath) => {
     const cfg = deps.config.get();
     const spec = resolveExecutor([`exec:${job.pilotExec || cfg.autopilot.pilotExec}`], { program: 'claude-code', model: 'sonnet' });

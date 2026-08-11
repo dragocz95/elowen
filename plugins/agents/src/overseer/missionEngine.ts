@@ -1,7 +1,6 @@
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import { resolveOwnerId } from '../lib/owner.js';
 import type { Task } from '../../../../src/store/types.js';
-import type { Readiness } from '../../../../src/store/readiness.js';
 import type { MissionStore, Mission } from '../store/missionStore.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../../../../src/tmux/types.js';
@@ -21,7 +20,9 @@ import { logger } from '../lib/logger.js';
 const log = logger('overseer');
 
 export interface MissionEngineDeps {
-  tasks: TaskStore; readiness: Readiness; missions: MissionStore;
+  tasks: TaskStore; missions: MissionStore;
+  /** Dependency-cleared open tasks (the host store seam's shape — reads only, no store class). */
+  readiness: { readyForEpic(epicId: string): Task[] };
   spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
   /** User store, used only for the admin fallback when attributing a phase agent to its owner (per-user
    *  prompt resolution). Optional: absent in minimal test wiring → file-default prompts. */
