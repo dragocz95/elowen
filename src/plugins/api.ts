@@ -7,6 +7,10 @@ import type { SlashCommandDef } from '../brain/slashCommands.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
+import type { TmuxDriver } from '../tmux/types.js';
+import type { BrainWorkerLauncher } from '../spawn/spawn.js';
+import type { Task, CreateTaskInput, TaskStatus } from '../store/types.js';
+import type { Project } from '../store/projectStore.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 export type { DelegatedChildSummary };
@@ -332,6 +336,62 @@ export interface PluginDb extends PluginDbHandle {
   appliedVersion(): number;
 }
 
+/** How spawned agents invoke the elowen CLI and reach the daemon API — the agent-scoped credential
+ *  set (never the admin token). Mirrors what the core threads to spawn/pilot/overseer today. */
+export interface PluginElowenCli {
+  /** Shell invocation of the CLI (`elowen`, or `node <path>` in a checkout). */
+  cli: string;
+  /** The same invocation as argv tokens, for direct `tmux -- <argv>` launches. */
+  cliArgv: string[];
+  /** Daemon base URL for agent REST calls. */
+  url: string;
+  /** The shared, task-UNBOUND agent token (overseer/pilot launches; ids that are not task rows). */
+  token: string;
+  /** The agent token bound to a REAL task row, so the API can pin a worker to its own task.
+   *  Undefined when the id is not a task. */
+  tokenForTask(taskId: string): string | undefined;
+}
+
+/** Read-only user view handed through host stores — identity only, no secrets, no mutation. */
+export interface PluginUserView { id: number; username: string; isAdmin: boolean }
+
+/** Typed store seams for a plugin that extracts a CORE subsystem. Deliberately interfaces over the
+ *  core stores (one shared SQLite underneath — see PluginDb), NOT the store classes themselves: the
+ *  seam is the documented contract, and users are read-only by design. */
+export interface PluginHostStores {
+  tasks: {
+    get(id: string): Task | null;
+    list(filter?: { status?: TaskStatus; project_id?: number }): Task[];
+    create(input: CreateTaskInput): Task;
+    setStatus(id: string, status: TaskStatus): void;
+    close(id: string, opts?: { summary?: string | null; outcome?: string | null }): void;
+    children(parentId: string): Task[];
+    descendants(rootId: string): Task[];
+    addLabel(id: string, label: string): void;
+    removeLabel(id: string, label: string): void;
+    depsFor(taskId: string): string[];
+    transaction<T>(fn: () => T): T;
+  };
+  projects: { get(id: number): Project | null; list(): Project[] };
+  usersRead: { list(): PluginUserView[]; isAdmin(id: number): boolean };
+}
+
+/** Host capabilities for extracting a core subsystem into a plugin (the agents extraction): the tmux
+ *  driver, the embedded brain-worker executor, the agent CLI credential set and the typed store seams
+ *  stay IN THE CORE and are handed through here. Every accessor is deny-by-default behind its own
+ *  `reads` grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
+export interface PluginHost {
+  /** The daemon's tmux driver. Gated by `reads:['tmux']`. */
+  tmux(): TmuxDriver;
+  /** The embedded (Elowen AI) worker executor. Gated by `reads:['brain-worker']`; present only in the
+   *  daemon and only after bootstrap wired it. */
+  brainWorker(): BrainWorkerLauncher;
+  /** Agent CLI invocation + daemon URL + agent-scoped tokens. Gated by `reads:['elowen-cli']`. */
+  elowenCli(): PluginElowenCli;
+  /** Typed seams over the core stores. Gated by `reads:['stores']`. */
+  stores(): PluginHostStores;
+}
+
 /** A plugin's browser UI (manifest `web` block, resolved by the loader): the built bundle on disk, its
  *  content hash (pins the immutable serving URL — a stale hash 404s), and the manifest's menu metadata. */
 export interface PluginWebUi {
@@ -611,6 +671,9 @@ export interface PluginContext {
   /** The shared main database (see {@link PluginDb}). Throws unless the manifest declares the
    *  `reads:['db']` capability — DB reach is a real grant, not a default. */
   db(): PluginDb;
+  /** Host capabilities for core-subsystem extraction (see {@link PluginHost}). Each accessor carries
+   *  its own deny-by-default `reads` grant. */
+  host: PluginHost;
   /** Contribute editable prompt templates: `<name>.md` files under `dir`, catalogued for the account UI
    *  and resolved user override → plugin file → core file. Gated by `mutates:['prompt']`. */
   registerPrompts(opts: { dir: string; entries: PluginPromptEntry[] }): void;

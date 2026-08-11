@@ -2,7 +2,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginEmbeddings, PluginHook, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHostStores, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { TmuxDriver } from '../tmux/types.js';
+import type { BrainWorkerLauncher } from '../spawn/spawn.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
@@ -60,6 +62,15 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
+/** What the host process actually has on hand for ctx.host — brainWorker resolves LIVE because
+ *  bootstrap constructs it after the plugin load (late wiring, same as SpawnService.attachBrainWorker). */
+export interface PluginHostWiring {
+  tmux?: TmuxDriver;
+  brainWorker?: () => BrainWorkerLauncher | undefined;
+  elowenCli?: PluginElowenCli;
+  stores?: PluginHostStores;
+}
+
 export class PluginRegistry {
   readonly tools: ToolDefinition[] = [];
   /** Which plugin registered each tool (tool name → plugin name) — feeds per-role tool filtering. */
@@ -290,7 +301,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -470,6 +481,31 @@ export class PluginRegistry {
         if (!capabilities.reads?.includes('db')) throw new Error(`plugin "${name}" did not declare the reads:['db'] capability`);
         if (!pluginDb) throw new Error('no database wired for plugins in this process');
         return pluginDb(name);
+      },
+      // Host capabilities for core-subsystem extraction. Each accessor carries its own deny-by-default
+      // reads grant and THROWS when refused or unwired — a subsystem built on these must not half-work.
+      host: {
+        tmux: () => {
+          if (!capabilities.reads?.includes('tmux')) throw new Error(`plugin "${name}" did not declare the reads:['tmux'] capability`);
+          if (!host?.tmux) throw new Error('no tmux driver wired for plugins in this process');
+          return host.tmux;
+        },
+        brainWorker: () => {
+          if (!capabilities.reads?.includes('brain-worker')) throw new Error(`plugin "${name}" did not declare the reads:['brain-worker'] capability`);
+          const worker = host?.brainWorker?.();
+          if (!worker) throw new Error('the brain worker is not available in this process (daemon-only, wired after boot)');
+          return worker;
+        },
+        elowenCli: () => {
+          if (!capabilities.reads?.includes('elowen-cli')) throw new Error(`plugin "${name}" did not declare the reads:['elowen-cli'] capability`);
+          if (!host?.elowenCli) throw new Error('no elowen CLI wiring for plugins in this process');
+          return host.elowenCli;
+        },
+        stores: () => {
+          if (!capabilities.reads?.includes('stores')) throw new Error(`plugin "${name}" did not declare the reads:['stores'] capability`);
+          if (!host?.stores) throw new Error('no store seams wired for plugins in this process');
+          return host.stores;
+        },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as
       // a native module), so a plugin-held setInterval is untestable and easy to leak. Unref'd — a

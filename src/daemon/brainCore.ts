@@ -5,6 +5,7 @@ import { Readiness } from '../store/readiness.js';
 import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
+import type { BrainWorkerLauncher } from '../spawn/spawn.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -320,6 +321,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
+  // Late binding for ctx.host.brainWorker(): the BrainWorkerService is constructed in bootstrap AFTER
+  // this factory returns (it needs the brain store + bus), mirroring SpawnService.attachBrainWorker.
+  let hostBrainWorker: BrainWorkerLauncher | undefined;
   // Status reads verify a `running` workflow row against the ENGINE (the subagent plugin's `workflow`
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
@@ -452,6 +456,20 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: opts.migrate !== false }),
       // ctx.publishEvent(): the daemon's ONE bus (SSE + activity log). Capability-gated in the registry.
       publishEvent: (e) => bus.publish(e),
+      // ctx.host.*: the core-owned machinery an extracted subsystem (agents) builds on. The brain
+      // worker resolves LIVE — bootstrap constructs it after this load (setPluginHostBrainWorker).
+      host: {
+        tmux,
+        brainWorker: () => hostBrainWorker,
+        elowenCli: { cli, cliArgv, url: elowenCli.url, token: elowenCli.token, tokenForTask },
+        stores: {
+          tasks, projects,
+          usersRead: {
+            list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
+            isAdmin: (id) => users.isAdmin(id),
+          },
+        },
+      },
       logger: log,
     }).then((registry) => {
       // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the
@@ -557,5 +575,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must
     // read plugin contributions without awaiting the provider (e.g. event tenancy resolvers).
     loadedPlugins: () => loadedPluginRegistry,
+    // Bootstrap hands the constructed BrainWorkerService here so ctx.host.brainWorker() resolves.
+    setPluginHostBrainWorker: (worker: BrainWorkerLauncher) => { hostBrainWorker = worker; },
   };
 }

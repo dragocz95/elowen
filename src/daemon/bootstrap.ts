@@ -452,7 +452,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins,
+    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -704,6 +704,8 @@ export async function buildApp(opts: BuildOpts) {
     userSettings: (userId) => userSettings.cliSettings(userId), // the task owner's auto-compact threshold
   });
   spawn.attachBrainWorker(brainWorkers);
+  // …and the plugin host's late binding, so ctx.host.brainWorker() resolves from now on.
+  setPluginHostBrainWorker(brainWorkers);
   // Brain workers have no tmux pane — the stuck detector and startup reconcile must see their live
   // sessions or they would reap every running elowen task as dead.
   const liveSessions = { list: async () => [...(await tmux.list()), ...brainWorkers.liveSessionNames()] };
