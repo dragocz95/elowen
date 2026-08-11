@@ -135,6 +135,39 @@ export function buildOldFixture(dbPath) {
       profile_id INTEGER NOT NULL,
       PRIMARY KEY (user_id, platform)
     );
+
+    -- OLD agents-subsystem tables from the pre-extraction (core) era, holding a RUNNING mission. The
+    -- plugin's grandfathered migrations must adopt these tables as-is (never move or rename a row),
+    -- the agents auto-enable migration must switch the plugin on for this pre-existing install, and
+    -- the engine must still see the active mission after the upgrade (run.mjs asserts all three).
+    -- projects/tasks at their OLD shape: the columns addColumn later adds (notes/icon; description/
+    -- scheduled_at/autostart/result_summary/outcome/closed_at/changed_files/*_sha/resume_note) are
+    -- absent so the additive block has real work to do.
+    CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, pr_enabled INTEGER);
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, title TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'task', status TEXT NOT NULL DEFAULT 'open',
+      priority TEXT NOT NULL DEFAULT 'P2', parent_id TEXT, labels TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE task_deps (
+      task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL,
+      PRIMARY KEY (task_id, depends_on_id),
+      CHECK (task_id != depends_on_id)
+    );
+    CREATE TABLE agents (
+      id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, name TEXT NOT NULL,
+      program TEXT NOT NULL, model TEXT NOT NULL, last_active_ts TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (project_id, name)
+    );
+    CREATE TABLE missions (
+      id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, autonomy TEXT NOT NULL,
+      max_sessions INTEGER NOT NULL DEFAULT 1,
+      state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_by INTEGER,
+      pilot_exec TEXT NOT NULL DEFAULT '', overseer_exec TEXT NOT NULL DEFAULT ''
+    );
   `);
 
   // --- Seed rows carrying OLD names / shapes ---
@@ -157,9 +190,14 @@ export function buildOldFixture(dbPath) {
   db.prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
     .run(1, 'permissions', permissions);
 
-  // A platform role's tool allow-list inside the global settings blob (v1 rewrites tools[]).
+  // A platform role's tool allow-list inside the global settings blob (v1 rewrites tools[]). The
+  // autopilot block carries pre-extraction values for the keys the agents plugin now owns: the
+  // one-shot config migration must COPY them into plugins.config.agents (autopilot.* keeps its
+  // values — lossless rollback), and the deliberately ABSENT plugins.enabled list is what the agents
+  // auto-enable migration must fix (an upgrade with running missions must not lose the subsystem).
   const settingsData = JSON.stringify({
     plugins: { config: { someplatform: { rolePolicies: [{ name: 'member', tools: ['read_file', 'list_dir', '*'] }] } } },
+    autopilot: { overseerModel: 'legacy-overseer-model', prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm run verify' },
   });
   db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(settingsData);
 
@@ -179,6 +217,18 @@ export function buildOldFixture(dbPath) {
   db.prepare('INSERT INTO personality_profiles (id, user_id, body) VALUES (?, ?, ?)').run(1, 1, 'retired');
   db.prepare('INSERT INTO personality_active_profiles (user_id, platform, profile_id) VALUES (?, ?, ?)')
     .run(1, 'discord', 1);
+
+  // A RUNNING mission from the core era: an active mission over an epic with one phase mid-flight
+  // (in_progress, its agent's tmux session dead with the old daemon) and one dependent phase open.
+  // After the upgrade the mission must still be active, the zombie phase reverted to 'open' by the
+  // plugin's boot reconcile (no loss, re-pickable), and the dependency untouched.
+  db.prepare('INSERT INTO projects (id, slug, path) VALUES (?, ?, ?)').run(1, 'legacy', '/tmp');
+  db.prepare("INSERT INTO tasks (id, project_id, title, type, status) VALUES ('epic1', 1, 'Legacy epic', 'epic', 'in_progress')").run();
+  db.prepare("INSERT INTO tasks (id, project_id, title, type, status, parent_id, labels) VALUES ('ph1', 1, 'phase one', 'task', 'in_progress', 'epic1', 'agent:Nova')").run();
+  db.prepare("INSERT INTO tasks (id, project_id, title, type, status, parent_id) VALUES ('ph2', 1, 'phase two', 'task', 'open', 'epic1')").run();
+  db.prepare("INSERT INTO task_deps (task_id, depends_on_id) VALUES ('ph2', 'ph1')").run();
+  db.prepare("INSERT INTO agents (project_id, name, program, model) VALUES (1, 'Nova', 'claude', 'opus')").run();
+  db.prepare("INSERT INTO missions (id, epic_id, autonomy, max_sessions, state, created_by) VALUES ('m-epic1', 'epic1', 'L2', 1, 'active', 1)").run();
 
   // The whole point: this DB has NEVER run a migration.
   db.pragma('user_version = 0');

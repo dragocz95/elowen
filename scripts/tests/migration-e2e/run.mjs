@@ -11,9 +11,15 @@
 // DB (/var/www/.config/elowen/elowen.db) and prod services are never touched. Does NOT run `elowen up`.
 //
 // TEETH: the fixture stores OLD tool names / prompt keys and the assertions pin the exact POST-migration
-// values (Read,Bash / elowen / dropped personality tables / user_version=6). A silently-skipped, no-op, or
-// data-dropping migration fails the run loudly. Flip any expected value to its pre-migration form and the
-// run goes red.
+// values (Read,Bash / elowen / dropped personality tables / user_version advanced). A silently-skipped,
+// no-op, or data-dropping migration fails the run loudly. Flip any expected value to its pre-migration
+// form and the run goes red.
+//
+// It also carries the plugin-extraction upgrade scenario (plan risk 2): the fixture holds a RUNNING
+// mission from the pre-plugin core era. After the upgrade the agents plugin must be auto-enabled (its
+// root-mounted /missions route answers), the mission must still be active, the zombie in_progress phase
+// must be reverted to 'open' by the plugin's boot reconcile, and the plugin-owned autopilot keys must be
+// COPIED into plugins.config.agents with autopilot.* left intact (lossless rollback).
 
 import Database from 'better-sqlite3';
 import { spawn } from 'node:child_process';
@@ -150,6 +156,30 @@ async function main() {
     });
     assert(bootstrapLogin.status === 401, `bootstrap creds rejected — setup not re-triggered (HTTP ${bootstrapLogin.status})`);
 
+    // 3d) The RUNNING mission survived the upgrade: the agents plugin was auto-enabled for this
+    //     pre-existing install (its root-mounted /missions route answers — a disabled plugin would
+    //     404), the mission is still active, and the boot reconcile reverted the zombie phase
+    //     (in_progress, session dead with the old daemon) to 'open' so the engine can re-pick it.
+    const auth = { authorization: `Bearer ${login.token}` };
+    const missionsRes = await fetch(`${baseUrl}/missions`, { headers: auth });
+    assert(missionsRes.status === 200, `plugin /missions route answers after auto-enable (HTTP ${missionsRes.status})`);
+    const missions = await missionsRes.json();
+    const mission = (Array.isArray(missions) ? missions : missions.missions ?? []).find((m) => m.id === 'm-epic1');
+    assert(mission, 'the pre-upgrade mission m-epic1 is listed');
+    eq(mission.state, 'active', 'the mission is still active (engine sees it — nothing was lost)');
+    {
+      // The zombie reconcile is a boot task; give it a moment past /health.
+      let ph1 = null;
+      const until = Date.now() + 15_000;
+      while (Date.now() < until) {
+        const tasks = await (await fetch(`${baseUrl}/tasks`, { headers: auth })).json();
+        ph1 = tasks.find((t) => t.id === 'ph1');
+        if (ph1 && ph1.status === 'open') break;
+        await sleep(250);
+      }
+      eq(ph1 && ph1.status, 'open', "zombie phase ph1 (dead session) reverted to 'open' by the boot reconcile");
+    }
+
     // 4) Stop the daemon, then open the migrated DB and assert the transforms have teeth.
     await stop();
     if (exited && exited.code !== 0 && exited.signal !== 'SIGTERM') {
@@ -211,6 +241,28 @@ async function main() {
         const present = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(t).n;
         eq(present, 0, `v6 dropped the retired table ${t}`);
       }
+
+      // Agents-plugin one-shot migrations (extraction F2): the plugin was auto-enabled for this
+      // pre-existing install, and the plugin-owned autopilot keys were COPIED into
+      // plugins.config.agents while autopilot.* kept its values (lossless rollback).
+      const migrated = JSON.parse(db.prepare('SELECT data FROM settings WHERE id = 1').get().data);
+      assert(migrated.plugins.enabled.includes('agents'), 'agents plugin auto-enabled in plugins.enabled');
+      eq(migrated.agentsConfigMigrated, true, 'agents auto-enable marker persisted (one-shot)');
+      eq(migrated.agentsPluginConfigMigrated, true, 'agents config-copy marker persisted (one-shot)');
+      const agentsSlice = migrated.plugins.config.agents;
+      eq(agentsSlice.overseerModel, 'legacy-overseer-model', 'overseerModel copied into plugins.config.agents');
+      eq(agentsSlice.prBaseBranch, 'develop', 'prBaseBranch copied into plugins.config.agents');
+      eq(agentsSlice.prAutoOpen, true, 'prAutoOpen copied into plugins.config.agents');
+      eq(agentsSlice.prVerifyCommand, 'npm run verify', 'prVerifyCommand copied into plugins.config.agents');
+      eq(migrated.autopilot.overseerModel, 'legacy-overseer-model', 'autopilot.overseerModel untouched (copy, not move)');
+
+      // The grandfathered plugin schema adopted the OLD tables without touching the rows.
+      const pm = db.prepare("SELECT COUNT(*) AS n FROM plugin_migrations WHERE plugin = 'agents'").get().n;
+      assert(pm >= 1, 'agents plugin migrations are bookkept in plugin_migrations');
+      const missionRow = db.prepare("SELECT epic_id, state, autonomy FROM missions WHERE id = 'm-epic1'").get();
+      eq(missionRow, { epic_id: 'epic1', state: 'active', autonomy: 'L2' }, 'mission row intact after upgrade');
+      const dep = db.prepare("SELECT COUNT(*) AS n FROM task_deps WHERE task_id = 'ph2' AND depends_on_id = 'ph1'").get().n;
+      eq(dep, 1, 'phase dependency intact after upgrade');
     } finally {
       db.close();
     }
