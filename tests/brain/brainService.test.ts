@@ -472,7 +472,7 @@ describe('BrainService', () => {
     expect(svc.status(1).running).toBe(true);
     expect(d.store.getSession('brain-1')).toBeDefined();
     expect(d.createSession).toHaveBeenCalledTimes(1);
-    expect(d.prompts.render).toHaveBeenCalledWith('elowen', { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen' }, 1);
+    expect(d.prompts.render).toHaveBeenCalledWith('elowen', { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen', productName: 'Elowen' }, 1);
   });
 
   it('waits for an in-flight active start instead of rejecting an immediately submitted web turn', async () => {
@@ -3436,7 +3436,7 @@ describe('BrainService', () => {
       access: { admin: true, projectIds: [], scheduled: true } }, 'run the scheduled task');
 
     expect(d.prompts.render).toHaveBeenCalledWith('scheduled',
-      { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen' }, 1);
+      { userName: 'Filip', personality: personalityText(''), agentName: 'Elowen', productName: 'Elowen' }, 1);
     const rendered = d.prompts.render.mock.calls.map((c) => c[0]);
     expect(rendered).not.toContain('elowen'); // no coding-agent base for a scheduled turn
     expect(rendered).not.toContain('elowen-platform'); // no multi-user channel overlay either
@@ -3598,6 +3598,23 @@ describe('BrainService personality layering', () => {
     await svc.applyPersonalityChange(1);
     expect(d.session.dispose).toHaveBeenCalled(); // owner disposed on restart + channel dropped
     expect(d.createSession.mock.calls.length).toBe(before + 1); // owner respawned once
+  });
+
+  it('applyBrandChange restarts EVERY active owner session and resets every channel — the brand is instance-wide', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const registry = (svc as unknown as { sessions: { channelGet(id: string): { sessionId: string } | undefined } }).sessions;
+    await svc.start(1);
+    await svc.start(2);
+    await svc.channelSend({ channelId: 'disc-2', ownerUserId: 2, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
+    const before = d.createSession.mock.calls.length;
+    d.session.dispose.mockClear();
+
+    await svc.applyBrandChange();
+
+    expect(d.createSession.mock.calls.length).toBe(before + 2); // both owner sessions respawned
+    expect(registry.channelGet('disc-2')).toBeUndefined(); // channel dropped even though user 1 saved the change
+    expect(d.session.dispose).toHaveBeenCalled();
   });
 
   it('applyPersonalityChange resets only the changing user\'s channels — another user\'s channel session survives untouched', async () => {

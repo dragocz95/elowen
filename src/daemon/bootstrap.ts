@@ -452,7 +452,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain,
+    pluginProvider, hookAudit, brain, themes, brand,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -463,7 +463,7 @@ export async function buildApp(opts: BuildOpts) {
     // No subscription registered ⇒ sendToUsers is a no-op, so this needs no separate enable flag. Web push
     // is a daemon transport, so the hook is passed IN: the sender is built below out of the core's own
     // stores (hence resolved on use, not on wiring) and a process without that transport just omits it.
-    notifyTurnComplete: (userId, title, preview) => { void pushSender.sendToUsers([userId], buildTurnDone({ title, preview })); },
+    notifyTurnComplete: (userId, title, preview) => { void pushSender.sendToUsers([userId], buildTurnDone({ title, preview, productName: brand().productName })); },
   });
   // Close the late binding opened above the pool: from here the knob resolves against the live store,
   // so raising or zeroing it takes effect on the next delegated turn with no restart.
@@ -642,6 +642,7 @@ export async function buildApp(opts: BuildOpts) {
     prepareMcp: (program, cwd, token) => writeMcpConfig(program, cwd, token, mcpUrl),
     prompts,
     advisorStyle: (id) => userSettings.cliSettings(id).advisorStyle,
+    brand,
   });
   // Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Its cwd is a
   // neutral per-admin scratch dir alongside the DB (never a project checkout), mirroring the advisor dir.
@@ -768,7 +769,7 @@ export async function buildApp(opts: BuildOpts) {
   // same systemd path the web/CLI command uses. Built here (needs the units + marker), wired now.
   if (brain && restartDaemon) brain.restartHandler = restartDaemon;
 
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, planJobs, decisionQueue, pilot, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}) });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, planJobs, decisionQueue, pilot, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}) });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

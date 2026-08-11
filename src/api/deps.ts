@@ -31,6 +31,7 @@ import type { BrainOAuthManager } from '../brain/oauth.js';
 import type { BrainCredentialAccess } from '../brain/providerUsage.js';
 import type { EmbeddingService } from '../embeddings/embeddingService.js';
 import type { SubagentPoolStats } from '../subagent/poolStats.js';
+import type { ThemeStore } from '../store/themeStore.js';
 
 /** Everything the daemon injects into the REST server. Lives in its own module (rather than server.ts)
  *  so the route context and the route families can depend on the dependency shape without importing
@@ -148,4 +149,7 @@ export interface ServerDeps {
   /** Agent-skill install/verify for the System panel. Injected in tests; defaults to a service that
    *  writes into the spawning user's real provider skills dirs. */
   skillService?: SkillService;
+  /** White-label theme packages under `<dataDir>/themes/`. Absent → the public theme endpoint serves
+   *  the built-in brand and the admin theme list is empty. */
+  themes?: ThemeStore;
 }

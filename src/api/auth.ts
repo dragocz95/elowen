@@ -8,6 +8,11 @@ function isPublic(method: string, path: string, hasAvatarSig: boolean): boolean 
   if (method === 'POST' && path === '/auth/login') return true;
   // The VAPID public key is, by definition, public — the browser needs it to subscribe to push.
   if (method === 'GET' && path === '/push/vapid-public-key') return true;
+  // White-label brand + theme assets: the login screen renders the instance's name, colors and logo
+  // BEFORE any token exists. Safe pre-auth: the payload is validated presentation data (never secrets)
+  // and the asset route serves only whitelisted PNGs of the active theme.
+  if (method === 'GET' && path === '/public/theme') return true;
+  if (method === 'GET' && /^\/public\/theme\/assets\/[^/]+$/.test(path)) return true;
   // Terminal WebSocket upgrade. It reaches the daemon directly (nginx /ws/ → :4400), bypassing the
   // BFF that injects the session cookie, so it carries no token. Its capability is the single-use,
   // short-TTL ticket in the query string, minted only after an authenticated POST /sessions/:name/

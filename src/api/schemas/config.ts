@@ -163,4 +163,6 @@ export const configPatchSchema = z.object({
     model: z.string().optional(),
     baseUrl: z.string().optional(),
   }).optional(),
+  // `active: null` is a real value (back to the built-in brand); ConfigStore owns the name grammar.
+  theme: z.object({ active: z.string().nullable().optional() }).optional(),
 });

@@ -7,6 +7,7 @@ import { resolveExecutor } from '../overseer/routing.js';
 import { render } from '../prompts/index.js';
 import type { PromptService } from '../prompts/promptService.js';
 import { personalityText } from '../brain/personality.js';
+import { resolveBrand, type ResolvedBrand } from '../shared/brand.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('advisor');
@@ -32,6 +33,8 @@ export interface AdvisorDeps {
   prompts?: PromptService;
   /** Per-user advisor communication style, resolved to the `{{personality}}` prompt paragraph. */
   advisorStyle?: (userId: number) => string;
+  /** The instance's resolved brand ({{agentName}}/{{productName}}). Absent → the built-in Elowen brand. */
+  brand?: () => ResolvedBrand;
 }
 
 /** Per-user advisor lifecycle: a persistent `elowen-advisor-<userId>` agent session that controls Elowen
@@ -69,10 +72,11 @@ export class AdvisorService {
     await this.d.prepareMcp?.(spec.program, cwd, token, this.d.url);
     const u = this.d.users.get(userId)!;
     const personality = personalityText(this.d.advisorStyle?.(userId) ?? '');
-    // The configured assistant identity (Settings → Elowen AI) so {{agentName}} in the prompt resolves —
-    // mirrors how the brain/personality render supplies it. Absent → 'Elowen'.
-    const agentName = this.d.config.get().brain.agentName || 'Elowen';
-    const vars = { userName: u.name || u.username, personality, agentName };
+    // The instance brand so {{agentName}}/{{productName}} in the prompt resolve — the same resolver the
+    // brain spawner uses, so the tmux advisor and the embedded brain never disagree on the identity.
+    // Minimal wiring without the dep still honours the configured agent name (theme-less resolve).
+    const { agentName, productName } = this.d.brand?.() ?? resolveBrand(this.d.config.get(), null);
+    const vars = { userName: u.name || u.username, personality, agentName, productName };
     const rawPrompt = this.d.prompts
       ? this.d.prompts.render('elowen', vars, userId)
       : render('elowen', vars);

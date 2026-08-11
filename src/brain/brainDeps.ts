@@ -16,6 +16,7 @@ import type { BrainResourceLoaderOptions } from './session/factory.js';
 import type { ProjectModelPreference } from '../store/userSettingStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { DelegatedTurnRunner } from './delegatedTurn.js';
+import type { ResolvedBrand } from '../shared/brand.js';
 
 // The daemon-wiring seam of the brain, in its own module so the service/* units can depend on it
 // without importing the BrainService facade back (keeps the dependency graph acyclic — depcruise
@@ -66,8 +67,10 @@ export interface BrainDeps {
    *  empty. Appended AFTER the persona in appendSystemPrompt — the cache-safe seam. One global persona per
    *  user, identical on every platform (web/cli/discord/cron); for a channel `userId` is the channel owner. */
   activePersonality?: (userId: number) => string | undefined;
-  /** The assistant's configured display identity (Settings → Elowen AI). Absent → 'Elowen'. */
-  agentName?: () => string;
+  /** The instance's resolved brand — persona name (Settings → Elowen AI / active theme) and product
+   *  name (active theme). Read fresh at spawn so a brand change lands on the next respawn. Absent →
+   *  the built-in Elowen brand. */
+  brand?: () => ResolvedBrand;
   /** Max agent steps (model round-trips) per run before the turn is aborted (Settings → Elowen AI). Read
    *  fresh each turn so a config change applies without a session restart. Absent or ≤0 → unlimited. */
   maxSteps?: () => number;

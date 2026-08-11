@@ -117,11 +117,11 @@ export function notificationPreview(text: string): string {
 /** An owner-chat turn the user started finished while their device was off screen — a plain FYI, with the
  *  opening of the answer so it can be read without unlocking. The conversation name is the title: it says
  *  WHICH chat replied, which a fixed banner never did. No action; a tap opens the conversation. */
-export function buildTurnDone(input: { title: string; preview?: string }): PushPayload {
+export function buildTurnDone(input: { title: string; preview?: string; productName?: string }): PushPayload {
   const preview = notificationPreview(input.preview ?? '');
   return {
     kind: 'turn_done',
-    title: input.title ? trim(input.title, 60) : 'Elowen dokončil práci',
+    title: input.title ? trim(input.title, 60) : `${input.productName ?? 'Elowen'} dokončil práci`,
     body: preview ? trim(preview, 180) : 'Vaše konverzace je hotová.',
     actions: [],
     url: '/chat',

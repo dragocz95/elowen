@@ -1,6 +1,8 @@
 import { streamSSE } from 'hono/streaming';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { join, delimiter } from 'node:path';
+import { resolveBrand } from '../../shared/brand.js';
+import { THEME_ASSET_FILES, type ThemeAssetFile } from '../../store/themeStore.js';
 import { isNewer } from '../../cli/version.js';
 import { handleMcpRequest } from '../../mcp/server.js';
 import { eventProjectId } from '../eventProject.js';
@@ -197,6 +199,63 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
 
+  // --- White-label brand. The public payload is what the web shell (including the pre-auth login
+  // screen) renders itself from: validated presentation data only, never secrets. Served even with no
+  // theme active so the client never has to branch on existence — it then carries the built-in brand.
+  const publicThemePayload = (): {
+    brand: { agentName: string; productName: string };
+    colors: Record<string, string>;
+    fonts: { sans?: string; mono?: string };
+    text: Record<string, Record<string, string>>;
+    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>>;
+    v: string;
+  } => {
+    const cfg = d.config.get();
+    const theme = cfg.theme.active ? d.themes?.get(cfg.theme.active) ?? null : null;
+    const brand = resolveBrand(cfg, theme?.manifest.brand ?? null);
+    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512'> = {
+      'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512',
+    };
+    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>> = {};
+    for (const file of theme?.assets ?? []) {
+      assets[assetKey[file]] = `/public/theme/assets/${file}?v=${theme!.version}`;
+    }
+    return {
+      brand: { agentName: brand.agentName, productName: brand.productName },
+      colors: theme?.manifest.colors ?? {},
+      fonts: theme?.manifest.fonts ?? {},
+      text: theme?.manifest.text ?? {},
+      assets,
+      v: theme ? theme.version : 'builtin',
+    };
+  };
+  app.get('/public/theme', (c) => c.json(publicThemePayload()));
+  app.get('/public/theme/assets/:file', (c) => {
+    const cfg = d.config.get();
+    const file = c.req.param('file');
+    // Whitelist check before any filesystem access; only the ACTIVE theme's assets are ever served, so
+    // this route enumerates nothing and a stale URL after a theme switch turns into a plain 404.
+    if (!cfg.theme.active || !(THEME_ASSET_FILES as readonly string[]).includes(file)) return c.json({ error: 'not found' }, 404);
+    const asset = d.themes?.resolveAsset(cfg.theme.active, file);
+    if (!asset) return c.json({ error: 'not found' }, 404);
+    try {
+      const body = readFileSync(asset.path);
+      // `immutable` is safe because every served URL carries the theme-version query param — new bytes
+      // arrive under a new URL. `nosniff` because the bytes are operator-supplied.
+      return c.body(new Uint8Array(body), 200, {
+        'content-type': 'image/png',
+        'cache-control': 'public, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+      });
+    } catch { return c.json({ error: 'not found' }, 404); }
+  });
+  // The admin picker list: every theme folder with its validity (an invalid manifest shows its reason
+  // so a hand-written theme is debuggable from Settings).
+  app.get('/themes', (c) => {
+    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ themes: d.themes?.list() ?? [], active: d.config.get().theme.active });
+  });
+
   app.get('/config', (c) => c.json(d.config.get()));
   app.get('/config/tool-deferral', async (c) => {
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
@@ -209,12 +268,21 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // save providers/the API key before the first admin exists.
     if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const patch = await parseBody(c, configPatchSchema);
+    const before = d.config.get();
     const updated = d.config.update(patch);
     // Apply a patched LSP toggle to the live manager too — it otherwise reads the flag only at boot,
     // and a config-only write would leave the runtime out of sync until the next restart.
     if (typeof patch.lspEnabled === 'boolean') {
       const { lspManager } = await import('../../brain/tools/lspTools.js');
       lspManager().setEnabled(patch.lspEnabled);
+    }
+    // A brand change (theme switch or persona rename) sits at the very top of every live system prompt.
+    // Respawn live sessions so the chat does not keep speaking as the old name while the UI shows the
+    // new one. Fire-and-forget for the same reason cli-settings does it: restart waits for in-flight
+    // turns, and the save response must not hang on that.
+    if (updated.theme.active !== before.theme.active || updated.brain.agentName !== before.brain.agentName) {
+      void Promise.resolve(d.brain?.applyBrandChange())
+        .catch((e) => console.warn(`config: live brand re-apply failed: ${e instanceof Error ? e.message : String(e)}`));
     }
     return c.json(updated);
   });

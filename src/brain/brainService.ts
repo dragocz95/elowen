@@ -201,7 +201,7 @@ export class BrainService {
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
       get activePersonality() { return d.activePersonality; },
-      get agentName() { return d.agentName; },
+      get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
       get runtimeConfig() { return d.runtimeConfig; },
       get memoryStore() { return d.memoryStore; },
@@ -1147,6 +1147,19 @@ export class BrainService {
     await this.serial(`personality-${userId}`, async () => {
       await this.restart(userId);
       await this.channelService.resetChannels('personality changed', (ownerUserId) => ownerUserId === userId);
+    });
+  }
+
+  /** The instance BRAND changed (theme switched / agent renamed): the old identity sits at the very top
+   *  of every live system prompt, so a session kept alive would keep speaking as the old name while the
+   *  UI already shows the new one. Instance-wide variant of applyPersonalityChange — the brand is
+   *  global, so every active owner session restarts and every channel session resets. History rehydrates
+   *  from SQLite; the full prompt-prefix change means a complete prompt-cache re-warm, which is why the
+   *  Settings UI warns before switching. Serialized on its own key so overlapping saves queue safely. */
+  async applyBrandChange(): Promise<void> {
+    await this.serial('brand-change', async () => {
+      for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
+      await this.channelService.resetChannels('brand changed');
     });
   }
 

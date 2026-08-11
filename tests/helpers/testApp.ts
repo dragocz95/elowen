@@ -26,6 +26,9 @@ export interface TestAppOpts {
   /** Stub a mission's isolated worktree dir (mirrors MissionGit.worktreeFor) so launch-path tests can
    *  assert that a mission phase runs in its worktree rather than the shared project checkout. */
   worktreeFor?: (missionId: string) => string | null | undefined;
+  /** Extra ServerDeps spread over the defaults — for routes whose collaborators (themes, brain stubs…)
+   *  the standard wiring does not construct. */
+  extra?: Partial<Parameters<typeof createServer>[0]>;
 }
 
 /** Wire a real in-memory daemon app (fake tmux + fake inference) with a bootstrapped admin token.
@@ -63,6 +66,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     planJobs, decisionQueue, pilot,
     ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
     makeInference: () => new FakeInference(opts.fakePlan ?? '[{"title":"Phase A","type":"task"}]'),
+    ...(opts.extra ?? {}),
   });
 
   /** Seed an epic + one in-progress child phase + an active mission `m-<epic>`. */

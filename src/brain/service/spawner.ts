@@ -1,4 +1,5 @@
 import { isChannelSession, isSubagentSession } from '../sessionId.js';
+import { DEFAULT_BRAND } from '../../shared/brand.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
@@ -37,7 +38,7 @@ interface SpawnerDeps {
   projectPath?: () => string | undefined;
   userSettings?: BrainDeps['userSettings'];
   activePersonality?: BrainDeps['activePersonality'];
-  agentName?: () => string;
+  brand?: BrainDeps['brand'];
   maxSteps?: () => number;
   runtimeConfig?: BrainDeps['runtimeConfig'];
   memoryStore?: BrainDeps['memoryStore'];
@@ -240,7 +241,9 @@ export class LiveSessionSpawner {
     const u = this.d.users.get(ownerUserId);
     const userName = u?.name || u?.username || 'Filip';
     const personality = personalityText(this.d.userSettings?.(ownerUserId)?.advisorStyle ?? '');
-    const agentName = this.d.agentName?.() || 'Elowen';
+    const brand = this.d.brand?.() ?? DEFAULT_BRAND;
+    const agentName = brand.agentName;
+    const productName = brand.productName;
     // A scheduled (cron/wake-up) turn gets its OWN focused system prompt — identity, channel-only
     // delivery, outcome reporting — instead of the coding-agent `elowen` base + platform overlay: a
     // timer-driven report is not an interactive coding session and does not need the engineering rules
@@ -249,11 +252,11 @@ export class LiveSessionSpawner {
     // prompt, since the senders are OTHER people and the base single-user framing would misaddress the
     // room; owner chat gets the base alone.
     const persona = opts.scheduled
-      ? this.d.prompts.render('scheduled', { userName, personality, agentName }, ownerUserId)
+      ? this.d.prompts.render('scheduled', { userName, personality, agentName, productName }, ownerUserId)
       : opts.channel
-        ? this.d.prompts.render('elowen', { userName, personality, agentName }, ownerUserId)
-          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName }, ownerUserId)
-        : this.d.prompts.render('elowen', { userName, personality, agentName }, ownerUserId);
+        ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, ownerUserId)
+          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, ownerUserId)
+        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, ownerUserId);
 
     // Create the image-carrying queue mirrors before the PI session. The boundary compaction adapter reads
     // these exact arrays just before every next-turn provider request, so queued text AND attachments are

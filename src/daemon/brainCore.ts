@@ -7,6 +7,8 @@ import { SpawnService } from '../spawn/spawn.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
+import { ThemeStore } from '../store/themeStore.js';
+import { resolveBrand, type ResolvedBrand } from '../shared/brand.js';
 import { UserStore } from '../store/userStore.js';
 import { EventStore } from '../store/eventStore.js';
 import { NoteStore } from '../store/noteStore.js';
@@ -220,6 +222,15 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const userPluginDir = join(dirname(opts.dbPath), 'plugins');
   const pluginDirs = opts.pluginDirs ?? [join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins'), userPluginDir];
   const pluginDataRoot = join(dirname(opts.dbPath), 'plugins-data');
+  // White-label theme packages next to the DB (sibling of agents/, plans/). Absent for an in-memory
+  // database, like the other file-backed dirs. The brand resolver below and the public theme API both
+  // read through the SAME store instance, so the served payload and the persona always agree.
+  const themes = opts.dbPath === ':memory:' ? undefined : new ThemeStore(join(dirname(opts.dbPath), 'themes'));
+  const brand = (): ResolvedBrand => {
+    const cfg = config.get();
+    const theme = cfg.theme.active ? themes?.get(cfg.theme.active) ?? null : null;
+    return resolveBrand(cfg, theme?.manifest.brand ?? null);
+  };
   // Typed sub-agents: built-in explore/plan ship in dist/prompts/agents (same `../` resolution as the
   // bundled plugins dir); user `.md` types live next to the DB in <config>/agents. Loaded lazily and
   // rebuilt on every plugin reload (invalidated in the pluginProvider factory below) so a new user agent
@@ -473,7 +484,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // One global personality body per user (user_settings key 'personalityBody'), identical on every
         // platform. Empty → undefined so nothing is appended and the system-prompt prefix stays byte-stable.
         activePersonality: (userId) => { const body = userSettings.cliSettings(userId).personalityBody.trim(); return body ? body : undefined; },
-        agentName: () => config.get().brain.agentName,
+        brand,
         maxSteps: () => config.get().brain.maxSteps,
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
@@ -530,6 +541,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
     embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
-    pluginProvider, hookAudit, brain,
+    pluginProvider, hookAudit, brain, themes, brand,
   };
 }
