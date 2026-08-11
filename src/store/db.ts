@@ -6,7 +6,10 @@ import { renameRegistryTool, renameTool, repairImageTool } from './toolRenames.j
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export type Db = Database.Database;
+/** An INTERFACE (not a type alias) on purpose: better-sqlite3's types are an `export =` namespace, so
+ *  an alias resolves to `BetterSqlite3.Database` — a name declaration emit cannot import, which breaks
+ *  the composite build the agents plugin references. An interface is a real named type of ours. */
+export interface Db extends Database.Database {}
 
 /** Add a column only if it isn't already present. Unlike a try/catch around ALTER TABLE, this
  *  checks the actual table shape, so a genuine ALTER failure (lock, disk full) is not swallowed. */

@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "prebuild": "npm run languages-check --silent && node scripts/dist-integrity.mjs clean",
-    "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
+    "build": "tsc -b tsconfig.json tsconfig.plugins.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
     "postbuild": "node scripts/dist-integrity.mjs chmod-bins && node scripts/dist-integrity.mjs verify",
     "check:dist": "node scripts/dist-integrity.mjs verify",
     "models:refresh": "node scripts/refresh-model-capabilities.mjs",

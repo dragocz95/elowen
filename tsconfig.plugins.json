@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "noUncheckedIndexedAccess": true, "esModuleInterop": true,
+    "outDir": "plugins/agents/dist", "rootDir": "plugins/agents/src",
+    "noUnusedLocals": true, "noUnusedParameters": true, "skipLibCheck": true, "declaration": false
+  },
+  "references": [{ "path": "./tsconfig.json" }],
+  "include": ["plugins/agents/src/**/*"]
+}

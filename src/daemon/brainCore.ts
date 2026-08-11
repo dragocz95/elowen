@@ -1,4 +1,5 @@
 import { openDb } from '../store/db.js';
+import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
@@ -151,7 +152,9 @@ export interface BrainCoreOpts {
  *  Those setters have silent defaults: a process that forgets one produces different transcripts with no
  *  error at all, which is the exact failure this factory exists to make impossible. */
 export async function buildBrainCore(opts: BrainCoreOpts) {
-  const db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
+  // Annotated (not inferred) so declaration emit names the `Db` alias — the composite build for the
+  // agents plugin (tsconfig.plugins.json) needs this factory's return type to be declaration-emittable.
+  const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
   const tasks = new TaskStore(db); const agents = new AgentStore(db);

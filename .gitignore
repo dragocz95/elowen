@@ -32,3 +32,7 @@ web-dist/
 # image-gen plugin scratch (chroma-key sources / temp renders)
 .imagegen-tmp/
 /.config/
+
+# Built plugin output (agents plugin builds with the repo via tsconfig.plugins.json)
+plugins/agents/dist/
+*.tsbuildinfo

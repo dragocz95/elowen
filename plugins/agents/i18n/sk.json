@@ -1,0 +1,3 @@
+{
+  "description": "Autonómni CLI agenti a misie: spúšťa kódovacích agentov v tmuxe (alebo na vstavaných Elowen AI modeloch), sleduje ich postup a prevádzkuje autopilota, ktorý plánuje, kontroluje a riadi viacúlohové misie. Vyčlenené z jadra Elowenu na platformu pluginov; vypnutím sa vypne spúšťanie agentov a misie, zatiaľ čo chat, úlohy a projekty fungujú ďalej."
+}
