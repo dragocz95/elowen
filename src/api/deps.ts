@@ -1,16 +1,10 @@
-import type { KeyedMutex } from '../shared/keyedMutex.js';
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
 import type { MissionStore } from '../store/missionStore.js';
-import type { AgentStore } from '../store/agentStore.js';
-import type { MissionEngine } from '../overseer/missionEngine.js';
-import type { MissionGit } from '../overseer/missionGit.js';
-import type { SpawnService } from '../spawn/spawn.js';
+import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsPlanJobs, AgentsRegistryView, AgentsSpawn } from '../plugins/api.js';
+import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
-import type { AgentSpec } from '../spawn/commandBuilder.js';
-import type { PlanJobStore, PlanJob } from '../overseer/planJob.js';
-import type { DecisionQueue } from '../overseer/decisionQueue.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -41,15 +35,19 @@ export interface ServerDeps {
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
-  engine: MissionEngine; spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
+  /** The agents subsystem's mission engine (structural — see AgentsControl). */
+  engine: AgentsMissionEngine;
+  /** The agents subsystem's spawn seam (structural — see AgentsControl). */
+  spawn: AgentsSpawn;
+  tmux: TmuxDriver; bus: EventBus;
   /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
-  missionGit?: MissionGit;
+  missionGit?: AgentsMissionGit;
   /** Shared per-checkout git serialization lock — the SAME instance the scheduler and mission engine
    *  use, so a phase's commit+snapshot at close can't interleave with the baseline read at another
    *  agent's spawn on the same checkout. Absent → a private lock (fine for isolated tests). */
-  gitLock?: KeyedMutex;
+  gitLock?: AgentsGitLock;
   project: { id: number; path: string };
-  fallback: AgentSpec;
+  fallback: AgentsExecSpec;
   /** How spawned agents invoke the elowen CLI (`elowen` globally, or `node <path>` in a checkout). Same
    *  value threaded to spawn/pilot/overseer; used by the guide service to render `elowen help`. Absent → `elowen`. */
   cli?: string;
@@ -82,9 +80,9 @@ export interface ServerDeps {
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;
   taskUsage?: TaskUsageStore;
-  /** Agent registry — records each spawned agent's project at spawn. Used to tag live sessions with
-   *  their project (the daemon's single source of truth for session→repo). */
-  agents?: AgentStore;
+  /** Agent registry read view — records each spawned agent's project at spawn. Used to tag live
+   *  sessions with their project (the daemon's single source of truth for session→repo). */
+  agents?: AgentsRegistryView;
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;
@@ -94,9 +92,9 @@ export interface ServerDeps {
   /** Factory for the planning LLM client; defaults to RelayClient. Overridable in tests. */
   makeInference?: (cfg: RelayConfig) => InferenceClient;
   /** Async planning job registry (relay or agent backend resolves into it). Defaulted when absent. */
-  planJobs?: PlanJobStore;
+  planJobs?: AgentsPlanJobs;
   /** Per-mission decision queue consumed by the parked overseer agent (long-poll). Defaulted when absent. */
-  decisionQueue?: DecisionQueue;
+  decisionQueue?: AgentsDecisionQueue;
   /** Spawn the Pilot agent for an agent-mode plan job (Task 9). Absent → relay-only planning. */
   pilot?: (job: PlanJob, projectPath: string) => Promise<void>;
   /** Per-user advisor lifecycle. Absent → advisor feature disabled (routes degrade gracefully). */

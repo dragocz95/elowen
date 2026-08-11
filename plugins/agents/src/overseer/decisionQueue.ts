@@ -1,28 +1,9 @@
 import { randomBytes } from 'node:crypto';
 
-export type DecisionKind = 'prompt' | 'review' | 'question' | 'message' | 'check';
-export interface DecisionResult {
-  approve: boolean;
-  confidence: number;
-  rationale: string;
-  /** For a 'check' decision (the liveness sweep woke the overseer about an idle worker): the overseer
-   *  wants the worker killed and relaunched (it judged it genuinely stuck, not just slow). Distinct from
-   *  `message` (nudge it) and a bare `approve:false` (escalate to a human). */
-  restart?: boolean;
-  /** For a 'question' decision: the option id the overseer picked. Absent ⇒ escalate to a human
-   *  (also the shape of a timeout/drain verdict, which therefore escalates the question). */
-  choice?: string;
-  /** For a 'message' decision (worker asked the autopilot a free-text question): the overseer's
-   *  free-text reply. Absent ⇒ the overseer escalated (or timed out) → the ask falls to the human
-   *  window. Distinct from `choice`/`approve`, which don't apply to a free-text exchange. */
-  message?: string;
-  /** True only when the overseer never answered (the decision timed out): there is NO real verdict,
-   *  so the decision must be handed to a human and never auto-acted on. In particular a post-done
-   *  review must NOT self-heal/re-run the phase on this — that turns a slow/absent overseer into an
-   *  infinite reopen loop. A genuine overseer reject leaves this unset. */
-  escalated?: boolean;
-}
-export interface PendingDecision { id: string; kind: DecisionKind; context: Record<string, unknown> }
+// Part of the core↔agents contract (the overseer long-poll routes deliver and resolve these) — the
+// definitions live in shared/; re-exported here so plugin-internal imports keep resolving.
+import type { DecisionKind, DecisionResult, PendingDecision } from '../../../../src/shared/agentEvents.js';
+export type { DecisionKind, DecisionResult, PendingDecision };
 
 interface Entry extends PendingDecision { settle: (r: DecisionResult) => void; enqueuedAt: number }
 type Waiter = (r: PendingDecision | null) => void;

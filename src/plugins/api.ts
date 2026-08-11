@@ -10,6 +10,8 @@ import type { ElowenEvent } from '../api/sse.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainWorkerLauncher } from '../spawn/spawn.js';
 import type { Task } from '../store/types.js';
+import type { Mission } from '../store/missionStore.js';
+import type { DecisionKind, DecisionResult, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
 import type { Project } from '../store/projectStore.js';
 import type { TaskStore } from '../store/taskStore.js';
 import type { TaskUsageStore } from '../store/taskUsageStore.js';
@@ -639,6 +641,101 @@ export interface McpListControl {
   bridgeSnapshot(): McpBridgeSnapshot;
 }
 
+/** An executor spec (`program`/`model` pair) as every agents-subsystem seam passes it. Structural twin
+ *  of the spawn commandBuilder's AgentSpec, spelled here so the control contract needs no import from
+ *  the subsystem it describes. */
+export interface AgentsExecSpec { program: string; model: string }
+
+/** Everything SpawnService.launch accepts, spelled structurally for the control boundary. `resume`
+ *  mirrors PendingResume ({ program, sessionId }) with the program widened to string. */
+export interface AgentsLaunchInput {
+  projectId: number; projectPath: string; taskId: string; agentName: string;
+  spec: AgentsExecSpec;
+  taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string;
+  extraEnv?: Record<string, string>; rawPrompt?: string;
+  resume?: { program: string; sessionId: string };
+  ownerId?: number | null; mcpUrl?: string; tddMode?: boolean;
+}
+
+/** The agents plugin's spawn seam: launch a worker/advisor session (tmux pane or embedded brain). */
+export interface AgentsSpawn { launch(input: AgentsLaunchInput): Promise<{ session: string }> }
+
+/** The mission engine surface the core routes/services drive (engage/pause/resume/disengage + the
+ *  tick/resume verbs the plan and review workflows call). */
+export interface AgentsMissionEngine {
+  engage(input: { epicId: string; autonomy: string; maxSessions: number; createdBy?: number | null; pilotExec?: string; overseerExec?: string; preserveReviewBudget?: boolean }): Promise<Mission>;
+  pause(id: string): Promise<void>;
+  resume(id: string): Promise<void>;
+  disengage(id: string): Promise<void>;
+  tick(id: string): Promise<void>;
+  isActive(id: string): boolean;
+  resumeStalled(id: string): Promise<void>;
+  stopTask(taskId: string): Promise<void>;
+}
+
+/** The async planning-job registry surface the plan/replan routes use. Jobs are read AND mutated in
+ *  place by the routes (job.phases/job.epicId), so the record type is the shared PlanJob contract. */
+export interface AgentsPlanJobs {
+  create(input: { goal: string; name?: string; projectId: number; epicId: string | null; dryRun: boolean; exec?: string; autoModel?: boolean; pilotExec?: string; overseerExec?: string; engage?: { autonomy: string; maxSessions: number; preserveReviewBudget?: boolean }; prEnabled?: boolean | null; maxSessions?: number; createdBy?: number | null }): PlanJob;
+  get(id: string): PlanJob | null;
+  setPhases(id: string, phases: Phase[]): PlanJob | null;
+  fail(id: string, error: string): PlanJob | null;
+}
+
+/** The per-mission decision queue surface: the ask/review services enqueue, the parked overseer's
+ *  long-poll routes deliver (`next`) and answer (`resolve`). */
+export interface AgentsDecisionQueue {
+  enqueue(missionId: string, kind: DecisionKind, context: Record<string, unknown>): Promise<DecisionResult>;
+  next(missionId: string, timeoutMs?: number): Promise<PendingDecision | null>;
+  resolve(missionId: string, id: string, result: DecisionResult): boolean;
+}
+
+/** Outcome of finalising a mission's git work at epic-done (or a manual PR open). */
+export type AgentsPrFinishResult =
+  | { state: 'off' }
+  | { state: 'verify-failed'; output: string }
+  | { state: 'ready' }
+  | { state: 'no-remote' }
+  | { state: 'pr-failed' }
+  | { state: 'incomplete' }
+  | { state: 'opened'; url: string; number: number };
+
+/** The PR-native git lifecycle surface the mission/task routes and the review service call. */
+export interface AgentsMissionGit {
+  worktreeFor(missionId: string): string | null;
+  prInfo(missionId: string): { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null } | null;
+  pendingPrMissionIds(): string[];
+  openPr(missionId: string): Promise<AgentsPrFinishResult>;
+  mergePr(missionId: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+  cleanup(missionId: string): Promise<void>;
+  appendFixPhase(epicId: string, feedback: string, exec?: string): Promise<boolean>;
+  commitPhase(missionId: string, phaseTitle: string, fallbackDir?: string): Promise<boolean>;
+}
+
+/** Read view over the plugin's agent registry (session name ↔ project tagging for the sessions list). */
+export interface AgentsRegistryView { projectFor(name: string): number | null }
+
+/** The shared per-checkout git serialization lock — the SAME instance the plugin's scheduler and
+ *  mission engine use, so an API-side phase commit can't interleave with an agent's baseline read. */
+export interface AgentsGitLock { run<T>(key: string, fn: () => Promise<T>): Promise<T> }
+
+/** The agents plugin's control: the whole tmux-agent/mission subsystem surface the core API routes,
+ *  services and the advisor reach after the extraction. Accessor methods (not plain fields) so the
+ *  registry's function-shape narrowing applies, and so the plugin can build its runtime lazily — the
+ *  first accessor call constructs it, which keeps a sub-agent runner (register-only, no services)
+ *  from ever building a second mission engine. */
+export interface AgentsControl {
+  engine(): AgentsMissionEngine;
+  spawn(): AgentsSpawn;
+  /** Spawn the Pilot agent for an agent-mode plan job. */
+  pilot(): (job: PlanJob, projectPath: string) => Promise<void>;
+  planJobs(): AgentsPlanJobs;
+  decisionQueue(): AgentsDecisionQueue;
+  missionGit(): AgentsMissionGit;
+  agents(): AgentsRegistryView;
+  gitLock(): AgentsGitLock;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -648,6 +745,7 @@ export interface KnownControls {
   cron: PendingWakeupControl;
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl;
   mcp: McpListControl;
+  agents: AgentsControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`

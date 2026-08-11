@@ -5,7 +5,7 @@ import { resolveOwnerId } from '../../prompts/owner.js';
 import { projectHead } from '../../integrations/projectFiles.js';
 import { uniqueName } from '../../daemon/uniqueName.js';
 import { logger } from '../../shared/logger.js';
-import type { KeyedMutex } from '../../shared/keyedMutex.js';
+import type { AgentsGitLock } from '../../plugins/api.js';
 import type { Task } from '../../store/types.js';
 import type { ServerDeps } from '../deps.js';
 
@@ -29,7 +29,7 @@ export interface SessionService {
  *  check-and-claim sequence (the atomic single-writer guard + snapshot baseline + spawn revert) can be
  *  reasoned about and tested without the HTTP surface. `pathFor` is shared with the route context so a
  *  re-homed project resolves identically here and at the scheduler's baseline read. */
-export function createSessionService(d: ServerDeps, gitLock: KeyedMutex, pathFor: (projectId: number) => string): SessionService {
+export function createSessionService(d: ServerDeps, gitLock: AgentsGitLock, pathFor: (projectId: number) => string): SessionService {
   async function launchManual(task: Task, exec: string | undefined): Promise<LaunchOutcome> {
     const spec = resolveExecutor(exec ? [`exec:${exec}`] : [], d.fallback);
     const projectId = task.project_id;

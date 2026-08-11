@@ -2,8 +2,7 @@ import { projectReviewDiff } from '../../integrations/projectFiles.js';
 import { buildReviewContext } from '../../overseer/reviewContext.js';
 import { snapshotTaskChanges } from '../../overseer/taskSnapshot.js';
 import { logger } from '../../shared/logger.js';
-import type { KeyedMutex } from '../../shared/keyedMutex.js';
-import type { DecisionQueue } from '../../overseer/decisionQueue.js';
+import type { AgentsDecisionQueue, AgentsGitLock } from '../../plugins/api.js';
 import type { Task } from '../../store/types.js';
 import type { ServerDeps } from '../deps.js';
 
@@ -15,8 +14,8 @@ const REVIEW_FIX_BUDGET = 2;
 export interface ReviewServiceDeps {
   d: ServerDeps;
   log: ReturnType<typeof logger>;
-  gitLock: KeyedMutex;
-  decisionQueue: DecisionQueue;
+  gitLock: AgentsGitLock;
+  decisionQueue: AgentsDecisionQueue;
   /** The checkout a mission's work lands in (worktree while live, else the project checkout). */
   checkoutPathFor(missionId: string | null, projectId: number): string;
   /** Filesystem path of a project (for the standalone-task snapshot). */

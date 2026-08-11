@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { shortId } from '../../shared/id.js';
-import type { PlanJobStore, PlanJob } from '../../overseer/planJob.js';
-import type { Phase } from '../../overseer/planner.js';
+import type { AgentsPlanJobs } from '../../plugins/api.js';
+import type { Phase, PlanJob } from '../../shared/agentEvents.js';
 import type { Task } from '../../store/types.js';
 import type { ServerDeps } from '../deps.js';
 
@@ -18,7 +18,7 @@ export interface PlanService {
  *  ticking the mission, and reaping the Pilot session. Extracted from the route layer so the planning
  *  path can be unit-tested without the HTTP surface. `pathFor` is shared with the route context so a
  *  re-homed project resolves identically here and at spawn/snapshot time. */
-export function createPlanService(d: ServerDeps, planJobs: PlanJobStore, pathFor: (projectId: number) => string): PlanService {
+export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathFor: (projectId: number) => string): PlanService {
   // Persist a plan job's phases as an epic + chained child tasks. Creates the epic when the job has
   // no epicId yet; otherwise appends after the epic's current tail (leaves = phases nothing depends
   // on). For a fresh epic there are no descendants, so the first new phase simply starts the chain.

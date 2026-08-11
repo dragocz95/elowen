@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { DecisionQueue } from '../../overseer/decisionQueue.js';
+import type { AgentsDecisionQueue } from '../../plugins/api.js';
 import type { ServerDeps } from '../deps.js';
 
 /** One poll's max hold before returning a heartbeat so the worker's CLI re-polls (mirrors the overseer
@@ -42,7 +42,7 @@ interface PendingAsk {
 
 export interface AskServiceDeps {
   d: ServerDeps;
-  decisionQueue: DecisionQueue;
+  decisionQueue: AgentsDecisionQueue;
 }
 
 export interface AskService {

@@ -10,10 +10,11 @@ import { createSkillService, type SkillService } from './services/skillService.j
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
-import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
+import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
 import { createTicketStore, type TicketStore } from '../terminal/ticketStore.js';
-import type { Phase } from '../overseer/planner.js';
+import type { AgentsDecisionQueue, AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
+import type { Phase, PlanJob } from '../shared/agentEvents.js';
 import type { EventProjectDeps } from './eventProject.js';
 import type { Task } from '../store/types.js';
 import type { Context, Hono } from 'hono';
@@ -49,10 +50,10 @@ type UserCtx = { get: (k: 'user') => User | undefined };
 export interface RouteContext {
   d: ServerDeps;
   log: ReturnType<typeof logger>;
-  planJobs: PlanJobStore;
-  decisionQueue: DecisionQueue;
+  planJobs: AgentsPlanJobs;
+  decisionQueue: AgentsDecisionQueue;
   tickets: TicketStore;
-  gitLock: KeyedMutex;
+  gitLock: AgentsGitLock;
 
   /** Projects an AGENT-scoped token may currently touch (its live working set). */
   agentProjects(): Set<number>;
