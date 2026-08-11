@@ -3,7 +3,7 @@ import { createContext, useContext, type ReactNode } from 'react';
 import { useLocaleSafe } from './i18n/context';
 import { BUILTIN_THEME, themeAssetUrl, type ThemePayload } from './brandShared';
 
-export { BUILTIN_THEME, themeAssetUrl, type ThemePayload } from './brandShared';
+export { BUILTIN_THEME, type ThemePayload } from './brandShared';
 
 const BrandContext = createContext<ThemePayload>(BUILTIN_THEME);
 
