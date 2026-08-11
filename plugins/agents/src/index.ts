@@ -1,15 +1,17 @@
 /** agents — the tmux-agent + missions subsystem as a plugin (plugin-platform F2).
  *
- *  SKELETON: establishes the TypeScript plugin build (tsc → dist/, shipped with the repo in lockstep)
- *  and the capability envelope before any core code moves in. Runtime reach comes exclusively through
- *  the PluginContext (ctx.host.*, ctx.db(), ctx.publishEvent(), ctx.registerPrompts(), …); imports
- *  from the daemon's src/ are TYPE-ONLY and erase at compile time, so the built plugin has no runtime
+ *  Extraction in progress: the store layer lives here (step 3); spawn/deriver/overseer, API routes,
+ *  prompts and brain tools follow step by step. Runtime reach comes exclusively through the
+ *  PluginContext (ctx.host.*, ctx.db(), ctx.publishEvent(), ctx.registerPrompts(), …); imports from
+ *  the daemon's src/ are TYPE-ONLY and erase at compile time, so the built plugin has no runtime
  *  dependency on the daemon's module graph.
  */
 import type { PluginContext } from '../../../src/plugins/api.js';
+import { AGENTS_MIGRATIONS } from './store/migrations.js';
 
 export function register(ctx: PluginContext): void {
-  // Nothing contributes yet — the extraction lands here step by step (stores → spawn/deriver/overseer
-  // → API routes/services → prompts/tools). The skeleton only proves the build + load path.
-  ctx.logger.info('agents plugin skeleton loaded');
+  // Schema first: grandfathered tables (see store/migrations.ts). In the daemon this applies pending
+  // steps exactly once; in the sub-agent runner ctx.db().migrate() is a logged no-op by design.
+  ctx.db().migrate(AGENTS_MIGRATIONS);
+  ctx.logger.info('agents plugin loaded (store layer)');
 }
