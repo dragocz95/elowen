@@ -1,3 +1,29 @@
 {
-  "description": "Autonomní CLI agenti a mise: spouští kódovací agenty v tmuxu (nebo na vestavěných Elowen AI modelech), sleduje jejich postup a provozuje autopilota, který plánuje, kontroluje a řídí víceúlohové mise. Vyčleněno z jádra Elowenu na platformu pluginů; vypnutím se vypne spouštění agentů a mise, zatímco chat, úkoly a projekty fungují dál."
+  "description": "Autonomní CLI agenti a mise: spouští kódovací agenty v tmuxu (nebo na vestavěných Elowen AI modelech), sleduje jejich postup a provozuje autopilota, který plánuje, kontroluje a řídí víceúlohové mise. Vyčleněno z jádra Elowenu na platformu pluginů; vypnutím se vypne spouštění agentů a mise, zatímco chat, úkoly a projekty fungují dál.",
+  "fields": {
+    "sec_overseer": {
+      "label": "Dohled (overseer)",
+      "hint": "Rozhodovací model autopilotního dohledu."
+    },
+    "overseerModel": {
+      "label": "Model dohledu",
+      "hint": "Relay model pro rozhodnutí dohledu; prázdné použije model plánovače."
+    },
+    "sec_pr": {
+      "label": "PR-native mise",
+      "hint": "Větev, automatické otevření a ověřovací brána pro pull requesty misí."
+    },
+    "prBaseBranch": {
+      "label": "Základní větev PR",
+      "hint": "Větev, na kterou míří PR misí; prázdné se detekuje podle repozitáře."
+    },
+    "prAutoOpen": {
+      "label": "Otevírat PR automaticky",
+      "hint": "Otevře PR mise, jakmile se její epic dokončí."
+    },
+    "prVerifyCommand": {
+      "label": "Ověřovací příkaz PR",
+      "hint": "Příkaz, který musí ve worktree skončit s kódem 0, než se PR otevře; prázdné bránu vypne."
+    }
+  }
 }
