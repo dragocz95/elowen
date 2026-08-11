@@ -93,6 +93,10 @@ export class PluginRegistry {
   /** Authenticated API mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/plugins/:name/api`
    *  router. A key holds every method variant registered on that path (exact method beats method-less). */
   readonly apiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
+  /** ROOT-mounted authenticated plugin routes, keyed by the full absolute mount (e.g. '/missions',
+   *  '/missions/overseer'). Served by the daemon's root fallback dispatcher with the same auth/access
+   *  mechanics as `apiRoutes`; a mount that collides with a core route is skipped there (core wins). */
+  readonly rootApiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
   /** Host-managed background services (started after boot reconcile, cycled around plugin reloads) and
    *  boot reconciles (run sequentially BEFORE platforms serve turns). Both carry their owner for logs. */
   readonly services: { plugin: string; service: PluginService }[] = [];
@@ -184,6 +188,12 @@ export class PluginRegistry {
     }
     // Keys embed the plugin name, so cross-plugin collisions cannot happen by construction — copy as-is.
     for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
+    // Root mounts are a GLOBAL namespace: first registrant wins, a colliding sibling is skipped loudly.
+    for (const [k, v] of other.rootApiRoutes) {
+      const prior = this.rootApiRoutes.get(k);
+      if (prior && prior.plugin !== v.plugin) { warn?.(`root api mount "${k}" from "${v.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
+      this.rootApiRoutes.set(k, v);
+    }
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
@@ -240,6 +250,28 @@ export class PluginRegistry {
       if (!entry) return undefined;
       const route = entry.routes.find((r) => r.method === method) ?? entry.routes.find((r) => r.method === undefined);
       return route ? { handler: route.handler, access: route.access, remainder } : undefined;
+    };
+    const exact = pick(clean, '');
+    if (exact) return exact;
+    let at = clean.lastIndexOf('/');
+    while (at > 0) {
+      const hit = pick(clean.slice(0, at), clean.slice(at + 1));
+      if (hit) return hit;
+      at = clean.lastIndexOf('/', at - 1);
+    }
+    return undefined;
+  }
+
+  /** Resolve a ROOT-mounted plugin route for an absolute request path — longest mount prefix at a
+   *  segment boundary wins, exact method beats method-less (same rules as {@link apiRoute}). Returns
+   *  the owning mount too, so the dispatcher can apply its core-conflict skip set per mount. */
+  rootApiRoute(path: string, method: string): { mount: string; plugin: string; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string } | undefined {
+    const clean = '/' + path.replace(/^\/+|\/+$/g, '');
+    const pick = (mount: string, remainder: string) => {
+      const entry = this.rootApiRoutes.get(mount);
+      if (!entry) return undefined;
+      const route = entry.routes.find((r) => r.method === method) ?? entry.routes.find((r) => r.method === undefined);
+      return route ? { mount, plugin: entry.plugin, handler: route.handler, access: route.access, remainder } : undefined;
     };
     const exact = pick(clean, '');
     if (exact) return exact;
@@ -441,16 +473,38 @@ export class PluginRegistry {
       // silently register a route the dispatcher would then treat as its default.
       registerApiRoute: (route) => {
         const clean = route.path?.trim().replace(/^\/+|\/+$/g, '') ?? '';
-        if (!/^[a-z0-9][a-z0-9\-/]*$/.test(clean) || clean.split('/').some((seg) => !seg)) {
+        // A bare mount ('' path) is meaningful only WITH rootMount — the namespaced surface always has
+        // a path segment after /api/.
+        if ((clean !== '' || route.rootMount === undefined) && (!/^[a-z0-9][a-z0-9\-/]*$/.test(clean) || clean.split('/').some((seg) => !seg))) {
           scoped.warn(`registerApiRoute('${route.path}') refused: path must be lowercase slash-separated segments`);
-          return;
-        }
-        if (!provides?.apiRoutes?.includes(clean)) {
-          scoped.warn(`registerApiRoute('${clean}') refused: not declared in manifest provides.apiRoutes`);
           return;
         }
         if (route.access !== 'admin' && route.access !== 'user' && route.access !== 'agent') {
           scoped.warn(`registerApiRoute('${clean}') refused: access must be admin, user or agent`);
+          return;
+        }
+        if (route.rootMount !== undefined) {
+          // Root mount: absolute lowercase path, and the FULL mount must be declared (with the leading
+          // slash) in provides.apiRoutes — the manifest stays the single audit surface for what a
+          // plugin serves. Trust: plugins are admin-installed by definition (bundled or marketplace),
+          // so the root namespace is not a wider grant than the namespaced one — just a wider PATH.
+          const mount = route.rootMount.trim().replace(/\/+$/g, '');
+          if (!/^\/[a-z0-9][a-z0-9\-/]*$/.test(mount) || mount.slice(1).split('/').some((seg) => !seg)) {
+            scoped.warn(`registerApiRoute rootMount '${route.rootMount}' refused: must be an absolute lowercase path`);
+            return;
+          }
+          const full = clean ? `${mount}/${clean}` : mount;
+          if (!provides?.apiRoutes?.includes(full)) {
+            scoped.warn(`registerApiRoute('${full}') refused: root mount not declared in manifest provides.apiRoutes`);
+            return;
+          }
+          const entry = this.rootApiRoutes.get(full) ?? { plugin: name, routes: [] };
+          entry.routes.push({ ...(route.method ? { method: route.method.toUpperCase() } : {}), access: route.access, handler: route.handler });
+          this.rootApiRoutes.set(full, entry);
+          return;
+        }
+        if (!provides?.apiRoutes?.includes(clean)) {
+          scoped.warn(`registerApiRoute('${clean}') refused: not declared in manifest provides.apiRoutes`);
           return;
         }
         const key = `${name}/${clean}`;

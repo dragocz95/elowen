@@ -13,7 +13,7 @@ import { registerPluginRoutes } from './plugins/index.js';
 import { registerTaskRoutes } from './tasks.js';
 import { registerMemoryRoutes } from './memory.js';
 import { registerHookRoutes } from './hooks.js';
-import { registerPluginApiRoutes } from './pluginApi.js';
+import { registerPluginApiRoutes, registerRootPluginApiRoutes } from './pluginApi.js';
 import { registerPluginUiRoutes } from './pluginUi.js';
 
 /** Register every route family on the app. Order matters: the auth/tenancy guards are global
@@ -40,4 +40,7 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerPluginApiRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);
   registerHookRoutes(app, ctx);
+  // ROOT-mounted plugin routes — MUST register last: it is a fallback catch-all, so a core route
+  // registered above always wins over a plugin's root mount by construction.
+  registerRootPluginApiRoutes(app, ctx);
 }

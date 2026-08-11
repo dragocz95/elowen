@@ -60,7 +60,13 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
   };
   app.use('*', async (c, next) => {
     if (c.get('tokenScope') !== 'agent') return next();
-    if (!agentAllowed(c.req.method, c.req.path)) return c.json({ error: 'forbidden' }, 403);
+    if (!agentAllowed(c.req.method, c.req.path)) {
+      // Root-mounted plugin routes (PluginApiRoute.rootMount): pass through ONLY a route that itself
+      // declared access:'agent' — the root dispatcher enforces the same rule again, so this carve-out
+      // (the root twin of the /plugins/:name/api/ one above) never widens the deny-by-default gate.
+      const match = (await d.plugins?.get().catch(() => undefined))?.rootApiRoute(c.req.path, c.req.method);
+      if (!match || match.access !== 'agent') return c.json({ error: 'forbidden' }, 403);
+    }
     // A worker is spawned with a token minted for ITS task, so the allow-listed task verbs are pinned
     // to that task: without this, every agent in a project shares one credential and agent A could
     // close/ask-on/read task B (the project gate above can't see an intra-project crossing). A final

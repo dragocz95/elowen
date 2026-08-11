@@ -256,6 +256,10 @@ export interface PluginHttpResponse {
   headers?: Record<string, string>;
   /** An object body is JSON-serialized with a json content-type; string/bytes pass through. */
   body?: string | Uint8Array | object;
+  /** Server-sent-events stream instead of a buffered body (authenticated plugin API only). The
+   *  dispatcher opens the SSE response and runs this until it returns or the client disconnects
+   *  (`signal` aborts). `send` writes one event frame. Ignored when `body` is also set. */
+  sse?: (send: (data: string, event?: string) => Promise<void>, signal: AbortSignal) => Promise<void>;
 }
 /** An inbound webhook mount a plugin exposes on the daemon at `/hooks/<plugin>/<path>`. The mount is
  *  public at the bearer layer (an external service — a Teams bot callback — carries no Elowen token), so
@@ -296,12 +300,22 @@ export interface PluginApiRequest extends PluginHttpRequest {
  *  the handler and the declared `access` level is enforced by the dispatcher, so the handler starts from
  *  a verified identity instead of re-implementing auth. */
 export interface PluginApiRoute {
-  /** Mount path RELATIVE to `/plugins/<plugin>/api/` — lowercase segments; longest prefix wins. */
+  /** Mount path RELATIVE to `/plugins/<plugin>/api/` (or to `rootMount` when that is set) — lowercase
+   *  segments; longest prefix wins. May be '' ONLY with rootMount (the mount itself). */
   path: string;
   /** Exact HTTP method (GET/POST/…); omitted = any method. */
   method?: string;
   access: PluginApiAccess;
   handler: (req: PluginApiRequest) => Promise<PluginHttpResponse>;
+  /** Mount the route on the daemon's ROOT router at `<rootMount>/<path>` instead of under
+   *  `/plugins/<plugin>/api/` — for a plugin that grandfathers a formerly-core API surface whose paths
+   *  existing clients (web BFF, CLI) already call (e.g. '/missions'). Same auth/access mechanics as the
+   *  namespaced surface. The full mount must be declared in the manifest's provides.apiRoutes (WITH the
+   *  leading slash). A conflict with a core route or another plugin's mount is skipped with a warning —
+   *  core always wins. Trust note: every installable plugin is admin-installed (bundled or via the
+   *  admin-only marketplace), so a root mount does not cross a trust boundary the plugin surface does
+   *  not already cross; there is deliberately no separate trust flag today. */
+  rootMount?: string;
 }
 
 /** One editable prompt template a plugin contributes — the shape of a core catalog entry
