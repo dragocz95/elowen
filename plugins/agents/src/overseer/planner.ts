@@ -1,40 +1,13 @@
-import type { InferenceClient } from '../../../../src/inference/types.js';
-import { extractJson } from './llmParse.js';
-// Phase is part of the CORE event contract (rides the `plan` SSE event) — defined in shared/, only
-// re-exported here so the planner's own callers keep their import path until the extraction moves them.
+/** Planner instruction blocks for the plugin's Pilot flow.
+ *
+ *  The actual goal→phases decomposition (planPrompt/parsePhases/decompose) stayed CORE — /tasks/plan
+ *  is deliberately plugin-less — so this copy keeps only what the plugin's pilotAgent composes into
+ *  its own prompt: the models and parallelism instruction blocks, plus the Phase re-export its
+ *  callers type against. */
+// Phase is part of the CORE event contract (rides the `plan` SSE event) — defined in shared/.
 import type { Phase } from '../../../../src/shared/agentEvents.js';
 
 export type { Phase };
-
-/** Task types a phase may take; anything else is coerced to 'task'. */
-export const VALID_TYPES = new Set(['task', 'feature', 'bug', 'chore']);
-
-/** Sanitize a model-supplied agent name into a tmux-safe single token. Keeps `_` and `-` (both legal
- *  in tmux session names) so multi-word names like "code-reviewer" survive instead of collapsing to
- *  "codereviewer"; strips only `:` (the session-name separator) and whitespace/other characters. */
-function sanitizeAgentName(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const clean = raw.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24);
-  return clean.length > 0 ? clean : undefined;
-}
-
-/** Sanitize a planner-local phase slug (an `id` or a `dependsOn` entry) to `[A-Za-z0-9_-]`. Returns
- *  undefined when nothing legal remains, so blank/garbage ids are simply dropped (the phase then has
- *  no id and persistPlan treats it as dependency-free). */
-function sanitizeSlug(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const clean = raw.trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
-  return clean.length > 0 ? clean : undefined;
-}
-
-/** Per-project context fed to the Pilot — the project's saved "Pilot info" notes. */
-export interface PlanProjectContext { notes?: string }
-
-/** Render the project notes into a planning-context block, or '' when there are none. */
-function projectContextBlock(project?: PlanProjectContext): string {
-  const notes = project?.notes?.trim();
-  return notes ? `Project context (use this when planning):\n${notes}` : '';
-}
 
 /** Render the enabled, described models into a planner instruction block. Only models that are in
  *  `allowedExecs` AND have a non-empty note are listed — the planner can only sensibly pick a model
@@ -61,55 +34,4 @@ export function parallelismBlock(maxSessions: number, isolated: boolean): string
     return `Parallelism: up to ${maxSessions} phases can run AT THE SAME TIME, sharing ONE working tree. Independent phases must therefore touch DISJOINT files/areas — if two phases would edit the same files (or one would rewrite another's), the agents clobber each other, so make one depend on the other instead. Actively look for file-disjoint branches of work and give them no dependency (dependsOn: []) — a good plan here is a DAG several phases WIDE, not one long chain. Make each phase's details state its file/area boundary explicitly so the parallel agents stay in their lanes.`;
   }
   return `Parallelism: phases run ONE AT A TIME (a single shared working copy). Order them so each builds on the previous — a linear chain (each phase lists the previous one in dependsOn) is the expected shape here.`;
-}
-
-/**
- * Build the decomposition prompt: substitute the goal ({{goal}}) and the project's Pilot
- * notes ({{project}}) into the template. If the template has no {{project}} placeholder, the
- * context block is prepended so saved templates still pick up the notes.
- */
-export function planPrompt(goal: string, template: string, project?: PlanProjectContext, models?: string, parallelism?: string): string {
-  // `template` is REQUIRED in the plugin copy (deviation from core): the shipped default lives in the
-  // core prompts dir (defaultPromptTemplate → rawTemplate('planner')), which this compile unit cannot
-  // runtime-import. Callers resolve the default via the host prompt service (rawTemplate) instead.
-  let tpl = template.trim();
-  const ctx = projectContextBlock(project);
-  if (tpl.includes('{{project}}')) tpl = tpl.replaceAll('{{project}}', ctx).trim();
-  else if (ctx) tpl = `${ctx}\n\n${tpl}`;
-  const mdl = models ?? '';
-  if (tpl.includes('{{models}}')) tpl = tpl.replaceAll('{{models}}', mdl);
-  else if (mdl) tpl = `${mdl}\n\n${tpl}`;
-  const par = parallelism ?? '';
-  if (tpl.includes('{{parallelism}}')) tpl = tpl.replaceAll('{{parallelism}}', par);
-  else if (par) tpl = `${par}\n\n${tpl}`;
-  return tpl.includes('{{goal}}') ? tpl.replaceAll('{{goal}}', goal) : `${tpl}\n\nGoal: ${goal}`;
-}
-
-/** Extract and validate the phase array from raw LLM output. Throws on unparseable/empty output. */
-export function parsePhases(text: string): Phase[] {
-  const raw = extractJson(text, '['); // first balanced array; caller wraps in try/catch
-  if (!Array.isArray(raw)) throw new Error('plan output is not an array');
-  const phases = raw
-    .filter((p): p is { title: string; type?: unknown; agent?: unknown; details?: unknown; exec?: unknown; id?: unknown; dependsOn?: unknown } => !!p && typeof (p as { title?: unknown }).title === 'string' && (p as { title: string }).title.trim().length > 0)
-    .map((p) => ({
-      title: p.title.trim(),
-      type: VALID_TYPES.has(String(p.type)) ? String(p.type) : 'task',
-      agent: sanitizeAgentName(p.agent),
-      details: typeof p.details === 'string' && p.details.trim() ? p.details.trim() : undefined,
-      exec: typeof p.exec === 'string' && p.exec.trim() ? p.exec.trim() : undefined,
-      id: sanitizeSlug(p.id),
-      // Only an actual array becomes dependsOn; each entry is slug-sanitized and garbage dropped. A
-      // non-array (or absent) stays undefined → persistPlan reads it as "no declared dependencies".
-      dependsOn: Array.isArray(p.dependsOn)
-        ? p.dependsOn.map(sanitizeSlug).filter((x): x is string => !!x)
-        : undefined,
-    }));
-  if (phases.length === 0) throw new Error('plan output had no valid phases');
-  return phases;
-}
-
-/** Run the LLM decomposition for a goal and return validated phases. */
-export async function decompose(inf: InferenceClient, goal: string, template: string, project?: PlanProjectContext, models?: string, parallelism?: string): Promise<Phase[]> {
-  const { text } = await inf.decide(planPrompt(goal, template, project, models, parallelism));
-  return parsePhases(text);
 }

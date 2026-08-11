@@ -14,7 +14,7 @@ export interface PrInfoReader { prInfo(missionId: string): { prUrl: string | nul
 
 /** The push TRANSPORT seam (mine-4 decision): the PushSender stays in core; the plugin only ever hands
  *  it user ids + a payload. Structural, so the composition root passes the host transport through. */
-export interface PushTransport { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
+interface PushTransport { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
 
 export interface PushDispatcherDeps {
   missions: MissionStore;

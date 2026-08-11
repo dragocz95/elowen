@@ -3,7 +3,7 @@
  *    opencode's recorded `cost`). This is the truth.
  *  - `calculated`: we derived it from a price sheet (no provider figure available). An estimate.
  *  - `unavailable`: no cost figure at all (e.g. claude/codex transcripts don't record one). */
-export type CostSource = 'provider_reported' | 'calculated' | 'unavailable';
+type CostSource = 'provider_reported' | 'calculated' | 'unavailable';
 
 /** Normalized token usage for one agent run. Portable across executors: figures come either from a
  *  coding CLI's on-disk transcript (opencode / claude / codex) or from the embedded brain's live PI

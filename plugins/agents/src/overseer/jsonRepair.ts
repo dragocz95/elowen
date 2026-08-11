@@ -97,7 +97,7 @@ function outsideStrings(s: string, fn: (chunk: string) => string): string {
 }
 
 /** Apply the textual fixes a model's near-JSON commonly needs. */
-export function repairJson(snippet: string): string {
+function repairJson(snippet: string): string {
   // Smart/curly quotes → straight quotes (models love these in prose-adjacent JSON).
   let s = snippet.replace(/[“”„‟″]/g, '"').replace(/[‘’‚‛′]/g, "'");
   s = singleToDouble(s);   // unify on double quotes BEFORE any string-aware structural pass

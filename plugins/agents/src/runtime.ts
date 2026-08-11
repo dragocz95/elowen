@@ -218,7 +218,7 @@ function runLivenessSweep(d: LivenessDeps): void {
 
 /** One interval loop the host should drive (ctx.registerInterval in B2). `ms` values are carried over
  *  from bootstrap's startLoops verbatim. */
-export interface AgentsInterval { name: string; ms: number; fn: () => void }
+interface AgentsInterval { name: string; ms: number; fn: () => void }
 
 /** The interval periods, ms-for-ms what bootstrap's startLoops scheduled for this subsystem. Exported
  *  as a standalone map so the plugin entry can register the host timers WITHOUT constructing the
@@ -233,7 +233,6 @@ export const AGENTS_INTERVAL_MS = {
   'decision-sweep': DECISION_SWEEP_MS,
   'pr-feedback': 60_000,
 } as const;
-export type AgentsIntervalName = keyof typeof AGENTS_INTERVAL_MS;
 
 /** Assemble the whole tmux-agent subsystem from host deps. Pure construction + bus subscriptions —
  *  no loop is started here (the deriver's 5s loop starts via `deriver.start()`, the intervals are

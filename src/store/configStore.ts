@@ -984,9 +984,10 @@ export class ConfigStore {
         enabled: sanitizeStringList(patch.plugins?.enabled ?? cur.plugins.enabled),
         removed: sanitizeStringList(patch.plugins?.removed ?? cur.plugins.removed),
         // Merge per-plugin config so a patch touching one plugin never wipes another's slice. Then
-        // mirror any autopilot patch of the agents-plugin-owned keys into plugins.config.agents:
-        // TRANSITIONAL until F3 moves the Settings web off the autopilot fields — it keeps the copy
-        // the plugin reads in sync with edits arriving through the unchanged autopilot surface.
+        // mirror any autopilot patch of the agents-plugin-owned keys into plugins.config.agents.
+        // TRANSITIONAL: the Settings web edits the plugin slice directly since F3, but older clients
+        // (CLI, scripts) still PUT the autopilot keys — keep mirroring until that surface has settled
+        // in production, then drop the mirror together with the schema.sql agents blocks.
         config: mirrorAgentsPluginConfig(
           patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
           patch.autopilot),

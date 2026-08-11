@@ -111,9 +111,8 @@ export function register(ctx: PluginContext): void {
     ctx.registerInterval(name, () => { rt().intervals.find((i) => i.name === name)?.fn(); }, ms);
   }
 
-  // Tenancy for the subsystem's own events. Coexists with the core resolvers while the bootstrap
-  // wiring's taskForSession survives in core (plugin resolvers run only when core yields null);
-  // becomes the sole source once the core copies are deleted (B2b part 2).
+  // Tenancy for the subsystem's own events — the SOLE source since the core copies were deleted:
+  // with the plugin disabled, signal/plan events resolve null and record admin-only.
   // `signal` needs only the task store (an agent session is its `agent:<name>` label), so it must not
   // force runtime construction; `plan` jobs live in the runtime's PlanJobStore — no runtime, no jobs.
   ctx.registerEventProjectResolver((e: ElowenEvent) => {

@@ -3,12 +3,16 @@
   "workspaces": {
     ".": {
       "entry": [
-        "plugins/**/index.mjs"
+        "plugins/**/index.mjs",
+        "plugins/agents/src/index.ts",
+        "plugins/*/web-src/index.tsx"
       ],
       "project": [
         "src/**/*.ts",
         "tests/**/*.ts",
-        "plugins/**/*.mjs"
+        "plugins/**/*.mjs",
+        "plugins/**/src/**/*.ts",
+        "plugins/**/web-src/**/*.{ts,tsx}"
       ]
     },
     "web": {
@@ -55,9 +59,17 @@
     ],
     "web/lib/types.ts": [
       "types"
+    ],
+    "plugins/agents/src/lib/execs.ts": [
+      "exports"
     ]
   },
   "ignore": [
     "web/public/sw.js"
+  ],
+  "ignoreDependencies": [
+    "@types/react",
+    "@types/react-dom",
+    "lucide-react"
   ]
 }

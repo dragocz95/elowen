@@ -9,7 +9,7 @@
  *  agent-facing operational instructions, not user chrome. */
 
 /** The instruction block appended to a worker prompt when TDD mission mode is on. */
-export const TDD_DIRECTIVE = `## Test-Driven Development (required)
+const TDD_DIRECTIVE = `## Test-Driven Development (required)
 You MUST follow strict TDD for every behavioral change:
 1. Write a test that captures the desired behavior and confirm it FAILS for the right reason before writing any implementation.
 2. Implement the minimum code to make that test pass.

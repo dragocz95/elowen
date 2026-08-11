@@ -2,7 +2,7 @@ import { tddDirective } from '../lib/tdd.js';
 import { resumeProviderFor, type PendingResume } from './resume/index.js';
 import { codexMcpArgs } from '../lib/mcpArgs.js';
 
-export type PromptVars = Record<string, string>;
+type PromptVars = Record<string, string>;
 
 /** How worker preamble templates are rendered. Inside the plugin the renderer is REQUIRED (the host
  *  prompt service, user-override-aware) — there is no file-based `render` fallback here, because the

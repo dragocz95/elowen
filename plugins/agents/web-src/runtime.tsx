@@ -10,17 +10,17 @@ import type { ComponentType, ReactNode, MouseEvent } from 'react';
 // ---- data shapes (structural mirrors of the daemon's wire types) --------------------------------
 
 export interface SessionInfo { name: string; role: string; agent: string; missionId?: string; userId?: number; projectId?: number }
-export interface Task {
+interface Task {
   id: string; project_id: number; title: string; type: string; status: string; parent_id: string | null;
   labels: string[]; outcome?: string | null; result_summary?: string | null;
 }
-export type DerivedSignal =
+type DerivedSignal =
   | { type: 'needs_input'; question: string; options?: { id: string; label: string }[] }
   | { type: 'working' | 'idle' | 'done'; question?: undefined; options?: undefined };
 export interface Escalation { taskId: string; epicId?: string; title: string; rationale: string; ts: string; blocked: { id: string; title: string }[] }
 export interface PendingAsk { taskId: string; askId: string; title?: string; epicId?: string; question: string; since?: number }
 
-export interface ContextMenuItem { label: string; icon?: unknown; onClick?: () => void; danger?: boolean }
+interface ContextMenuItem { label: string; icon?: unknown; onClick?: () => void; danger?: boolean }
 export interface ContextMenuState { x: number; y: number; items: (ContextMenuItem | 'divider')[] }
 
 // ---- hook shapes --------------------------------------------------------------------------------

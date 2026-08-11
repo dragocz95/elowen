@@ -10,10 +10,3 @@ export function parseDbTs(ts?: string | null): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-/** Normalise a SQLite/ISO DB timestamp to a canonical ISO-8601 (UTC) string. Routes through
- *  {@link parseDbTs} so a value already carrying a zone never gets a second 'Z' (Invalid Date). An
- *  unparseable input yields the epoch ISO rather than throwing — SQLite always emits a valid space form,
- *  so callers converting stored rows for display never hit that. */
-export function dbTsToIso(ts: string): string {
-  return new Date(parseDbTs(ts)).toISOString();
-}
