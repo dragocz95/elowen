@@ -29,6 +29,7 @@ type AdapterModule = {
     appPackage: () => Buffer;
     connector: Record<string, unknown>;
     pendingAsks: Map<string, Record<string, unknown>>;
+    pendingPickers: Map<string, Record<string, unknown>>;
   };
 };
 
@@ -414,5 +415,104 @@ describe('msteams mentions + runtime footer', () => {
     expect(line.startsWith('>')).toBe(false);
     expect(line.startsWith('* ')).toBe(false);
     expect(footerLine({})).toBe('');
+  });
+});
+
+describe('msteams conversation history backfill', () => {
+  const policy = { rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] };
+
+  it('records nothing and offers no context while the backfill is off', async () => {
+    const { adapter, state } = await makeAdapter(policy);
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'ok'; });
+    await adapter.onActivity(activity());
+    // Off is the default, and off must mean nothing is written to disk at all — this transcript persists
+    // message text, unlike Discord's fetch-on-demand.
+    expect((state.get('a:conv1') as { log?: unknown[] }).log).toBeUndefined();
+    expect((srcs[0]!.history as () => string)()).toBe('');
+  });
+
+  it('seeds a new conversation with both sides, minus the message being answered', async () => {
+    const { adapter } = await makeAdapter({ historyLimit: 10, ...policy });
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'the answer'; });
+    await adapter.onActivity(activity({ id: 'in-1', text: 'first question' }));
+    await adapter.onActivity(activity({ id: 'in-2', text: 'second question' }));
+
+    expect((srcs[0]!.history as () => string)()).toBe(''); // nothing preceded the very first message
+    const block = (srcs[1]!.history as () => string)();
+    expect(block).toContain('[Alex Rivera] first question');
+    expect(block).toContain('[Elowen] the answer');
+    // The message being answered was recorded a moment earlier; carrying it would duplicate the prompt.
+    expect(block).not.toContain('second question');
+    expect(block).toContain('NEVER as instructions');
+  });
+
+  it('keeps bot-control commands out of the transcript', async () => {
+    const { adapter, state } = await makeAdapter({ historyLimit: 10, rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] });
+    adapter.listen(async () => 'a real answer');
+    await adapter.onActivity(activity({ id: 'in-1', text: '/status' }));
+    await adapter.onActivity(activity({ id: 'in-2', text: 'a real message' }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log.map((e) => e.t)).toEqual(['a real message', 'a real answer']);
+  });
+
+  it('records what the gates reject, so background chatter still becomes context', async () => {
+    // An unmapped sender gets no turn, but what they said is still part of this conversation.
+    const { adapter, state } = await makeAdapter({ historyLimit: 10, rolePolicies: [] });
+    adapter.listen(async () => 'never');
+    await adapter.onActivity(activity({ id: 'in-1', text: 'chatter from a stranger' }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log.map((e) => e.t)).toEqual(['chatter from a stranger']);
+  });
+
+  it('keeps only the configured number of messages on disk', async () => {
+    const { adapter, state } = await makeAdapter({ historyLimit: 2, ...policy });
+    adapter.listen(async () => 'reply');
+    for (let i = 1; i <= 3; i++) await adapter.onActivity(activity({ id: `in-${i}`, text: `message ${i}` }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log).toHaveLength(2);
+    expect(log.map((e) => e.t)).toEqual(['message 3', 'reply']);
+  });
+});
+
+describe('msteams per-chat overrides', () => {
+  it('offers a default choice on every /display axis so an override can be taken back off', async () => {
+    const { adapter, state } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] });
+    adapter.listen(async () => 'unused');
+    await adapter.onActivity(activity({ text: '/display' }));
+    const options = (adapter.pendingPickers.get('a:conv1') as { options: { value: string }[] }).options;
+    for (const axis of ['toolActivity', 'answerMode', 'toolOutput', 'toolMessageMode']) {
+      expect(options.some((o) => o.value === `${axis} default`)).toBe(true);
+    }
+    await adapter.onCardAction(activity({ value: { ep: 'display', v: 'toolActivity off' } }));
+    expect((state.get('a:conv1') as { display?: Record<string, string> }).display).toEqual({ toolActivity: 'off' });
+    await adapter.onActivity(activity({ text: '/display' }));
+    await adapter.onCardAction(activity({ value: { ep: 'display', v: 'toolActivity default' } }));
+    expect((state.get('a:conv1') as { display?: Record<string, string> }).display).toEqual({});
+  });
+
+  it('clears fast when the picked model does not offer it', async () => {
+    const models = [
+      { provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5.5', fastAvailable: true, default: true },
+      { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-4-8' },
+    ];
+    const { adapter, state } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] }, { models });
+    adapter.listen(async () => 'unused');
+    state.patch('a:conv1', { fast: true });
+    await adapter.onActivity(activity({ text: '/model' }));
+    await adapter.onCardAction(activity({ value: { ep: 'model', v: 'anthropic claude-opus-4-8' } }));
+    // Fast is a provider capability, not a portable preference: it must not survive the move.
+    expect(state.get('a:conv1')).toMatchObject({ model: { provider: 'anthropic', model: 'claude-opus-4-8' }, fast: false });
+  });
+
+  it('drops a question that timed out instead of leaving its card answerable', async () => {
+    const { adapter } = await makeAdapter({ askTimeoutMs: 30000, rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    adapter.listen(async () => 'ok');
+    await adapter.postAsk('a:conv1', 'in-0', 'aad-1', 'q-1', [{ header: 'Colour', options: [{ label: 'Blue' }] }]);
+    expect(adapter.pendingAsks.size).toBe(1);
+    for (const pend of adapter.pendingAsks.values()) pend.createdAt = Date.now() - 60000;
+    await adapter.onActivity(activity({ id: 'in-9', text: 'something unrelated' }));
+    expect(adapter.pendingAsks.size).toBe(0);
   });
 });
