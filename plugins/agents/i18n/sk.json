@@ -25,5 +25,14 @@
       "label": "Overovací príkaz PR",
       "hint": "Príkaz, ktorý musí vo worktree skončiť s kódom 0, kým sa PR otvorí; prázdne bránu vypne."
     }
+  },
+  "web": {
+    "nav": {
+      "sessions": "Sesie",
+      "escalations": "Eskalacie"
+    },
+    "settings": {
+      "agents": "Agenti a autopilot"
+    }
   }
 }

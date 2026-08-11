@@ -25,5 +25,14 @@
       "label": "Ověřovací příkaz PR",
       "hint": "Příkaz, který musí ve worktree skončit s kódem 0, než se PR otevře; prázdné bránu vypne."
     }
+  },
+  "web": {
+    "nav": {
+      "sessions": "Sese",
+      "escalations": "Eskalace"
+    },
+    "settings": {
+      "agents": "Agenti a autopilot"
+    }
   }
 }

@@ -146,6 +146,12 @@ function readTree(dir) {
   }
 }
 for (const dir of sourceRoots) readTree(dir);
+// Plugin web bundles (plugins/*/web-src) consume the core dictionaries through the runtime's
+// useTranslation — their key references are as live as the app's own, so scan them too.
+for (const name of readdirSync(join(root, 'plugins'))) {
+  const webSrc = join(root, 'plugins', name, 'web-src');
+  if (existsSync(webSrc) && statSync(webSrc).isDirectory()) readTree(webSrc);
+}
 const sourceIdentifiers = new Set(sourceBlob.match(/[A-Za-z0-9_]+/g));
 
 for (const leaf of collectLeaves(dictionaries.en)) {

@@ -84,5 +84,28 @@
       "default": "",
       "hint": "Command that must exit 0 in the worktree before any PR opens; empty disables the gate."
     }
-  ]
+  ],
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "nav": [
+      {
+        "label": "Sessions",
+        "icon": "SquareTerminal",
+        "route": "sessions"
+      },
+      {
+        "label": "Escalations",
+        "icon": "ShieldAlert",
+        "route": "escalations"
+      }
+    ],
+    "settings": [
+      {
+        "id": "agents",
+        "label": "Agents & Autopilot",
+        "icon": "Bot"
+      }
+    ]
+  }
 }
