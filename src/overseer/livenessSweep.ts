@@ -2,24 +2,6 @@ import { classifySession } from './sessionInfo.js';
 import type { DecisionQueue, DecisionResult } from './decisionQueue.js';
 import type { PaneActivityTracker } from './paneActivity.js';
 
-/** A worker's pane unchanged this long → it may be wedged; wake the overseer to look. */
-export const WORKER_IDLE_MS = 300_000; // 5 min
-/** An overseer's OWN pane unchanged this long while it holds pending decisions → it's stuck, not just
- *  thinking; escalate them. Higher than a worker's bar: a premature overseer escalation hands a
- *  half-decided thing to a human (the very bug this avoids), and overseer reasoning is legitimately longer. */
-export const OVERSEER_IDLE_MS = 600_000; // 10 min
-/** Don't escalate a dead overseer's pending decisions until it's been gone this long — gives the overseer
- *  watchdog (re-parks a missing overseer every 60 s) a chance to recover first. */
-export const DECISION_GRACE_MS = 90_000;
-/** Absolute sanity backstop: escalate a decision that's sat this long no matter what — the one hole the
- *  pane-activity signal can't see is a TUI that keeps animating while its poll loop is dead. Deliberately
- *  very high so it never fires on a genuinely-thinking overseer; the pane-idle rule above is the real one. */
-export const DECISION_HARD_MS = 1_800_000; // 30 min
-/** How often the sweep runs from the daemon loop. */
-export const DECISION_SWEEP_MS = 30_000;
-/** A still-working worker gets a routine PROGRESS check this often — the overseer glances and may steer it,
- *  but never escalates a healthy agent. The single cadence knob (gated by `overseerExec`; 0 disables). */
-export const PROGRESS_REVIEW_MS = 900_000; // 15 min
 /** Tail of pane lines captured for the change-detection hash (matches the deriver's window). */
 const PANE_TAIL = 60;
 
