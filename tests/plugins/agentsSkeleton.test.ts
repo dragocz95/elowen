@@ -20,7 +20,7 @@ describe('agents plugin skeleton', () => {
   });
 
   it('declares exactly the extraction capability envelope', () => {
-    expect(manifest.capabilities?.reads?.sort()).toEqual(['brain-worker', 'config', 'db', 'elowen-cli', 'git', 'inference', 'prompts', 'stores', 'tmux']);
+    expect(manifest.capabilities?.reads?.sort()).toEqual(['brain-worker', 'config', 'db', 'elowen-cli', 'git', 'inference', 'prompts', 'push', 'stores', 'tmux']);
     expect(manifest.capabilities?.mutates?.sort()).toEqual(['events', 'prompt']);
   });
 });

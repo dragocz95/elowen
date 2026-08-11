@@ -5,7 +5,7 @@
   "description": "Autonomous CLI agents and missions: spawns coding agents in tmux (or on embedded Elowen AI models), watches their progress, and runs the autopilot that plans, reviews and steers multi-task missions. Extracted from the Elowen core onto the plugin platform; disabling it turns off agent spawning and missions while chat, tasks and projects keep working.",
   "entry": "dist/index.js",
   "capabilities": {
-    "reads": ["db", "tmux", "brain-worker", "elowen-cli", "stores", "prompts", "config", "inference", "git"],
+    "reads": ["db", "tmux", "brain-worker", "elowen-cli", "stores", "prompts", "config", "inference", "git", "push"],
     "mutates": ["prompt", "events"]
   }
 }
