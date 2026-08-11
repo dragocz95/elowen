@@ -2052,6 +2052,13 @@ export const sk = {
     error: 'chyba',
     unknown: 'pracuje',
   },
+  pluginUi: {
+    unavailable: 'Tento plugin nie je zapnutý, alebo nemá žiadne rozhranie.',
+    incompatible: 'Tento plugin vyžaduje novšiu verziu aplikácie. Na použitie jeho rozhrania aktualizujte server.',
+    loadFailed: 'Rozhranie pluginu sa nepodarilo načítať. Skontrolujte záznamy pluginu v Nastavenia → Pluginy.',
+    pageMissing: 'Plugin nemá na tejto adrese žiadnu stránku.',
+    crashed: 'V rozhraní pluginu nastala chyba. Zvyšok aplikácie nie je ovplyvnený.',
+  },
   help: {
     taskAutoModel: "Najvhodnejší model ku každej fáze zvolí autopilot sám.",
     taskDependsOn: "Táto úloha počká, kým nie sú vybrané úlohy uzavreté.",

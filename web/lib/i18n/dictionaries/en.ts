@@ -2052,6 +2052,13 @@ export const en = {
     error: 'error',
     unknown: 'working',
   },
+  pluginUi: {
+    unavailable: 'This plugin is not enabled, or it has no interface.',
+    incompatible: 'This plugin needs a newer version of the application. Update the server to use its interface.',
+    loadFailed: 'The plugin interface failed to load. Check the plugin logs in Settings → Plugins.',
+    pageMissing: 'The plugin has no page at this address.',
+    crashed: 'The plugin interface encountered an error. The rest of the application is unaffected.',
+  },
   help: {
     taskAutoModel: "Autopilot picks the best model per phase.",
     taskDependsOn: "This task waits until the selected tasks are closed.",

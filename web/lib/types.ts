@@ -275,6 +275,16 @@ export interface TerminalSettings {
 }
 
 /** One installed daemon plugin as listed by GET /plugins (admin). */
+/** One row of GET /plugins/ui — an enabled plugin's browser UI: menu metadata (renderable before any
+ *  bundle JS runs) plus the immutable content-hash bundle URL. */
+export interface PluginUiListing {
+  name: string;
+  url: string;
+  apiVersion: number;
+  nav: { label: string; icon?: string; route?: string }[];
+  settings: { id: string; label: string; icon?: string }[];
+}
+
 export interface PluginInfo {
   name: string;
   version: string;

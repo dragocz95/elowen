@@ -36,6 +36,7 @@ export const QUERY_KEYS = {
   brainCommands: ['brain-commands'] as const,
   brainRateLimits: ['brain-rate-limits'] as const,
   brainContextUsage: ['brain-context-usage'] as const,
+  pluginUi: ['plugin-ui'] as const,
 };
 
 /** The published slash-command menu for the web surface — the single source of truth is the daemon's
@@ -253,6 +254,12 @@ export const useProjectsCommits = (projectIds: number[], hours: number) =>
 
 export const useMe = () =>
   useQuery({ queryKey: QUERY_KEYS.me, queryFn: elowenClient.me, staleTime: 5 * 60 * 1000 });
+
+/** Enabled plugins with a browser UI — drives the shell nav + the /p/[plugin] host page. Keyed per
+ *  locale (labels are localized server-side); held in the query cache so a plugin toggle can invalidate
+ *  it and the menu updates without a reload. */
+export const usePluginUi = (locale: string) =>
+  useQuery({ queryKey: [...QUERY_KEYS.pluginUi, locale], queryFn: () => elowenClient.pluginUi(locale), staleTime: 60_000 });
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */
