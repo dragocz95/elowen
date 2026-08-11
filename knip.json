@@ -41,6 +41,9 @@
     "src/plugins/api.ts": [
       "types"
     ],
+    "src/shared/agentEvents.ts": [
+      "types"
+    ],
     "src/brain/transcript.ts": [
       "types"
     ],

@@ -1,5 +1,5 @@
 import type { PluginDbHandle } from '../../../../src/plugins/api.js';
-import type { MissionState } from '../../../../src/store/types.js';
+import type { MissionState } from '../../../../src/shared/agentEvents.js';
 
 export type { MissionState };
 
