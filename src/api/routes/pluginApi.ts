@@ -111,12 +111,18 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
   const corePatterns = app.routes
     .filter((r) => !r.path.includes('*'))
     .map((r) => ({ method: r.method, segs: r.path.split('/').filter(Boolean) }));
-  const coversMount = (mount: string): boolean => {
+  // A mount is dropped (per METHOD) only when a core pattern of that method FULLY covers it — every
+  // core segment is a param or equals the mount's literal segment, so every request the mount's root
+  // could serve is core's. A PARTIAL overlap (the mount has a param where core has a literal, e.g.
+  // plugin PATCH '/plugins/skills/:name' beside core PATCH '/plugins/:name/config') is not a
+  // conflict: core routes matched before this fall-through dispatcher, so core naturally wins the
+  // literal paths and the mount serves the rest. Method-blind or either-side-param matching here
+  // used to drop such mounts wholesale, 404ing paths nobody else served.
+  const coveringMethods = (mount: string): Set<string> => {
     const segs = mount.split('/').filter(Boolean);
-    // Params wildcard on EITHER side: a pattern mount ('/tasks/:id/ask') conflicts with a core route
-    // only when every segment pair is compatible (equal literals, or a param on either side).
-    return corePatterns.some((p) =>
-      p.segs.length === segs.length && p.segs.every((seg, i) => seg.startsWith(':') || segs[i]!.startsWith(':') || seg === segs[i]));
+    return new Set(corePatterns
+      .filter((p) => p.segs.length === segs.length && p.segs.every((seg, i) => seg.startsWith(':') || seg === segs[i]))
+      .map((p) => p.method));
   };
   // Conflict validation runs once per registry GENERATION (object identity): a reload re-validates,
   // a steady state costs one map lookup per request.
@@ -128,14 +134,24 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
   // can tell "subsystem off" from "no such endpoint". Recomputed per generation: enabling/disabling
   // a plugin reloads the registry, so the disk scan runs once per toggle, not per request.
   let declaredInactive: { plugin: string; segs: string[] }[] = [];
-  const validate = (registry: { rootApiRoutes: Map<string, { plugin: string }> }) => {
+  const validate = (registry: { rootApiRoutes: Map<string, { plugin: string; routes: { method?: string }[] }> }) => {
     if (registry === validatedFor) return;
     validatedFor = registry;
     skipped.clear();
+    // The skip key is `<METHOD> <mount>`: the same mount can be fine for one method and fully
+    // core-shadowed for another. A method-less plugin route is shadowed only on the METHODS core
+    // actually covers (an 'ALL' core route covers everything → the '*' key), so it keeps serving the
+    // methods core never registered there.
     for (const [mount, entry] of registry.rootApiRoutes) {
-      if (coversMount(mount)) {
-        skipped.add(mount);
-        log.warn(`root api mount '${mount}' (plugin ${entry.plugin}) skipped: a core route owns this path — core wins`);
+      const covered = coveringMethods(mount);
+      for (const route of entry.routes) {
+        const methods = route.method !== undefined
+          ? (covered.has(route.method) || covered.has('ALL') ? [route.method] : [])
+          : [...covered].map((m) => (m === 'ALL' ? '*' : m));
+        for (const m of methods) {
+          skipped.add(`${m} ${mount}`);
+          log.warn(`root api mount '${m === '*' ? 'ANY' : m} ${mount}' (plugin ${entry.plugin}) skipped: a core route owns this path — core wins`);
+        }
       }
     }
     declaredInactive = discoverPlugins(d.pluginDirs ?? [])
@@ -160,7 +176,7 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
     if (!registry) return next();
     validate(registry);
     const match = registry.rootApiRoute(c.req.path, c.req.method);
-    if (!match || skipped.has(match.mount)) {
+    if (!match || skipped.has(`${c.req.method} ${match.mount}`) || skipped.has(`* ${match.mount}`)) {
       // No live handler — but if a DISCOVERED plugin declares this mount, the subsystem exists and is
       // merely off: answer an explicit 503 so callers (CLI, spawned agents, MCP tools) get a reason
       // instead of a bare 404. An undeclared path still falls through to Hono's notFound.

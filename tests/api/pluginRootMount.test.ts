@@ -20,7 +20,7 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'rooty', version: '1.0.0', apiVersion: '1', description: 'root mount demo', entry: 'index.mjs',
-    provides: { apiRoutes: ['/rooty', '/rooty/agent-poll', '/rooty/admin-knob', '/rooty/feed', '/tasks', 'ns-ping'] },
+    provides: { apiRoutes: ['/rooty', '/rooty/agent-poll', '/rooty/admin-knob', '/rooty/feed', '/tasks', '/plugins/rooty/:x', 'ns-ping'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
@@ -31,6 +31,11 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
       ctx.registerApiRoute({ rootMount: '/rooty/feed', path: '', access: 'user', handler: async () => ({ sse: async (send) => { await send('one', 'tick'); await send('two', 'tick'); } }) });
       // Collides with the core '/tasks' family — the dispatcher must skip it with a warning.
       ctx.registerApiRoute({ rootMount: '/tasks', path: '', access: 'user', handler: async () => ({ body: { hijacked: true } }) });
+      // Same mount, but a METHOD core does not serve on /tasks — the skip is per method, so this lives.
+      ctx.registerApiRoute({ rootMount: '/tasks', path: '', method: 'PUT', access: 'user', handler: async () => ({ body: { methodScoped: true } }) });
+      // A PATTERN mount partially overlapped by core literals (GET /plugins/:name/icon etc.) — core
+      // wins those literal paths by matching first; the mount still serves everything else.
+      ctx.registerApiRoute({ rootMount: '/plugins/rooty/:x', path: '', method: 'GET', access: 'user', handler: async (req) => ({ body: { param: req.params.x } }) });
       // Root mount not declared in provides.apiRoutes — refused at register time.
       ctx.registerApiRoute({ rootMount: '/sneaky', path: '', access: 'user', handler: async () => ({ body: {} }) });
       // Namespaced route keeps working beside the root mounts.
@@ -87,6 +92,24 @@ describe('root-mounted plugin API routes', () => {
     const body = await res.json() as unknown[];
     expect(Array.isArray(body)).toBe(true); // the core task list answered, not the hijacker
     expect(warnings.some((w) => w.includes("registerApiRoute('/sneaky') refused"))).toBe(true); // undeclared mount refused
+  });
+
+  it('the core-conflict skip is per METHOD, and a partial pattern overlap is not a conflict', async () => {
+    const { provider } = rootPluginProvider();
+    const { app, token } = await makeTestApp({ extra: { plugins: provider } });
+    // GET /tasks is fully core-owned (skipped above); PUT /tasks is a method core never serves there,
+    // so the plugin's method-scoped route answers instead of being dropped alongside the GET.
+    const put = await app.request('/tasks', { method: 'PUT', ...auth(token) });
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ methodScoped: true });
+    // The pattern mount '/plugins/rooty/:x' overlaps core's '/plugins/:name/icon' only on the literal
+    // 'icon' path. It must NOT be dropped: core answers 'icon' (it matched first), the plugin the rest.
+    const other = await app.request('/plugins/rooty/whatever', auth(token));
+    expect(other.status).toBe(200);
+    expect(await other.json()).toEqual({ param: 'whatever' });
+    const icon = await app.request('/plugins/rooty/icon', auth(token));
+    expect(icon.status).toBe(404); // the CORE icon route answered (no plugin dirs wired here)
+    expect(await icon.json()).toEqual({ error: 'unknown plugin' });
   });
 
   it('a plugin reload swaps handlers without stacking a second registration (single response)', async () => {
