@@ -9,8 +9,11 @@ import { EffectsProvider } from '../../../lib/useEffects';
 
 const NOW = new Date('2026-06-30T12:00:00Z').getTime();
 
-function server(opts: { asks?: unknown[]; jobs?: unknown[] } = {}) {
+const AGENTS_UI = [{ name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: null }];
+
+function server(opts: { asks?: unknown[]; jobs?: unknown[]; pluginUi?: unknown[] } = {}) {
   return setupServer(
+    http.get('*/api/plugins/ui', () => HttpResponse.json(opts.pluginUi ?? AGENTS_UI)),
     http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })),
     http.get('*/api/tasks', () => HttpResponse.json([])),
     http.get('*/api/tasks/deps', () => HttpResponse.json([])),
@@ -64,6 +67,20 @@ describe('HeroCosmos', () => {
     const nav = screen.getByRole('navigation', { name: 'Attention' });
     const decisions = await within(nav).findByRole('link', { name: /Decisions waiting 2/ });
     expect(decisions.className).toContain('hero-cosmos__pod--alert');
+  });
+
+  it('hides the decisions + agents pods when the agents plugin contributes no UI', async () => {
+    srv.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    renderCosmos();
+
+    const nav = screen.getByRole('navigation', { name: 'Attention' });
+    // The remaining pods still render — the cosmos never links into the missing plugin's pages.
+    expect(await within(nav).findByText('Next run')).toBeTruthy();
+    expect(within(nav).getByText('This month')).toBeTruthy();
+    expect(within(nav).queryByText('Decisions waiting')).toBeNull();
+    expect(within(nav).queryByText('Agents active')).toBeNull();
+    const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect(hrefs).toEqual(['/settings?section=cron', '/stats']);
   });
 
   it('reports the quiet state without alerts or scheduled jobs', async () => {

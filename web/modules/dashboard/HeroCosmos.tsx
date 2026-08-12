@@ -9,7 +9,7 @@ import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import {
-  usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe,
+  usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, usePluginUi,
 } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 import { ElowenPresence } from './ElowenPresence';
@@ -35,6 +35,13 @@ const ANGLES_DEG: Record<PodId, number> = {
   cron: 128,
 };
 
+/** With the agents plugin off, only cron + cost remain; their normal bottom corners would leave the
+ *  field bottom-heavy, so the pair moves to a balanced diagonal instead. */
+const REDUCED_ANGLES_DEG: Partial<Record<PodId, number>> = {
+  cron: -128,
+  cost: 52,
+};
+
 const POD_W = 184; // px mirror of the 11.5rem .hero-cosmos__pod width
 
 interface HeroPod {
@@ -57,6 +64,14 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const svgRef = useRef<SVGSVGElement>(null);
   const podsRef = useRef<HTMLElement>(null);
   const alertRef = useRef(false);
+
+  // The decisions/agents pods link into the agents plugin's pages and their counts come from its API
+  // surface, so they only render when the plugin actually contributes a UI — the same /plugins/ui
+  // source the sidebar nav reads. Until the listing loads they stay hidden (undefined → absent), so a
+  // plugin-less instance never flashes two dead cards. With the plugin off the count queries 404 once
+  // and stop (4xx is never retried — see the QueryClient defaults in app/providers.tsx).
+  const pluginUi = usePluginUi(locale);
+  const agentsUi = (pluginUi.data ?? []).some((p) => p.name === 'agents');
 
   const asks = usePendingAsks();
   const escalations = useEscalations();
@@ -91,23 +106,25 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const todayLabel = today.cost != null ? formatCost(today.cost) : '—';
 
   const pods: HeroPod[] = [
-    {
-      id: 'decisions',
-      icon: ShieldQuestion,
-      label: t.dashboard.signalDecisionsWaiting,
-      value: String(decisions),
-      detail: decisions > 0 ? t.dashboard.decisionsUnit : t.dashboard.allClear,
-      href: '/p/agents/escalations',
-      alert: decisions > 0,
-    },
-    {
-      id: 'agents',
-      icon: Radio,
-      label: t.dashboard.signalAgentsActive,
-      value: String(agents),
-      detail: agents > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet,
-      href: '/p/agents/sessions',
-    },
+    ...(agentsUi ? [
+      {
+        id: 'decisions' as const,
+        icon: ShieldQuestion,
+        label: t.dashboard.signalDecisionsWaiting,
+        value: String(decisions),
+        detail: decisions > 0 ? t.dashboard.decisionsUnit : t.dashboard.allClear,
+        href: '/p/agents/escalations',
+        alert: decisions > 0,
+      },
+      {
+        id: 'agents' as const,
+        icon: Radio,
+        label: t.dashboard.signalAgentsActive,
+        value: String(agents),
+        detail: agents > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet,
+        href: '/p/agents/sessions',
+      },
+    ] : []),
     {
       id: 'cron',
       icon: AlarmClock,
@@ -153,9 +170,10 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       const cy = h / 2;
       const rx = Math.min(w / 2 - POD_W / 2 - 8, w * 0.38);
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      const angles = podEls.length < 4 ? { ...ANGLES_DEG, ...REDUCED_ANGLES_DEG } : ANGLES_DEG;
       for (const pod of podEls) {
         const id = pod.dataset.pod as PodId;
-        const angle = (ANGLES_DEG[id] * Math.PI) / 180;
+        const angle = (angles[id] * Math.PI) / 180;
         const ry = Math.min(h / 2 - pod.offsetHeight / 2 - 8, h * 0.4);
         const x = cx + rx * Math.cos(angle);
         const y = cy + ry * Math.sin(angle);
@@ -191,7 +209,10 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       podsLayer.removeEventListener('pointerover', onOver);
       podsLayer.removeEventListener('pointerleave', onOut);
     };
-  }, []);
+    // Re-run when the pod SET changes (the agents pair appears once /plugins/ui confirms the plugin):
+    // the ResizeObserver only fires on size changes, so a DOM-only pod addition would otherwise keep
+    // stale orbit positions.
+  }, [agentsUi]);
 
   // The waiting state re-tones the decisions filament amber to match the presence aura. The layout
   // pass re-applies it via alertRef because a redraw recreates the paths.
