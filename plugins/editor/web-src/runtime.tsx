@@ -33,6 +33,10 @@ interface EditorRuntime {
     useCopyProjectEntry(): MutationResult<{ id: number; from: string; to: string }>;
     useDeleteProjectEntry(): MutationResult<{ id: number; path: string }>;
     useMobile(): boolean;
+    /** The persisted project filter the built-in workspaces share, keyed by storage key. */
+    useProjectFilter(storageKey: string): { selectedProject: number | 'all'; setProject(value: number | 'all'): void };
+    /** Height that makes the surface reach the bottom of the window; undefined until measured. */
+    useFillHeight(ref: { current: HTMLElement | null }, minPx?: number): number | undefined;
   };
   utils: {
     baseName(path: string): string;

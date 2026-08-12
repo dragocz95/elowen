@@ -35,7 +35,12 @@
     "strings": {
       "title": "Editor",
       "project": "Project",
-      "empty": "No available project"
+      "empty": "No available project",
+      "workspaceEyebrow": "Code workspace",
+      "workspaceIntro": "Project files, working changes and previews in one focused editing surface.",
+      "workspaceReady": "{project} connected",
+      "noProjects": "No project to edit",
+      "noProjectsDescription": "Create a project first, then open it here in the editor."
     }
   }
 }

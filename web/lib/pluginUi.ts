@@ -35,7 +35,8 @@ import { Segmented } from '../components/ui/Segmented';
 import { EntityList, EntityRow } from '../components/ui/EntityList';
 import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
-import { SpatialWorkspaceLayout, WorkspaceMetric } from '../components/ui/WorkspacePrimitives';
+import { SpatialWorkspaceLayout, WorkspaceMetric, WorkspacePage, CompactWorkspaceHeader } from '../components/ui/WorkspacePrimitives';
+import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
 import { ModelIcon } from '../components/ui/ModelIcon';
 import { OutcomeBadge } from '../components/ui/OutcomeBadge';
@@ -70,6 +71,8 @@ import { copyText } from './clipboard';
 import { defineEditorThemes } from './monaco/oledTheme';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
+import { useProjectFilter } from './useProjectFilter';
+import { useFillHeight } from './useFillHeight';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
@@ -136,6 +139,9 @@ export function ensurePluginUiRuntime(): void {
       Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
+      // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
+      // rebuilt the layout for itself.
+      WorkspacePage, CompactWorkspaceHeader, ProjectFilterPills,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
@@ -164,7 +170,9 @@ export function ensurePluginUiRuntime(): void {
       useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
       useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
       useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
-      useMobile,
+      // Layout/selection behaviour shared with the built-in workspaces: the same persisted project
+      // filter Tasks and Kanban use, and the same window-measured fill height.
+      useMobile, useProjectFilter, useFillHeight,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {

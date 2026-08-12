@@ -7,7 +7,12 @@
     "strings": {
       "title": "Editor",
       "project": "Projekt",
-      "empty": "Nie je k dispozícii žiadny projekt"
+      "empty": "Nie je k dispozícii žiadny projekt",
+      "workspaceEyebrow": "Pracovný priestor kódu",
+      "workspaceIntro": "Projektové súbory, pracovné zmeny a náhľady na jednej sústredenej editačnej ploche.",
+      "workspaceReady": "{project} pripojený",
+      "noProjects": "Žiadny projekt na úpravu",
+      "noProjectsDescription": "Najprv vytvorte projekt, potom ho otvorte tu v editore."
     }
   }
 }
