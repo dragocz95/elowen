@@ -472,3 +472,55 @@ describe('ConfigStore agents plugin config (F2 step 7)', () => {
     expect(cs.get().autopilot.prBaseBranch).toBe('trunk'); // the autopilot value itself still persists
   });
 });
+
+describe('ConfigStore lsp plugin migration', () => {
+  /** A pre-extraction install: diagnostics deliberately turned OFF, no `lsp` plugin, no marker. */
+  const OLD_ROW = (over: Record<string, unknown> = {}) => JSON.stringify({
+    allowedExecs: ['sonnet'],
+    lspEnabled: false,
+    plugins: { enabled: ['files', 'agents'], removed: [], config: {} },
+    ...over,
+  });
+  const storeWith = (row: string): { cs: ConfigStore; stored: () => Record<string, unknown> } => {
+    const db2 = openDb(':memory:');
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(row);
+    return {
+      cs: new ConfigStore(db2),
+      stored: () => JSON.parse((db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data) as Record<string, unknown>,
+    };
+  };
+
+  it('enables the plugin and copies the toggle once, losslessly (old DB)', () => {
+    const { cs, stored } = storeWith(OLD_ROW());
+    cs.migrateLspPlugin();
+    expect(cs.get().plugins.enabled).toContain('lsp');
+    // The operator's OFF survives the extraction — an upgrade must not silently restart tsserver.
+    expect(cs.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: false });
+    // Lossless: the core field is COPIED, not moved, so a rollback to a build that reads it still works.
+    expect(stored()['lspEnabled']).toBe(false);
+    // Idempotent: a second run leaves a later toggle (or a disable) exactly where the admin put it.
+    cs.update({ plugins: { enabled: ['files', 'agents'], config: { lsp: { diagnosticsEnabled: true } } } });
+    cs.migrateLspPlugin();
+    expect(cs.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: true });
+    expect(cs.get().plugins.enabled).not.toContain('lsp'); // stays disabled — the marker is set
+  });
+
+  it('never overwrites a plugins.config.lsp value the admin already set', () => {
+    const { cs } = storeWith(OLD_ROW({ plugins: { enabled: ['files'], removed: [], config: { lsp: { diagnosticsEnabled: true } } } }));
+    cs.migrateLspPlugin();
+    expect(cs.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: true }); // theirs wins over lspEnabled:false
+  });
+
+  it('leaves an already-enabled plugin list untouched (no duplicate entry)', () => {
+    const { cs } = storeWith(OLD_ROW({ plugins: { enabled: ['files', 'lsp'], removed: [], config: {} } }));
+    cs.migrateLspPlugin();
+    expect(cs.get().plugins.enabled.filter((n) => n === 'lsp')).toEqual(['lsp']);
+  });
+
+  it('is a no-op on a fresh install (no settings row → the defaults already carry the marker)', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.migrateLspPlugin();
+    expect(cs.pluginConfig('lsp')).toEqual({}); // unset → the plugin's own default (on)
+    expect(cs.get().plugins.enabled).toContain('lsp'); // from the fresh-install defaults, not the migration
+  });
+});

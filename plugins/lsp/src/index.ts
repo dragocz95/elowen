@@ -20,13 +20,20 @@ import { registerLspTools } from './tools.js';
 import { registerLspApi } from './api.js';
 import { lspPluginConfig } from './config.js';
 
-export function register(ctx: PluginContext): void {
+/** Test seam, mirroring {@link LspManagerDeps}: the lifecycle test drives real teardown against a fake
+ *  transport instead of spawning tsserver. The host only ever calls `register(ctx)`. */
+export interface LspRegisterDeps {
+  createManager?: () => LspManager;
+}
+
+export function register(ctx: PluginContext, deps: LspRegisterDeps = {}): void {
   // Lazy: registration must not spawn anything, and a sub-agent runner loads this plugin too (it gets
   // the tools, never the services) — so the manager appears on the first tool call there.
+  const create = deps.createManager ?? (() => new LspManager());
   let manager: LspManager | null = null;
   const lsp = (): LspManager => {
     if (!manager) {
-      manager = new LspManager();
+      manager = create();
       manager.setEnabled(lspPluginConfig(ctx.config).diagnosticsEnabled);
     }
     return manager;
