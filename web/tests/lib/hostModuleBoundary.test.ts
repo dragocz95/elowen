@@ -42,6 +42,27 @@ describe('host ↔ plugin boundary', () => {
     expect(resurrected).toEqual([]);
   });
 
+  /** `web/lib` is the layer BELOW the feature modules, and the plugin contract is served from it. Where
+   *  it reaches UP into a module, that module owns something the contract re-serves — the settings deck's
+   *  own primitives. A pure helper reached that way is the quiet failure: the work extraction left
+   *  `statusTone` in `modules/dashboard` with the contract as its only consumer, so the next module move
+   *  would have taken a helper four plugin bundles render with it. */
+  it('web/lib reaches into a feature module only for the components that module owns', () => {
+    const allowed = [
+      'modules/settings/providers',
+      'modules/settings/SettingsSurface',
+      'modules/settings/MarkdownAssetEditor',
+    ];
+    const offenders = sources(join(webRoot, 'lib')).flatMap((file) => {
+      const src = readFileSync(file, 'utf8');
+      return [...src.matchAll(/from '[^']*\/(modules\/[^']+)'/g)]
+        .map((m) => m[1]!)
+        .filter((mod) => !allowed.includes(mod))
+        .map((mod) => `${relative(webRoot, file)} → ${mod}`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it('no core web source imports a plugin bundle directly', () => {
     const offenders = ['lib', 'components', 'modules', 'app']
       .map((d) => join(webRoot, d))

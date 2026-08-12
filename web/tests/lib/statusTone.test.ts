@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statusTone } from '../../../modules/dashboard/statusTone';
+import { statusTone } from '../../lib/statusTone';
 
 describe('statusTone', () => {
   it('maps each status to its tone', () => {

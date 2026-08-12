@@ -126,7 +126,7 @@ import { useSessionStall } from './useSessionStall';
 import { useTaskControls } from './useTaskControls';
 import { buildUsageSummary } from './usageBars';
 import { eventIcon } from './eventMeta';
-import { statusTone } from '../modules/dashboard/statusTone';
+import { statusTone } from './statusTone';
 import { taskTypeMeta } from './taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
