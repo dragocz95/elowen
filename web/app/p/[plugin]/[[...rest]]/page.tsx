@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
+import { SettingsDocument } from '../../../../modules/settings/SettingsSurface';
 import { PluginErrorBoundary, PluginPlaceholder as Placeholder } from '../../../../components/plugin/PluginUiGuards';
 import { usePluginUi } from '../../../../lib/queries';
 import { useTranslation } from '../../../../lib/i18n';
@@ -48,9 +49,12 @@ export default function PluginHostPage() {
     const match = settingsComponent
       ? { Component: settingsComponent, params: { id: rest[1]! } }
       : matchPluginPage(registration.pages, rest);
-    body = match
+    const rendered = match
       ? <match.Component plugin={plugin} params={match.params} rest={rest} />
       : <Placeholder text={strings.pageMissing} />;
+    // A settings section is written for the Settings deck, whose panel supplies the document surface its
+    // groups sit on. Reached directly from the sidebar it must look the same, so the wrapper comes along.
+    body = settingsComponent ? <SettingsDocument>{rendered}</SettingsDocument> : rendered;
   }
 
   return (

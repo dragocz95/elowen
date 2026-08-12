@@ -69,8 +69,8 @@ describe('Sidebar (registry-driven)', () => {
     client.setQueryData(['tasks'], []);
     // Sessions and Editor are plugin worlds now — seed the /plugins/ui listing the nav model consumes.
     client.setQueryData(['plugin-ui', 'en'], [
-      { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }] },
-      { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }] },
+      { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }], settings: [] },
+      { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }], settings: [] },
     ]);
     render(<Wrapper><Sidebar mode="drawer" drawerOpen /></Wrapper>);
     expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();

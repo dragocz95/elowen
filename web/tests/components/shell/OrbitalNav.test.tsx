@@ -13,8 +13,8 @@ function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollap
   // The Sessions destination is plugin-supplied now — seed the /plugins/ui listing the shell nav maps
   // into worlds (key carries the locale; tests run with the default 'en').
   client.setQueryData(['plugin-ui', 'en'], [
-    { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }, { label: 'Escalations', icon: 'ShieldAlert', route: 'escalations' }] },
-    { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }] },
+    { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }, { label: 'Escalations', icon: 'ShieldAlert', route: 'escalations' }], settings: [] },
+    { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }], settings: [] },
   ]);
   return render(<Wrapper><OrbitalNav compact={compact} {...props} /></Wrapper>);
 }

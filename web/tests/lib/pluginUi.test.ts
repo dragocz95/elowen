@@ -55,7 +55,30 @@ describe('pluginNavEntries', () => {
     expect(multi[0]!.subItems?.map((s) => s.href)).toEqual(['/p/demo', '/p/demo/detail']);
   });
 
-  it('a plugin without nav claims no menu space; unknown icons fall back to the puzzle', () => {
+  it('gives a settings-only plugin its own world pointing at the standalone settings page', () => {
+    // Skills, Cron and Sub-agents contribute a Settings section and no nav page. The host route serves
+    // that section as a real page, so the sidebar must offer it instead of hiding the plugin.
+    const entries = pluginNavEntries([
+      { name: 'skills', url: '/plugins/skills/web/x.js', apiVersion: 1, nav: [], settings: [{ id: 'skills', label: 'Dovednosti', icon: 'Sparkles' }] },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id: 'plugin-skills', href: '/p/skills/settings/skills', label: 'Dovednosti' });
+    expect(entries[0]!.subItems).toBeUndefined();
+  });
+
+  it('lists nav pages before settings sections when a plugin has both', () => {
+    const entries = pluginNavEntries([
+      {
+        name: 'agents', url: '/plugins/agents/web/x.js', apiVersion: 1,
+        nav: [{ label: 'Relace', route: 'sessions' }],
+        settings: [{ id: 'autopilot', label: 'Autopilot' }],
+      },
+    ]);
+    expect(entries[0]!.href).toBe('/p/agents/sessions'); // the face stays the plugin's own page
+    expect(entries[0]!.subItems?.map((s) => s.href)).toEqual(['/p/agents/sessions', '/p/agents/settings/autopilot']);
+  });
+
+  it('a plugin with neither nav nor settings claims no menu space; unknown icons fall back to the puzzle', () => {
     expect(pluginNavEntries(listing([]))).toHaveLength(0);
     const entry = pluginNavEntries(listing([{ label: 'X', icon: 'NotAnIcon', route: '' }]))[0]!;
     expect(entry.icon).toBe(Puzzle);
