@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseResumeLabel, resumeProviderFor } from '../../../../../src/shared/resume/index.js';
-import { claudeResume } from '../../../../../src/shared/resume/claude.js';
-import { codexResume } from '../../../../../src/shared/resume/codex.js';
-import { opencodeResume } from '../../../../../src/shared/resume/opencode.js';
-import { kiloResume } from '../../../../../src/shared/resume/kilo.js';
-import { piResume } from '../../../../../src/shared/resume/pi.js';
-import { ompResume } from '../../../../../src/shared/resume/omp.js';
+import { parseResumeLabel, resumeProviderFor } from '../../../../../plugins/agents/src/spawn/resume/index.js';
+import { claudeResume } from '../../../../../plugins/agents/src/spawn/resume/claude.js';
+import { codexResume } from '../../../../../plugins/agents/src/spawn/resume/codex.js';
+import { opencodeResume } from '../../../../../plugins/agents/src/spawn/resume/opencode.js';
+import { kiloResume } from '../../../../../plugins/agents/src/spawn/resume/kilo.js';
+import { piResume } from '../../../../../plugins/agents/src/spawn/resume/pi.js';
+import { ompResume } from '../../../../../plugins/agents/src/spawn/resume/omp.js';
 
 describe('resume providers', () => {
   it('claude resumes via the --resume flag, alongside --model', () => {

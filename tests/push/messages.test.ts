@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReview, buildNeedsInput, buildStalled, buildBlocked, buildDone, buildTurnDone, notificationPreview } from '../../src/push/messages.js';
+import { buildTurnDone, notificationPreview } from '../../src/push/messages.js';
 
 // A phone renders no markdown, so anything left in arrives as literal punctuation the reader has to look
 // past. The preview has to be the sentence the answer opens with, on one line.
@@ -68,43 +68,5 @@ describe('turn-done preview', () => {
   // preview could ever show, so no future pattern added here can be fed an unbounded string.
   it('reads only the opening of a very long answer', () => {
     expect(notificationPreview(`${'a'.repeat(5_000)} KONEC`)).not.toContain('KONEC');
-  });
-});
-
-describe('push message builders', () => {
-  it('review carries approve/rerun actions and points at escalations', () => {
-    const p = buildReview({ missionId: 'm-e1', taskId: 't1', phaseTitle: 'Build', rationale: 'missing test' });
-    expect(p.kind).toBe('review');
-    expect(p.actions.map((a) => a.action)).toEqual(['approve', 'rerun']);
-    expect(p.url).toBe('/escalations');
-    expect(p.body).toContain('missing test');
-  });
-
-  it('needs_input gives allow/reject for a permission prompt (no options)', () => {
-    const p = buildNeedsInput({ session: 'elowen-a', question: 'Run rm?', hasOptions: false });
-    expect(p.actions.map((a) => a.action)).toEqual(['allow', 'reject']);
-    expect(p.session).toBe('elowen-a');
-  });
-
-  it('needs_input is tap-to-open for a multiple-choice question (has options)', () => {
-    const p = buildNeedsInput({ session: 'elowen-a', question: 'Pick one', hasOptions: true });
-    expect(p.actions).toEqual([]);
-  });
-
-  it('stalled and blocked offer an open action', () => {
-    expect(buildStalled({ missionId: 'm-e1', epicTitle: 'E' }).actions.map((a) => a.action)).toEqual(['open']);
-    expect(buildBlocked({ taskId: 't1', taskTitle: 'T' }).actions.map((a) => a.action)).toEqual(['open']);
-  });
-
-  it('done has no actions and appends the PR phrase only when a url is present', () => {
-    const plain = buildDone({ missionId: 'm-e1', epicTitle: 'E' });
-    expect(plain.actions).toEqual([]);
-    expect(plain.title).toBe('Mise dokončena');
-    expect(plain.url).toBe('/dash');
-
-    const withPr = buildDone({ missionId: 'm-e1', epicTitle: 'E', prUrl: 'https://gh/pr/1' });
-    expect(withPr.title).toContain('PR');
-    expect(withPr.url).toBe('https://gh/pr/1');
-    expect(withPr.prUrl).toBe('https://gh/pr/1');
   });
 });

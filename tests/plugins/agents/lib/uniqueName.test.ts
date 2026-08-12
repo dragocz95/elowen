@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { uniqueName, freeAgentName } from '../../src/daemon/uniqueName.js';
+import { uniqueName, freeAgentName } from '../../../../plugins/agents/src/lib/uniqueName.js';
 
 describe('uniqueName', () => {
   it('never returns the same name twice in a run', () => {

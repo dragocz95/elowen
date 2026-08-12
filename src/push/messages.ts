@@ -1,6 +1,10 @@
 /** Web-push payloads built daemon-side and rendered verbatim by the service worker. User-facing text
  *  is Czech (formal) — the SW does no i18n. `actions` map to inline notification buttons; an empty
- *  `actions` array means tap-to-open only (the SW opens `url`). */
+ *  `actions` array means tap-to-open only (the SW opens `url`).
+ *
+ *  Only the owner-chat turn notification is built here. The mission builders (review/needs_input/
+ *  stalled/blocked/done) live in the agents plugin (plugins/agents/src/push/messages.ts); PushPayload
+ *  keeps the full kind union because plugin-built payloads flow through the host push seam. */
 
 type PushKind = 'review' | 'needs_input' | 'stalled' | 'blocked' | 'done' | 'turn_done';
 
@@ -30,60 +34,6 @@ const trim = (s: string, n = 140): string => {
   const points = Array.from(s);
   return points.length > n ? `${points.slice(0, n - 1).join('')}…` : s;
 };
-
-/** Overseer rejected/timed out a phase review — needs a human verdict. */
-export function buildReview(input: { missionId: string; taskId: string; phaseTitle: string; rationale: string }): PushPayload {
-  return {
-    kind: 'review',
-    title: 'Mise potřebuje vaše rozhodnutí',
-    body: input.rationale ? `${input.phaseTitle}: ${trim(input.rationale)}` : input.phaseTitle,
-    missionId: input.missionId,
-    taskId: input.taskId,
-    actions: [{ action: 'approve', title: 'Schválit' }, { action: 'rerun', title: 'Spustit znovu' }],
-    url: '/escalations',
-  };
-}
-
-/** An agent is waiting on a prompt the autopilot couldn't answer. A permission prompt (no options)
- *  gets inline Allow/Reject; a multiple-choice question (options present) can't fit on a notification,
- *  so it is tap-to-open only. */
-export function buildNeedsInput(input: { missionId?: string; taskId?: string; session: string; question: string; hasOptions: boolean }): PushPayload {
-  return {
-    kind: 'needs_input',
-    title: 'Agent čeká na odpověď',
-    body: trim(input.question || 'Agent potřebuje vaši odpověď.'),
-    missionId: input.missionId,
-    taskId: input.taskId,
-    session: input.session,
-    actions: input.hasOptions ? [] : [{ action: 'allow', title: 'Povolit' }, { action: 'reject', title: 'Odmítnout' }],
-    url: '/sessions',
-  };
-}
-
-/** A mission stalled (no running agents, a blocked child) — waiting on a human. */
-export function buildStalled(input: { missionId: string; epicTitle: string }): PushPayload {
-  return {
-    kind: 'stalled',
-    title: 'Mise se zastavila',
-    body: `${input.epicTitle} čeká na vaši pozornost.`,
-    missionId: input.missionId,
-    actions: [{ action: 'open', title: 'Otevřít' }],
-    url: '/escalations',
-  };
-}
-
-/** A task was blocked (an agent died too many times). */
-export function buildBlocked(input: { missionId?: string; taskId: string; taskTitle: string }): PushPayload {
-  return {
-    kind: 'blocked',
-    title: 'Mise se zastavila',
-    body: `${input.taskTitle} se zablokovala.`,
-    missionId: input.missionId,
-    taskId: input.taskId,
-    actions: [{ action: 'open', title: 'Otevřít' }],
-    url: '/escalations',
-  };
-}
 
 /** How much of an answer is examined. The preview shown is two orders of magnitude shorter, so this only
  *  has to be long enough that an answer opening with a code block still has prose left after flattening.
@@ -125,18 +75,5 @@ export function buildTurnDone(input: { title: string; preview?: string; productN
     body: preview ? trim(preview, 180) : 'Vaše konverzace je hotová.',
     actions: [],
     url: '/chat',
-  };
-}
-
-/** A mission finished — FYI, no action. Mentions the PR when one was opened. */
-export function buildDone(input: { missionId: string; epicTitle: string; prUrl?: string | null }): PushPayload {
-  return {
-    kind: 'done',
-    title: input.prUrl ? 'Mise dokončena — PR otevřen' : 'Mise dokončena',
-    body: input.prUrl ? `${input.epicTitle} — PR je připravený k revizi.` : `${input.epicTitle} je hotová.`,
-    missionId: input.missionId,
-    ...(input.prUrl ? { prUrl: input.prUrl } : {}),
-    actions: [],
-    url: input.prUrl ?? '/dash',
   };
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPR, readPRReviews, mergePR } from '../../src/integrations/github/pr.js';
+import { createPR, readPRReviews, mergePR } from '../../../../plugins/agents/src/integrations/pr.js';
 
 // A fake `gh` on PATH lets us assert createPR's parsing/fallback without touching the network. Each
 // test writes a shell stub that mimics the relevant `gh` behaviour.

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createMissionWorktree, removeWorktree, commitAll, detectBaseBranch, pushBranch } from '../../src/integrations/git/worktree.js';
+import { createMissionWorktree, removeWorktree, commitAll, detectBaseBranch, pushBranch } from '../../../../plugins/agents/src/integrations/worktree.js';
 
 let repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });

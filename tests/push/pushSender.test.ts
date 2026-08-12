@@ -3,11 +3,11 @@ import webpush from 'web-push';
 import { openDb } from '../../src/store/db.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
 import { PushSender, vapidContact, type Deliver } from '../../src/push/pushSender.js';
-import { buildStalled } from '../../src/push/messages.js';
+import type { PushPayload } from '../../src/push/messages.js';
 
 // Real VAPID keys: setVapidDetails validates the key format, so a placeholder wouldn't pass.
 const KEYS = webpush.generateVAPIDKeys();
-const payload = buildStalled({ missionId: 'm-e1', epicTitle: 'Epic' });
+const payload: PushPayload = { kind: 'stalled', title: 'Mise se zastavila', body: 'Epic čeká na vaši pozornost.', missionId: 'm-e1', actions: [{ action: 'open', title: 'Otevřít' }], url: '/escalations' };
 
 let subs: PushSubscriptionStore;
 beforeEach(() => {
