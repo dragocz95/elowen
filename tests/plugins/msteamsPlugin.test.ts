@@ -411,7 +411,10 @@ describe('msteams mentions + runtime footer', () => {
       footerLine: (idle: unknown) => string;
     };
     const line = footerLine({ model: 'openai/gpt-5', usage: { percent: 42 } });
-    expect(line).toBe('*— gpt-5 · 42 %*');
+    // The leading nbsp paragraph is the gap: Teams renders the engine's own blank-line join tight, and
+    // an empty paragraph is dropped by markdown, so the spacer must carry a character that looks blank.
+    expect(line).toBe('\u00a0\n\n*— gpt-5 · 42 %*');
+    expect(line.split('\n').at(-1)).toBe('*— gpt-5 · 42 %*');
     // Teams draws a blockquote as a full-width bordered strip that dwarfs a one-line footer, and a `* `
     // opener would turn the line into a bullet item.
     expect(line.startsWith('>')).toBe(false);
@@ -488,6 +491,34 @@ describe('msteams conversation history backfill', () => {
     const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
     expect(log).toHaveLength(2);
     expect(log.map((e) => e.t)).toEqual(['message 3', 'reply']);
+  });
+});
+
+describe('msteams live trace layout', () => {
+  it('puts every tool row on its own line', async () => {
+    // Teams treats a single newline as a soft wrap, so the shared engine's default join rendered the
+    // whole trace as one run-on paragraph: "Skill … ToolSearch … CronAdd …" side by side.
+    const { LiveMessage } = await import(join(repoRoot, 'plugins/msteams/lib/stream.mjs')) as {
+      LiveMessage: new (a: unknown, c: string, r?: string, k?: string, d?: unknown) => {
+        onEvent: (e: Record<string, unknown>) => void;
+      };
+    };
+    let content = '';
+    const adapter = {
+      cfg: { runtimeFooter: false },
+      tmSend: async (_c: string, text: string) => { content = text; return 'mid-1'; },
+      tmEdit: async (_c: string, _id: string, text: string) => { content = text; return true; },
+      tmDelete: async () => true,
+    };
+    const lm = new LiveMessage(adapter, 'a:conv1');
+    lm.onEvent({ type: 'tool', id: 'a', name: 'Skill', detail: 'skills', icon: '📚' });
+    lm.onEvent({ type: 'tool', id: 'b', name: 'CronAdd', detail: 'every minute', icon: '⏰' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const rows = content.split('\n').filter((l) => l.trim());
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.some((l) => l.includes('Skill') && l.includes('CronAdd'))).toBe(false);
+    expect(content).toContain('\n\n');
   });
 });
 
