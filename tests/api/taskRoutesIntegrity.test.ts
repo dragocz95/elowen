@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -12,6 +11,7 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import type { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
 import type { ServerDeps } from '../../src/api/deps.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 /** A store whose dependency write always fails — stands in for any error inside setDeps (locked DB,
  *  constraint violation) so the create path's atomicity can be observed. */
@@ -36,7 +36,7 @@ class GhostTmux extends FakeTmuxDriver {
 /** An in-memory daemon app with no user store (open mode → no auth), so these tests exercise the route
  *  logic itself. `engine`/`tmux` are injectable to simulate a teardown that fails. */
 function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver; tasks?: TaskStore } = {}) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = opts.tasks ?? new TaskStore(db);
   const missions = new MissionStore(db);
@@ -90,7 +90,7 @@ describe('PATCH /tasks/:id validates the whole command before it writes any of i
 
 describe('POST /tasks creates the task and its dependencies atomically', () => {
   it('persists no task when wiring its dependencies fails', async () => {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new DepFailingTaskStore(db);
     tasks.create({ id: 'dep-a', project_id: 1, title: 'A' });

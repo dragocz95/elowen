@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
 import type { Db } from '../../../../src/store/db.js';
 import { MissionPrStore } from '../../../../plugins/agents/src/store/missionPrStore.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let db: Db;
 let store: MissionPrStore;
-beforeEach(() => { db = openDb(':memory:'); store = new MissionPrStore(db); });
+beforeEach(() => { db = openAgentsDb(':memory:'); store = new MissionPrStore(db); });
 
 describe('MissionPrStore', () => {
   it('returns null for a mission with no PR record', () => {

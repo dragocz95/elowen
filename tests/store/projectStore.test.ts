@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -7,9 +6,10 @@ import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 let store: ProjectStore;
-beforeEach(() => { store = new ProjectStore(openDb(':memory:')); });
+beforeEach(() => { store = new ProjectStore(openAgentsDb(':memory:')); });
 
 describe('ProjectStore', () => {
   it('creates, lists and gets projects with notes', () => {
@@ -65,7 +65,7 @@ describe('ProjectStore', () => {
 
 describe('ProjectStore.remove (cascade)', () => {
   it('deletes project-bound categories and clears their memories fail-closed', () => {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     const projects = new ProjectStore(db);
     const categories = new MemoryCategoryStore(db);
     const memories = new MemoryStore(db);
@@ -85,7 +85,7 @@ describe('ProjectStore.remove (cascade)', () => {
   });
 
   it('detaches the project and everything scoped to it, leaving siblings untouched', () => {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     const projects = new ProjectStore(db);
     const tasks = new TaskStore(db);
     const missions = new MissionStore(db);

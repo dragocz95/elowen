@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const detectGithubAuth = vi.hoisted(() => vi.fn());
 vi.mock('../../src/integrations/github/auth.js', () => ({ detectGithubAuth }));
 
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -12,9 +11,10 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function makeApp(ghToken?: string) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (ghToken) config.update({ autopilot: { ghToken } });
   const app = createServer({

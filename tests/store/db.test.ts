@@ -16,7 +16,12 @@ describe('openDb', () => {
   it('applies schema (tables exist) on a fresh :memory: db', () => {
     const db = openDb(':memory:');
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r: any) => r.name);
-    expect(names).toEqual(expect.arrayContaining(['projects', 'tasks', 'task_deps', 'agents', 'missions', 'brain_subagent_runs']));
+    expect(names).toEqual(expect.arrayContaining(['projects', 'tasks', 'task_deps', 'brain_subagent_runs']));
+    // The agents-plugin tables are NOT core schema: a fresh install with the plugin disabled must not
+    // create them (their DDL lives in plugins/agents/src/store/migrations.ts).
+    expect(names).not.toContain('missions');
+    expect(names).not.toContain('agents');
+    expect(names).not.toContain('notes');
   });
 
   it('migrates a pre-project_id events table without throwing (adds the column + index)', () => {

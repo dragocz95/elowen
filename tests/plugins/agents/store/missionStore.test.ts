@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let m: MissionStore;
-beforeEach(() => { m = new MissionStore(openDb(':memory:')); });
+beforeEach(() => { m = new MissionStore(openAgentsDb(':memory:')); });
 
 describe('MissionStore', () => {
   it('persists a mission and lists it active; setState hides it', () => {

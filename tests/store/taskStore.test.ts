@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 let db: Db;
 let store: TaskStore;
-beforeEach(() => { db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/var/www/elowen')").run(); store = new TaskStore(db); });
+beforeEach(() => { db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/var/www/elowen')").run(); store = new TaskStore(db); });
 
 describe('TaskStore', () => {
   it('creates and reads a task with parsed labels', () => {

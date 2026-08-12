@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -9,9 +8,10 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function makeApp(over: { latestVersion?: () => Promise<string | null>; startUpdate?: () => void; startRestart?: (target: 'daemon' | 'web') => void; autoUpdate?: boolean; skillService?: any; withUsers?: boolean } = {}) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (over.autoUpdate) config.update({ autoUpdate: true });
   const missions = new MissionStore(db);

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -11,12 +10,13 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // Open mode (no UserStore) so canAccessProject always passes — the focus here is the file-editor
 // behaviour, not the tenancy gate (covered in projectAccess.test.ts). The project points at a real
 // temp dir so every operation hits the actual filesystem.
 function makeApp() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const projects = new ProjectStore(db);
   const app = createServer({

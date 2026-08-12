@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -11,9 +10,10 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { UserSettingStore } from '../../src/store/userSettingStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const amy = users.create('amy', 'pw');
@@ -66,7 +66,7 @@ describe('cli-settings routes', () => {
     // Regression: applyPersonalityChange/restart respawns the brain and waits for any in-flight turn to
     // settle, so awaiting it in the request stalled the PATCH (and the web "saving" indicator) for as long
     // as the turn ran. A never-settling re-apply must not hang the response — the persist already happened.
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const amy = users.create('amy', 'pw');

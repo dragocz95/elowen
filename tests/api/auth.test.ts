@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -10,9 +9,10 @@ import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function makeAuthedApp() {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('alice', 'secret');
   const brainStore = new BrainStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../src/store/db.js';
 import { TaskStore } from '../../../src/store/taskStore.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
 import { assembleMissionDetail } from '../../../plugins/agents/src/api/missionDetail.js';
+import { openAgentsDb } from '../../helpers/agentsDb.js';
 
 let tasks: TaskStore; let missions: MissionStore;
 beforeEach(() => {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/var/www/elowen')").run();
   tasks = new TaskStore(db); missions = new MissionStore(db);
 });

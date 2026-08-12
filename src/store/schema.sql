@@ -35,23 +35,8 @@ CREATE TABLE IF NOT EXISTS task_usage (
   captured_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
-CREATE TABLE IF NOT EXISTS agents (
-  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, name TEXT NOT NULL,
-  program TEXT NOT NULL, model TEXT NOT NULL, last_active_ts TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (project_id, name)
-);
-CREATE TABLE IF NOT EXISTS missions (
-  id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, autonomy TEXT NOT NULL,
-  max_sessions INTEGER NOT NULL DEFAULT 1,
-  state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now')),
-  created_by INTEGER,
-  pilot_exec TEXT NOT NULL DEFAULT '', overseer_exec TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS mission_pr (
-  mission_id TEXT PRIMARY KEY, branch TEXT NOT NULL, worktree TEXT NOT NULL,
-  pr_number INTEGER, pr_url TEXT, pr_state TEXT, last_review_ts TEXT,
-  fix_rounds INTEGER NOT NULL DEFAULT 0, last_feedback TEXT
-);
+-- The agents/missions/mission_pr/notes tables are AGENTS-PLUGIN-owned now: their DDL lives in
+-- plugins/agents/src/store/migrations.ts and is applied only when that plugin is enabled.
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
 -- `id` is AUTOINCREMENT, not a bare rowid: ownership columns (tasks.created_by, missions.created_by)
 -- reference it, and a plain rowid is REUSED after the highest-numbered user is deleted — the next
@@ -125,22 +110,8 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_target ON events(target);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts DESC);
--- Inter-agent handoff notes: free-form context an agent leaves for later agents working the same
--- scope (a mission/epic by default). Generic (scope, target) shape mirrors events; no FK so a note
--- can outlive a deleted epic and a project-scoped target stays valid.
-CREATE TABLE IF NOT EXISTS notes (
-  id INTEGER PRIMARY KEY,
-  scope TEXT NOT NULL,
-  target TEXT NOT NULL,
-  author TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_notes_scope_target ON notes(scope, target, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_missions_epic ON missions(epic_id);
-CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);
 -- Embedded brain (advisor engine): per-user conversations. SQLite is the sole authoritative store —
 -- the PI agent session runs in-memory (SessionManager.inMemory) and every settled turn is projected
 -- here; on start the history is rehydrated back into a fresh in-memory session. No JSONL on disk.

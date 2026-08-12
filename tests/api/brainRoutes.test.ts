@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -19,6 +18,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { ProcessInfo } from '../../src/brain/processRegistry.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 const proc = (id: string, sessionId: string | null): ProcessInfo => ({
   id, command: `sleep ${id}`, cwd: '/w', startedAt: '2026-01-01T00:00:00Z', sessionId, running: true, exitCode: null,
@@ -296,7 +296,7 @@ function mcpPluginProvider(servers: { name: string; status: string }[]): PluginR
 }
 
 function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegistryProvider } = {}) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -993,7 +993,7 @@ describe('GET /brain/status telemetry', () => {
 
 describe('GET /brain/models allow-list', () => {
   function setupWithProviders() {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
@@ -1033,7 +1033,7 @@ describe('GET /brain/models allow-list', () => {
 
 describe('LSP status + toggle routes', () => {
   function setupLsp() {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');

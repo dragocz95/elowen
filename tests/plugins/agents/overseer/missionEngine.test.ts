@@ -6,7 +6,6 @@ import { projectHead, projectRangeDiff } from '../../../../src/integrations/proj
 const gitSeam = { projectHead, projectRangeDiff };
 import { render } from '../../../../src/prompts/index.js';
 const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
-import { openDb } from '../../../../src/store/db.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
 import { Readiness } from '../../../../src/store/readiness.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
@@ -19,9 +18,10 @@ import type { MissionEngineDeps } from '../../../../plugins/agents/src/overseer/
 import { EventBus } from '../../../../src/api/sse.js';
 import { SystemClock } from '../../../../src/shared/clock.js';
 import type { ElowenEvent } from '../../../../src/api/sse.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 function setup(opts?: { summarize?: MissionEngineDeps['summarize'] }) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
   tasks.create({ id: 't1', project_id: 1, title: 'one', parent_id: 'epic', labels: ['exec:ollama-cloud/deepseek-v4-flash'] });
@@ -41,7 +41,7 @@ function setup(opts?: { summarize?: MissionEngineDeps['summarize'] }) {
 
 describe('MissionEngine', () => {
   it('reverts a task to open (and publishes it) when spawn.launch throws', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 't1', project_id: 1, title: 'one', parent_id: 'epic' });
@@ -76,7 +76,7 @@ describe('MissionEngine', () => {
   });
 
   it('serializes ready phases that share a non-PR checkout, even with max_sessions > 1 (C1)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     // Two independent (no dep) phases → both dependency-cleared and ready at once.
@@ -95,7 +95,7 @@ describe('MissionEngine', () => {
   });
 
   it('coalesces a tick requested while one is already in flight into exactly one extra pass (M1)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 't1', project_id: 1, title: 'one', parent_id: 'epic' });
@@ -116,7 +116,7 @@ describe('MissionEngine', () => {
   });
 
   it('keeps review self-heal budgets on a PR-feedback re-engage but resets them on a fresh engage (M3)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic', status: 'closed' }); // a finished phase…
@@ -304,7 +304,7 @@ describe('MissionEngine', () => {
   /** Two parallel in_progress children whose sessions are live; `kill` misbehaves for `elowen-a` per
    *  the injected `killA` (which may or may not actually end the session). */
   async function stopRunningSetup(killA: (base: FakeTmuxDriver) => void | Promise<void>) {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 'a', project_id: 1, title: 'a', parent_id: 'epic' });
@@ -372,7 +372,7 @@ describe('MissionEngine', () => {
 
 describe('MissionEngine overseer lifecycle', () => {
   function setup(overseer?: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; ensure?: ReturnType<typeof vi.fn> }) {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 'g1', project_id: 1, title: 'Add auth login flow', parent_id: 'epic' });
@@ -439,7 +439,7 @@ describe('MissionEngine overseer lifecycle', () => {
 
 describe('MissionEngine multi-project', () => {
   it('drives a mission in a non-home project and spawns in that project\'s path', async () => {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
     const tasks = new TaskStore(db);

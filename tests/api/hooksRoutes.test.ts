@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -12,6 +11,7 @@ import { createServer } from '../../src/api/server.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import type { PluginHttpRoute } from '../../src/plugins/api.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 class FakeClock { constructor(private t: number) {} now(): number { return this.t; } }
 
@@ -32,7 +32,7 @@ function registryWith(routes: { plugin: string; declared: string[]; route: Plugi
 }
 
 function setup(registry: PluginRegistry | undefined) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -138,7 +138,7 @@ describe('hook routes', () => {
     }]);
     let current = first;
     const provider = new PluginRegistryProvider(() => Promise.resolve(current));
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     users.create('admin', 'pw');

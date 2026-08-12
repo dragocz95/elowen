@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -13,12 +12,13 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore, type ConfigPatch } from '../../src/store/configStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
 function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch } = {}) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (over.patch) config.update(over.patch);

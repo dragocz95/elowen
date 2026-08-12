@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { hasLiveMission } from '../../src/cli/missionGate.js';
-import { openDb } from '../../src/store/db.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // The gate runs in a separate CLI process against the daemon's real DB file, so these tests use real
 // tmp files, not :memory:. It guards the self-update restart from killing a running mission — the
@@ -32,7 +32,7 @@ describe('hasLiveMission (self-update / setup gate)', () => {
 
   it('missions table with no live rows → false; a live mission → true', () => {
     const file = join(tmp(), 'elowen.db');
-    const db = openDb(file); // real daemon schema
+    const db = openAgentsDb(file); // real daemon schema
     db.prepare("INSERT INTO missions (id, epic_id, autonomy, state) VALUES ('m-done', 'e0', 'L1', 'completed')").run();
     db.close();
     expect(hasLiveMission(envFor(file))).toBe(false);

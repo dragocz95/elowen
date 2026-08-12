@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -19,6 +18,7 @@ import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -51,7 +51,7 @@ function setup() {
       { key: 'rolePolicies', label: 'Role policies', type: 'rolePolicies' },
     ],
   });
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -165,7 +165,7 @@ describe('plugin routes', () => {
     const root = tmpDir('plugcaps');
     makePlugin(root, 'enricher', { capabilities: { hooks: ['brain.turn.contextBuilt'], mutates: ['turnContext'], network: true } });
     makePlugin(root, 'plain');
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const app = createServer({
@@ -208,7 +208,7 @@ describe('plugin routes', () => {
         });
       }
     `);
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');
@@ -298,7 +298,7 @@ describe('sub-agent (typed .md) routes', () => {
     const cfgDir = tmpDir('agentcfg');
     const pluginDataRoot = join(cfgDir, 'plugins-data');
     mkdirSync(pluginDataRoot, { recursive: true });
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');

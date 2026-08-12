@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -18,6 +17,7 @@ import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
 let sharedRuntime: ModelRuntime;
@@ -45,7 +45,7 @@ function pluginDirsFixture(): string[] {
 }
 
 function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = []) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -12,9 +11,10 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
 import type { CommitFileChange } from '../../src/integrations/projectFiles.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);

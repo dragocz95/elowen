@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -11,11 +10,12 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // The live SSE channel broadcasts every bus event; without per-subscriber scoping a tenant would see
 // cross-project task statuses in real time. Each subscriber must receive only its projects' events.
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);

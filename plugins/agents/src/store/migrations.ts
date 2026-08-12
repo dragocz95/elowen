@@ -1,4 +1,12 @@
-import type { PluginDbMigrationStep } from '../../../../src/plugins/api.js';
+import type { PluginDbHandle, PluginDbMigrationStep } from '../../../../src/plugins/api.js';
+
+/** Add a column only if it isn't already present (same shape as core db.ts addColumn): checks the
+ *  actual table shape, so a genuine ALTER failure (lock, disk full) is not swallowed. */
+const addColumn = (db: PluginDbHandle, table: string, column: string, decl: string): void => {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+};
 
 /** The agents plugin's schema, applied through ctx.db().migrate() (bookkept in plugin_migrations).
  *
@@ -43,6 +51,21 @@ CREATE INDEX IF NOT EXISTS idx_notes_scope_target ON notes(scope, target, id);
 CREATE INDEX IF NOT EXISTS idx_missions_epic ON missions(epic_id);
 CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);
 `);
+    },
+  },
+  {
+    // Column additions that used to run in core db.ts. On any install that ever booted a daemon with
+    // those core steps the columns already exist (addColumn no-ops); this step exists for the ANCIENT
+    // database that skips straight from a pre-column era to a daemon whose core no longer alters
+    // plugin tables. v1 already puts the columns in the CREATE forms, so a fresh install never needs
+    // this either — it is purely the old-upgrade safety net.
+    version: 2,
+    up: (db) => {
+      addColumn(db, 'mission_pr', 'fix_rounds', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'mission_pr', 'last_feedback', 'TEXT');
+      addColumn(db, 'missions', 'created_by', 'INTEGER');
+      addColumn(db, 'missions', 'pilot_exec', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'missions', 'overseer_exec', "TEXT NOT NULL DEFAULT ''");
     },
   },
 ];

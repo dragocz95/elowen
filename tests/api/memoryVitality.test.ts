@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -13,9 +12,10 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { EmbeddingService, type ProviderResolver } from '../../src/embeddings/embeddingService.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const amy = users.create('amy', 'pw');

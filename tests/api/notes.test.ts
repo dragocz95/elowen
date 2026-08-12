@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { NoteStore } from '../../plugins/agents/src/store/noteStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -15,13 +14,14 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // Two projects; bob is assigned to #1 only. An agent token is confined to its live working set, so we
 // seed an in_progress agent task in project 1 to put project 1 (and its epic e1) in the agent's reach.
 // The '/notes' surface is served by the agents plugin's root mount — the REAL plugin is loaded here;
 // `withPlugin: false` leaves it discovered-but-disabled (the explicit-503 degradation).
 function setup(withPlugin = true) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);

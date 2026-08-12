@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../../src/store/db.js';
 import { makePluginDb } from '../../../src/store/pluginDb.js';
 import { AGENTS_MIGRATIONS } from '../../../plugins/agents/src/store/migrations.js';
 import { AgentStore } from '../../../plugins/agents/src/store/agentStore.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
 import { MissionPrStore } from '../../../plugins/agents/src/store/missionPrStore.js';
 import { NoteStore } from '../../../plugins/agents/src/store/noteStore.js';
+import { openAgentsDb } from '../../helpers/agentsDb.js';
 
 /** A DB as the agents plugin sees it: the shared main database through ctx.db(). */
 function pluginDb() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   return makePluginDb(db, 'agents', { canMigrate: true });
 }
 
@@ -19,13 +19,13 @@ describe('agents plugin store layer (extraction step 3)', () => {
     // Simulate the post-extraction world (step 8): core schema no longer carries these tables.
     for (const t of ['agents', 'missions', 'mission_pr', 'notes']) pdb.exec(`DROP TABLE ${t}`);
     pdb.migrate(AGENTS_MIGRATIONS);
-    expect(pdb.appliedVersion()).toBe(1);
+    expect(pdb.appliedVersion()).toBe(2);
     const names = pdb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agents','missions','mission_pr','notes') ORDER BY name").all() as { name: string }[];
     expect(names.map((r) => r.name)).toEqual(['agents', 'mission_pr', 'missions', 'notes']);
     // …and against a live pre-extraction DB (tables already exist) it must be a harmless no-op.
     const fresh = pluginDb();
     fresh.migrate(AGENTS_MIGRATIONS);
-    expect(fresh.appliedVersion()).toBe(1);
+    expect(fresh.appliedVersion()).toBe(2);
   });
 
   it('AgentStore: upsert recycles a name onto a new program/model and resolves latest program/project', () => {

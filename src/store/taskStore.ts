@@ -1,3 +1,4 @@
+import { tolerateMissingAgentsTables } from './db.js';
 import type { Db } from './db.js';
 import type { Task, CreateTaskInput, TaskStatus } from './types.js';
 import type { CommitFileChange } from '../integrations/projectFiles.js';
@@ -120,16 +121,24 @@ export class TaskStore {
     return { task: this.get(taskId)! };
   }
 
-  /** Wipe ALL tasks, their dependency edges, every mission and its PR record — the operational data
-   *  reset used by the admin cleanup. mission_pr has no FK cascade (same as the epic-delete cascade in
-   *  cascade.ts), so it must be cleared explicitly or a wiped mission leaves an orphan PR/worktree
-   *  record behind. Projects/users/config are untouched. Returns the row counts removed. */
+  /** Wipe ALL tasks, their dependency edges, every mission, its PR record and every handoff note —
+   *  the operational data reset used by the admin cleanup. mission_pr has no FK cascade (same as the
+   *  epic-delete cascade in cascade.ts), so it must be cleared explicitly or a wiped mission leaves an
+   *  orphan PR/worktree record behind; notes all target wiped tasks, so they go too.
+   *  Projects/users/config are untouched. Returns the row counts removed. */
   deleteAll(): { tasks: number; missions: number } {
     return this.db.transaction(() => {
-      const missions = (this.db.prepare('SELECT COUNT(*) c FROM missions').get() as { c: number }).c;
+      // missions/mission_pr/notes are AGENTS-PLUGIN tables: a fresh install with the plugin disabled
+      // never created them — tolerate that shape, but always wipe them when present (cleanup must not
+      // depend on the plugin being on, or orphan rows resurface on re-enable).
+      const missions = tolerateMissingAgentsTables(
+        () => (this.db.prepare('SELECT COUNT(*) c FROM missions').get() as { c: number }).c, 0);
       this.db.prepare('DELETE FROM task_deps').run();
-      this.db.prepare('DELETE FROM mission_pr').run();
-      this.db.prepare('DELETE FROM missions').run();
+      tolerateMissingAgentsTables(() => {
+        this.db.prepare('DELETE FROM mission_pr').run();
+        this.db.prepare('DELETE FROM missions').run();
+      }, undefined);
+      tolerateMissingAgentsTables(() => { this.db.prepare('DELETE FROM notes').run(); }, undefined);
       const r = this.db.prepare('DELETE FROM tasks').run();
       return { tasks: r.changes, missions };
     })();
@@ -140,7 +149,8 @@ export class TaskStore {
    *  none) before deleteAll() wipes the row, so a paused or naturally-completed mission — which the
    *  live-only disengage sweep never reaches — doesn't leak its worktree. */
   listMissionIds(): string[] {
-    return (this.db.prepare('SELECT id FROM missions').all() as { id: string }[]).map((r) => r.id);
+    return tolerateMissingAgentsTables(
+      () => (this.db.prepare('SELECT id FROM missions').all() as { id: string }[]).map((r) => r.id), []);
   }
 
   /** Run a sequence of this store's own writes as ONE atomic transaction. Not a generic repository or

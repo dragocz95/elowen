@@ -10,7 +10,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { openDb } from '../../../../src/store/db.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
 import { SpawnService } from '../../../../plugins/agents/src/spawn/spawn.js';
@@ -19,9 +18,10 @@ import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { FakeClock } from '../../../../src/shared/clock.js';
 import { Scheduler } from '../../../../plugins/agents/src/overseer/scheduler.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 function setup(now: number) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const tmux = new FakeTmuxDriver();
   const spawn = new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) });
@@ -83,7 +83,7 @@ describe('Scheduler', () => {
     // agents would clobber each other's edits and muddle per-task change attribution), so each tick
     // launches at most one; the rest stay open and fire on later ticks once the checkout frees.
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     const tmux = new FakeTmuxDriver();
     let n = 0;
@@ -105,7 +105,7 @@ describe('Scheduler', () => {
     // If the task were still 'open' at that point, a concurrent mission/scheduler tick computing `busy`
     // from the in_progress list would miss it and launch a second agent into the same shared checkout.
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     const tmux = new FakeTmuxDriver();
     let statusAtAwait: string | undefined; // the task's status at the moment the lock body (first await) runs
@@ -122,7 +122,7 @@ describe('Scheduler', () => {
     // writer claims project 2's checkout (flips x2 in_progress). A stale tick-start snapshot would miss
     // that and still launch project 2's due task; the fresh per-task read must hold it instead.
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
     const tasks = new TaskStore(db);
@@ -144,7 +144,7 @@ describe('Scheduler', () => {
 
   it('launches tasks in DIFFERENT projects concurrently — separate checkouts never block each other', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
     const tasks = new TaskStore(db);
@@ -159,7 +159,7 @@ describe('Scheduler', () => {
 
   it('restores the schedule (and status open) when the spawn fails (O9)', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     const failingSpawn = { launch: async () => { throw new Error('tmux down'); } };
     const scheduler = new Scheduler({ git: gitSeam, tasks, spawn: failingSpawn as never, bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => 'Nova', clock: new FakeClock(t0 + 60_000) });
@@ -178,7 +178,7 @@ describe('Scheduler', () => {
     git('init', '-q'); git('config', 'user.email', 't@t.io'); git('config', 'user.name', 'T');
     writeFileSync(join(repo, 'f.txt'), 'v0'); git('add', '-A'); git('commit', '-q', '-m', 'c0');
     try {
-      const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'r',?)").run(repo);
+      const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'r',?)").run(repo);
       const tasks = new TaskStore(db);
       const bus = new EventBus(); const changes: string[] = [];
       bus.subscribe((e) => { if (e.type === 'change') changes.push(e.taskId); });
@@ -197,7 +197,7 @@ describe('Scheduler', () => {
     writeFileSync(join(repo, 'f.txt'), 'v0'); git('add', '-A'); git('commit', '-q', '-m', 'c0');
     const base = git('rev-parse', 'HEAD').toString().trim();
     try {
-      const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'r',?)").run(repo);
+      const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'r',?)").run(repo);
       const tasks = new TaskStore(db);
       const bus = new EventBus(); const changes: string[] = [];
       bus.subscribe((e) => { if (e.type === 'change') changes.push(e.taskId); });
@@ -215,7 +215,7 @@ describe('Scheduler', () => {
 
   it('launches due autostart tasks across every project', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
     const tasks = new TaskStore(db);

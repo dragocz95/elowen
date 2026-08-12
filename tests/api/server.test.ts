@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { openDb } from '../../src/store/db.js';
 import { SubagentRunnerPool } from '../../src/subagent/pool.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -17,6 +16,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { FakeInference } from '../../src/inference/client.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 /** A body streamed in chunks with NO content-length header — the chunked shape a hard cap has to stop.
  *  `pulled()` reports how many bytes the daemon actually read, so a test can tell "rejected after
@@ -34,7 +34,7 @@ function streamedBody(totalBytes: number, chunkBytes = 16 * 1024) {
 }
 
 function makeApp() {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const bus = new EventBus();
   const a = createServer({ tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus, engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db) });
@@ -96,7 +96,7 @@ describe('api', () => {
     expect(list.map((t: { id: string }) => t.id)).toEqual(['elowen-1']);
   });
   it('GET /tasks?project_id=N narrows the list to one project; unknown id yields []', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o'),(2,'other','/p')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o'),(2,'other','/p')").run();
     const tasks = new TaskStore(db);
     const projects = new ProjectStore(db);
     const app = createServer({ tasks, projects, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db) });
@@ -122,7 +122,7 @@ describe('api', () => {
 });
 
 it('POST /tasks with body {title} generates an id and sets status open', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -247,7 +247,7 @@ it('GET /events flushes an initial comment so headers reach the client immediate
   // Through the web BFF proxy, a streamed response sends no HTTP headers until the first body byte.
   // The event bus is silent on a quiet system, so /events must emit an immediate SSE comment or the
   // dashboard's live channel never connects. Comments (lines starting with ':') are ignored by EventSource.
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: new FakeTmuxDriver(), project: { id: 1, path: '/o' },
@@ -281,7 +281,7 @@ it('GET /missions/:id returns mission detail for a seeded mission', async () => 
 });
 
 it('GET /config returns masked config; PUT updates without exposing the key', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -357,7 +357,7 @@ it('DELETE /tasks/:id removes the task and publishes a cancelled event', async (
 });
 
 it('POST /tasks honours an explicit project_id (multi-project)', async () => {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const tasks = new TaskStore(db);
@@ -375,7 +375,7 @@ it('POST /tasks honours an explicit project_id (multi-project)', async () => {
 });
 
 it('POST /tasks rejects an unknown project_id with 404', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
@@ -394,7 +394,7 @@ it('POST /tasks/plan without an autopilot key returns 400', async () => {
 });
 
 it('POST /tasks/plan decomposes a goal into an epic with sequential phase subtasks', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
@@ -419,7 +419,7 @@ it('POST /tasks/plan decomposes a goal into an epic with sequential phase subtas
 });
 
 it('POST /tasks/plan stores the model-assigned agent name as a label', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
@@ -434,7 +434,7 @@ it('POST /tasks/plan stores the model-assigned agent name as a label', async () 
 });
 
 it('POST /tasks/plan with supplied phases skips the LLM and needs no key', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -450,7 +450,7 @@ it('POST /tasks/plan with supplied phases skips the LLM and needs no key', async
 });
 
 it('POST /tasks/plan dryRun returns phases without creating any tasks', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
@@ -469,7 +469,7 @@ it('POST /tasks/plan dryRun returns phases without creating any tasks', async ()
 });
 
 it('POST /tasks/plan with engage=true engages a mission on the epic', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   let engagedEpic = '';
@@ -488,7 +488,7 @@ it('POST /tasks/plan with engage=true engages a mission on the epic', async () =
 });
 
 it('POST /tasks/:epicId/phases inserts a phase chained after the epic\'s current tail', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db);
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -509,7 +509,7 @@ it('POST /tasks/:epicId/phases inserts a phase chained after the epic\'s current
 });
 
 it('POST /tasks/:epicId/phases replans a residual goal into chained phases', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -528,7 +528,7 @@ it('POST /tasks/:epicId/phases replans a residual goal into chained phases', asy
 });
 
 it('POST /tasks/:epicId/phases — a DAG replan does not overtake the epic\'s unfinished frontier', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -548,7 +548,7 @@ it('POST /tasks/:epicId/phases — a DAG replan does not overtake the epic\'s un
 });
 
 it('POST /tasks/:epicId/phases returns 404 for a non-epic id', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
@@ -559,7 +559,7 @@ it('POST /tasks/:epicId/phases returns 404 for a non-epic id', async () => {
 });
 
 it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new phase', async () => {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db);
   let ticked = '';
   const engine = { isActive: (id: string) => id === 'm-E', tick: async (id: string) => { ticked = id; } } as unknown as MissionEngine;
@@ -582,7 +582,7 @@ it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new ph
 it('POST /auth/login caps the body before parsing it, without buffering the stream', async () => {
   // /auth/login is public, so an anonymous caller reaches a handler that reads the whole body. A
   // chunked request carries no content-length to pre-check — the cap has to stop the read itself.
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('admin', 'pw');
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
@@ -631,7 +631,7 @@ it('GET /health surfaces the real pool: spawn failure as a stable code, never th
   children[0]?.emit('message', { type: 'fatal', reason: 'build mismatch (daemon /var/www/secret-internal-path 1.2.3)' });
   await run;
 
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,

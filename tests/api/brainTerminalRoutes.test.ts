@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -16,9 +15,10 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { BrainTerminalService } from '../../src/brain/terminalService.js';
 import { classifySession } from '../../src/shared/sessionInfo.js';
 import { freshUserSessionId, brainTerminalName } from '../../src/brain/sessionId.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // id 1, is_admin

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -12,12 +11,13 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { AdvisorService } from '../../src/advisor/service.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 /** Server wired with a real AdvisorService (fake tmux) plus a brain stub that records how much of the
  *  user's durable state is still visible at the moment live teardown runs — that ordering is the whole
  *  point of the delete route. */
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user → is_admin

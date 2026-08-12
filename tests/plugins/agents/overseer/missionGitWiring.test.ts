@@ -9,7 +9,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { openDb } from '../../../../src/store/db.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
 import { Readiness } from '../../../../src/store/readiness.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
@@ -22,13 +21,14 @@ import { SpawnService } from '../../../../plugins/agents/src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { SystemClock } from '../../../../src/shared/clock.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let base: string;   // unique parent so the sibling `.elowen-worktrees/` dir is isolated + cleaned
 let repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
 
 function setup(prEnabled: boolean) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -14,6 +13,7 @@ import { MemoryStore } from '../../src/store/memoryStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { EmbeddingService, type ProviderResolver } from '../../src/embeddings/embeddingService.js';
 import { runMemoryEvictionSweep } from '../../src/daemon/bootstrap.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 interface MemoryDto {
   id: number;
@@ -49,7 +49,7 @@ function embeddingFetch(vectors: Record<string, number[]>): typeof fetch {
 }
 
 function setup(withEmbeddings = true) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id, slug, path) VALUES (1, 'elowen', '/o')").run();
   const users = new UserStore(db);
   const user = users.create('amy', 'pw');

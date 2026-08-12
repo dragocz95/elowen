@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { SpawnService } from '../../../../plugins/agents/src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
-import { openDb } from '../../../../src/store/db.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
 import { render } from '../../../../src/prompts/index.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 // The plugin SpawnService REQUIRES the host prompt seam (no file-render fallback). The core file
 // renderer stands in — the exact default the pre-extraction core service used.
@@ -11,7 +11,7 @@ const prompts = { render: (n: string, v?: Record<string, string>) => render(n, v
 
 describe('SpawnService', () => {
   it('registers the agent and spawns an elowen- session', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts });
     const { session } = await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'SwiftLake', spec: { program: 'opencode', model: 'ollama-cloud/deepseek-v4-flash' } });
@@ -21,7 +21,7 @@ describe('SpawnService', () => {
   });
 
   it('delivers ELOWEN_URL/TOKEN/TASK as tmux session env, never as an `export` in the pane command', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts, elowen: { cli: 'elowen', url: 'http://localhost:4400', token: 's3cr3t-tok' } });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-7', agentName: 'Nova', spec: { program: 'opencode', model: 'm' } });
@@ -33,7 +33,7 @@ describe('SpawnService', () => {
   });
 
   it('hands a worker the token minted for ITS task, and a reasoning agent the shared one', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     // Only real task ids bind; an overseer/pilot id has no task row, so the resolver returns undefined.
     const tokenForTask = (taskId: string) => taskId === 'elowen-7' ? 'tok-for-7' : undefined;
@@ -45,7 +45,7 @@ describe('SpawnService', () => {
   });
 
   it('merges caller extraEnv into the tmux session env (reasoning agents: ELOWEN_PLAN_JOB etc.)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts, elowen: { cli: 'elowen', url: 'http://x', token: 'tok' } });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'pj-1', agentName: 'Pilot', spec: { program: 'claude-code', model: 'opus' }, rawPrompt: 'PLAN', extraEnv: { ELOWEN_PLAN_JOB: 'pj-1' } });
@@ -53,7 +53,7 @@ describe('SpawnService', () => {
   });
 
   it('scrubs the token from a tmux spawn failure and re-throws a sanitized error', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     tmux.failSpawn = true; // a real tmux failure embeds `-e ELOWEN_TOKEN=<token>` in its error message
     const svc = new SpawnService({ tmux, agents, prompts, elowen: { cli: 'elowen', url: 'http://x', token: 'sup3r-s3cret' } });
@@ -64,7 +64,7 @@ describe('SpawnService', () => {
   });
 
   it('applies the provider resolver binary + args to the spawned command', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts, providers: (program) => program === 'opencode' ? { bin: '/usr/bin/oc', args: '--pure' } : undefined });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'opencode', model: 'm' } });
@@ -72,7 +72,7 @@ describe('SpawnService', () => {
   });
 
   it('resumes the prior session when its program matches the spawn', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'claude-code', model: 'sonnet' }, resume: { program: 'claude-code', sessionId: 'sess-7' } });
@@ -80,7 +80,7 @@ describe('SpawnService', () => {
   });
 
   it('ignores a resume whose program no longer matches the task exec (cold start)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts });
     // recorded a claude session, but the operator switched the task's exec to codex since
@@ -89,7 +89,7 @@ describe('SpawnService', () => {
   });
 
   it('ignores resume when the provider has it disabled', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, prompts, providers: () => ({ resume: false }) });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'claude-code', model: 'sonnet' }, resume: { program: 'claude-code', sessionId: 'sess-7' } });
@@ -99,7 +99,7 @@ describe('SpawnService', () => {
 
 describe('SpawnService elowen seam', () => {
   const mk = () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     return { agents: new AgentStore(db), tmux: new FakeTmuxDriver() };
   };
 

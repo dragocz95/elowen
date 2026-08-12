@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
 import type { Db } from '../../../../src/store/db.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
@@ -8,11 +7,12 @@ import { EventBus } from '../../../../src/api/sse.js';
 import { PushDispatcher, type PrInfoReader } from '../../../../plugins/agents/src/push/pushDispatcher.js';
 import type { PushSender } from '../../../../src/push/pushSender.js';
 import type { PushPayload } from '../../../../src/push/messages.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 interface Captured { userIds: number[]; payload: PushPayload }
 
 function harness(prInfo?: PrInfoReader) {
-  const db: Db = openDb(':memory:');
+  const db: Db = openAgentsDb(':memory:');
   const missions = new MissionStore(db);
   const tasks = new TaskStore(db);
   const users = new UserStore(db);

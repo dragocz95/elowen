@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Deriver } from '../../../../plugins/agents/src/deriver/deriver.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
-import { openDb } from '../../../../src/store/db.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 const OC_DIALOG = `△ Permission required\n Allow once   Allow always   Reject  ⇆ select  enter confirm`;
 
 function setup(autonomy: string | null = null, decideApproval?: DeriverDecider, missionFor?: (session: string) => string | null) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const agents = new AgentStore(db);
   tasks.create({ id: 'elowen-1', project_id: 1, title: 'T' }); tasks.setStatus('elowen-1', 'in_progress');
   agents.upsert({ project_id: 1, name: 'TestAgent', program: 'opencode', model: 'ollama-cloud/deepseek-v4-flash' });
@@ -85,7 +85,7 @@ describe('Deriver permission handling', () => {
   });
 
   it('claude workspace-trust gate: auto-accepts under autonomy WITHOUT consulting the overseer', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db); const agents = new AgentStore(db);
     tasks.create({ id: 'elowen-1', project_id: 1, title: 'T' }); tasks.setStatus('elowen-1', 'in_progress');
     agents.upsert({ project_id: 1, name: 'Nova', program: 'claude-code', model: 'sonnet' });
@@ -103,7 +103,7 @@ describe('Deriver permission handling', () => {
   });
 
   it('L0: claude trust gate still escalates (autonomy gate precedes auto-accept)', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db); const agents = new AgentStore(db);
     tasks.create({ id: 'elowen-1', project_id: 1, title: 'T' }); tasks.setStatus('elowen-1', 'in_progress');
     agents.upsert({ project_id: 1, name: 'Nova', program: 'claude-code', model: 'sonnet' });
@@ -164,7 +164,7 @@ const OC_QUESTION = `  ┃  # Questions
 type QDecider = (input: { question: string; context: string; options: { id: string; label: string }[]; autonomy: string; missionId: string | null; taskId: string }) => Promise<{ choiceId: string | null }>;
 
 function setupQuestion(autonomy: string | null, decideQuestion?: QDecider, missionFor?: (s: string) => string | null) {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const agents = new AgentStore(db);
   tasks.create({ id: 'elowen-1', project_id: 1, title: 'T' }); tasks.setStatus('elowen-1', 'in_progress');
   agents.upsert({ project_id: 1, name: 'TestAgent', program: 'opencode', model: 'ollama-cloud/deepseek-v4-flash' });

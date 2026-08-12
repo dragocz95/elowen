@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -11,11 +10,12 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // Two projects; bob assigned to #1. The activity timeline carries task/mission ids + statuses, so it
 // must be scoped per-project — a tenant sees only their projects' events, never the whole daemon's.
 function setup() {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);
@@ -61,7 +61,7 @@ describe('GET /activity tenancy filtering', () => {
 
 describe('GET /activity?target — per-task conversation feed', () => {
   function setupTask() {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
@@ -92,7 +92,7 @@ describe('GET /activity?target — per-task conversation feed', () => {
 
 describe('EventStore.record project stamping', () => {
   it('honors a passed-in project for non-task events, else falls back to the task lookup', () => {
-    const db = openDb(':memory:');
+    const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 't1', project_id: 1, title: 'x' });

@@ -4,7 +4,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { openDb } from '../../../../src/store/db.js';
 import { TaskStore } from '../../../../src/store/taskStore.js';
 import { ProjectStore } from '../../../../src/store/projectStore.js';
 import { ConfigStore } from '../../../../src/store/configStore.js';
@@ -12,6 +11,7 @@ import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.
 import { MissionPrStore } from '../../../../plugins/agents/src/store/missionPrStore.js';
 import { MissionGit } from '../../../../plugins/agents/src/overseer/missionGit.js';
 import { sweepPrFeedback } from '../../../../plugins/agents/src/overseer/prFeedback.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let base: string, repo: string, binDir: string, origPath: string | undefined;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -29,7 +29,7 @@ const ghChangesRequested = (ts: string) =>
   ghReview(`{"state":"OPEN","reviews":[{"state":"CHANGES_REQUESTED","body":"please rename the function","submittedAt":"${ts}","author":{"login":"alice"}}],"comments":[]}`);
 
 async function build(opts: { exec?: string } = {}) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);

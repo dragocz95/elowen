@@ -19,6 +19,20 @@ function addColumn(db: Db, table: string, column: string, decl: string): void {
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 
+/** Run a statement that touches an AGENTS-PLUGIN-owned table (missions/mission_pr/agents/notes) from
+ *  core cleanup code, tolerating the table's absence. A fresh install with the agents plugin disabled
+ *  never creates those tables (their DDL lives in the plugin's migrations), yet core's destructive
+ *  paths — epic/project/user delete, admin cleanup — must still run there AND must still purge plugin
+ *  rows when the tables DO exist (cleanup routed through the plugin control would silently skip while
+ *  it is off, stranding orphans that resurface on re-enable). Only "no such table/column" is treated
+ *  as the fresh-install shape; any other failure propagates. */
+export function tolerateMissingAgentsTables<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch (e) {
+    if (e instanceof Error && /no such (table|column)/i.test(e.message)) return fallback;
+    throw e;
+  }
+}
+
 export interface OpenDbOptions {
   /** Create the schema and run migrations (default true). A process that is NOT the migrator — a pooled
    *  sub-agent runner, forked only after the daemon's own openDb returned — passes false: it then opens a
@@ -142,22 +156,12 @@ function applyAdditiveMigrations(db: Db): void {
   // Timeline labels: snapshot the task/epic title at write time so an event still reads as a name
   // after its task is deleted (events outlive tasks). Empty for signal/plan and unknown tasks.
   addColumn(db, 'events', 'label', "TEXT NOT NULL DEFAULT ''");
-  // PR feedback loop budget: how many auto fix rounds a mission's PR has already consumed. Bounds the
-  // Codex↔Elowen review ping-pong before escalating to a human. Additive — old DBs default to 0.
-  addColumn(db, 'mission_pr', 'fix_rounds', 'INTEGER NOT NULL DEFAULT 0');
-  // The aggregated PR-review feedback the planner is currently fixing — surfaced in the UI so a fix
-  // round is explained ("these phases address PR review X"). Cleared on merge/close. Old DBs default null.
-  addColumn(db, 'mission_pr', 'last_feedback', 'TEXT');
   // Per-project override of the GitHub PR-native workflow. NULL = inherit the global autopilot default;
   // 1/0 = force on/off for this project (each project can run a different flow). Old DBs default NULL.
   addColumn(db, 'projects', 'pr_enabled', 'INTEGER');
-  // Who started the mission — drives per-mission push-notification routing (owner + admins). Nullable:
-  // legacy/system missions have no owner and fall back to notifying admins only. Old DBs default NULL.
-  addColumn(db, 'missions', 'created_by', 'INTEGER');
-  // Per-mission Autopilot identities. Empty inherits the current global Settings value, preserving
-  // every legacy mission while allowing a newly planned mission to keep its explicit choices.
-  addColumn(db, 'missions', 'pilot_exec', "TEXT NOT NULL DEFAULT ''");
-  addColumn(db, 'missions', 'overseer_exec', "TEXT NOT NULL DEFAULT ''");
+  // The mission_pr/missions column additions that used to sit here (fix_rounds, last_feedback,
+  // created_by, pilot_exec, overseer_exec) moved to the agents plugin's migration v2 — those tables
+  // are plugin-owned and a fresh install with the plugin disabled does not have them at all.
   // Who created the task — used to attribute a spawned agent to a user so its prompts resolve to that
   // user's overrides (else admin fallback). Nullable: legacy/system tasks have no owner. Old DBs NULL.
   addColumn(db, 'tasks', 'created_by', 'INTEGER');
@@ -350,7 +354,11 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
   let highest = (db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM users').get() as { m: number }).m;
   for (const [table, column] of USER_REFERENCE_COLUMNS) {
     if (!tableExists.get(table)) continue; // a database predating this table simply has nothing to contribute
-    const { m } = db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number };
+    // Column tolerance: missions.created_by is added by the AGENTS PLUGIN's migration v2 now, so an
+    // ancient DB upgrading with the plugin disabled may hold the table without the column — which
+    // also means no row ever referenced a user through it.
+    const m = tolerateMissingAgentsTables(
+      () => (db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number }).m, 0);
     if (m > highest) highest = m;
   }
   if (highest <= 0) return; // nothing has ever referenced a user — the counter may start from scratch

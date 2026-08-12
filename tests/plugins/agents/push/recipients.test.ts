@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
 import type { Db } from '../../../../src/store/db.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
 import { UserStore } from '../../../../src/store/userStore.js';
 import { recipientsForMission } from '../../../../plugins/agents/src/push/recipients.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let db: Db; let missions: MissionStore; let users: UserStore;
 let adminId: number; let ownerId: number;
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = openAgentsDb(':memory:');
   missions = new MissionStore(db);
   users = new UserStore(db);
   adminId = users.create('admin', 'pw').id; // first user → admin

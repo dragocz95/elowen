@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
 import type { Db } from '../../../../src/store/db.js';
 import { NoteStore } from '../../../../plugins/agents/src/store/noteStore.js';
+import { openAgentsDb } from '../../../helpers/agentsDb.js';
 
 let db: Db;
 let notes: NoteStore;
-beforeEach(() => { db = openDb(':memory:'); notes = new NoteStore(db); });
+beforeEach(() => { db = openAgentsDb(':memory:'); notes = new NoteStore(db); });
 
 describe('NoteStore', () => {
   it('adds a note and lists it back for its scope/target', () => {

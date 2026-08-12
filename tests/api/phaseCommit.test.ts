@@ -4,7 +4,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -15,6 +14,7 @@ import { MissionGit } from '../../plugins/agents/src/overseer/missionGit.js';
 import { createServer } from '../../src/api/server.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
+import { openAgentsDb } from '../helpers/agentsDb.js';
 
 let base: string, repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -22,7 +22,7 @@ const close = (app: ReturnType<typeof createServer>, id: string) =>
   app.request(`/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'closed', result_summary: 'done', outcome: 'ok' }) });
 
 function build(prEnabled: boolean) {
-  const db = openDb(':memory:');
+  const db = openAgentsDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);
