@@ -3,8 +3,6 @@ import { TerminalSquare, ArrowRight, List, Bell, MessageSquare, Activity, Bot, E
 import { runtime } from '../runtime';
 import { SessionCard } from './SessionCard';
 
-const SESSION_VIEWS: readonly ('live' | 'brain')[] = ['live', 'brain'];
-
 /** Deep-link filter (?filter=needs_input), kept in local state + history.replaceState — the plugin
  *  page owns its query string; a filter flip must not push a history entry (parity with the core
  *  page's router.replace). */
@@ -18,7 +16,6 @@ export function SessionsView() {
   const signals = hooks.useSessionSignals();
   const { t } = hooks.useTranslation();
   const [openTerm, setOpenTerm] = useState<string | null>(null);
-  const [view, setView] = hooks.usePersistentState<'live' | 'brain'>('elowen.sessions.view', 'live', SESSION_VIEWS);
   const [filter, setFilterState] = useState<'all' | 'needs_input'>(initialFilter);
 
   const infos = sessions.data ?? [];
@@ -56,6 +53,9 @@ export function SessionsView() {
           description: t.sessions.workspaceIntro,
           mascotState: sessions.isLoading ? 'saving' : sessions.isError ? 'error' : 'idle',
           status: !sessions.isLoading && !sessions.isError ? <span className="workspace-status">{t.sessions.workspaceReady}</span> : undefined,
+          // The conversation register moved to the Chat page (it is core data, reachable with this
+          // plugin disabled); this page keeps a signpost instead of the old Conversations tab.
+          action: <C.Button variant="ghost" icon={MessageSquare} onClick={() => navigate('/chat')}>{t.chat.openHistory}</C.Button>,
           metrics: <>
             <C.WorkspaceMetric label={t.sessions.metricLive} value={infos.length} icon={Activity} />
             <C.WorkspaceMetric label={t.sessions.metricNeedsInput} value={needsInputCount} icon={Bell} />
@@ -63,10 +63,9 @@ export function SessionsView() {
             <C.WorkspaceMetric label={t.sessions.metricControl} value={controlCount} icon={Eye} />
           </>,
         }}
-        navigation={{ sections: [{ id: 'live', label: t.sessions.liveTitle, icon: TerminalSquare }, { id: 'brain', label: t.sessionsPanel.tab, icon: MessageSquare }], value: view, onChange: (id: string) => setView(id as 'live' | 'brain'), ariaLabel: t.page.sessions }}
       >
         <C.ControlSurfaceDocument>
-        {view === 'live' ? <section className="min-w-0">
+        <section className="min-w-0">
           <C.ControlSurfaceToolbar className="flex-col items-stretch gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex items-baseline gap-2">
@@ -112,7 +111,7 @@ export function SessionsView() {
                 </div>
               )}
           </C.ControlSurfaceRegister>
-        </section> : <C.BrainSessionsPanel />}
+        </section>
         </C.ControlSurfaceDocument>
       </C.SpatialWorkspaceLayout>
 

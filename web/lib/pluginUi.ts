@@ -49,7 +49,6 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useToast } from '../components/ui/Toast';
 import { TerminalModal } from '../components/terminal/TerminalModal';
 import { LiveTail } from '../components/terminal/LiveTail';
-import { BrainSessionsPanel } from '../components/brain/BrainSessionsPanel';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import {
@@ -96,15 +95,14 @@ export function ensurePluginUiRuntime(): void {
     jsxRuntime: JsxRuntime,
     // Curated: what a plugin page needs to look native. Growing this list is cheap; shrinking it is a
     // breaking change — so every addition is deliberate. The second block is the agents-extraction
-    // surface (F3): the workspace/control-surface primitives, terminal views and the brain
-    // conversations panel its moved pages compose.
+    // surface (F3): the workspace/control-surface primitives and terminal views its moved pages compose.
     components: {
       Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
-      TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail, BrainSessionsPanel,
+      TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a

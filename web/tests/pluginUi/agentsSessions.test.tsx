@@ -37,28 +37,17 @@ vi.mock('next/dynamic', () => ({
 }));
 
 let killed = false;
-let admin = false;
-const conversations = Array.from({ length: 13 }, (_, index) => ({
-  id: `brain-${index + 1}`,
-  title: `Conversation ${index + 1}`,
-  model: 'gpt-5.5',
-  updated_at: `2026-07-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
-  running: index === 0,
-  active: index === 0,
-}));
 const server = setupServer(
-  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: admin } })),
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: false } })),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/config', () => HttpResponse.json({ autopilot: {} })),
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: false, status: null, branches: [], commits: [] })),
   http.get('*/api/sessions', () => HttpResponse.json([{ name: 'elowen-SwiftLake', role: 'agent', agent: 'SwiftLake' }])),
   http.get('*/api/sessions/elowen-SwiftLake/pane', () => HttpResponse.json({ pane: 'line a\nline b' })),
-  http.get('*/api/brain/sessions', () => HttpResponse.json(conversations)),
-  http.get('*/api/brain/managed-sessions', () => HttpResponse.json(conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 1200 })) )),
   http.delete('*/api/sessions/elowen-SwiftLake', () => { killed = true; return HttpResponse.json({ ok: true }); }),
 );
-beforeEach(() => { admin = false; });
+beforeEach(() => { killed = false; });
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
 describe('agents plugin SessionsView', () => {
@@ -87,45 +76,15 @@ describe('agents plugin SessionsView', () => {
     await waitFor(() => expect(killed).toBe(true));
   });
 
-  it('renders conversations as full-width rows with pagination', async () => {
+  it('carries no Conversations tab, only the signpost to the Chat page register', async () => {
+    // The conversation register (BrainSessionsPanel) is core data and moved to /chat — the plugin
+    // page keeps live agents only, plus a hero link pointing at the register's new home.
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsView /></ToastProvider></Wrapper>);
-    fireEvent.click(screen.getByRole('radio', { name: 'Conversations' }));
-    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-    expect(screen.getByTestId('brain-sessions-list')).toHaveAttribute('role', 'list');
-    expect(screen.getByRole('button', { name: 'Conversation 1: Actions' })).toBeInTheDocument();
-    expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(12);
-    expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument());
-  });
-
-  it('offers the conversation row actions from right click', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SessionsView /></ToastProvider></Wrapper>);
-    fireEvent.click(screen.getByRole('radio', { name: 'Conversations' }));
-    await screen.findByText('Conversation 1');
-
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open in web chat: Conversation 1' }));
-
-    expect(screen.getByRole('menuitem', { name: 'Download as HTML' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Download as JSONL' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
-  });
-
-  it('uses the shared table heading and keeps Delete all in its action zone', async () => {
-    admin = true;
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SessionsView /></ToastProvider></Wrapper>);
-    fireEvent.click(screen.getByRole('radio', { name: 'Conversations' }));
-    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-
-    const toolbar = screen.getByTestId('brain-sessions-toolbar');
-    expect(toolbar).toHaveClass('control-surface-toolbar');
-    expect(screen.getByTestId('brain-sessions-list').closest('.control-surface-register')).toBeInTheDocument();
-    expect(within(toolbar).getByRole('heading', { name: 'Conversations' })).toHaveClass('text-base');
-    expect(within(toolbar).getByRole('button', { name: 'Delete all' })).toHaveClass('spatial-inline-action');
+    await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
+    expect(screen.queryByRole('radio', { name: 'Conversations' })).toBeNull();
+    expect(screen.queryByTestId('brain-sessions-list')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Conversation history' })).toBeInTheDocument();
   });
 
   it('opens terminal in modal and closes via modal close button', async () => {

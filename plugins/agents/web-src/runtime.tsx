@@ -85,7 +85,7 @@ interface AgentsComponents {
   ControlSurfaceState: AnyComponent; ControlSurfaceToolbar: AnyComponent;
   ModelIcon: AnyComponent; OutcomeBadge: AnyComponent; ProjectPill: AnyComponent; IconButton: AnyComponent;
   ActionMenu: AnyComponent; ContextMenu: AnyComponent; ChangeStrip: AnyComponent; TaskUsageBadge: AnyComponent;
-  ConfirmDialog: AnyComponent; TerminalModal: AnyComponent; LiveTail: AnyComponent; BrainSessionsPanel: AnyComponent;
+  ConfirmDialog: AnyComponent; TerminalModal: AnyComponent; LiveTail: AnyComponent;
 }
 
 interface AgentsRuntime {
