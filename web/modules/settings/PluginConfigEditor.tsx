@@ -1,7 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, GitFork, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { CronJobsEditor } from './CronJobsEditor';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, GraduationCap, GitFork, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { SkillsEditor } from './SkillsEditor';
 import { SubagentsEditor } from './SubagentsEditor';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
@@ -579,13 +578,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
         </>
       )}
-
-      {/* The cronjob plugin's jobs are data, not config schema — a dedicated editor card. */}
-      {mode === 'behavior' && detail.name === 'cronjob' ? (
-        <SettingsGroup className="plugin-card" icon={Clock} title={t.cron.title} description={t.cron.sectionHint}>
-          <div className="settings-group__panel"><CronJobsEditor /></div>
-        </SettingsGroup>
-      ) : null}
 
       {/* Same story for the skills plugin: its skills are .md files, not config schema. */}
       {mode === 'behavior' && detail.name === 'skills' ? (

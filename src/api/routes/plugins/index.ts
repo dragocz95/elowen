@@ -6,7 +6,6 @@ import { MarketplaceError } from '../../../plugins/marketplace.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Context } from 'hono';
 import type { ElowenApp, RouteContext } from '../../context.js';
-import { registerCronjobRoutes } from './cronjobs.js';
 import { registerSkillRoutes } from './skills.js';
 import { registerAgentRoutes } from './agents.js';
 import { registerBrainOAuthRoutes } from './oauth.js';
@@ -337,7 +336,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(listing().find((p) => p.name === name) ?? { ok: true });
   });
 
-  registerCronjobRoutes(app, ctx, shared);
   registerSkillRoutes(app, ctx, shared);
   registerAgentRoutes(app, ctx, shared);
 

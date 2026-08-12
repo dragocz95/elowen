@@ -46,6 +46,9 @@ import { ContextMenu, DIVIDER } from '../components/ui/ContextMenu';
 import { ChangeStrip } from '../components/ui/ChangeStrip';
 import { TaskUsageBadge } from '../components/ui/TaskUsageBadge';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
+import { SelectionSummary } from '../components/ui/SelectionSummary';
+import { BrainModelField } from '../components/ui/BrainModelField';
 import { useToast } from '../components/ui/Toast';
 import { TerminalModal } from '../components/terminal/TerminalModal';
 import { LiveTail } from '../components/terminal/LiveTail';
@@ -57,16 +60,19 @@ import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { allModels } from './execPresets';
+import { compactElapsed, parseTs } from './format';
+import { isValidSchedule } from './cronSchedule';
 import { useAutoSaveStatus } from './useAutoSaveStatus';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
+  useCronJobs, useDiscordChannels,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
-  useUpdateConfig, useInstallSkills,
+  useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
 } from './mutations';
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
@@ -125,6 +131,8 @@ export function ensurePluginUiRuntime(): void {
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
       SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
+      // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
+      ManageSelectionModal, SelectionSummary, BrainModelField,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
@@ -136,12 +144,16 @@ export function ensurePluginUiRuntime(): void {
       useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
       useUpdateConfig,
       useBrainModels, useSystemSkills, useInstallSkills, useAutoSaveStatus, usePluginStrings,
+      // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
+      // the cronjob plugin's settings editor reaches them here.
+      useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {
       needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
       execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
       allModels, cliProviders: PROVIDERS,
+      compactElapsed, parseTs, isValidSchedule,
     },
     api,
     navigate: (href) => navigateImpl(href),

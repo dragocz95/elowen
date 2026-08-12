@@ -4,9 +4,30 @@
   "apiVersion": "1",
   "description": "Scheduled prompts: recurring jobs (\"every 30m\", \"daily 07:30\") and one-shot wake-ups (\"in 20m\", \"at 18:30\") that run as the brain's own conversations with full owner powers. Admin-only management.",
   "entry": "index.mjs",
-  "provides": { "tools": ["CronAdd", "ScheduleWakeup", "CronList", "CronRemove"], "platforms": ["cron"] },
-  "deferLoading": ["CronAdd", "CronList", "CronRemove", "ScheduleWakeup"],
-  "icons": { "Cron*": "⏰", "ScheduleWakeup": "⏰" },
+  "provides": {
+    "tools": [
+      "CronAdd",
+      "ScheduleWakeup",
+      "CronList",
+      "CronRemove"
+    ],
+    "platforms": [
+      "cron"
+    ],
+    "apiRoutes": [
+      "/plugins/cronjob/jobs"
+    ]
+  },
+  "deferLoading": [
+    "CronAdd",
+    "CronList",
+    "CronRemove",
+    "ScheduleWakeup"
+  ],
+  "icons": {
+    "Cron*": "⏰",
+    "ScheduleWakeup": "⏰"
+  },
   "configSchema": [
     {
       "key": "sec_scheduler",
@@ -89,5 +110,52 @@
       "placeholder": "host default (30 min)",
       "hint": "Optional. A job idle longer than this between runs starts a fresh conversation on its next tick — past the model's prompt-cache window, reusing the old context is pure cost with no cache benefit. Leave empty to use the host default (like Discord). Set a smaller value for frequent jobs, a larger one to keep continuity longer, or 0 to never start fresh (always keep the running context)."
     }
-  ]
+  ],
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "settings": [
+      {
+        "id": "jobs",
+        "label": "Scheduled jobs",
+        "icon": "Clock"
+      }
+    ],
+    "strings": {
+      "title": "Scheduled jobs",
+      "sectionHint": "Recurring prompts run on schedule. Changes apply within 30 seconds.",
+      "empty": "No scheduled jobs yet.",
+      "addJob": "Add job",
+      "removeJob": "Delete job",
+      "deleteTitle": "Delete job",
+      "deleteDesc": "The job “{name}” will be removed permanently.",
+      "jobNew": "New job",
+      "name": "Name",
+      "schedule": "Schedule",
+      "scheduleValid": "Valid schedule",
+      "scheduleInvalid": "Invalid schedule",
+      "hours": "Active hours",
+      "check": "Check command",
+      "prompt": "Prompt",
+      "enabled": "Enabled",
+      "paused": "Paused",
+      "channel": "Destination channel",
+      "channelDefault": "default channel",
+      "pillDefault": "(default)",
+      "model": "Model",
+      "modelDefault": "default",
+      "lastRun": "ran {t} ago",
+      "lastResult": "Last result",
+      "header": "Header with the job name",
+      "saveError": "Saving the job failed",
+      "deleteError": "Deleting the job failed",
+      "helpSchedule": "Formats: “every 15m”, “every 2h”, “daily 07:30”, “weekly sun 20:00”.",
+      "helpHours": "Optional “H-H” window (e.g. “5-21”) — outside it the job stays quiet.",
+      "helpHeader": "On = the delivered message starts with a \"⏰ job name\" line. Turn off for persona messages in a dedicated channel.",
+      "helpCheck": "Cheap shell guard before the prompt. No output = AI turn is skipped (saves a model call); output is passed to the assistant.",
+      "helpPrompt": "What the assistant does on each run.",
+      "helpChannel": "Where the result is delivered on Discord. Default = the discord plugin’s notification channel.",
+      "helpModel": "Which model the job runs on. Default = the server default model."
+    }
+  }
 }

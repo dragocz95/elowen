@@ -1,17 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isValidSchedule as sharedValid } from '../../src/shared/cronSchedule.js';
 import { isValidSchedule as webValid } from '../../web/lib/cronSchedule';
 import { isValidSchedule as webRunValid, nextCronRun } from '../../web/lib/cron';
 import type { CronJob } from '../../web/lib/types';
 
-// The cron/schedule grammar is hand-mirrored in FOUR places because neither the untyped `.mjs` plugin
-// nor the standalone web bundle can import the daemon's NodeNext source: the plugin's parseSchedule (the
-// authority), src/shared/cronSchedule.ts (API validation), web/lib/cronSchedule.ts (web validation) and
-// web/lib/cron.ts (the dashboard's next-run computation). This test pins them in lockstep — a drift like
-// web/lib/cron.ts silently dropping the cron-expression branch (a valid job shown as "never fires") fails
-// here instead of shipping wrong data.
+// The cron/schedule grammar is hand-mirrored in THREE places because the standalone web bundle cannot
+// import the untyped `.mjs` plugin: the plugin's parseSchedule (the authority — it also validates the
+// /plugins/cronjob/jobs API writes), web/lib/cronSchedule.ts (web validation, exposed to the plugin
+// bundle via the runtime utils) and web/lib/cron.ts (the dashboard's next-run computation). This test
+// pins them in lockstep — a drift like web/lib/cron.ts silently dropping the cron-expression branch (a
+// valid job shown as "never fires") fails here instead of shipping wrong data.
 const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/cronjob/index.mjs');
 const plugin = await import(pluginPath) as { parseSchedule(spec: string): { kind: string } | null };
 
@@ -26,11 +25,10 @@ const CORPUS: string[] = [
   '0 9 32 * *', '0 9 * 13 *', '1-3-5 * * * *', 'daily 24:00', 'weekly xyz 10:00', '',
 ];
 
-describe('cron schedule grammar parity (plugin ⋅ shared ⋅ web-validate ⋅ web-nextrun)', () => {
+describe('cron schedule grammar parity (plugin ⋅ web-validate ⋅ web-nextrun)', () => {
   for (const spec of CORPUS) {
     it(`agrees on ${JSON.stringify(spec)}`, () => {
       const expected = plugin.parseSchedule(spec) !== null; // the authoritative parser
-      expect(sharedValid(spec)).toBe(expected);
       expect(webValid(spec)).toBe(expected);
       expect(webRunValid(spec)).toBe(expected);
     });

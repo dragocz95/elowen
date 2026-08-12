@@ -13,24 +13,34 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
-function setup() {
+const pluginsDir = join(process.cwd(), 'plugins');
+
+function setup(opts: { enabled?: string[] } = {}) {
   const dataRoot = tmpDir('cronjobs');
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
   const amy = users.create('amy', 'pw');
+  // The '/plugins/cronjob/jobs' surface is served by the REAL cronjob plugin (root mounts) now.
+  const provider = new PluginRegistryProvider(() => loadPlugins({
+    dirs: [pluginsDir], enabled: opts.enabled ?? ['cronjob'], dataRoot,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+  }));
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-    pluginDataRoot: dataRoot,
+    pluginDataRoot: dataRoot, pluginDirs: [pluginsDir],
+    plugins: provider,
   });
   return { app, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
@@ -149,9 +159,8 @@ describe('cron jobs routes', () => {
     expect(onDisk(dataRoot).map((j: { id: string }) => j.id)).toEqual(['j2']);
   });
 
-  // The plugin rewrites jobs.json with a plain, non-atomic writeFileSync. A write that read the file at
-  // the wrong moment and saw "no jobs" would put ONE job back where twelve were — the very loss this
-  // endpoint exists to stop.
+  // A write that read the file at the wrong moment (truncated, or not a list) and saw "no jobs" would
+  // put ONE job back where twelve were — the very loss this endpoint exists to stop.
   it('refuses to write over a jobs file it could not read, and leaves it untouched', async () => {
     const { app, dataRoot, adminTok } = setup();
     const file = join(dataRoot, 'cronjob', 'jobs.json');
@@ -226,6 +235,13 @@ describe('cron jobs routes', () => {
     expect((await app.request('/plugins/cronjob/jobs', auth(amyTok))).status).toBe(403);
     expect((await save(app, amyTok, job())).status).toBe(403);
     expect((await app.request('/plugins/cronjob/jobs/j1', del(amyTok))).status).toBe(403);
+  });
+
+  it('answers 503 "cronjob plugin is disabled" when the plugin is off', async () => {
+    const { app, adminTok } = setup({ enabled: [] });
+    const res = await app.request('/plugins/cronjob/jobs', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'cronjob plugin is disabled' });
   });
 });
 

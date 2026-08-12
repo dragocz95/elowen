@@ -6,6 +6,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runtimeFooter } from '../_shared/format.mjs';
 import { readJsonSafe, writeJsonAtomic } from '../_shared/atomicJson.mjs';
@@ -713,6 +714,109 @@ export function register(ctx) {
   const store = new JobStore(join(ctx.dataDir(), 'jobs.json'), ctx.logger);
   const deliveryStore = new DeliveryStore(join(ctx.dataDir(), 'pending-deliveries.json'), ctx.logger);
   const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('cron jobs can only be managed from an admin session'); };
+
+  // ── Admin jobs API (root mounts, grandfathered core URLs): jobs.json is a SHARED list — the
+  // scheduler stamps runs into it, CronAdd/CronRemove write it, and the settings deck edits it here.
+  // So a write names exactly ONE job and the file is read-modify-written around it: taking the whole
+  // array from a client whose snapshot predates someone else's new job would delete that job on save.
+  // The scheduler re-reads the file every tick, so an edit applies live — no restart. ──
+  const jobsFile = join(ctx.dataDir(), 'jobs.json');
+  /** The jobs on disk, STRICT: throws when the file is present but unreadable. A caller about to
+   *  write the list back must abort, not rebuild it from an empty base — a truncated read must never
+   *  be mistaken for "there are no jobs". Only the read-only GET may treat that as empty (the
+   *  scheduler's own JobStore stays tolerant for ticks; this strictness is the API's). */
+  const readJobsStrict = () => {
+    if (!existsSync(jobsFile)) return [];
+    const parsed = JSON.parse(readFileSync(jobsFile, 'utf-8'));
+    if (!Array.isArray(parsed)) throw new Error('jobs.json is not an array');
+    return parsed;
+  };
+  /** The fields a client owns. Everything else a job carries on disk is the SCHEDULER's (lastRun,
+   *  lastSlot, lastResult, wake-up origin) and is merged back from the file — writing a stale lastRun
+   *  back would make an interval job due again on the next tick, and a dropped lastSlot would re-fire
+   *  a slot already run. */
+  const CRON_FIELDS = ['id', 'name', 'schedule', 'prompt', 'check', 'hours', 'notifyChannelId', 'plain', 'model', 'enabled', 'runAt', 'createdAt'];
+  /** Why this job is not storable, or null when it is. */
+  const cronJobError = (j) => {
+    for (const k of ['id', 'name', 'schedule', 'prompt']) {
+      if (typeof j[k] !== 'string' || j[k].trim() === '') return `a job needs a non-empty "${k}"`;
+    }
+    const oneShot = j.runAt !== undefined;
+    if (oneShot ? typeof j.runAt !== 'string' || Number.isNaN(Date.parse(j.runAt)) : !parseSchedule(j.schedule)) {
+      return `invalid schedule "${String(j.schedule)}" — use "every 15m", "every 2h", "daily 07:30", "weekly sun 20:00" or a 5-field cron expression`;
+    }
+    if (j.check !== undefined && typeof j.check !== 'string') return 'check must be omitted or a string';
+    if (j.plain !== undefined && typeof j.plain !== 'boolean') return 'plain must be omitted or a boolean';
+    if (j.model !== undefined) {
+      const m = j.model;
+      if (typeof m !== 'object' || m === null || typeof m.provider !== 'string' || typeof m.model !== 'string' || !m.provider.trim() || !m.model.trim()) {
+        return 'model must be omitted or an object with non-empty provider and model';
+      }
+    }
+    return null;
+  };
+  const jsonRes = (body, status = 200) => ({ status, body });
+
+  ctx.registerApiRoute({
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'GET', access: 'admin',
+    handler: async (req) => {
+      if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
+      try { return jsonRes(readJobsStrict()); }
+      catch { return jsonRes([]); } // a read-only view may show an unreadable file as empty; a write may not
+    },
+  });
+
+  // Upsert ONE job, leaving every other job on disk exactly as it is.
+  ctx.registerApiRoute({
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'PUT', access: 'admin',
+    handler: async (req) => {
+      const segs = req.path === '' ? [] : req.path.split('/');
+      if (segs.length !== 1) return jsonRes({ error: 'not found' }, 404);
+      let body;
+      try { body = await req.json(); } catch { body = null; }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonRes({ error: 'body must be a job object' }, 400);
+      // The URL names the job — a body id can't redirect the write onto another one.
+      const job = { ...body, id: decodeURIComponent(segs[0]) };
+      const error = cronJobError(job);
+      if (error) return jsonRes({ error }, 400);
+
+      let jobs;
+      try { jobs = readJobsStrict(); }
+      catch { return jsonRes({ error: 'jobs file is unreadable — refusing to write over it' }, 500); }
+      const prev = jobs.find((j) => j.id === job.id);
+      const edit = {};
+      for (const k of CRON_FIELDS) if (job[k] !== undefined) edit[k] = job[k];
+      const runtime = {};
+      for (const [k, v] of Object.entries(prev ?? {})) if (!CRON_FIELDS.includes(k)) runtime[k] = v;
+      // A job that just flipped to enabled (or arrived new as enabled) is armed from NOW, so it waits
+      // for its next natural slot instead of firing immediately. Arming means BOTH halves of the run
+      // state: `lastSlot` decides a daily/weekly job on slot identity alone, so leaving Monday's slot
+      // behind on a job re-enabled on Thursday would fire it on the spot. One-shot (runAt) jobs are
+      // excluded — they fire exactly once, while lastRun is empty.
+      const enabling = !job.runAt && edit.enabled !== false && (!prev || prev.enabled === false);
+      if (enabling) delete runtime.lastSlot;
+      const saved = { ...edit, ...runtime, ...(enabling ? { lastRun: new Date().toISOString() } : {}) };
+      store.save(prev ? jobs.map((j) => (j.id === job.id ? saved : j)) : [...jobs, saved]);
+      return jsonRes({ ok: true });
+    },
+  });
+
+  // Idempotent: deleting a job that is already gone is a success, not a 404. A client racing its own
+  // in-flight save (or another tab) must be able to say "this job should not exist" without having to
+  // know whether it currently does.
+  ctx.registerApiRoute({
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'DELETE', access: 'admin',
+    handler: async (req) => {
+      const segs = req.path === '' ? [] : req.path.split('/');
+      if (segs.length !== 1) return jsonRes({ error: 'not found' }, 404);
+      let jobs;
+      try { jobs = readJobsStrict(); }
+      catch { return jsonRes({ error: 'jobs file is unreadable — refusing to write over it' }, 500); }
+      const rest = jobs.filter((j) => j.id !== decodeURIComponent(segs[0]));
+      if (rest.length !== jobs.length) store.save(rest);
+      return jsonRes({ ok: true });
+    },
+  });
 
   ctx.registerTool(defineTool({
     name: 'CronAdd', label: 'Schedule job',

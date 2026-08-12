@@ -2,13 +2,25 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { onUnhandledRequest } from '../../msw';
-import { CronJobsEditor } from '../../../modules/settings/CronJobsEditor';
-import { ToastProvider } from '../../../components/ui/Toast';
-import { createWrapper } from '../../test-utils';
-import type { CronJob, DiscordChannelOption, BrainModelOption } from '../../../lib/types';
+import { onUnhandledRequest } from '../msw';
+import { ensurePluginUiRuntime } from '../../lib/pluginUi';
+import { JobsSettings } from '../../../plugins/cronjob/web-src/JobsSettings';
+import manifest from '../../../plugins/cronjob/elowen-plugin.json';
+import { ToastProvider } from '../../components/ui/Toast';
+import { createWrapper } from '../test-utils';
+import type { CronJob, DiscordChannelOption, BrainModelOption } from '../../lib/types';
 
-const server = setupServer();
+// The moved editor resolves everything through window.ElowenUiRuntime — install the REAL runtime,
+// so this exercises the production contract the bundle runs against.
+ensurePluginUiRuntime();
+
+// View copy is served per-plugin by /plugins/ui; serving the REAL manifest en fallback keeps the
+// assertions in lockstep with what production users see.
+const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
+
+const server = setupServer(
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'cronjob', url: '/plugins/cronjob/web/index.js', apiVersion: 1, nav: [], settings: [], strings }])),
+);
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 const job = (over: Partial<CronJob>): CronJob =>
@@ -30,12 +42,12 @@ async function mountWith(jobs: CronJob[]) {
     http.put('*/api/plugins/cronjob/jobs/:id', () => HttpResponse.json({ ok: true })),
   );
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><CronJobsEditor /></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
   // Expand the job row so the channel/model fields render.
   fireEvent.click(await screen.findByText('digest'));
 }
 
-describe('CronJobsEditor — error state', () => {
+describe('cronjob JobsSettings — error state', () => {
   it('shows a retryable error instead of an infinite skeleton', async () => {
     let attempts = 0;
     server.use(
@@ -47,7 +59,7 @@ describe('CronJobsEditor — error state', () => {
       http.get('*/api/brain/models', () => HttpResponse.json(MODELS)),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><CronJobsEditor /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
 
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -65,7 +77,7 @@ const deleteRow = async (index: number) => {
 /** The two SelectionSummary Manage buttons of an expanded job: [channel, model]. */
 const manageButtons = () => screen.getAllByRole('button', { name: 'Manage' });
 
-describe('CronJobsEditor destination channel', () => {
+describe('cronjob JobsSettings destination channel', () => {
   it('picking a channel in the single-select modal replaces the destination', async () => {
     await mountWith([job({ notifyChannelId: '100' })]);
     fireEvent.click(manageButtons()[0]);
@@ -105,7 +117,7 @@ describe('CronJobsEditor destination channel', () => {
 /** jobs.json is shared: the scheduler stamps runs into it and the brain's CronAdd tool writes it. A page
  *  that sent the whole list back would delete every job it had not seen — which is exactly how jobs went
  *  missing. So a write must name ONE job, and the rest of the list must be none of this page's business. */
-describe('CronJobsEditor writes', () => {
+describe('cronjob JobsSettings writes', () => {
   const mount = (jobs: CronJob[], writes: { id: string; body: unknown }[], deletes: string[]) => {
     server.use(
       http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json(jobs)),
@@ -121,7 +133,7 @@ describe('CronJobsEditor writes', () => {
       }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><CronJobsEditor /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
   };
 
   it('saves only the job that was edited', async () => {
@@ -182,7 +194,7 @@ describe('a cron job row', () => {
       }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><CronJobsEditor /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
   };
   /** The name input / prompt textarea of the Nth expanded row. */
   const nameBox = (row = 0) => screen.getAllByPlaceholderText('morning-digest')[row]!;
@@ -242,7 +254,7 @@ describe('a cron job row', () => {
   });
 });
 
-describe('CronJobsEditor model', () => {
+describe('cronjob JobsSettings model', () => {
   it('groups the catalog by provider with a pinned Default and picking a model updates the chip', async () => {
     await mountWith([job({})]);
     fireEvent.click(manageButtons()[1]);
