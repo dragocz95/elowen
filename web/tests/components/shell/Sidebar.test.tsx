@@ -21,15 +21,20 @@ describe('Sidebar (registry-driven)', () => {
     expect(screen.getByRole('navigation', { hidden: true })).toHaveAttribute('inert');
   });
 
-  it('renders the four product worlds and the admin System menu', () => {
+  it('renders the product worlds and the admin System menu', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
     client.setQueryData(['tasks'], []);
+    // The work world (tasks, kanban, timeline, stats) belongs to the work plugin — it reaches the nav
+    // through the /plugins/ui listing, not the core registry.
+    client.setQueryData(['plugin-ui', 'en'], [
+      { name: 'work', nav: [{ label: 'Tasks', icon: 'ListChecks', route: 'tasks' }], settings: [] },
+    ]);
     render(<Wrapper><Sidebar /></Wrapper>);
     expect(screen.getByAltText('Elowen')).toBeInTheDocument();
     expect(screen.getByText('Spaces')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: 'Work' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/p/work/tasks');
     expect(screen.getByRole('link', { name: 'Projects' })).toBeInTheDocument();
     const memory = screen.getByRole('link', { name: 'Memory' });
     const system = screen.getByRole('button', { name: 'System' });
@@ -67,28 +72,42 @@ describe('Sidebar (registry-driven)', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
     client.setQueryData(['tasks'], []);
-    // Sessions and Editor are plugin worlds now — seed the /plugins/ui listing the nav model consumes.
+    // Work, Sessions and Editor are plugin worlds now — seed the /plugins/ui listing the nav model consumes.
     client.setQueryData(['plugin-ui', 'en'], [
+      { name: 'work', nav: [
+        { label: 'Tasks', icon: 'ListChecks', route: 'tasks' },
+        { label: 'Kanban', icon: 'KanbanSquare', route: 'kanban' },
+        { label: 'Timeline', icon: 'Activity', route: 'timeline' },
+        { label: 'Stats', icon: 'BarChart3', route: 'stats' },
+      ], settings: [] },
       { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }], settings: [] },
       { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }], settings: [] },
     ]);
     render(<Wrapper><Sidebar mode="drawer" drawerOpen /></Wrapper>);
-    expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Kanban' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sessions' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Timeline' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Stats' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Editor' })).toBeInTheDocument();
+    // Asserted on the addresses: a plugin world is named after its first page, so its face and that
+    // page share a label and a by-name lookup would be ambiguous rather than wrong.
+    const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect(hrefs).toEqual(expect.arrayContaining([
+      '/p/work/tasks', '/p/work/kanban', '/p/work/timeline', '/p/work/stats',
+      '/p/agents/sessions', '/p/editor',
+    ]));
   });
 
   it('exposes child routes through an accessible flyout in rail mode', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 2, username: 'bob', is_admin: false, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
     client.setQueryData(['tasks'], []);
+    client.setQueryData(['plugin-ui', 'en'], [
+      { name: 'work', nav: [
+        { label: 'Tasks', icon: 'ListChecks', route: 'tasks' },
+        { label: 'Kanban', icon: 'KanbanSquare', route: 'kanban' },
+      ], settings: [] },
+    ]);
     render(<Wrapper><Sidebar mode="rail" /></Wrapper>);
-    const workFlyout = screen.getByRole('group', { name: 'Work' });
-    expect(within(workFlyout).getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/tasks');
-    expect(within(workFlyout).getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/kanban');
+    // A plugin world is named after its first page, and its pages hang off the plugin host route.
+    const workFlyout = screen.getByRole('group', { name: 'Tasks' });
+    expect(within(workFlyout).getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/p/work/tasks');
+    expect(within(workFlyout).getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/p/work/kanban');
   });
 
   it('keeps the footer quiet with only the Elowen version', () => {

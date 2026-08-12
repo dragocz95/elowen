@@ -16,18 +16,30 @@ import type { NavEntry } from './NavItem';
 /** Top to bottom: where you land, then the work, then the context behind it, then administration.
  *  Home first and the admin surfaces last, so the axis reads in the order you actually use it. */
 const SPATIAL_ROUTE_ORDER = [
-  '/dash', '/chat',                               // home, then chat
-  '/tasks', '/kanban', '/p/agents', '/timeline',  // the work
-  '/projects', '/p/editor', '/memory', '/stats',  // what the work runs on
-  '/account', '/settings', '/users',              // administration
+  '/dash', '/chat',                                                    // home, then chat
+  '/p/work/tasks', '/p/work/kanban', '/p/agents', '/p/work/timeline',  // the work
+  '/projects', '/p/editor', '/memory', '/p/work/stats',                // what the work runs on
+  '/account', '/settings', '/users',                                   // administration
 ];
 /** Where an entry parks on the axis. Prefix-matched, not exact: a plugin world links to its first
  *  page (e.g. /p/agents/sessions), which must claim its plugin's slot ('/p/agents') — an unmatched
- *  entry would fall past the administration block and become the wheel's last stop. */
+ *  entry would fall past the administration block and become the wheel's last stop. A plugin whose
+ *  pages belong in different bands (work's register, board and timeline are the work itself; its spend
+ *  stats sit with what the work runs on) names those pages individually, so extracting a subsystem
+ *  never reshuffles the axis the reader knows. */
 function spatialOrderIndex(href: string | undefined): number {
   if (!href) return Number.MAX_SAFE_INTEGER;
   const index = SPATIAL_ROUTE_ORDER.findIndex((route) => href === route || href.startsWith(`${route}/`));
   return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+/** Whether the axis names this page by its own address rather than through its world. That is what
+ *  decides which worlds the rail opens up: a world whose pages have their own slots contributes those
+ *  pages (the work register, the board, the timeline, the spend stats each own one), and every other
+ *  world contributes its face. The order above is the single place that says so — before, the two
+ *  expanded worlds were hardcoded by id here, which stopped being expressible the moment a world could
+ *  arrive from a plugin. */
+function isAxisPage(href: string | undefined): boolean {
+  return href !== undefined && SPATIAL_ROUTE_ORDER.includes(href);
 }
 
 /** The public site's rail spacing — the look this rail matches. */
@@ -68,9 +80,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
   const { t } = useTranslation();
   const lastWheelAt = useRef(0);
   const routeEntries = useMemo<NavEntry[]>(() => [
-    ...worlds.flatMap((world) => world.id === 'work' || world.id === 'projects'
-      ? (world.subItems ?? []).map((item) => ({ ...item, icon: item.icon ?? world.icon }))
-      : [world]),
+    ...worlds.flatMap((world) => {
+      const pages = (world.subItems ?? []).filter((item) => isAxisPage(item.href));
+      return pages.length > 0 ? pages.map((item) => ({ ...item, icon: item.icon ?? world.icon })) : [world];
+    }),
     ...systemItems.flatMap((group) => group.subItems?.length
       ? group.subItems.map((item) => ({ ...item, icon: item.icon ?? group.icon }))
       : [group]),

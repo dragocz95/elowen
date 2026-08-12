@@ -198,12 +198,14 @@ async function main() {
     // There is deliberately no /onboarding: setup happens in the terminal installer, and a visitor
     // with no account is shown the installer command by the login gate rather than a separate route.
     // /sessions and /escalations survive as client-side redirects to the agents plugin pages
-    // (/p/agents/…) — still a 200 HTML shell here; the router.replace happens in the browser.
+    // (/p/agents/…), and /tasks, /kanban, /timeline and /stats to the work plugin's — still a 200 HTML
+    // shell here; the router.replace happens in the browser.
     const PAGES = [
       '/', '/dash', '/settings', '/users', '/stats', '/kanban', '/tasks',
       '/chat', '/sessions', '/projects', '/memory', '/timeline', '/escalations', '/account',
       '/p/editor', '/terminal/e2e', // plugin UI host + dynamic route [name] — arbitrary segment must still render
       '/p/agents/sessions', // plugin UI host route [plugin] — serves the shell even for a deep page
+      '/p/work/tasks', '/p/work/kanban', // where the four legacy work routes above now actually land
     ];
     for (const path of PAGES) {
       const r = await http('GET', WEB, path);

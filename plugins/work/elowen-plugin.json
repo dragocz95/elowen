@@ -42,5 +42,15 @@
   },
   "planSafe": [
     "ElowenListTasks"
-  ]
+  ],
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "nav": [
+      { "label": "Tasks", "icon": "ListChecks", "route": "tasks" },
+      { "label": "Kanban", "icon": "KanbanSquare", "route": "kanban" },
+      { "label": "Timeline", "icon": "Activity", "route": "timeline" },
+      { "label": "Stats", "icon": "BarChart3", "route": "stats" }
+    ]
+  }
 }

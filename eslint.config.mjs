@@ -61,6 +61,17 @@ export default tseslint.config(
     },
   },
   {
+    // A plugin's browser bundle is React too — the pages extracted out of core web keep their inline
+    // hook directives, and hook correctness matters just as much once the code is served from a plugin.
+    // Next's plugin is deliberately absent: a bundle has no Next router, pages or <Image>.
+    files: ['plugins/*/web-src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
+  {
     // Web app (Next.js + React): register the react-hooks and Next plugins so the codebase's inline
     // `eslint-disable` directives resolve, and we get hook-correctness + Next best-practice checks.
     files: ['web/**/*.{ts,tsx}'],

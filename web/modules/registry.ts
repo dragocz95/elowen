@@ -1,24 +1,25 @@
 import type { ModuleMeta } from './types';
 import { meta as dashboard } from './dashboard/meta';
-import { meta as stats } from './stats/meta';
-import { meta as tasks } from './tasks/meta';
-import { meta as kanban } from './kanban/meta';
-import { meta as timeline } from './timeline/meta';
 import { meta as settings } from './settings/meta';
 import { meta as projects } from './projects/meta';
 import { meta as users } from './users/meta';
 import { meta as memory } from './memory/meta';
 import { meta as chat } from './chat/meta';
 
-export const MODULES: ModuleMeta[] = [dashboard, stats, tasks, kanban, timeline, settings, projects, users, memory, chat];
+export const MODULES: ModuleMeta[] = [dashboard, settings, projects, users, memory, chat];
 
 /**
  * Product navigation is intentionally smaller than the module registry. Modules keep their
  * independent routes (and remain discoverable in the command palette), while the shell presents
- * four stable user-facing worlds. This keeps route compatibility separate from information
+ * a few stable user-facing worlds. This keeps route compatibility separate from information
  * architecture, so regrouping the UI never requires redirects or aliases.
+ *
+ * A plugin's pages are NOT listed here: they arrive at runtime from the /plugins/ui listing
+ * (`lib/pluginNav.ts`), so a world exists exactly while the plugin that owns it is enabled. The work
+ * world (tasks, kanban, timeline, stats) left with the work plugin, the way sessions and the editor
+ * did before it.
  */
-type NavigationWorldId = 'home' | 'chat' | 'work' | 'projects' | 'memory';
+type NavigationWorldId = 'home' | 'chat' | 'projects' | 'memory';
 
 export interface NavigationWorld {
   id: NavigationWorldId;
@@ -30,7 +31,6 @@ export interface NavigationWorld {
 export const NAVIGATION_WORLDS: readonly NavigationWorld[] = [
   { id: 'home', route: dashboard.route, icon: dashboard.icon, children: [] },
   { id: 'chat', route: chat.route, icon: chat.icon, children: [] },
-  { id: 'work', route: tasks.route, icon: tasks.icon, children: [tasks, kanban, timeline, stats] },
   { id: 'projects', route: projects.route, icon: projects.icon, children: [projects] },
   { id: 'memory', route: memory.route, icon: memory.icon, children: [] },
 ] as const;

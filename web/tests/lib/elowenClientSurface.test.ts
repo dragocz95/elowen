@@ -12,6 +12,10 @@ import { QUERY_KEYS } from '../../lib/queries';
 const WEB_ROOT = resolve(process.cwd());
 const SOURCE_DIRS = ['app', 'components', 'lib', 'modules'];
 const CLIENT = join(WEB_ROOT, 'lib', 'elowenClient.ts');
+/** A plugin's browser bundle is a first-class consumer: it reaches the very same client through the UI
+ *  runtime (`utils.elowenClient`), so a wrapper only the extracted work views call is live code, not a
+ *  dead route. Scanning them here is what keeps this guard honest as pages move out of core. */
+const PLUGIN_ROOT = resolve(WEB_ROOT, '..', 'plugins');
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -20,6 +24,17 @@ function walk(dir: string, out: string[] = []): string[] {
     else if (/\.tsx?$/.test(entry.name)) out.push(path);
   }
   return out;
+}
+
+/** Every bundle source under plugins/<name>/web-src, tests excluded (see the note in the first case). */
+function pluginSources(): string[] {
+  return readdirSync(PLUGIN_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => {
+      const dir = join(PLUGIN_ROOT, entry.name, 'web-src');
+      try { return walk(dir); } catch { return []; }
+    })
+    .filter((path) => !/\.test\.tsx?$/.test(path));
 }
 
 /** Both guards read call sites, and prose is not a call site: a method named in a doc comment has no
@@ -37,8 +52,7 @@ function captured(match: RegExpMatchArray, group: number): string {
   return value;
 }
 
-const sources = SOURCE_DIRS
-  .flatMap((dir) => walk(join(WEB_ROOT, dir)))
+const sources = [...SOURCE_DIRS.flatMap((dir) => walk(join(WEB_ROOT, dir))), ...pluginSources()]
   // The client cannot vouch for itself, and its own key-less source has nothing else the guards want.
   .filter((path) => path !== CLIENT)
   .map((path) => stripComments(readFileSync(path, 'utf8')));
@@ -47,10 +61,13 @@ const sources = SOURCE_DIRS
 // trailing context is a lookahead so the match stays 12 characters wide: consuming it would swallow a
 // second reference sitting on the same line.
 const CLIENT_REFERENCE = /(?<![\w$/])elowenClient\b(?=([^\n]{0,32}))/g;
-/** The two shapes a reference is allowed to take: a property access (which names the method it uses) and
- *  the named import specifier that brought the binding in. */
+/** The shapes a reference is allowed to take: a property access (which names the method it uses), the
+ *  named import (or runtime destructure) specifier that brought the binding in, and — in a plugin
+ *  bundle, which is handed the client through the UI runtime rather than importing it — the property
+ *  signature declaring the shape it narrowed the client to. A type member is not a call site. */
 const CLIENT_ACCESS = /^\s*\.\s*([A-Za-z_$][\w$]*)/;
 const CLIENT_IMPORT = /^\s*[,}]/;
+const CLIENT_TYPE_MEMBER = /^\s*:\s*\{/;
 
 describe('elowenClient surface', () => {
   // A method nothing calls is a dead route wrapper: it keeps a removed feature's endpoint and DTOs alive
@@ -74,7 +91,7 @@ describe('elowenClient surface', () => {
   it('is reached only by direct property access', () => {
     const opaque = sources.flatMap((src) => [...src.matchAll(CLIENT_REFERENCE)]
       .map((m) => captured(m, 1))
-      .filter((tail) => !CLIENT_ACCESS.test(tail) && !CLIENT_IMPORT.test(tail))
+      .filter((tail) => !CLIENT_ACCESS.test(tail) && !CLIENT_IMPORT.test(tail) && !CLIENT_TYPE_MEMBER.test(tail))
       .map((tail) => `elowenClient${tail}`));
     expect(opaque).toEqual([]);
   });

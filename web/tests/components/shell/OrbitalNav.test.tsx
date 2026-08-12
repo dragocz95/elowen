@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 const pushSpy = vi.hoisted(() => vi.fn());
-const currentPath = vi.hoisted(() => ({ value: '/stats' }));
+const currentPath = vi.hoisted(() => ({ value: '/p/work/stats' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value, useRouter: () => ({ push: pushSpy }) }));
 import { getStableOffsets, OrbitalNav, railSpacing } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
@@ -10,9 +10,15 @@ function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollap
   const { wrapper: Wrapper, client } = createWrapper();
   client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
-  // The Sessions destination is plugin-supplied now — seed the /plugins/ui listing the shell nav maps
-  // into worlds (key carries the locale; tests run with the default 'en').
+  // The work pages, Sessions and the Editor are plugin-supplied now — seed the /plugins/ui listing the
+  // shell nav maps into worlds (key carries the locale; tests run with the default 'en').
   client.setQueryData(['plugin-ui', 'en'], [
+    { name: 'work', nav: [
+      { label: 'Tasks', icon: 'ListChecks', route: 'tasks' },
+      { label: 'Kanban', icon: 'KanbanSquare', route: 'kanban' },
+      { label: 'Timeline', icon: 'Activity', route: 'timeline' },
+      { label: 'Stats', icon: 'BarChart3', route: 'stats' },
+    ], settings: [] },
     { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }, { label: 'Escalations', icon: 'ShieldAlert', route: 'escalations' }], settings: [] },
     { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }], settings: [] },
   ]);
@@ -55,7 +61,7 @@ describe('railSpacing', () => {
 
 describe('OrbitalNav rail stability', () => {
   it('keeps every destination at the same offset whichever route is active', () => {
-    currentPath.value = '/stats';
+    currentPath.value = '/p/work/stats';
     const first = mount();
     const parked = ['Projects', 'Editor', 'Stats', 'Memory', 'Users', 'Home'].map((l) => [l, offsetOf(l)] as const);
     first.unmount();
@@ -83,14 +89,20 @@ describe('OrbitalNav rail stability', () => {
       .map((item) => [item.querySelector('a')!.textContent, offsetOf(item.querySelector('a')!.textContent!)] as const)
       .sort((a, b) => a[1] - b[1])
       .map(([label]) => label);
-    expect(order[0]).toBe('Home');
-    expect(order[1]).toBe('Chat'); // Chat is parked right after Home
-    expect(order.slice(-3)).toEqual(['Account', 'Settings', 'Users']);
+    // The whole axis, not just its ends: a destination whose address the order does not name falls
+    // past administration to the very bottom, and no other assertion here would notice. Extracting
+    // the work pages into a plugin changed all four of their addresses — this is what catches it.
+    expect(order).toEqual([
+      'Home', 'Chat',
+      'Tasks', 'Kanban', 'Sessions', 'Timeline',
+      'Projects', 'Editor', 'Memory', 'Stats',
+      'Account', 'Settings', 'Users',
+    ]);
   });
 });
 
 describe('OrbitalNav', () => {
-  beforeEach(() => { currentPath.value = '/stats'; });
+  beforeEach(() => { currentPath.value = '/p/work/stats'; });
 
   it('exposes work and project destinations as top-level orbital links', () => {
     mount();
@@ -102,10 +114,10 @@ describe('OrbitalNav', () => {
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat');
-    expect(screen.getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/tasks');
-    expect(screen.getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/kanban');
+    expect(screen.getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/p/work/tasks');
+    expect(screen.getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/p/work/kanban');
     expect(screen.getByRole('link', { name: 'Sessions' })).toHaveAttribute('href', '/p/agents/sessions');
-    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/timeline');
+    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/p/work/timeline');
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects');
     expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/p/editor');
     expect(screen.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
@@ -125,7 +137,7 @@ describe('OrbitalNav', () => {
   });
 
   it('steps to the next route when the wheel is used over navigation', () => {
-    mount(); // active: /stats — the last "context" stop before administration
+    mount(); // active: the spend stats — the last "context" stop before administration
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
     expect(pushSpy).toHaveBeenCalledWith('/account');
   });
@@ -162,7 +174,7 @@ describe('OrbitalNav', () => {
 });
 
 describe('OrbitalNav collapse handle', () => {
-  beforeEach(() => { currentPath.value = '/stats'; });
+  beforeEach(() => { currentPath.value = '/p/work/stats'; });
 
   it('is absent when collapsing is not the user’s call, so no dead control is offered', () => {
     mount();

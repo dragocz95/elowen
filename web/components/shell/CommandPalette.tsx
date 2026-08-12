@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation';
 import { Search, Plus, Rocket, CornerDownLeft, type LucideIcon } from 'lucide-react';
 import { MODULES } from '../../modules/registry';
 import { useTranslation } from '../../lib/i18n';
-import { useAgentsPlugin } from '../../lib/queries';
+import { useAgentsPlugin, usePluginUi } from '../../lib/queries';
+import { pluginNavEntries } from '../../lib/pluginNav';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
@@ -20,8 +21,12 @@ function Highlight({ text, q }: { text: string; q: string }) {
 
 export function CommandPalette() {
   const router = useRouter();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const agentsUi = useAgentsPlugin();
+  // Plugin pages are destinations too. They are NOT in the module registry (a plugin's nav arrives at
+  // runtime with the plugin), so without this the palette would silently lose every extracted page —
+  // the task register, the board, the timeline, the sessions view — the day it left core.
+  const pluginUi = usePluginUi(locale);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -46,13 +51,20 @@ export function CommandPalette() {
   const commands = useMemo<Command[]>(() => {
     const go = (route: string) => () => { router.push(route); setOpen(false); };
     const nav = MODULES.map((m) => ({ id: `nav:${m.route}`, label: `${t.common.goTo} ${t.page[m.id as keyof typeof t.page] ?? m.label}`, hint: m.route, icon: m.icon, run: go(m.route) }));
+    // One entry per plugin PAGE (a world with sub-items contributes each of them), already localized
+    // by the daemon's listing.
+    const pluginNav = pluginNavEntries(pluginUi.data ?? [])
+      .flatMap<{ href?: string; label: string; icon?: LucideIcon }>((world) => world.subItems ?? [world])
+      .flatMap((entry) => entry.href && entry.icon
+        ? [{ id: `nav:${entry.href}`, label: `${t.common.goTo} ${entry.label}`, hint: entry.href, icon: entry.icon, run: go(entry.href) }]
+        : []);
     const actions: Command[] = [
       { id: 'new-task', label: t.tasks.newTask, hint: 'create', icon: Plus, run: go('/tasks?new=1') },
       // "New mission" opens the engage flow — an agents-plugin feature, hidden without it.
       ...(agentsUi ? [{ id: 'new-mission', label: t.missions.newMission, hint: 'engage', icon: Rocket, run: go('/tasks?new=1') }] : []),
     ];
-    return [...actions, ...nav];
-  }, [router, t, agentsUi]);
+    return [...actions, ...nav, ...pluginNav];
+  }, [router, t, agentsUi, pluginUi.data]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();

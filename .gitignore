@@ -50,3 +50,4 @@ plugins/cronjob/web/
 plugins/skills/web/
 plugins/subagent/web/
 plugins/whatsapp/web/
+plugins/work/web/
