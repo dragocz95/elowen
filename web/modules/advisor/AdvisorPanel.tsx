@@ -6,6 +6,7 @@ import { useTranslation } from '../../lib/i18n';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { Segmented } from '../../components/ui/Segmented';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useAgentsPlugin } from '../../lib/queries';
 import { AdvisorPane } from './AdvisorPane';
 import { BrainChat } from './BrainChat';
 import { SessionPicker } from './SessionPicker';
@@ -25,12 +26,19 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
   const [sideMenuOpen, setSideMenuOpen] = useState(false);
   // Chat = the embedded brain (same one `elowen chat` talks to); Terminal = the tmux panes. Chat first.
   const [mode, setMode] = usePersistentState<'chat' | 'terminal'>('elowen.dock.mode', 'chat', ['chat', 'terminal']);
+  // Every pane the terminal mode can hold is a tmux pane owned by the agents plugin (the advisor and
+  // live agent sessions), so without that plugin the mode has nothing to show and is not offered —
+  // otherwise the dock advertises a Terminál that can only ever be empty.
+  const terminals = useAgentsPlugin();
   // On /chat the ChatView owns the chat surface, so the dock is forced to Terminál only — the Chat
   // segment is hidden and the terminal branch renders regardless of the stored mode. The persisted mode
   // is left untouched, so leaving /chat restores the user's choice. This never touches the controller.
   const onChat = usePathname() === '/chat';
-  const effectiveMode = onChat ? 'terminal' : mode;
+  const effectiveMode = !terminals ? 'chat' : onChat ? 'terminal' : mode;
   const horizontal = state.side === 'left' || state.side === 'right';
+  // On /chat the full-page surface already IS the chat, so a dock with no terminals has nothing left to
+  // hold — rendering it would only duplicate the conversation beside itself.
+  const empty = !terminals && onChat;
 
   // Width drag: on the right the panel grows as the divider moves left (negative dx), so the sign
   // flips by side. Same logic vertically: a bottom dock grows as the divider moves up (negative dy).
@@ -63,6 +71,10 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
 
   const excluded = state.panes.filter((p) => p.kind === 'session').map((p) => p.name!);
   const widthHandle = <ResizeHandle orientation="vertical" onDelta={onWidthDelta} className="h-full" />;
+  const modes = [
+    ...(onChat && terminals ? [] : [{ value: 'chat', label: t.brainChat.modeChat, icon: MessageCircle }]),
+    ...(terminals ? [{ value: 'terminal', label: t.brainChat.modeTerminal, icon: SquareTerminal }] : []),
+  ];
 
   const column = (
     <div
@@ -72,13 +84,12 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
       {/* Thin global toolbar for the whole dock (it may hold several panes), so it carries no pane
           title — each pane labels itself below. Controls are right-aligned. */}
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        {/* Kept even when a single mode is left: /chat has always shown the lone Terminál segment as the
+            label for what the dock is, so a lone Chat segment reads the same way. */}
         <Segmented
           aria-label={t.brainChat.modeNav}
           size="sm"
-          options={[
-            ...(onChat ? [] : [{ value: 'chat', label: t.brainChat.modeChat, icon: MessageCircle }]),
-            { value: 'terminal', label: t.brainChat.modeTerminal, icon: SquareTerminal },
-          ]}
+          options={modes}
           value={effectiveMode}
           onChange={(v) => setMode(v as 'chat' | 'terminal')}
         />
@@ -163,6 +174,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
     </div>
   );
 
+  if (empty) return null;
   // The size divider sits on the panel's inner edge: left of the column when docked right, right of
   // it when docked left; below it when docked top, above it when docked bottom.
   const heightHandle = <ResizeHandle orientation="horizontal" onDelta={onHeightDelta} className="w-full" />;

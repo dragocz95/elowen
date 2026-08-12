@@ -6,7 +6,11 @@ import type { UseDockState } from '../../../lib/useDockState';
 
 const currentPath = vi.hoisted(() => ({ value: '/dash' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value }));
-beforeEach(() => { currentPath.value = '/dash'; });
+// Every pane the dock's terminal mode can hold is a tmux pane owned by the agents plugin, so the panel
+// gates that mode on the plugin's presence. Default: present, the instance most tests here describe.
+const agents = vi.hoisted(() => ({ present: true }));
+vi.mock('../../../lib/queries', () => ({ useAgentsPlugin: () => agents.present }));
+beforeEach(() => { currentPath.value = '/dash'; agents.present = true; });
 
 vi.mock('../../../modules/advisor/AdvisorPane', () => ({
   AdvisorPane: ({ pane }: { pane: { id: string } }) => <div data-testid="pane">{pane.id}</div>,
@@ -66,5 +70,23 @@ describe('AdvisorPanel', () => {
     expect(screen.getByRole('radio', { name: /^terminal|^terminál/i })).toBeInTheDocument();
     expect(screen.queryByTestId('brain-chat')).toBeNull();
     expect(screen.getByTestId('pane')).toBeInTheDocument();
+  });
+
+  it('offers no Terminál mode without the agents plugin', () => {
+    // The stored mode is terminal, so a panel that ignored the plugin would render an empty tmux stack
+    // behind a Terminál segment nothing can ever fill.
+    agents.present = false;
+    renderPanel(fakeDock());
+    expect(screen.queryByRole('radio', { name: /^terminal|^terminál/i })).toBeNull();
+    expect(screen.getByRole('radio', { name: /^chat$/i })).toBeInTheDocument();
+    expect(screen.getByTestId('brain-chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('pane')).toBeNull();
+  });
+
+  it('renders nothing on /chat without the agents plugin: the page already IS the chat', () => {
+    agents.present = false;
+    currentPath.value = '/chat';
+    const { container } = renderPanel(fakeDock());
+    expect(container).toBeEmptyDOMElement(); // no second chat surface beside the full-page one
   });
 });
