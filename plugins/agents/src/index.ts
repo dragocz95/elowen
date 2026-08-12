@@ -27,6 +27,7 @@ import { registerAdvisorApi } from './api/advisor.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
+import { AGENTS_MCP_TOOLS } from './mcpTools.js';
 import { agentsPluginConfig } from './config.js';
 import { logger, setBaseLogger } from './lib/logger.js';
 import { detectClis } from './lib/cliDetection.js';
@@ -170,6 +171,11 @@ export function register(ctx: PluginContext): void {
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);
+
+  // The agents tools of the daemon's OWN /mcp server (missions/sessions/notes — every route they
+  // proxy is a plugin root mount above). Pure REST-proxy declarations: registering them never builds
+  // the runtime, and with the plugin disabled they vanish from tools/list.
+  for (const tool of AGENTS_MCP_TOOLS) ctx.registerMcpTool(tool);
 
   // The control surface the daemon routes/services/advisor drive (deps getters resolve it live from
   // the loaded registry). Accessor methods so the registry's function-shape narrowing applies and so

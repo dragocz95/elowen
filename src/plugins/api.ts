@@ -1,4 +1,5 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { ZodTypeAny } from 'zod';
 import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowCompletionEmitter, WorkflowEmitter } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
@@ -514,6 +515,28 @@ export interface PluginAgentCatalog {
    *  merged registry. */
   save(name: string, input: { description?: unknown; tools?: unknown; body?: unknown }): Promise<AgentCatalogResult>;
   remove(name: string): AgentCatalogResult;
+}
+
+/** The request function a daemon-MCP tool handler receives — the shared `callElowenApi` core already
+ *  bound to the CALLING MCP client's bearer token, throwing on a non-ok response with the same
+ *  `elowen <status>: …` text agents have always seen. A tool can never act with wider rights than
+ *  the client that invoked it. */
+export type PluginMcpRequest = (method: string, path: string, body?: unknown) => Promise<unknown>;
+
+/** A tool contributed to the DAEMON'S OWN /mcp server — the endpoint spawned agents and the advisor
+ *  connect to. (NOT the `mcp` bridge plugin, which CONSUMES external MCP servers.) The declaration
+ *  carries the full MCP surface (name/description/zod input shape); `run` is a pure REST proxy over
+ *  {@link PluginMcpRequest}, so the handler holds no state and works identically in the stateless
+ *  per-request server. A disabled plugin's tools simply vanish from `tools/list` — the correct MCP
+ *  semantics for an absent capability. */
+export interface PluginMcpTool {
+  /** Snake_case tool name (e.g. `elowen_missions`) — unique across core + plugins. */
+  name: string;
+  description: string;
+  /** Zod RAW shape — exactly what `McpServer.registerTool` takes as `inputSchema`. */
+  inputSchema: Record<string, ZodTypeAny>;
+  /** Pure REST proxy: parsed arguments + a request fn bound to the caller's token. */
+  run(args: Record<string, unknown>, req: PluginMcpRequest): Promise<unknown>;
 }
 
 /** One row of the first-run readiness report (see PluginContext.registerReadinessCheck). */
@@ -1062,6 +1085,12 @@ export interface PluginContext {
    *  disappear with it, which is itself the honest answer); return null to skip, and a throwing check
    *  is dropped for that request. Keep it cheap and synchronous-ish: this rides a UI read. */
   registerReadinessCheck(check: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null>): void;
+  /** Contribute a tool to the daemon's OWN /mcp server (see {@link PluginMcpTool}). STRICT
+   *  deny-by-default: the name must be declared in the manifest's `provides.mcpTools` — the manifest
+   *  stays the single audit surface for what a plugin exposes to connected MCP clients. The /mcp
+   *  server is composed per request from the LIVE registry, so a reload or disable applies to the
+   *  very next `tools/list` without any cache to invalidate. */
+  registerMcpTool(tool: PluginMcpTool): void;
   /** Subscribe to the daemon's event bus (usage recording, push dispatch — bus CONSUMERS that moved
    *  into a plugin). Gated by `mutates:['events']`. Returns the unsubscribe; the host also detaches
    *  every subscription of the OLD registry on a plugin reload, so a stale closure can never

@@ -177,9 +177,12 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   // MCP endpoint: the advisor agent connects here to control Elowen with native tools. Each request is
   // handled statelessly with the toolset bound to the caller's token, and every tool delegates to the
   // same `callElowenApi` core as the `elowen api` CLI verb — so a new REST endpoint needs zero edits here.
+  // Plugin-contributed tools (the agents plugin's mission/session/notes surface) are resolved from the
+  // LIVE registry per request, so a plugin reload/disable applies to the very next tools/list.
   app.all('/mcp', async c => {
     const token = c.get('token');
-    return handleMcpRequest(c.req.raw, { url: `http://localhost:${ELOWEN_PORT}`, token });
+    const registry = await d.plugins?.get().catch(() => undefined);
+    return handleMcpRequest(c.req.raw, { url: `http://localhost:${ELOWEN_PORT}`, token, pluginTools: registry?.mcpTools ?? [] });
   });
 
   // --- Web push: the browser's VAPID public key, plus per-user device subscribe/unsubscribe. The

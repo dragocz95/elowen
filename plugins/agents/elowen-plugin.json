@@ -39,6 +39,20 @@
     "tools": [
       "ElowenListMissions",
       "ElowenListSessions"
+    ],
+    "mcpTools": [
+      "elowen_sessions",
+      "elowen_note_add",
+      "elowen_notes",
+      "elowen_missions",
+      "elowen_mission_engage",
+      "elowen_mission_pause",
+      "elowen_mission_resume",
+      "elowen_mission_disengage",
+      "elowen_session_spawn",
+      "elowen_session_kill",
+      "elowen_session_send_keys",
+      "elowen_session_read_pane"
     ]
   },
   "planSafe": [

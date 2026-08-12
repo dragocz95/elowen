@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -119,6 +119,9 @@ export class PluginRegistry {
   readonly eventRowResolvers: { plugin: string; fn: (e: ElowenEvent) => EventPersistenceRow | null | undefined }[] = [];
   /** First-run readiness rows (see PluginContext.registerReadinessCheck). */
   readonly readinessChecks: { plugin: string; fn: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null> }[] = [];
+  /** Tools contributed to the daemon's OWN /mcp server (see PluginContext.registerMcpTool). The /mcp
+   *  handler composes core + these per request, so this list needs no cache invalidation on reload. */
+  readonly mcpTools: { plugin: string; tool: PluginMcpTool }[] = [];
   /** Live bus subscriptions this registry's plugins hold (ctx.subscribeEvents). Owned by the registry
    *  so a reload can detach the WHOLE old generation — a stale closure must never double-handle events
    *  beside its replacement. */
@@ -209,6 +212,12 @@ export class PluginRegistry {
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
     this.eventRowResolvers.push(...other.eventRowResolvers);
     this.readinessChecks.push(...other.readinessChecks);
+    // MCP tool names are a flat namespace on the daemon's /mcp server — first-writer-wins, like tools.
+    for (const m of other.mcpTools) {
+      const prior = this.mcpTools.find((x) => x.tool.name === m.tool.name);
+      if (prior && prior.plugin !== m.plugin) { warn?.(`mcp tool "${m.tool.name}" from "${m.plugin}" ignored — already registered by "${prior.plugin}"`); continue; }
+      this.mcpTools.push(m);
+    }
     this.busSubscriptions.push(...other.busSubscriptions);
     for (const [k, v] of other.webUi) this.webUi.set(k, v);
     for (const p of other.promptEntries) {
@@ -581,6 +590,18 @@ export class PluginRegistry {
       // Display-only onboarding rows — no capability gate; the check runs with only what the plugin
       // already holds through its other (gated) seams.
       registerReadinessCheck: (fn) => { this.readinessChecks.push({ plugin: name, fn }); },
+      // Daemon-MCP tools: STRICT deny-by-default against `provides.mcpTools` (the surface is new, so
+      // there is no legacy manifest to tolerate). Handlers are pure REST proxies over the caller's
+      // token, so no capability gate applies — the REST layer's own auth is the boundary.
+      registerMcpTool: (tool) => {
+        const clean = tool?.name?.trim() ?? '';
+        if (!/^[a-z0-9][a-z0-9_]*$/.test(clean)) { scoped.warn(`registerMcpTool refused: "${tool?.name}" is not snake_case (a-z, 0-9, underscores)`); return; }
+        if (!provides?.mcpTools?.includes(clean)) {
+          scoped.warn(`registerMcpTool('${clean}') refused: not declared in manifest provides.mcpTools`);
+          return;
+        }
+        this.mcpTools.push({ plugin: name, tool });
+      },
       subscribeEvents: (fn) => {
         if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);
         if (!subscribeEvents) throw new Error('no event bus wired for plugins in this process');

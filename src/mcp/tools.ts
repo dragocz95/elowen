@@ -1,56 +1,94 @@
+import { z } from 'zod';
 import { callElowenApi } from '../shared/apiClient.js';
+import type { PluginMcpRequest, PluginMcpTool } from '../plugins/api.js';
 
-/** The Elowen MCP toolset, built over the single shared `callElowenApi` core — exactly the same forward
- *  path as the `elowen api` CLI verb, so there is no duplicated request logic and a new REST endpoint
- *  needs zero edits here. `elowen_request` is the generic escape hatch (any endpoint works immediately);
- *  the typed helpers are thin fixed-route wrappers that exist only for nicer agent UX. */
+/** Connection the MCP toolset binds to — one caller's daemon URL + bearer token. */
 export interface ElowenToolDeps { url: string; token: string; call?: typeof callElowenApi }
 
-export function makeElowenTools(d: ElowenToolDeps) {
+/** The request core every MCP tool proxies through — the single shared `callElowenApi` path (exactly
+ *  the same forward as the `elowen api` CLI verb), bound to the caller's token and throwing on a
+ *  non-ok response with the `elowen <status>: …` text agents have always seen. */
+export function makeMcpRequest(d: ElowenToolDeps): PluginMcpRequest {
   const call = d.call ?? callElowenApi;
-  const req = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+  return async (method, path, body) => {
     const r = await call(method, path, body, { url: d.url, token: d.token });
     if (!r.ok) throw new Error(`elowen ${r.status}: ${r.text || JSON.stringify(r.data)}`);
     return r.data;
   };
-  return {
-    elowen_request: (a: { method: string; path: string; body?: unknown }) => req(a.method, a.path, a.body),
-    elowen_tasks: () => req('GET', '/tasks'),
-    elowen_create_task: (a: { title: string; project_id?: number; description?: string }) => req('POST', '/tasks', a),
-    elowen_plan: (a: {
-      goal: string;
-      project_id?: number;
-      name?: string;
-      exec?: string;
-      autoModel?: boolean;
-      autonomy?: string;
-      maxSessions?: number;
-      engage?: boolean;
-      dryRun?: boolean;
-      prompt?: string;
-      prEnabled?: boolean | null;
-    }) => req('POST', '/tasks/plan', a),
-    elowen_sessions: () => req('GET', '/sessions'),
-    elowen_note_add: (a: { target: string; body: string }) => req('POST', '/notes', { scope: 'mission', target: a.target, body: a.body }),
-    elowen_notes: (a: { target: string }) => req('GET', `/notes?scope=mission&target=${encodeURIComponent(a.target)}`),
-    // Mission lifecycle — engage spawns the autopilot on an epic; pause/resume/disengage drive its state.
-    elowen_missions: () => req('GET', '/missions'),
-    elowen_mission_engage: (a: { epicId: string; autonomy?: string; maxSessions?: number }) => req('POST', '/missions', a),
-    elowen_mission_pause: (a: { id: string }) => req('PATCH', `/missions/${encodeURIComponent(a.id)}`, { action: 'pause' }),
-    elowen_mission_resume: (a: { id: string }) => req('PATCH', `/missions/${encodeURIComponent(a.id)}`, { action: 'resume' }),
-    elowen_mission_disengage: (a: { id: string }) => req('DELETE', `/missions/${encodeURIComponent(a.id)}`),
-    // Live tmux session control — spawn a worker for a task, kill it, send keystrokes, read the pane.
-    elowen_session_spawn: (a: { taskId: string; exec?: string }) => req('POST', '/sessions', a),
-    elowen_session_kill: (a: { name: string }) => req('DELETE', `/sessions/${encodeURIComponent(a.name)}`),
-    elowen_session_send_keys: (a: { name: string; keys: string[] }) => req('POST', `/sessions/${encodeURIComponent(a.name)}/keys`, { keys: a.keys }),
-    elowen_session_read_pane: (a: { name: string; ansi?: boolean }) => req('GET', `/sessions/${encodeURIComponent(a.name)}/pane${a.ansi ? '?ansi=1' : ''}`),
-    // Task lifecycle — update fields/status, close with an outcome verdict, read token/cost usage.
-    elowen_task_update: (a: { id: string; status?: string; title?: string; type?: string; priority?: string; description?: string; exec?: string; deps?: string[] }) => {
-      const { id, ...patch } = a;
-      return req('PATCH', `/tasks/${encodeURIComponent(id)}`, patch);
-    },
-    elowen_task_close: (a: { id: string; result_summary?: string; outcome?: string }) =>
-      req('PATCH', `/tasks/${encodeURIComponent(a.id)}`, { status: 'closed', result_summary: a.result_summary, outcome: a.outcome }),
-    elowen_task_usage: (a: { id: string }) => req('GET', `/tasks/${encodeURIComponent(a.id)}/usage`),
-  };
 }
+
+/** The CORE Elowen MCP toolset: the generic escape hatch plus the task/plan surface the daemon serves
+ *  itself. The agents-domain tools (sessions/missions/notes/session control) are contributed by the
+ *  agents plugin via `registerMcpTool` — with the plugin disabled they vanish from `tools/list`, which
+ *  is the correct MCP answer for an absent capability. Same declaration shape as a plugin's
+ *  ({@link PluginMcpTool}), so the server composes both lists identically. Names, descriptions and
+ *  input schemas are pinned by tests/mcp/mcpToolParity.test.ts — spawned agents carry them in their
+ *  prompts and habits, so they must never drift. */
+export const CORE_MCP_TOOLS: PluginMcpTool[] = [
+  {
+    name: 'elowen_request',
+    description: 'Call any Elowen REST endpoint (full control). Generic escape hatch — every endpoint works without a dedicated tool.',
+    inputSchema: { method: z.string(), path: z.string(), body: z.unknown().optional() },
+    run: (a, req) => req(a.method as string, a.path as string, a.body),
+  },
+  {
+    name: 'elowen_tasks',
+    description: 'List all tasks.',
+    inputSchema: {},
+    run: (_a, req) => req('GET', '/tasks'),
+  },
+  {
+    name: 'elowen_create_task',
+    description: 'Create a task.',
+    inputSchema: { title: z.string(), project_id: z.number().optional(), description: z.string().optional() },
+    run: (a, req) => req('POST', '/tasks', a),
+  },
+  {
+    name: 'elowen_plan',
+    description: 'Plan a goal into an epic with phases (autopilot). Supports full planning options: set engage:true to immediately start a mission; autonomy (L0-L3) controls agent freedom; maxSessions controls parallelism; exec overrides the executor; autoModel lets the planner pick per-phase models; dryRun previews phases without persisting; prompt supplies a custom planner prompt; prEnabled (true/false/null) controls PR-native mode.',
+    inputSchema: {
+      goal: z.string(),
+      project_id: z.number().optional(),
+      name: z.string().optional(),
+      exec: z.string().optional(),
+      autoModel: z.boolean().optional(),
+      autonomy: z.string().optional(),
+      maxSessions: z.number().optional(),
+      engage: z.boolean().optional(),
+      dryRun: z.boolean().optional(),
+      prompt: z.string().optional(),
+      prEnabled: z.boolean().nullable().optional(),
+    },
+    run: (a, req) => req('POST', '/tasks/plan', a),
+  },
+  {
+    name: 'elowen_task_update',
+    description: 'Update a task: any of status (open/in_progress/blocked/closed/cancelled), title, type, priority, description, exec override, or deps. Only the fields you pass are changed.',
+    inputSchema: {
+      id: z.string(),
+      status: z.enum(['open', 'in_progress', 'blocked', 'closed', 'cancelled']).optional(),
+      title: z.string().optional(),
+      type: z.string().optional(),
+      priority: z.string().optional(),
+      description: z.string().optional(),
+      exec: z.string().optional(),
+      deps: z.array(z.string()).optional(),
+    },
+    run: (a, req) => {
+      const { id, ...patch } = a;
+      return req('PATCH', `/tasks/${encodeURIComponent(id as string)}`, patch);
+    },
+  },
+  {
+    name: 'elowen_task_close',
+    description: 'Close a task with a verdict: `result_summary` (what was done) and `outcome` (e.g. ok/fail). Drives the post-done overseer review gate for mission phases.',
+    inputSchema: { id: z.string(), result_summary: z.string().optional(), outcome: z.string().optional() },
+    run: (a, req) => req('PATCH', `/tasks/${encodeURIComponent(a.id as string)}`, { status: 'closed', result_summary: a.result_summary, outcome: a.outcome }),
+  },
+  {
+    name: 'elowen_task_usage',
+    description: "Read a task's agent token/cost usage from the executor CLI's local session storage. Null usage means no matching session was found.",
+    inputSchema: { id: z.string() },
+    run: (a, req) => req('GET', `/tasks/${encodeURIComponent(a.id as string)}/usage`),
+  },
+];
