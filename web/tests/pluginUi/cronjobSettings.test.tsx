@@ -42,7 +42,7 @@ async function mountWith(jobs: CronJob[]) {
     http.put('*/api/plugins/cronjob/jobs/:id', () => HttpResponse.json({ ok: true })),
   );
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
   // Expand the job row so the channel/model fields render.
   fireEvent.click(await screen.findByText('digest'));
 }
@@ -59,7 +59,7 @@ describe('cronjob JobsSettings — error state', () => {
       http.get('*/api/brain/models', () => HttpResponse.json(MODELS)),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
 
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -133,7 +133,7 @@ describe('cronjob JobsSettings writes', () => {
       }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
   };
 
   it('saves only the job that was edited', async () => {
@@ -194,7 +194,7 @@ describe('a cron job row', () => {
       }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><JobsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
   };
   /** The name input / prompt textarea of the Nth expanded row. */
   const nameBox = (row = 0) => screen.getAllByPlaceholderText('morning-digest')[row]!;

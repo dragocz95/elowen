@@ -35,34 +35,41 @@ const fullRegistration = registration.value;
 beforeEach(() => { route.rest = []; registration.value = fullRegistration; });
 
 describe('plugin host route', () => {
-  // A settings section is authored for the Settings deck, which supplies the document surface its groups
-  // sit on. Reached straight from the sidebar it has to look the same, so the route wraps it.
-  it('renders a settings section on the same document surface the Settings deck gives it', async () => {
-    route.rest = ['settings', 'skills'];
-    const { container } = mount();
-    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
-    const document = container.querySelector('[data-settings-document]');
-    expect(document).not.toBeNull();
-    expect(document!.contains(screen.getByTestId('section'))).toBe(true);
-  });
-
-  it('leaves a plugin page unwrapped — it brings its own layout', async () => {
-    const { container } = mount();
-    await waitFor(() => expect(screen.getByTestId('page')).toBeInTheDocument());
-    expect(container.querySelector('[data-settings-document]')).toBeNull();
-  });
-
-  // The deck page around a section supplies the page column and the title; standalone, the route owes the
-  // section both, or it renders as a fragment on an empty screen with no heading and no page name.
-  it('gives a standalone settings section the page column and heading a core page has', async () => {
+  // The route hands a settings section the page column and the page's identity, and nothing else: the
+  // header and the document surface come from the section itself (components.PluginPageFrame), because
+  // the header has to sit ABOVE that surface and only the section knows its own subtitle and actions.
+  it('wraps a settings section in the page column without dictating its inner surface', async () => {
     route.rest = ['settings', 'skills'];
     const { container } = mount();
     await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
     const page = container.querySelector('.workspace-page');
     expect(page).not.toBeNull();
     expect(page!.contains(screen.getByTestId('section'))).toBe(true);
-    expect(container.querySelector('.workspace-header h1')?.textContent).toBe('Skills');
-    expect(container.querySelector('.workspace-header__eyebrow')).not.toBeNull();
+    expect(container.querySelector('[data-settings-document]')).toBeNull(); // the mock section renders none
+  });
+
+  it('leaves a plugin page unwrapped — it brings its own layout', async () => {
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('page')).toBeInTheDocument());
+    expect(container.querySelector('.workspace-page')).toBeNull();
+  });
+
+  // The deck page around a section supplies the page column and names the page; standalone, the route
+  // owes the section the column and the masthead/tab title, and tells it that it is on a page so it can
+  // head itself. Without that it renders as a fragment on an empty screen.
+  it('gives a standalone settings section the page column, the page name and its surface', async () => {
+    route.rest = ['settings', 'skills'];
+    const seen: string[] = [];
+    registration.value = {
+      pages: {},
+      settings: { skills: ({ surface }: { surface: string }) => { seen.push(surface); return <div data-testid="section">section</div>; } },
+    } as unknown as PluginUiRegistration;
+    const { container } = mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+    const page = container.querySelector('.workspace-page');
+    expect(page).not.toBeNull();
+    expect(page!.contains(screen.getByTestId('section'))).toBe(true);
+    expect(seen).toContain('page');
     expect(global.document.title).toContain('Skills');
   });
 
@@ -72,6 +79,6 @@ describe('plugin host route', () => {
     registration.value = { pages: {}, settings: { skills: () => <div data-testid="section">section</div> } } as unknown as PluginUiRegistration;
     const { container } = mount();
     await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
-    expect(container.querySelector('[data-settings-document]')).not.toBeNull();
+    expect(container.querySelector('.workspace-page')).not.toBeNull();
   });
 });

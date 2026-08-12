@@ -16,7 +16,8 @@
 import * as React from 'react';
 import * as ReactDom from 'react-dom';
 import * as JsxRuntime from 'react/jsx-runtime';
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
 // The contract (runtime surface, registration shape, Window globals) lives in @elowen/plugin-ui-kit —
 // the SAME package plugin authors build against — so the two sides cannot drift. Types ONLY: a value
 // import would need Turbopack to resolve the symlinked package outside its root, while `import type`
@@ -59,7 +60,7 @@ import { ModelCatalogField } from '../components/ui/ModelCatalogField';
 import { ChoiceField } from '../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
-import { SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
@@ -96,6 +97,81 @@ import { taskTypeMeta } from '../modules/tasks/taskMeta';
  *  kit without updating this value is a type error, not a silent drift. */
 export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 1;
 export type { PluginPageProps, PluginUiRegistration };
+
+/** The page header a plugin surface wears when it is reached as its own page. It is the app's own
+ *  workspace header, and the eyebrow is supplied here rather than by each bundle so every plugin page
+ *  is labelled the same way in the user's language without shipping the word seven times. A bundle
+ *  renders it only for `surface === 'page'`: inside the Settings deck the panel already names the
+ *  section, and a second title there would be noise. */
+function PluginPageHeader({ title, description, icon, action }: {
+  title: string;
+  description?: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return <CompactWorkspaceHeader eyebrow={t.pluginUi.eyebrow} title={title} description={description} icon={icon} action={action} />;
+}
+
+/** The frame a plugin's settings section wears per surface, so no bundle has to reimplement it: on a
+ *  page it is headed and sits on its own document surface; in the Settings deck the surrounding panel
+ *  supplies both, so the children render bare. For a section that already composes its own
+ *  SettingsGroups. */
+function PluginPageFrame({ surface, title, description, icon, action, plugin, section, children }: {
+  surface: 'page' | 'deck';
+  /** Omit it and the frame reads the section's label from the manifest listing (already localized), so
+   *  the page title has ONE source and cannot drift from the sidebar entry that leads here. */
+  title?: string;
+  description?: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
+  plugin?: string;
+  section?: string;
+  children: ReactNode;
+}) {
+  const { locale } = useTranslation();
+  const listing = usePluginUi(locale);
+  if (surface === 'deck') return <>{children}</>;
+  const entry = plugin === undefined ? undefined : listing.data?.find((p) => p.name === plugin);
+  const label = title ?? entry?.settings.find((s) => s.id === section)?.label ?? '';
+  return (
+    <>
+      <PluginPageHeader title={label} description={description} icon={icon} action={action} />
+      <SettingsDocument>{children}</SettingsDocument>
+    </>
+  );
+}
+
+/** The common shape: one settings group. In the deck the group carries the section's own title block;
+ *  on a page that block becomes the page header instead, because a page that repeats its own name
+ *  inside the first card reads like a fragment someone pasted onto an empty screen. */
+function PluginSection({ surface, title, description, icon, action, actions, className, density, children }: {
+  surface: 'page' | 'deck';
+  title: string;
+  description?: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+  density?: 'comfortable' | 'compact';
+  children: ReactNode;
+}) {
+  const deck = surface === 'deck';
+  return (
+    <PluginPageFrame surface={surface} title={title} description={description} icon={icon} action={action}>
+      <SettingsGroup
+        className={className}
+        icon={deck ? icon : undefined}
+        title={deck ? title : undefined}
+        description={deck ? description : undefined}
+        actions={actions}
+        density={density}
+      >
+        {children}
+      </SettingsGroup>
+    </PluginPageFrame>
+  );
+}
 
 /** Localized view strings for one plugin's bundle: the /plugins/ui listing's merged `strings` record
  *  (manifest English overlaid with the active locale's i18n `web.strings`). Empty while the listing
@@ -141,11 +217,11 @@ export function ensurePluginUiRuntime(): void {
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
       // rebuilt the layout for itself.
-      WorkspacePage, CompactWorkspaceHeader, ProjectFilterPills,
+      WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
-      SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      SettingsDocument, SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
       ManageSelectionModal, SelectionSummary, BrainModelField, MarkdownAssetEditor,

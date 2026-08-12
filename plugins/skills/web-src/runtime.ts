@@ -41,7 +41,7 @@ interface SkillsHooks {
 type AnyComponent = ComponentType<any>;
 
 interface SkillsComponents {
-  Badge: AnyComponent; Toggle: AnyComponent; SettingsGroup: AnyComponent;
+  Badge: AnyComponent; Toggle: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
   MarkdownAssetEditor: AnyComponent;
 }
 
@@ -52,7 +52,7 @@ interface SkillsRuntime {
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[] }>;
+type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
 interface SkillsRegistration {
   requiresApiVersion: number;
   settings?: Record<string, PluginPageComponent>;

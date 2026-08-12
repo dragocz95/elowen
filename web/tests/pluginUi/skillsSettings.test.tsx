@@ -27,9 +27,9 @@ const skillRow = (name: string, disableModelInvocation: boolean) =>
 const list = [skillRow('alpha', false), skillRow('beta', false)];
 const toggles = () => screen.getAllByRole('switch', { name: strings.disableModelInvocation });
 
-const mount = () => {
+const mount = (surface: 'page' | 'deck' = 'deck') => {
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><SkillsSettings /></ToastProvider></Wrapper>);
+  return render(<Wrapper><ToastProvider><SkillsSettings surface={surface} /></ToastProvider></Wrapper>);
 };
 
 describe('skills SkillsSettings (optimistic disclosure toggle)', () => {
@@ -93,5 +93,26 @@ describe('skills SkillsSettings (optimistic disclosure toggle)', () => {
     fireEvent.click(screen.getByRole('button', { name: strings.save }));
     await waitFor(() => expect(created).toBeTruthy());
     expect(created).toEqual({ name: 'my-skill', description: 'When to use it.', content: 'Do the thing.', disableModelInvocation: false });
+  });
+
+  // The same component serves the Settings deck and its own page. On a page it has to look like a page —
+  // headed, on its own document surface — while in the deck the panel around it already names the
+  // section, so a second title there is noise. Getting this wrong is what made the plugin pages read as
+  // fragments pasted onto an empty screen.
+  it('heads itself on a page and stays bare inside the Settings deck', async () => {
+    server.use(http.get('*/api/plugins/skills/list', () => HttpResponse.json(list)));
+
+    const page = mount('page');
+    await waitFor(() => expect(page.container.querySelector('.workspace-header h1')?.textContent).toBe(strings.title));
+    expect(page.container.querySelector('.workspace-header__eyebrow')?.textContent).toBeTruthy();
+    expect(page.container.querySelector('[data-settings-document]')).not.toBeNull();
+    // the card must NOT repeat the page title: on a page the group header carries nothing
+    expect(page.container.querySelector('.settings-group__header')).toBeNull();
+    page.unmount();
+
+    const deck = mount('deck');
+    await waitFor(() => expect(deck.container.querySelector('.settings-group__header h2')?.textContent).toBe(strings.title));
+    expect(deck.container.querySelector('.workspace-header')).toBeNull();
+    expect(deck.container.querySelector('[data-settings-document]')).toBeNull();
   });
 });

@@ -42,7 +42,7 @@ beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); after
 describe('agents plugin settings — Autopilot section', () => {
   it('defaults to Relay mode and saves relay fields (execs cleared)', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><AgentsSettings surface="deck" plugin="agents" params={{ id: 'agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
     expect(screen.getByText('Planner model')).toBeTruthy(); // same role labels in both modes
     expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy(); // notes edit inline (no drawer)
@@ -61,7 +61,7 @@ describe('agents plugin settings — Autopilot section', () => {
 
   it('switching to CLI Tools seeds and saves agent execs', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><AgentsSettings surface="deck" plugin="agents" params={{ id: 'agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
 
     fireEvent.click(screen.getByText('CLI Tools')); // mode toggle — auto-persists the agent execs
@@ -76,7 +76,7 @@ describe('agents plugin settings — Autopilot section', () => {
 
   it('toggles TDD mission mode and persists the plugin-slice tddMode', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><AgentsSettings surface="deck" plugin="agents" params={{ id: 'agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
 
     const toggle = screen.getByRole('switch', { name: 'TDD mission mode' });
@@ -87,7 +87,7 @@ describe('agents plugin settings — Autopilot section', () => {
 
   it('saves the run defaults (executor/autonomy/max sessions) as their own PUT', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><AgentsSettings surface="deck" plugin="agents" params={{ id: 'agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('Autonomy')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('radio', { name: 'L3' }));
@@ -100,7 +100,7 @@ describe('agents plugin settings — Autopilot section', () => {
 
   it('renders the plugin-config sub-section below the autopilot rows', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><AgentsSettings surface="deck" plugin="agents" params={{ id: 'agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('Overseer model')).toBeTruthy()); // from configSchema
   });
 });
@@ -108,7 +108,7 @@ describe('agents plugin settings — Autopilot section', () => {
 describe('agents plugin settings — CLI Agents section', () => {
   it('renders provider rows and persists an edited binary under providers', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><CliAgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><CliAgentsSettings surface="deck" plugin="agents" params={{ id: 'cli-agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('Claude Code')).toBeTruthy());
 
     const bins = screen.getAllByPlaceholderText('claude');
@@ -121,7 +121,7 @@ describe('agents plugin settings — CLI Agents section', () => {
 
   it('shows per-provider skill status badges from /system/skills', async () => {
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><CliAgentsSettings /></ToastProvider></Wrapper>);
+    render(<Wrapper><ToastProvider><CliAgentsSettings surface="deck" plugin="agents" params={{ id: 'cli-agents' }} /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('outdated')).toBeTruthy()); // present+installed, not upToDate
     expect(screen.getByText('not on this machine')).toBeTruthy();
     // An update is available (outdated) → the install button is enabled.

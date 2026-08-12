@@ -27,7 +27,7 @@ const AGENTS = [
 
 const mount = () => {
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><SubagentsSettings /></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><SubagentsSettings surface="deck" /></ToastProvider></Wrapper>);
 };
 
 describe('subagent SubagentsSettings', () => {

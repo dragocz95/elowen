@@ -117,7 +117,8 @@ interface AgentsComponents {
   ModelIcon: AnyComponent; OutcomeBadge: AnyComponent; ProjectPill: AnyComponent; IconButton: AnyComponent;
   ActionMenu: AnyComponent; ContextMenu: AnyComponent; ChangeStrip: AnyComponent; TaskUsageBadge: AnyComponent;
   ConfirmDialog: AnyComponent; TerminalModal: AnyComponent; LiveTail: AnyComponent;
-  SettingsGroup: AnyComponent; SettingsRow: AnyComponent; BackendPicker: AnyComponent;
+  SettingsGroup: AnyComponent;
+  PluginPageFrame: AnyComponent; SettingsRow: AnyComponent; BackendPicker: AnyComponent;
   ProviderPicker: AnyComponent; ModelCatalogField: AnyComponent; ChoiceField: AnyComponent;
   AutoSaveStatus: AnyComponent; ProviderLogo: AnyComponent;
 }
@@ -133,7 +134,7 @@ interface AgentsRuntime {
 // Deliberately CAST rather than `declare global`: the web app's test build compiles these sources
 // alongside the kit's own Window declarations, and two ambient declarations of the same property
 // must agree exactly. Local casts keep this compile unit merge-free in both builds.
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[] }>;
+type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
 interface AgentsRegistration {
   requiresApiVersion: number;
   pages?: Record<string, PluginPageComponent>;

@@ -9,7 +9,7 @@ const unpair = () => runtime().api('/plugins/whatsapp/unpair', { method: 'POST' 
 /** The whatsapp plugin's "Pairing" settings-deck section: shows the current link state and offers
  *  either a "Pair device" button (opens a QR/code modal) or, when linked, a red "Unpair" button.
  *  Pairing state is read live off the running adapter. */
-export function PairingSettings() {
+export function PairingSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('whatsapp');
   const [open, setOpen] = useState(false);
@@ -29,7 +29,7 @@ export function PairingSettings() {
   };
 
   return (
-    <C.SettingsGroup className="plugin-card" icon={QrCode} title={s.pairTitle} description={s.pairHint}>
+    <C.PluginSection surface={surface} className="plugin-card" icon={QrCode} title={s.pairTitle} description={s.pairHint}>
       <div className="settings-group__panel space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           {connected ? (
@@ -50,7 +50,7 @@ export function PairingSettings() {
           onClose={() => setConfirmUnpair(false)}
         />
       </div>
-    </C.SettingsGroup>
+    </C.PluginSection>
   );
 }
 

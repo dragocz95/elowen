@@ -14,7 +14,7 @@ type AnyComponent = ComponentType<any>;
 
 interface WhatsAppComponents {
   Button: AnyComponent; Modal: AnyComponent; ModalBody: AnyComponent; ModalFooter: AnyComponent;
-  ConfirmDialog: AnyComponent; SettingsGroup: AnyComponent;
+  ConfirmDialog: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
 }
 
 interface WhatsAppRuntime {
@@ -23,7 +23,7 @@ interface WhatsAppRuntime {
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[] }>;
+type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
 interface WhatsAppRegistration {
   requiresApiVersion: number;
   settings?: Record<string, PluginPageComponent>;

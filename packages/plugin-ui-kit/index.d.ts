@@ -1,6 +1,6 @@
 /** Contract types for Elowen plugin browser UIs — the ONE source of truth shared by the web app
  *  (which installs `window.ElowenUiRuntime` and consumes registrations) and plugin bundles (which
- *  read the runtime and call `window.__elowenRegisterPluginUi`). The web app's `web/lib/pluginUi.ts`
+ *  read the runtime and call `window.__elowenRegisterPluginUi`). The web app's `web/lib/pluginUi.tsx`
  *  imports these types; keep the two sides in lockstep by editing THIS file only. */
 import type * as React from 'react';
 import type * as ReactDom from 'react-dom';
@@ -19,6 +19,11 @@ export interface PluginPageProps {
   params: Record<string, string>;
   /** The raw path segments under /p/<plugin>/. */
   rest: string[];
+  /** Where this component is mounted. A settings component renders in BOTH places: inside the Settings
+   *  deck, where the surrounding panel already names the section, and as a standalone page at
+   *  /p/<plugin>, where nothing else does — so on a page it owes the reader a page header of its own
+   *  (`components.PluginPageHeader`) and must not repeat the section title inside its card. */
+  surface: 'page' | 'deck';
 }
 
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns

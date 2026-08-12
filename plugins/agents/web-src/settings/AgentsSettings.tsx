@@ -11,12 +11,15 @@ interface Detail {
 
 /** The "Agents & Autopilot" settings entry: the moved core Autopilot section (main-config
  *  `autopilot.*` + run defaults over PUT /config) on top, the plugin's own config editor below. */
-export function AgentsSettings() {
+export function AgentsSettings({ surface, plugin, params }: { surface: 'page' | 'deck'; plugin: string; params: Record<string, string> }) {
+  const { components: C } = runtime();
   return (
-    <div className="flex flex-col gap-6">
-      <AutopilotSection />
-      <PluginConfigSection />
-    </div>
+    <C.PluginPageFrame surface={surface} plugin={plugin} section={params.id}>
+      <div className="flex flex-col gap-6">
+        <AutopilotSection />
+        <PluginConfigSection />
+      </div>
+    </C.PluginPageFrame>
   );
 }
 

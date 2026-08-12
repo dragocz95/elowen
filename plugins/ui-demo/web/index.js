@@ -37,19 +37,23 @@ function DemoPage({ plugin }) {
 }
 
 /** Settings-deck proof: the manifest's `web.settings` entry adds the section to the core Settings
- *  page, and THIS component (registered under the same id) renders as its content. */
-function DemoSettings({ plugin }) {
+ *  page, and THIS component (registered under the same id) renders as its content. The same component
+ *  is also reachable as its own page at /p/ui-demo/settings/demo, so it takes `surface` and hands it
+ *  to the host's PluginPageFrame — which supplies the page header and document surface on a page and
+ *  gets out of the way inside the deck. This is the pattern every settings section follows. */
+function DemoSettings({ plugin, params, surface }) {
   const [stats, setStats] = React.useState(null);
   React.useEffect(() => {
     api(`/plugins/${plugin}/api/stats`).then(setStats).catch(() => setStats(null));
   }, [plugin]);
 
-  return h('div', { className: 'max-w-xl space-y-4', 'data-testid': 'ui-demo-settings' },
-    h('p', { className: 'text-sm text-text-muted' },
-      'This section is rendered from the ui-demo plugin bundle inside the core Settings page.'),
-    h('div', { className: 'rounded-lg border border-border bg-surface px-4 py-2' },
-      Row('Plugin', plugin),
-      Row('Loaded at', stats ? stats.startedAt : '\u2026')));
+  return h(components.PluginPageFrame, { surface, plugin, section: params.id },
+    h('div', { className: 'max-w-xl space-y-4', 'data-testid': 'ui-demo-settings' },
+      h('p', { className: 'text-sm text-text-muted' },
+        'This section is rendered from the ui-demo plugin bundle inside the core Settings page.'),
+      h('div', { className: 'rounded-lg border border-border bg-surface px-4 py-2' },
+        Row('Plugin', plugin),
+        Row('Loaded at', stats ? stats.startedAt : '\u2026'))));
 }
 
 window.__elowenRegisterPluginUi('ui-demo', {

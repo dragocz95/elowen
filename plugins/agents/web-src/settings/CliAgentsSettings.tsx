@@ -6,7 +6,7 @@ import { runtime, type CliProviderConfig } from '../runtime';
  *  launch configuration (binary, args, permission/resume toggles). Reads and writes the SAME main
  *  config key as before (`providers` over GET/PUT /config) — only the component moved into the plugin
  *  bundle. */
-export function CliAgentsSettings() {
+export function CliAgentsSettings({ surface, plugin, params }: { surface: 'page' | 'deck'; plugin: string; params: Record<string, string> }) {
   const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('agents');
   const { t } = hooks.useTranslation();
@@ -33,7 +33,8 @@ export function CliAgentsSettings() {
   if (config.isError) return <C.ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} />;
 
   return (
-    <div className="flex flex-col gap-4">
+    <C.PluginPageFrame surface={surface} plugin={plugin} section={params.id}>
+      <div className="flex flex-col gap-4">
       {/* Agent skills sit at the top — they install/verify the `elowen-workflow` skill into the very
           CLI agents this section configures. The daemon self-installs on startup; this is the
           on-demand re-apply + per-provider status. */}
@@ -119,6 +120,7 @@ export function CliAgentsSettings() {
           );
         })}
       </C.SettingsGroup>
-    </div>
+      </div>
+    </C.PluginPageFrame>
   );
 }

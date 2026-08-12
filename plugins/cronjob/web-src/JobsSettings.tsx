@@ -268,7 +268,7 @@ function CronJobRow({ job, persisted, channels, models, onRemoved }: {
  *  the scheduler or the brain's CronAdd tool creates shows up on the next refetch — and each row
  *  persists itself. A row added here lives locally only until the server has it; from then on the
  *  server's copy is the row. */
-export function JobsSettings() {
+export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('cronjob');
   const { t } = hooks.useTranslation();
@@ -320,8 +320,8 @@ export function JobsSettings() {
   };
 
   return (
-    <C.SettingsGroup className="plugin-card" icon={Clock} title={s.title} description={s.sectionHint}>
+    <C.PluginSection surface={surface} className="plugin-card" icon={Clock} title={s.title} description={s.sectionHint}>
       <div className="settings-group__panel">{body()}</div>
-    </C.SettingsGroup>
+    </C.PluginSection>
   );
 }

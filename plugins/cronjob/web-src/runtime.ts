@@ -65,6 +65,7 @@ interface CronComponents {
   Badge: AnyComponent; Button: AnyComponent; Input: AnyComponent; Field: AnyComponent; Toggle: AnyComponent;
   ConfirmDialog: AnyComponent; AutoSaveStatus: AnyComponent; LoadingState: AnyComponent; ErrorState: AnyComponent;
   ManageSelectionModal: AnyComponent; SelectionSummary: AnyComponent; BrainModelField: AnyComponent;
+  PluginSection: AnyComponent;
   SettingsGroup: AnyComponent;
 }
 
@@ -75,7 +76,7 @@ interface CronRuntime {
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[] }>;
+type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
 interface CronRegistration {
   requiresApiVersion: number;
   settings?: Record<string, PluginPageComponent>;

@@ -12,7 +12,7 @@ const EMPTY_FORM: SubagentForm = { editing: null, name: '', description: '', bod
  *  read-only; user agents are one `.md` file each (frontmatter name/description/tools + a body prompt)
  *  and can be created, edited and deleted here. A read-only agent gets look-only tools plus read-only
  *  shell. Changes hot-reload the plugins, so new conversations pick them up immediately. */
-export function SubagentsSettings() {
+export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('subagent');
   const query = hooks.usePluginSubagents();
@@ -23,7 +23,7 @@ export function SubagentsSettings() {
     Array.isArray(tools) ? tools.join(', ') : { 'read-only': s.toolsReadOnly, all: s.toolsAll, inherit: s.toolsInherit }[tools];
 
   return (
-    <C.SettingsGroup className="plugin-card" icon={GitFork} title={s.title} description={s.sectionHint}>
+    <C.PluginSection surface={surface} className="plugin-card" icon={GitFork} title={s.title} description={s.sectionHint}>
       <div className="settings-group__panel">
         <C.MarkdownAssetEditor
           query={query}
@@ -91,6 +91,6 @@ export function SubagentsSettings() {
           onDelete={(name: string, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(name, callbacks)}
         />
       </div>
-    </C.SettingsGroup>
+    </C.PluginSection>
   );
 }

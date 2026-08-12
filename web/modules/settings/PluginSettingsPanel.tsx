@@ -35,7 +35,7 @@ export function PluginSettingsPanel({ plugin, settingId }: { plugin: string; set
   if (!Component) return <PluginPlaceholder text={strings.settingsUnavailable} />;
   return (
     <PluginErrorBoundary notice={strings.crashed}>
-      <Component plugin={plugin} params={{ id: settingId }} rest={['settings', settingId]} />
+      <Component plugin={plugin} params={{ id: settingId }} rest={['settings', settingId]} surface="deck" />
     </PluginErrorBoundary>
   );
 }

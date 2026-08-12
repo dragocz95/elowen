@@ -38,7 +38,7 @@ interface SubagentHooks {
 type AnyComponent = ComponentType<any>;
 
 interface SubagentComponents {
-  Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent;
+  Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
   MarkdownAssetEditor: AnyComponent;
 }
 
@@ -47,7 +47,7 @@ interface SubagentRuntime {
   hooks: SubagentHooks;
 }
 
-type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[] }>;
+type PluginPageComponent = ComponentType<{ plugin: string; params: Record<string, string>; rest: string[]; surface: 'page' | 'deck' }>;
 interface SubagentRegistration {
   requiresApiVersion: number;
   settings?: Record<string, PluginPageComponent>;

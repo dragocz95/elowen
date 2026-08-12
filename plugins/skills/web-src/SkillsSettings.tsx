@@ -10,7 +10,7 @@ const EMPTY_FORM: SkillForm = { editing: null, name: '', description: '', body: 
  *  hot-reload the plugins, so NEW brain conversations pick them up immediately. The
  *  `disable-model-invocation` toggle hides a skill from progressive disclosure while keeping it
  *  reachable via /skill:name. */
-export function SkillsSettings() {
+export function SkillsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('skills');
   const { toast } = hooks.useToast();
@@ -28,7 +28,7 @@ export function SkillsSettings() {
   };
 
   return (
-    <C.SettingsGroup className="plugin-card" icon={GraduationCap} title={s.title} description={s.sectionHint}>
+    <C.PluginSection surface={surface} className="plugin-card" icon={GraduationCap} title={s.title} description={s.sectionHint}>
       <div className="settings-group__panel">
         <C.MarkdownAssetEditor
           query={query}
@@ -106,6 +106,6 @@ export function SkillsSettings() {
           onDelete={(name: string, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(name, callbacks)}
         />
       </div>
-    </C.SettingsGroup>
+    </C.PluginSection>
   );
 }

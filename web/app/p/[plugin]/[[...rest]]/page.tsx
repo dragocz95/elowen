@@ -3,8 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
-import { SettingsDocument } from '../../../../modules/settings/SettingsSurface';
-import { CompactWorkspaceHeader, WorkspacePage } from '../../../../components/ui/WorkspacePrimitives';
+import { WorkspacePage } from '../../../../components/ui/WorkspacePrimitives';
 import { ModuleHeader } from '../../../../components/ui/ModuleHeader';
 import { MotionReveal } from '../../../../components/ui/Motion';
 import { pluginLucideIcon } from '../../../../lib/pluginIcons';
@@ -63,18 +62,19 @@ export default function PluginHostPage() {
       ? { Component: settingsComponent, params: { id: section.id } }
       : page;
     const rendered = match
-      ? <match.Component plugin={plugin} params={match.params} rest={rest} />
+      ? <match.Component plugin={plugin} params={match.params} rest={rest} surface="page" />
       : <Placeholder text={strings.pageMissing} />;
     // A settings section is written for the Settings deck: the deck's panel supplies the document surface
     // its groups sit on, and the deck page supplies the masthead title and the page column. Reached
     // directly it has to bring all three, or it reads as a fragment pasted onto an empty screen.
     body = settingsComponent && section ? (
       <WorkspacePage>
+        {/* The masthead and the browser tab are the host's to name; everything visible belongs to the
+            section, which on a page heads itself with components.PluginPageHeader above its own
+            document surface — the header has to sit ABOVE that surface, so the host cannot supply it
+            from out here. In the Settings deck the panel keeps supplying both. */}
         <ModuleHeader title={section.label} icon={pluginLucideIcon(section.icon)} />
-        <CompactWorkspaceHeader eyebrow={strings.eyebrow} title={section.label} icon={pluginLucideIcon(section.icon)} />
-        <MotionReveal>
-          <SettingsDocument>{rendered}</SettingsDocument>
-        </MotionReveal>
+        <MotionReveal>{rendered}</MotionReveal>
       </WorkspacePage>
     ) : rendered;
   }
