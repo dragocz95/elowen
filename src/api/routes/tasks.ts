@@ -6,42 +6,9 @@ import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as V
 import { snapshotTaskChanges } from '../services/taskSnapshot.js';
 import { RelayClient } from '../../inference/client.js';
 import { shortId } from '../../shared/id.js';
-import { parseBody, queryInt } from '../validation.js';
+import { parseBody } from '../validation.js';
 import { createTaskSchema, patchTaskSchema, planSchema, insertPhasesSchema } from '../schemas/tasks.js';
 import type { ElowenApp, RouteContext } from '../context.js';
-import type { TokenUsage, CostSource } from '../../integrations/usage/types.js';
-
-/** Fold a task-worker exec bucket and the same model's brain-chat bucket into one, for /usage/by-model.
- *  Token fields add; cost preserves null (a bucket with NO cost stays "—", never a fake $0) and its
- *  provenance rolls up exactly like TaskUsageStore.aggregateByExec: unavailable when neither side is
- *  costed, provider_reported only when EVERY costed side is provider-reported, else calculated (any
- *  estimate taints the sum). */
-function mergeModelUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-  const costUsd = a.costUsd == null && b.costUsd == null ? null : (a.costUsd ?? 0) + (b.costUsd ?? 0);
-  const costed = [a, b].filter((u) => u.costUsd != null);
-  const costSource: CostSource = costUsd == null
-    ? 'unavailable'
-    : costed.every((u) => u.costSource === 'provider_reported') ? 'provider_reported' : 'calculated';
-  // Speed merges as a duration-weighted average over the sides that MEASURED one (task-worker buckets
-  // carry none): a side's generation seconds are its MEASURED output over its rate — weighting by total
-  // `output` would credit a side for untimed history it never timed. The merged pair goes back on the
-  // wire so the next consumer up (Stats page, CLI Σ row) can weight the same way.
-  const measured = (u: TokenUsage): { output: number; seconds: number } => {
-    const tps = u.outputTps;
-    const output = u.measuredOutput ?? 0;
-    return tps != null && tps > 0 && output > 0 ? { output, seconds: output / tps } : { output: 0, seconds: 0 };
-  };
-  const mA = measured(a); const mB = measured(b);
-  const measuredOutput = mA.output + mB.output;
-  const measuredSeconds = mA.seconds + mB.seconds;
-  return {
-    input: a.input + b.input, output: a.output + b.output,
-    cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite,
-    total: a.total + b.total, reasoning: (a.reasoning ?? 0) + (b.reasoning ?? 0),
-    costUsd, currency: a.currency ?? b.currency ?? (costUsd != null ? 'USD' : null), costSource,
-    measuredOutput, outputTps: measuredSeconds > 0 ? measuredOutput / measuredSeconds : null,
-  };
-}
 
 /** A patch the store refused mid-write (a dangling/cyclic dependency edge, an illegal reparent). It
  *  carries the client-facing reason so the handler can roll the WHOLE patch back and answer 400,
@@ -56,13 +23,14 @@ async function sessionLive(d: RouteContext['d'], session: string): Promise<boole
   try { return (await d.tmux.list()).includes(session); } catch { return true; }
 }
 
-/** Tasks, usage, admin cleanup and the plan/replan endpoints. The post-done review workflow that the
- *  close path drives lives in the agents plugin (reached through `d.onTaskClosed`); planning lives in
- *  {@link PlanService}. */
+/** Tasks and the plan/replan endpoints. The post-done review workflow that the close path drives lives
+ *  in the agents plugin (reached through `d.onTaskClosed`); planning lives in {@link PlanService}. The
+ *  usage aggregates and the admin cleanup that used to sit here are core-owned surfaces of their own
+ *  (routes/usage.ts, routes/admin.ts) — they outlive the task domain. */
 export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
   const {
     d, log, planJobs, gitLock,
-    canAccessProject, notAdmin, accessibleProjects, execAllowedForUser,
+    canAccessProject, accessibleProjects, execAllowedForUser,
     pathFor, checkoutPathFor, resolveTarget,
     persistPlan, reapPilotSession, finalizePlanJob,
   } = ctx;
@@ -125,84 +93,6 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // BrainWorkerService persisted at close (this is where provider-reported cost lives).
     const live = d.liveTaskUsage?.(task.id) ?? null;
     return c.json(live ?? d.taskUsage?.get(task.id) ?? null);
-  });
-  // Total token/cost usage aggregated per model (exec spec). Read straight from the `task_usage`
-  // snapshots (the UsageRecorder writes one per task as it settles), so this never re-scans the CLIs'
-  // session stores. Scoped to the caller's accessible projects; optional `?project_id=N` narrows it.
-  // Task-worker usage is merged with the caller's OWN brain CHAT-session usage (CLI/web chat) per model —
-  // exactly like /usage/by-day merges the daily totals — so paid chat spend is no longer invisible on the
-  // Stats page. Brain usage is per-user with no project, so it only joins the unscoped view (a
-  // `project_id` filter keeps the old tasks-only semantics).
-  app.get('/usage/by-model', c => {
-    const allowed = accessibleProjects(c); // Set of project ids, or null for an admin (all projects)
-    let projectIds: number[] | undefined = allowed ? [...allowed] : undefined;
-    const pidRaw = c.req.query('project_id');
-    const projectScoped = pidRaw !== undefined && pidRaw !== '';
-    if (projectScoped) {
-      const pid = Number(pidRaw);
-      if (Number.isFinite(pid)) projectIds = projectIds ? projectIds.filter((p) => p === pid) : [pid];
-    }
-    // Optional ?from=&to= ISO-8601 window narrowing task_usage.captured_at (the dashboard's fixed
-    // "this month" widget and the Stats page's date filter both go through this same param). Malformed
-    // values are silently ignored — same benevolent posture as project_id above (no 400s).
-    const fromRaw = c.req.query('from');
-    const toRaw = c.req.query('to');
-    const fromIso = fromRaw && !Number.isNaN(Date.parse(fromRaw)) ? fromRaw : undefined;
-    const toIso = toRaw && !Number.isNaN(Date.parse(toRaw)) ? toRaw : undefined;
-    const window = fromIso || toIso ? { fromIso, toIso } : undefined;
-    const rows = d.taskUsage?.aggregateByExec(projectIds, window) ?? [];
-    const userId = c.get('user')?.id;
-    const brain = !projectScoped && userId != null ? d.brainStore?.usageByModel(userId, window) ?? [] : [];
-    if (brain.length === 0) return c.json(rows);
-    const byExec = new Map(rows.map((r) => [r.exec, { exec: r.exec, usage: r.usage }]));
-    for (const r of brain) {
-      const cur = byExec.get(r.exec);
-      if (!cur) byExec.set(r.exec, { exec: r.exec, usage: r.usage });
-      else cur.usage = mergeModelUsage(cur.usage, r.usage);
-    }
-    return c.json([...byExec.values()]);
-  });
-  // Daily spend/token totals over the last N days (default 7) for the dashboard's spend sparkline.
-  // Same project scoping as /usage/by-model; only days with settled tasks come back, so the client
-  // pads the missing days with zero. `?days=` is clamped to a sane 1..90 window. Task-worker usage is
-  // merged with the caller's OWN brain-session usage (CLI/web chat) — chat on a paid model is real
-  // spend and used to be invisible here. Brain usage is per-user, so it only joins the unscoped view
-  // (a `project_id` filter keeps the old tasks-only semantics: chat spend has no project).
-  app.get('/usage/by-day', c => {
-    const allowed = accessibleProjects(c);
-    let projectIds: number[] | undefined = allowed ? [...allowed] : undefined;
-    const pidRaw = c.req.query('project_id');
-    const projectScoped = pidRaw !== undefined && pidRaw !== '';
-    if (projectScoped) {
-      const pid = Number(pidRaw);
-      if (Number.isFinite(pid)) projectIds = projectIds ? projectIds.filter((p) => p === pid) : [pid];
-    }
-    const days = queryInt(c.req.query('days'), { min: 1, max: 90, fallback: 7 });
-    const tasks = d.taskUsage?.aggregateByDay(projectIds, days) ?? [];
-    const userId = c.get('user')?.id;
-    const brain = !projectScoped && userId != null ? d.brainStore?.usageByDay(userId, days) ?? [] : [];
-    if (brain.length === 0) return c.json(tasks);
-    const byDay = new Map(tasks.map((r) => [r.day, { ...r }]));
-    for (const r of brain) {
-      const cur = byDay.get(r.day);
-      if (!cur) { byDay.set(r.day, { ...r }); continue; }
-      cur.tokens += r.tokens;
-      cur.cost = cur.cost == null && r.cost == null ? null : (cur.cost ?? 0) + (r.cost ?? 0);
-    }
-    return c.json([...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)));
-  });
-  // Reset the usage stats the page actually charts: the `task_usage` snapshots AND the caller's own chat
-  // spend. Admin-only and irreversible. Clearing only the snapshots used to leave every chart standing,
-  // because chat spend is read back out of the conversation rows rather than from a snapshot — so on an
-  // instance whose spend is mostly chat the button appeared to do nothing at all. Chat spend is cleared
-  // by stripping the accounting from those rows; the messages themselves are kept, so conversations stay
-  // readable. The agents' CLI session transcripts are still left untouched.
-  app.post('/usage/reset', c => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const userId = c.get('user')?.id;
-    const cleared = d.taskUsage?.deleteAll() ?? 0;
-    const chat = userId != null ? d.brainStore?.clearUsage(userId) ?? 0 : 0;
-    return c.json({ ok: true, cleared, chatCleared: chat });
   });
   // The transcript of an embedded-brain (elowen:) worker run — the task detail's conversation tab.
   // CLI-run tasks have no brain session, so this returns an empty list for them.
@@ -434,48 +324,6 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' }); // live SSE so open UIs drop the row
     d.events?.deleteForTarget(id); // purge its history — a removed task leaves no dead feed
     return c.json({ ok: true });
-  });
-  // Admin maintenance: wipe ALL operational data — tasks (+deps), missions, the activity feed — and
-  // stop every live agent session. Projects, users and config are kept. Irreversible; admin-only.
-  app.post('/admin/cleanup', async c => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    // Stop missions cleanly first (kills their agents + drains overseers), then sweep any remaining
-    // elowen- sessions (manual launches / zombies) so no agent keeps running against deleted tasks.
-    // A teardown that FAILS aborts the wipe: erasing every task and mission row while an agent is
-    // still live leaves it editing checkouts with nothing left in the DB to find or stop it by.
-    const liveMissions = d.missions.live();
-    // Same teardown-first invariant as the epic delete: a live mission with no engine (agents plugin
-    // disabled) cannot be stopped, so the wipe must refuse instead of erasing rows under live agents.
-    if (liveMissions.length > 0 && !d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
-    try {
-      for (const m of liveMissions) await d.engine?.disengage(m.id);
-    } catch (e) {
-      log.error('cleanup aborted — mission disengage failed', e);
-      return c.json({ error: 'mission teardown failed' }, 500);
-    }
-    const sessions = (await d.tmux.list()).filter((s) => s.startsWith('elowen-'));
-    for (const s of sessions) await d.tmux.kill(s).catch(() => { /* verified below */ });
-    // A kill fails routinely for a session that exited on its own, so the kill itself proves nothing —
-    // re-read the live list and judge by what actually survived. Sessions spawned after the sweep
-    // started are not ours to account for, so only the ones we tried to kill are checked.
-    const surviving = (await d.tmux.list()).filter((s) => sessions.includes(s));
-    if (surviving.length > 0) {
-      log.error(`cleanup aborted — agent sessions survived teardown: ${surviving.join(', ')}`);
-      return c.json({ error: 'agent teardown failed' }, 500);
-    }
-    // Free every mission's on-disk worktree (and its mission_pr row) before deleteAll() wipes the DB —
-    // the disengage sweep above only reaches 'active'/'stalled' missions, but a paused or naturally-
-    // completed one still holds a worktree for the pause/PR-feedback path. cleanup() is a no-op for a
-    // mission with no PR record, so calling it for every mission id here is safe.
-    try {
-      for (const missionId of d.tasks.listMissionIds()) await d.missionGit?.cleanup(missionId);
-    } catch (e) {
-      log.error('cleanup aborted — worktree cleanup failed', e);
-      return c.json({ error: 'mission teardown failed' }, 500);
-    }
-    const removed = d.tasks.deleteAll();
-    const events = d.events?.deleteAll() ?? 0;
-    return c.json({ ok: true, tasks: removed.tasks, missions: removed.missions, events });
   });
   app.post('/tasks/plan', async c => {
     const b = await parseBody(c, planSchema);
