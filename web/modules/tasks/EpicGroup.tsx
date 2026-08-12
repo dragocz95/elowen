@@ -11,7 +11,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
 import { elowenClient } from '../../lib/elowenClient';
 import { useDeleteMission, useEngage, usePauseMission, useResumeMission, useDisengage, useOpenMissionPr, useMergeMissionPr } from '../../lib/mutations';
-import { useSessions, useSessionSignals, useMissions, useConfig } from '../../lib/queries';
+import { useSessions, useSessionSignals, useMissions, useConfig, useAgentsPlugin } from '../../lib/queries';
 import { TaskCard } from './TaskCard';
 import { useDropTarget } from './useTaskDrop';
 import { AddPhaseModal } from './AddPhaseModal';
@@ -100,7 +100,10 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
   // Whether the bottom row has any lifecycle pill (PR link/open/merge, or engage/continue/pause/
   // disengage). When none apply — e.g. a closed epic with no PR — the row is dropped entirely so the
   // epic stays a single compact line instead of reserving an empty second line.
-  const hasActions = !!pr?.prUrl || pr?.prState === 'ready' || pr?.prState === 'open' || live || !epicClosed;
+  // Every pill in the actions row drives the agents plugin (mission engine, mission PR flow) — with
+  // the plugin off the row would only offer 503s, so it hides as one block.
+  const agentsUi = useAgentsPlugin();
+  const hasActions = agentsUi && (!!pr?.prUrl || pr?.prState === 'ready' || pr?.prState === 'open' || live || !epicClosed);
 
   // No overflow-hidden on the card: it would clip the action menu's dropdown (which must overlay
   // below the card). Corners stay clean because the only child reaching them — the expanded phase

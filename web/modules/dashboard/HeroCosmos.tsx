@@ -8,9 +8,7 @@ import { nextCronRun } from '../../lib/cron';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
-import {
-  usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, usePluginUi,
-} from '../../lib/queries';
+import { usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, useAgentsPlugin } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 import { ElowenPresence } from './ElowenPresence';
 import type { AgentPresenceState } from './useAgentPresence';
@@ -66,12 +64,11 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const alertRef = useRef(false);
 
   // The decisions/agents pods link into the agents plugin's pages and their counts come from its API
-  // surface, so they only render when the plugin actually contributes a UI — the same /plugins/ui
-  // source the sidebar nav reads. Until the listing loads they stay hidden (undefined → absent), so a
-  // plugin-less instance never flashes two dead cards. With the plugin off the count queries 404 once
-  // and stop (4xx is never retried — see the QueryClient defaults in app/providers.tsx).
-  const pluginUi = usePluginUi(locale);
-  const agentsUi = (pluginUi.data ?? []).some((p) => p.name === 'agents');
+  // surface, so they only render when the plugin actually contributes a UI (useAgentsPlugin — the
+  // shared /plugins/ui presence gate). Until the listing loads they stay hidden, so a plugin-less
+  // instance never flashes two dead cards. With the plugin off the count queries 404 once and stop
+  // (4xx is never retried — see the QueryClient defaults in app/providers.tsx).
+  const agentsUi = useAgentsPlugin();
 
   const asks = usePendingAsks();
   const escalations = useEscalations();

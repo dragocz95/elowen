@@ -8,6 +8,7 @@ vi.mock('../../../lib/queries', () => ({
   useSessions: () => ({ data: [] }),
   useSessionSignals: () => ({}),
   useConfig: () => ({ data: { defaults: { exec: 'sonnet' } } }),
+  useAgentsPlugin: () => true, // the status dots render only with the agents plugin present
 }));
 vi.mock('../../../lib/elowenClient', () => ({ elowenClient: { taskUsage: vi.fn().mockResolvedValue(null) } }));
 

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ChevronLeft, Timer } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useTasks, useAllDeps, useSessionSignal, useConfig, useMissionNotes } from '../../lib/queries';
+import { useTasks, useAllDeps, useSessionSignal, useConfig, useMissionNotes, useAgentsPlugin } from '../../lib/queries';
 import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/elowenClient';
 import { useTaskControls } from '../../lib/useTaskControls';
@@ -42,8 +42,10 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
   const task = tasks.data?.find((x) => x.id === taskId);
   const { session, running, start, stop, pause } = useTaskControls(task ?? { id: taskId, title: '', status: 'open' });
   const signal = useSessionSignal(session ?? '');
-  // Handoff notes are mission-scoped (keyed by epic id): a phase shows its mission's notes, an epic its own.
-  const notesTarget = task ? (task.parent_id ?? (task.type === 'epic' ? task.id : null)) : null;
+  // Handoff notes are mission-scoped (keyed by epic id): a phase shows its mission's notes, an epic its
+  // own. The store is plugin-owned (/notes answers 503 without the plugin), so don't poll it then.
+  const agentsUi = useAgentsPlugin();
+  const notesTarget = agentsUi && task ? (task.parent_id ?? (task.type === 'epic' ? task.id : null)) : null;
   const notes = useMissionNotes(notesTarget);
 
   if (!task) return <EmptyState title={t.tasks.selectHint} icon={TerminalSquare} />;

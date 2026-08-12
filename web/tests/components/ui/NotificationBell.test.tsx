@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
@@ -17,6 +17,7 @@ const pendingAsk = {
 };
 
 const server = setupServer(
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [] }])),
   http.get('*/api/sessions', () => HttpResponse.json([])),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/tasks/deps', () => HttpResponse.json([])),
@@ -25,6 +26,7 @@ const server = setupServer(
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest }));
+afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('NotificationBell', () => {
@@ -37,5 +39,17 @@ describe('NotificationBell', () => {
     const inbox = await screen.findByRole('link', { name: /Escalations \(1\).*Choose the database/ });
     expect(inbox).toHaveAttribute('href', '/p/agents/escalations');
     expect(screen.queryByText('No agents waiting for approval.')).not.toBeInTheDocument();
+  });
+
+  it('shows NO decisions inbox (count 0) when the agents plugin is absent', async () => {
+    // The inbox link targets /p/agents/escalations — with the plugin off it would land on a plugin-404
+    // page, so the bell must not glow over stale escalation data.
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><NotificationBell /></Wrapper>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }));
+    expect(await screen.findByText('No agents waiting for approval.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Escalations/ })).not.toBeInTheDocument();
   });
 });

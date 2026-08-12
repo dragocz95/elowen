@@ -2,6 +2,7 @@ import { liveState, type LiveState } from '../../lib/agentUtils';
 import type { DerivedSignal } from '../../lib/types';
 import type { StallState } from '../../lib/useSessionStall';
 import { useTranslation } from '../../lib/i18n';
+import { useAgentsPlugin } from '../../lib/queries';
 
 const STYLE: Record<LiveState, { color: string; ring: string; pulse: boolean }> = {
   working: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)', pulse: true },
@@ -23,6 +24,11 @@ function resolveState(signal: DerivedSignal | undefined, live: boolean, stall: S
 /** A single live-state dot: green pulse (working), amber (stalled/needs input), red (stuck), neutral (complete/idle). */
 export function AgentStatusDot({ signal, live = false, size = 'md', stall, silenceSec = 0 }: { signal?: DerivedSignal; live?: boolean; size?: 'sm' | 'md'; stall?: StallState; silenceSec?: number }) {
   const { t } = useTranslation();
+  // Agent live-state comes entirely from the agents plugin's session surface; without the plugin the
+  // dot could only ever render a meaningless neutral 'idle'. One gate here hides it product-wide
+  // (task cards, kanban, phase log) instead of each caller re-checking.
+  const agentsUi = useAgentsPlugin();
+  if (!agentsUi) return null;
   const state = resolveState(signal, live, stall);
   const s = STYLE[state];
   const px = size === 'sm' ? 6 : 8;

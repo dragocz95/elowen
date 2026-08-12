@@ -10,6 +10,7 @@ import { createWrapper } from '../../test-utils';
 interface PlanBody { autoModel?: boolean; exec?: string; pilotExec?: string; overseerExec?: string }
 let planBody: PlanBody | null = null;
 const server = setupServer(
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [] }])),
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], modelNotes: { sonnet: 'coder' }, autopilot: { model: 'm', overseerModel: '', apiUrl: 'u', apiKeySet: true, notes: '', prompt: '', pilotExec: '', overseerExec: '', reviewOnDone: false }, providers: {}, defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/projects', () => HttpResponse.json([])),

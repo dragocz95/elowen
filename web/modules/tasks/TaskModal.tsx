@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Play, Sparkles, ListChecks, Plus, X, AlertTriangle, Pencil } from 'lucide-react';
 import type { Task, PlanResult } from '../../lib/types';
-import { useConfig, useTasks, usePlanJob, useProjects } from '../../lib/queries';
+import { useConfig, useTasks, usePlanJob, useProjects, useAgentsPlugin } from '../../lib/queries';
 import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { taskExec } from '../../lib/agentUtils';
@@ -114,7 +114,10 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
   const [maxSessionsPick, setMaxSessions] = useState<number | null>(null);
   const autonomy = autonomyPick ?? config?.defaults?.autonomy ?? 'L3';
   const maxSessions = maxSessionsPick ?? config?.defaults?.maxSessions ?? 1;
-  const [engage, setEngage] = useState(false);
+// Engage-flow fields are agents-plugin features. Hidden without the plugin, their state keeps the
+  // safe defaults (engage=false, prMode='default', execs empty), so a plan submits cleanly.
+  const agentsUi = useAgentsPlugin();
+    const [engage, setEngage] = useState(false);
   // Per-task GitHub PR workflow override, mirroring the Projects page tri-state: 'default' inherits the
   // project/global setting, 'on'/'off' force it for this task. Sent as prEnabled true/false/null.
   const [prMode, setPrMode] = useState<'default' | 'on' | 'off'>('default');
@@ -335,6 +338,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
             <Field label={t.tasks.autoModelLabel} hint={t.help.taskAutoModel}>
               <Toggle checked={autoModel} onChange={setAutoModel} label={t.tasks.autoModelLabel} />
             </Field>
+            {agentsUi ? (
             <div className="grid gap-4 md:grid-cols-2">
               <Field label={t.tasks.plannerExecutor} hint={t.help.taskPlannerExecutor}>
                 <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.plannerExecutor} manageAriaLabel={t.tasks.plannerExecutor} />
@@ -343,6 +347,8 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.overseerExecutor} manageAriaLabel={t.tasks.overseerExecutor} />
               </Field>
             </div>
+            ) : null}
+            {agentsUi ? (
             <Field label={t.tasks.fieldPrMode} hint={t.help.taskPrMode}>
               <Segmented
                 value={prMode}
@@ -354,11 +360,14 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 ]}
               />
             </Field>
+            ) : null}
             {!autoModel && execSelect}
+            {agentsUi ? (
             <button type="button" onClick={() => setEngage((v) => !v)} className="flex w-fit items-center gap-2 text-sm text-text">
               <Checkbox checked={engage} />
               {t.tasks.startAutopilot}
             </button>
+            ) : null}
 
             {manual && (
               <div className="flex flex-col gap-2 rounded-md border border-border bg-elevated/40 p-3">

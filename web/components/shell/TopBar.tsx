@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, Menu, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useMe } from '../../lib/queries';
+import { useMe, useAgentsPlugin } from '../../lib/queries';
 import { usePageHeader } from '../../lib/pageHeader';
 import { navigationWorldForPath } from '../../modules/registry';
 import { NotificationBell } from '../ui/NotificationBell';
@@ -16,6 +16,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
   const { t } = useTranslation();
   const me = useMe();
   const pathname = usePathname();
+  const agentsUi = useAgentsPlugin();
   const pageHeader = usePageHeader();
   const { title, count, icon: Icon } = pageHeader?.header ?? {};
   const world = navigationWorldForPath(pathname);
@@ -23,7 +24,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
     ? t.nav[world.id]
     : pathname.startsWith('/account') || pathname.startsWith('/settings') || pathname.startsWith('/users')
       ? t.nav.system
-      : pathname.startsWith('/p/agents/escalations')
+      : agentsUi && pathname.startsWith('/p/agents/escalations')
         ? t.sidebar.notifications
         : undefined;
 

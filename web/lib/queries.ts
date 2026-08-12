@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
+import { useTranslation } from './i18n';
 import { pendingEscalations, type Escalation } from './escalations';
 import type { DerivedSignal, GithubAuthStatus, PlanJob, MemoryFilters, SlashCommandDef, ProcessInfo } from './types';
 
@@ -260,6 +261,17 @@ export const useMe = () =>
  *  it and the menu updates without a reload. */
 export const usePluginUi = (locale: string) =>
   useQuery({ queryKey: [...QUERY_KEYS.pluginUi, locale], queryFn: () => elowenClient.pluginUi(locale), staleTime: 60_000 });
+
+/** Whether the agents plugin contributes a browser UI on this instance — read from the SAME
+ *  /plugins/ui listing the sidebar nav uses, so every agents-only affordance (dashboard pods, the
+ *  escalations inbox, engage controls, agent status dots, /p/agents/* links) gates on one source.
+ *  False while the listing loads: agents affordances appear only once the plugin is confirmed, so a
+ *  plugin-less instance never flashes them. */
+export const useAgentsPlugin = (): boolean => {
+  const { locale } = useTranslation();
+  const pluginUi = usePluginUi(locale);
+  return (pluginUi.data ?? []).some((p) => p.name === 'agents');
+};
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */

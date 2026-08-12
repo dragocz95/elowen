@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Search, Plus, Rocket, CornerDownLeft, type LucideIcon } from 'lucide-react';
 import { MODULES } from '../../modules/registry';
 import { useTranslation } from '../../lib/i18n';
+import { useAgentsPlugin } from '../../lib/queries';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
@@ -20,6 +21,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
 export function CommandPalette() {
   const router = useRouter();
   const { t } = useTranslation();
+  const agentsUi = useAgentsPlugin();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -46,10 +48,11 @@ export function CommandPalette() {
     const nav = MODULES.map((m) => ({ id: `nav:${m.route}`, label: `${t.common.goTo} ${t.page[m.id as keyof typeof t.page] ?? m.label}`, hint: m.route, icon: m.icon, run: go(m.route) }));
     const actions: Command[] = [
       { id: 'new-task', label: t.tasks.newTask, hint: 'create', icon: Plus, run: go('/tasks?new=1') },
-      { id: 'new-mission', label: t.missions.newMission, hint: 'engage', icon: Rocket, run: go('/tasks?new=1') },
+      // "New mission" opens the engage flow — an agents-plugin feature, hidden without it.
+      ...(agentsUi ? [{ id: 'new-mission', label: t.missions.newMission, hint: 'engage', icon: Rocket, run: go('/tasks?new=1') }] : []),
     ];
     return [...actions, ...nav];
-  }, [router, t]);
+  }, [router, t, agentsUi]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();

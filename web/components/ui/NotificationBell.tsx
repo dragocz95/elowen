@@ -5,7 +5,7 @@ import { uiZoom } from '../../lib/uiZoom';
 import Link from 'next/link';
 import { Bell, ShieldAlert } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useSessions, useSessionSignals, useTasks, useEscalations, usePendingAsks } from '../../lib/queries';
+import { useSessions, useSessionSignals, useTasks, useEscalations, usePendingAsks, useAgentsPlugin } from '../../lib/queries';
 import { needsInputSessions, taskSessionName } from '../../lib/agentUtils';
 import { taskExec } from '../../lib/agentUtils';
 import { NeedsInputRow } from './NeedsInputRow';
@@ -23,7 +23,11 @@ export function NotificationBell() {
   const waiting = needsInputSessions(sessions.data ?? [], signals);
   const escalations = useEscalations();
   const pendingAsks = usePendingAsks().data ?? [];
-  const inboxCount = escalations.length + pendingAsks.length;
+  // The decisions inbox (overseer escalations + parked asks) is an agents-plugin surface: its link
+  // targets /p/agents/escalations and the underlying counts are derived from mission events. With
+  // the plugin off the bell must not glow over a link that would land on a plugin-404 page.
+  const agentsUi = useAgentsPlugin();
+  const inboxCount = agentsUi ? escalations.length + pendingAsks.length : 0;
   const count = waiting.length + inboxCount;
   const inboxPreview = pendingAsks[0]?.title?.trim()
     || pendingAsks[0]?.question?.trim()

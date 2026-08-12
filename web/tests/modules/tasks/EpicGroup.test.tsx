@@ -14,6 +14,7 @@ const phases: Task[] = [
 ];
 
 const server = setupServer(
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [] }])),
   http.get('*/api/sessions', () => HttpResponse.json([])),
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null }])),
   // EpicGroup now drives the mission lifecycle + rolled-up cost, so it reads these too.
@@ -91,6 +92,18 @@ describe('EpicGroup — delete mission', () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(calls).not.toHaveBeenCalled();
+  });
+});
+
+describe('EpicGroup — agents plugin gating', () => {
+  it('hides the whole mission actions row (engage & co.) when the agents plugin is absent', async () => {
+    // Every pill in the row drives the plugin's mission engine / PR flow — without the plugin the
+    // clicks could only answer 503, so the row hides as one block.
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    renderEpic();
+    await screen.findByText('Ship feature'); // rendered
+    expect(screen.queryByRole('button', { name: /engage/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /open pr/i })).toBeNull();
   });
 });
 

@@ -6,6 +6,9 @@ function W({ children }: { children: React.ReactNode }) { return <LanguageProvid
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push, replace: () => {} }) }));
+// The palette gates its "New mission" action on the agents plugin's presence; this suite runs
+// without a QueryClient, so stub the presence hook directly.
+vi.mock('../../../lib/queries', () => ({ useAgentsPlugin: () => true }));
 import { CommandPalette } from '../../../components/shell/CommandPalette';
 
 describe('CommandPalette', () => {
