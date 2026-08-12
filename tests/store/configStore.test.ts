@@ -524,3 +524,54 @@ describe('ConfigStore lsp plugin migration', () => {
     expect(cs.get().plugins.enabled).toContain('lsp'); // from the fresh-install defaults, not the migration
   });
 });
+
+// The task domain became a plugin in this wave, so on EVERY pre-existing install this one-shot upgrade is
+// the only thing standing between the operator and an instance that boots without its tasks, its Kanban
+// and its missions — the rows survive, but nothing owns them. It deserves the same pinning as its
+// siblings above: this store method, and (in tests/daemon/upgradeMigrations.test.ts) the boot that runs it.
+describe('ConfigStore work plugin migration', () => {
+  /** A pre-extraction install: task tracking was core, so there is no `work` plugin and no marker. */
+  const OLD_ROW = (over: Record<string, unknown> = {}) => JSON.stringify({
+    allowedExecs: ['sonnet'],
+    plugins: { enabled: ['files', 'agents'], removed: [], config: {} },
+    ...over,
+  });
+  const storeWith = (row: string): { cs: ConfigStore; stored: () => Record<string, unknown> } => {
+    const db2 = openDb(':memory:');
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(row);
+    return {
+      cs: new ConfigStore(db2),
+      stored: () => JSON.parse((db2.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data) as Record<string, unknown>,
+    };
+  };
+
+  it('keeps task tracking on an upgraded install by enabling the plugin that now owns it', () => {
+    const { cs, stored } = storeWith(OLD_ROW());
+    expect(cs.get().plugins.enabled).not.toContain('work'); // the install as it was before the upgrade
+    cs.migrateWorkPlugin();
+    expect(cs.get().plugins.enabled).toContain('work');
+    expect(stored()['workPluginMigrated']).toBe(true); // persisted, so the sweep is genuinely one-shot
+    // Nothing else about the operator's plugin choice moves.
+    expect(cs.get().plugins.enabled).toContain('agents');
+  });
+
+  it('never re-enables the plugin after a deliberate disable (the marker makes it one-shot)', () => {
+    const { cs } = storeWith(OLD_ROW());
+    cs.migrateWorkPlugin();
+    cs.update({ plugins: { enabled: ['files', 'agents'] } }); // the admin turns task tracking off
+    cs.migrateWorkPlugin();
+    expect(cs.get().plugins.enabled).not.toContain('work');
+  });
+
+  it('leaves an already-enabled plugin list untouched (no duplicate entry)', () => {
+    const { cs } = storeWith(OLD_ROW({ plugins: { enabled: ['files', 'work'], removed: [], config: {} } }));
+    cs.migrateWorkPlugin();
+    expect(cs.get().plugins.enabled.filter((n) => n === 'work')).toEqual(['work']);
+  });
+
+  it('is a no-op on a fresh install (no settings row → the defaults already carry the marker)', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.migrateWorkPlugin();
+    expect(cs.get().plugins.enabled).toContain('work'); // from the fresh-install defaults, not the migration
+  });
+});
