@@ -82,6 +82,17 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     expect((await app.request('/plan/pj-nope', auth(tok))).status).toBe(404);
   });
 
+  it('admin cleanup refuses with 503 while a mission is live (teardown-first, nothing wiped)', async () => {
+    const { app, tasks, missions, tok } = setup();
+    tasks.create({ id: 'e1', project_id: 1, title: 'E', type: 'epic' });
+    missions.create({ id: 'm-e1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1 });
+    const res = await app.request('/admin/cleanup', post(tok, {}));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'agents plugin is disabled' });
+    expect(tasks.get('e1')).not.toBeNull(); // rows survive — no wipe under live agents nobody can stop
+    expect(missions.get('m-e1')?.state).toBe('active');
+  });
+
   it('an AGENT token is 403 on the overseer verbs without the plugin (no static allow-list hole)', async () => {
     // The middleware's agent allow-list no longer names the overseer routes — they pass only through
     // the rootApiRoute(access:'agent') carve-out, which needs the plugin loaded. Disabled plugin ⇒ a
