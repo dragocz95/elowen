@@ -1,5 +1,6 @@
 import type { PluginApiRequest, PluginContext, PluginHttpResponse } from '../../../src/plugins/api.js';
 import {
+  EditorFileError,
   copyProjectEntry, createProjectDir, createProjectFile, deleteProjectEntry, listProjectFiles,
   projectChangedFiles, projectCommitDiff, projectCommitFileDiff, projectCommitFiles, projectCommitLog,
   projectFileAtHead, projectFileDiff, projectWorkingDiff, readProjectBytes, readProjectFile,
@@ -21,7 +22,12 @@ async function body(req: PluginApiRequest): Promise<Record<string, unknown> | nu
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 function requiredString(value: unknown): string | null { return typeof value === 'string' && value.length > 0 ? value : null; }
-function fileError(error: unknown): PluginHttpResponse { return { status: 400, body: { error: error instanceof Error ? error.message : 'invalid path' } }; }
+/** Only the editor's own refusals reach the client. Anything else — an fs error above all — is flattened:
+ *  its message carries the project's absolute path on the server, and it answers "does this path exist?"
+ *  for a caller probing outside the tree. */
+function fileError(error: unknown): PluginHttpResponse {
+  return { status: 400, body: { error: error instanceof EditorFileError ? error.message : 'invalid path' } };
+}
 
 export function registerEditorApi(ctx: PluginContext): void {
   const safe = ctx.host.projectFiles().safe;

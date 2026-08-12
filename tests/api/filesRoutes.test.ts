@@ -93,6 +93,22 @@ describe('project file editor routes', () => {
     expect(existsSync(join(root, '../escape.ts'))).toBe(false);
   });
 
+  it('keeps the server path out of file errors while still naming the editor\'s own refusals', async () => {
+    // A missing file fails inside fs, whose message quotes the project's absolute path — the client gets a
+    // flat refusal instead, and learns nothing about what exists on disk outside the tree.
+    const missing = await app.request(`/projects/${id}/file?path=nope.ts`);
+    expect(missing.status).toBe(400);
+    const leaked = (await missing.json() as { error: string }).error;
+    expect(leaked).toBe('invalid path');
+    expect(leaked).not.toContain(root);
+    expect(leaked).not.toContain(tmpdir());
+
+    // The refusals the editor authors itself are what the operator needs to read, so they still travel.
+    const dup = await app.request(`/projects/${id}/new-file`, json({ path: 'README.md' }));
+    expect(dup.status).toBe(400);
+    expect(await dup.json()).toEqual({ error: 'already exists' });
+  });
+
   it('POST /new-file and POST /dir create entries inside the root', async () => {
     expect((await app.request(`/projects/${id}/new-file`, json({ path: 'docs/notes.md' }))).status).toBe(200);
     expect(existsSync(join(root, 'docs/notes.md'))).toBe(true);

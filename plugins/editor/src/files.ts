@@ -11,6 +11,11 @@ const MAX_RAW = 10 * 1024 * 1024;
 export interface FileNode { path: string; type: 'file' | 'dir' }
 export type SafePath = (root: string, rel: string, forWrite?: boolean) => string;
 
+/** A refusal the operator is meant to read — "already exists", "source does not exist". Only these
+ *  messages travel to the client: a raw fs error carries the absolute server path of the project (and
+ *  tells the caller whether a path exists), so the route maps everything else to a flat 'invalid path'. */
+export class EditorFileError extends Error {}
+
 export function listProjectFiles(root: string, maxDepth = 8): FileNode[] {
   const resolvedRoot = realpathSync(root);
   const out: FileNode[] = [];
@@ -53,29 +58,29 @@ export function readProjectBytes(safe: SafePath, root: string, rel: string): Buf
 
 export function createProjectFile(safe: SafePath, root: string, rel: string): void {
   const abs = safe(root, rel, true);
-  if (existsSync(abs)) throw new Error('already exists');
+  if (existsSync(abs)) throw new EditorFileError('already exists');
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, '', 'utf8');
 }
 
 export function createProjectDir(safe: SafePath, root: string, rel: string): void {
   const abs = safe(root, rel, true);
-  if (existsSync(abs)) throw new Error('already exists');
+  if (existsSync(abs)) throw new EditorFileError('already exists');
   mkdirSync(abs, { recursive: true });
 }
 
 export function deleteProjectEntry(safe: SafePath, root: string, rel: string): void {
   const projectRoot = realpathSync(root);
   const abs = safe(root, rel, true);
-  if (abs === projectRoot) throw new Error('cannot delete project root');
+  if (abs === projectRoot) throw new EditorFileError('cannot delete project root');
   rmSync(abs, { recursive: true, force: true });
 }
 
 export function renameProjectEntry(safe: SafePath, root: string, from: string, to: string): void {
   const src = safe(root, from, true);
   const dst = safe(root, to, true);
-  if (!existsSync(src)) throw new Error('source does not exist');
-  if (existsSync(dst)) throw new Error('target already exists');
+  if (!existsSync(src)) throw new EditorFileError('source does not exist');
+  if (existsSync(dst)) throw new EditorFileError('target already exists');
   mkdirSync(dirname(dst), { recursive: true });
   renameSync(src, dst);
 }
@@ -83,8 +88,8 @@ export function renameProjectEntry(safe: SafePath, root: string, from: string, t
 export function copyProjectEntry(safe: SafePath, root: string, from: string, to: string): void {
   const src = safe(root, from, true);
   const dst = safe(root, to, true);
-  if (!existsSync(src)) throw new Error('source does not exist');
-  if (existsSync(dst)) throw new Error('target already exists');
+  if (!existsSync(src)) throw new EditorFileError('source does not exist');
+  if (existsSync(dst)) throw new EditorFileError('target already exists');
   mkdirSync(dirname(dst), { recursive: true });
   cpSync(src, dst, { recursive: true });
 }
