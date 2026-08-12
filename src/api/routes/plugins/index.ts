@@ -374,37 +374,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     } catch { return c.json([]); } // network failure → empty picker, never a leaked error detail
   });
 
-  // ── WhatsApp pairing (whatsapp plugin): surface the live pairing QR/code so the settings "Pair"
-  // modal can render it, and let the button force a fresh pairing attempt. Reaches the SAME live adapter
-  // instance the orchestrator connected, through the plugin registry (d.plugins). The QR never leaves as
-  // anything but a rendered image; the raw socket credentials stay inside the plugin. ──
-  type WhatsAppPairing = { qrImage: string | null; code: string | null; connected: boolean };
-  const whatsappAdapter = async (): Promise<{ getPairing?(): WhatsAppPairing; startPairing?(): Promise<{ connected: boolean }>; unpair?(): Promise<{ connected: boolean }> } | undefined> => {
-    const registry = await d.plugins?.get();
-    return registry?.platforms.find((p) => p.name === 'whatsapp') as never;
-  };
-
-  app.get('/plugins/whatsapp/pairing', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const adapter = await whatsappAdapter();
-    if (!adapter?.getPairing) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
-    return c.json(adapter.getPairing());
-  });
-
-  app.post('/plugins/whatsapp/pair', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const adapter = await whatsappAdapter();
-    if (!adapter?.startPairing) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
-    return c.json(await adapter.startPairing());
-  });
-
-  app.post('/plugins/whatsapp/unpair', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const adapter = await whatsappAdapter();
-    if (!adapter?.unpair) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
-    return c.json(await adapter.unpair());
-  });
-
   // ── Teams app package (msteams plugin): the sideloadable ZIP (manifest + icons) the admin uploads
   // to the org's Teams app catalog. Built by the live adapter from the current config. ──
   app.get('/plugins/msteams/app-package', async (c) => {

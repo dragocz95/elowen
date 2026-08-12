@@ -15,9 +15,16 @@
       "WhatsappGroupCreate",
       "WhatsappGroupAdd",
       "WhatsappGroupRemove"
+    ],
+    "apiRoutes": [
+      "/plugins/whatsapp/pairing",
+      "/plugins/whatsapp/pair",
+      "/plugins/whatsapp/unpair"
     ]
   },
-  "icons": { "Whatsapp*": "🟢" },
+  "icons": {
+    "Whatsapp*": "🟢"
+  },
   "configSchema": [
     {
       "key": "sec_connection",
@@ -90,9 +97,18 @@
       "type": "enum",
       "default": "en",
       "options": [
-        { "value": "en", "label": "English" },
-        { "value": "cs", "label": "Čeština" },
-        { "value": "sk", "label": "Slovenčina" }
+        {
+          "value": "en",
+          "label": "English"
+        },
+        {
+          "value": "cs",
+          "label": "Čeština"
+        },
+        {
+          "value": "sk",
+          "label": "Slovenčina"
+        }
       ],
       "hint": "Language of the bot's own service messages (/new, /model, placeholders)."
     },
@@ -171,5 +187,30 @@
       "type": "rolePolicies",
       "hint": "First matching sender wins; senders with no mapped policy are ignored. The ID is a phone number (420777123456), a JID (…@s.whatsapp.net) or a whole group JID (…@g.us) — a group ID grants access to everyone in it. Mark a policy admin to let it switch the model and use the group tools. Each policy may also restrict which tools the bot can use for it."
     }
-  ]
+  ],
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "settings": [
+      {
+        "id": "pairing",
+        "label": "Pairing",
+        "icon": "QrCode"
+      }
+    ],
+    "strings": {
+      "pairTitle": "Pairing",
+      "pairHint": "Link the bot to a WhatsApp account. Scan the QR in WhatsApp → Linked devices, or use the pairing code.",
+      "pairButton": "Pair device",
+      "pairModalTitle": "Pair WhatsApp",
+      "pairScan": "Open WhatsApp → Linked devices → Link a device, and scan this code:",
+      "pairCode": "Or link with your phone number using this code:",
+      "pairWaiting": "Waiting for a QR code… make sure the plugin is enabled.",
+      "pairRefresh": "New code",
+      "pairError": "Could not reach the WhatsApp plugin. Is it enabled?",
+      "unpairButton": "Unpair device",
+      "unpairConfirm": "Unlink this WhatsApp account? The bot will stop receiving messages until you pair again.",
+      "close": "Close"
+    }
+  }
 }

@@ -1,7 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { WhatsAppPairSection } from './WhatsAppPairSection';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
@@ -545,11 +544,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         </SettingsGroup>
       ) : hasExplicitSections ? (
         // One settings-group card per author-declared section: an icon-chip header (label + `?` hint),
-        // the section's fields in the padded body. WhatsApp's pairing control leads the Connection card.
+        // the section's fields in the padded body.
         sectionCards.map((card, i) => {
           const hint = card.section ? fieldHint(card.section) : undefined;
           const isConnCard = card.section?.key === 'sec_connection';
-          const showPair = detail.name === 'whatsapp' && isConnCard;
           const showAppPackage = detail.name === 'msteams' && isConnCard;
           return (
             <SettingsGroup
@@ -559,9 +557,8 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
             >
-              {showPair || showAppPackage || card.fields.length > 0 ? (
+              {showAppPackage || card.fields.length > 0 ? (
                 <div className="settings-group__panel flex flex-col gap-4">
-                  {showPair ? <WhatsAppPairSection /> : null}
                   {showAppPackage ? <TeamsAppPackageSection /> : null}
                   {card.fields.length > 0 ? fieldList(card.fields) : null}
                 </div>

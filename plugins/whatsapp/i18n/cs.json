@@ -44,7 +44,11 @@
     "language": {
       "label": "Jazyk služebních zpráv",
       "hint": "Jazyk vlastních zpráv bota (/new, /model, zástupné texty): en (výchozí), cs nebo sk.",
-      "options": { "en": "Angličtina", "cs": "Čeština", "sk": "Slovenština" }
+      "options": {
+        "en": "Angličtina",
+        "cs": "Čeština",
+        "sk": "Slovenština"
+      }
     },
     "sec_conversation": {
       "label": "Konverzace",
@@ -81,6 +85,25 @@
     "senderPolicies": {
       "label": "Pravidla odesílatelů",
       "hint": "Vyhrává první odpovídající odesílatel; odesílatelé bez pravidla jsou ignorováni. ID je telefonní číslo (420777123456), JID (…@s.whatsapp.net) nebo celá skupina (…@g.us) — ID skupiny dá přístup všem v ní. Pravidlo označené admin smí přepínat model a používat skupinové nástroje. Každé pravidlo může navíc omezit, které nástroje pro něj smí bot používat."
+    }
+  },
+  "web": {
+    "settings": {
+      "pairing": "Párování"
+    },
+    "strings": {
+      "pairTitle": "Párování",
+      "pairHint": "Propojte bota s WhatsApp účtem. Naskenujte QR ve WhatsApp → Propojená zařízení, nebo použijte párovací kód.",
+      "pairButton": "Spárovat zařízení",
+      "pairModalTitle": "Spárovat WhatsApp",
+      "pairScan": "Otevřete WhatsApp → Propojená zařízení → Propojit zařízení a naskenujte tento kód:",
+      "pairCode": "Nebo propojte přes telefonní číslo tímto kódem:",
+      "pairWaiting": "Čekám na QR kód… ověřte, že je plugin zapnutý.",
+      "pairRefresh": "Nový kód",
+      "pairError": "Nepodařilo se spojit s WhatsApp pluginem. Je zapnutý?",
+      "unpairButton": "Zrušit párování",
+      "unpairConfirm": "Odpojit tento WhatsApp účet? Bot přestane přijímat zprávy, dokud znovu nespárujete.",
+      "close": "Zavřít"
     }
   }
 }

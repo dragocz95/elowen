@@ -504,7 +504,6 @@ export interface CronJob {
 export interface DiscordChannelOption { id: string; name: string; type: 'channel' | 'thread'; parentName?: string }
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
-export interface WhatsAppPairing { qrImage: string | null; code: string | null; connected: boolean }
 
 /** One markdown skill of the skills plugin (GET /plugins/skills/list). Bundled skills ship with the
  *  install and are read-only; user skills are created at runtime and can be edited or deleted.

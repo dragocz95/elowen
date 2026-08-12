@@ -40,5 +40,23 @@ export function register(ctx) {
   const adapter = new WhatsAppAdapter({ ...ctx.config }, ctx.logger, state, ctx.listModels, imageDirs, authDir, join(dataDir, 'qr.png'), ctx.answerQuestion, () => ctx.chatCommands('whatsapp'));
   ctx.registerPlatform(adapter);
   registerTools(ctx, adapter);
+
+  // ── Pairing API (root mounts, grandfathered core URLs): the settings "Pair" modal reads the live
+  // QR/code off THIS adapter instance and can force a fresh pairing attempt or unlink. The QR never
+  // leaves as anything but a rendered image; the raw socket credentials stay inside the plugin. ──
+  const jsonRes = (body, status = 200) => ({ status, body });
+  ctx.registerApiRoute({
+    rootMount: '/plugins/whatsapp/pairing', path: '', method: 'GET', access: 'admin',
+    handler: async (req) => (req.path === '' ? jsonRes(adapter.getPairing()) : jsonRes({ error: 'not found' }, 404)),
+  });
+  ctx.registerApiRoute({
+    rootMount: '/plugins/whatsapp/pair', path: '', method: 'POST', access: 'admin',
+    handler: async (req) => (req.path === '' ? jsonRes(await adapter.startPairing()) : jsonRes({ error: 'not found' }, 404)),
+  });
+  ctx.registerApiRoute({
+    rootMount: '/plugins/whatsapp/unpair', path: '', method: 'POST', access: 'admin',
+    handler: async (req) => (req.path === '' ? jsonRes(await adapter.unpair()) : jsonRes({ error: 'not found' }, 404)),
+  });
+
   ctx.logger.info('whatsapp platform registered (text commands + model picker + streaming + group tools)');
 }
