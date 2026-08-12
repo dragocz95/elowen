@@ -58,6 +58,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   cron: ['pendingWakeupOriginSessionIds'],
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession'],
   mcp: ['listServers', 'bridgeSnapshot'],
+  lsp: ['diagnosticsEnabled'],
   agents: ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis', 'advisor', 'onTaskClosed'],
 };
 
@@ -731,6 +732,7 @@ export class PluginRegistry {
       assertPathAllowed,
       allowedRoots,
       defaultCwd,
+      workDir: currentWorkDir,
       // Every tool name in the LIVE merged registry. The loader supplies the merged view; without it (a
       // direct contextFor in a unit test) this falls back to the plugin's own staging tools.
       toolNames: () => (allToolNames ? allToolNames() : this.tools.map((t) => t.name)),

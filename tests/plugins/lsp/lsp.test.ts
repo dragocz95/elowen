@@ -1,13 +1,14 @@
-import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { runWithPolicy } from '../../../src/plugins/policyContext.js';
 import { describe, it, expect } from 'vitest';
-import { encodeMessage, MessageDecoder } from '../../src/lsp/protocol.js';
+import { encodeMessage, MessageDecoder } from '../../../plugins/lsp/src/protocol.js';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
-import { detectLanguage, serverForLanguage, commandExists, listServers, resolveServerCommand } from '../../src/lsp/servers.js';
-import { parsePublishDiagnostics, LspClient, type LspTransport, type JsonRpcMessage } from '../../src/lsp/client.js';
-import { LspManager, formatCheckResult, projectRootForFile } from '../../src/lsp/manager.js';
-import { buildLspTools, toggleLsp, lspManager, workspaceBoundary, formatDocumentSymbols, formatLocations, formatHover, formatWorkspaceSymbols } from '../../src/brain/tools/lspTools.js';
+import { detectLanguage, serverForLanguage, commandExists, listServers, resolveServerCommand } from '../../../plugins/lsp/src/servers.js';
+import { parsePublishDiagnostics, LspClient, type LspTransport, type JsonRpcMessage } from '../../../plugins/lsp/src/client.js';
+import { LspManager, formatCheckResult, projectRootForFile } from '../../../plugins/lsp/src/manager.js';
+import { workspaceBoundary, formatDocumentSymbols, formatLocations, formatHover, formatWorkspaceSymbols } from '../../../plugins/lsp/src/tools.js';
+import { lspToolCtx, registeredLspTools } from './harness.js';
 
 describe('LSP protocol codec', () => {
   it('encodes with a byte-accurate Content-Length header', () => {
@@ -900,9 +901,9 @@ describe('LspManager', () => {
   });
 });
 
-describe('lsp tool + /lsp toggle', () => {
+describe('lsp tools', () => {
   it('exposes an LspDiagnostics tool that returns readable text (inside an allowed root)', async () => {
-    const tool = buildLspTools().find((t) => t.name === 'LspDiagnostics')!;
+    const tool = registeredLspTools().find((t) => t.name === 'LspDiagnostics')!;
     expect(tool).toBeDefined();
     // A non-code path is a graceful no-op (no server spawned) regardless of install state. The tool
     // enforces the same per-user path policy as every file tool, so run under one covering the path.
@@ -914,7 +915,7 @@ describe('lsp tool + /lsp toggle', () => {
   });
 
   it('LspDiagnostics refuses a path outside the session policy (no file read, no server)', async () => {
-    const tool = buildLspTools().find((t) => t.name === 'LspDiagnostics')!;
+    const tool = registeredLspTools().find((t) => t.name === 'LspDiagnostics')!;
     const res = await runWithPolicy(
       { allowedProjectIds: new Set([1]), allowedPaths: () => ['/tmp/only-here'] },
       () => tool.execute('c1', { path: '/etc/passwd' }),
@@ -930,23 +931,13 @@ describe('lsp tool + /lsp toggle', () => {
       mkdirSync(join(current, 'src'), { recursive: true });
       mkdirSync(other, { recursive: true });
       const policy = { allowedProjectIds: new Set([1, 2]), allowedPaths: () => [current, other] };
-      const bound = runWithPolicy(policy, () => workspaceBoundary(), { workDir: join(current, 'src') });
+      const bound = runWithPolicy(policy, () => workspaceBoundary(lspToolCtx()), { workDir: join(current, 'src') });
       expect(bound).toBe(current); // the repo the caller is working in, not whichever name sorts longest
       // Nothing to anchor on → unchanged fallback: the caller's widest allowed scope.
-      expect(runWithPolicy(policy, () => workspaceBoundary())).toBe(other);
+      expect(runWithPolicy(policy, () => workspaceBoundary(lspToolCtx()))).toBe(other);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it('toggle flips the shared manager state and back', () => {
-    const before = lspManager().isEnabled();
-    const off = toggleLsp();
-    expect(off.enabled).toBe(!before);
-    expect(lspManager().isEnabled()).toBe(!before);
-    const on = toggleLsp();
-    expect(on.enabled).toBe(before);
-    expect(lspManager().isEnabled()).toBe(before);
   });
 });
 

@@ -124,7 +124,7 @@ describe('chat production architecture boundaries', () => {
 
   it('has no dead scheduler/LSP/view introspection branches', () => {
     expect(source('frameScheduler.ts')).not.toMatch(/background(?:IntervalMs)?/);
-    expect(sourceFromRoot('src/lsp/manager.ts')).not.toMatch(/fresh:\s*(?:true|false)|fresh:\s*boolean/);
+    expect(sourceFromRoot('plugins/lsp/src/manager.ts')).not.toMatch(/fresh:\s*(?:true|false)|fresh:\s*boolean/);
     expect(source('chatViewport.ts')).not.toMatch(/\b(indexedHistoryTurns|cachedHistoryRows|setScrollFromRow)\s*\(/);
   });
 

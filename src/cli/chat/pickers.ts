@@ -591,12 +591,20 @@ export function createPickers(
         onInput: manageKey,
         onPick: (v) => {
           if (v !== '__toggle') { refresh(); return; }
+          const on = !s.enabled;
           runApplication(async () => {
-            const result = await client.command('lsp');
+            // The flag is the lsp plugin's own config: saving it persists the choice AND hot-reloads
+            // the plugin, whose service stops every language server on the way down.
+            await client.setLspDiagnostics(on);
             // refreshMeta keeps the right-panel LSP Active/Inactive line in step with the flip.
             await refreshMeta();
-            return result;
-          }, (r) => { rt.notice = color.dim(r?.message ?? 'toggled LSP'); refresh(); render(); }, fail);
+          }, () => {
+            rt.notice = color.dim(on
+              ? 'LSP diagnostics ON — the agent can now type-check edits live.'
+              : 'LSP diagnostics OFF — language servers stopped.');
+            refresh();
+            render();
+          }, fail);
         },
       });
     }, fail);

@@ -1,37 +1,26 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { LspManager, formatCheckResult, formatLspFailure, type LspOpFailure } from '../../lsp/manager.js';
-import { allowedRoots, assertPathAllowed, realPathWithin } from '../../plugins/pathGuard.js';
-import { currentWorkDir } from '../../plugins/policyContext.js';
 import { fileURLToPath } from 'node:url';
-
-/** One daemon-wide LSP manager (owns the live language-server clients). Shared by the `LspDiagnostics`
- *  tool and the `/lsp` toggle so enabling/disabling and diagnostics hit the same servers. Lazily built so
- *  no server is spawned until the agent actually checks a file. */
-let manager: LspManager | null = null;
-export function lspManager(): LspManager {
-  if (!manager) manager = new LspManager();
-  return manager;
-}
-
-/** Current LSP diagnostics state WITHOUT building the manager (it defaults to enabled). Read by
- *  /brain/status so chat clients can show the live Active/Inactive state next to the `/lsp` toggle. */
-export function lspEnabled(): boolean {
-  return manager ? manager.isEnabled() : true;
-}
+import type { PluginContext } from '../../../src/plugins/api.js';
+import type { LspManager } from './manager.js';
+import { formatCheckResult, formatLspFailure, type LspOpFailure } from './manager.js';
+import { containsPath } from './paths.js';
 
 /** Most-specific current-turn root containing the checked file. This is both the LSP search boundary
  *  and the security boundary: project marker discovery must never walk above a scoped user's repo. */
-function lspBoundary(path: string): string | undefined {
+function lspBoundary(ctx: PluginContext, path: string): string | undefined {
   // An allowed repo is the hard security floor. Prefer it over a possibly deeper client cwd so a turn
   // launched from `<repo>/src` can still discover `<repo>/tsconfig.json` without ever reaching outside
   // the repo. All-access turns have no allowed roots, so their validated cwd is the useful fallback.
-  const permitted = allowedRoots()
-    .filter((root) => realPathWithin(path, [root]) !== null)
+  const permitted = ctx.allowedRoots()
+    .filter((root) => containsPath(root, path))
     .sort((a, b) => b.length - a.length)[0];
   if (permitted) return permitted;
-  const workDir = currentWorkDir();
-  return workDir && realPathWithin(path, [workDir]) !== null ? workDir : undefined;
+  // ctx.workDir(), never ctx.defaultCwd(): the latter falls back to an allowed root or the daemon's
+  // own cwd (`/` under systemd), and either would hand marker discovery a scope this turn never
+  // named — the whole filesystem, in the systemd case.
+  const workDir = ctx.workDir();
+  return workDir && containsPath(workDir, path) ? workDir : undefined;
 }
 
 /** The workspace boundary for a symbol search. Unlike {@link lspBoundary} there is NO file to anchor on
@@ -40,13 +29,12 @@ function lspBoundary(path: string): string | undefined {
  *  answered from whichever repo happened to have the longest path, so a user working in project A got
  *  project B's symbols. Falls back to the widest scope when the work dir names no allowed repo, and to
  *  the work dir itself for an all-access turn (which carries no allowed roots).
- *  Passing the query string to realPathWithin (the original bug) always yielded null, so the tool always
- *  found nothing. Exported for the boundary unit test. */
-export function workspaceBoundary(): string | undefined {
-  const roots = allowedRoots();
-  const workDir = currentWorkDir();
+ *  Exported for the boundary unit test. */
+export function workspaceBoundary(ctx: PluginContext): string | undefined {
+  const roots = ctx.allowedRoots();
+  const workDir = ctx.workDir();
   if (roots.length === 0) return workDir;
-  const containing = workDir ? roots.filter((root) => realPathWithin(workDir, [root]) !== null) : [];
+  const containing = workDir ? roots.filter((root) => containsPath(root, workDir)) : [];
   return (containing.length > 0 ? containing : roots.slice()).sort((a, b) => b.length - a.length)[0];
 }
 
@@ -70,19 +58,21 @@ function renderOp(out: { ok: true; result: unknown } | LspOpFailure, format: (r:
   return formatLspFailure(out) ?? empty;
 }
 
-/** The `/lsp` toggle: flip live diagnostics on/off and report the new state. Off frees every spawned
- *  server. Shared by the CLI `/lsp` command via the /brain/command dispatch. */
-export function toggleLsp(): { enabled: boolean; message: string } {
-  const mgr = lspManager();
-  const enabled = !mgr.isEnabled();
-  mgr.setEnabled(enabled);
-  return { enabled, message: enabled ? 'LSP diagnostics ON — the agent can now type-check edits live.' : 'LSP diagnostics OFF — language servers stopped.' };
-}
-
-/** The owner-chat LSP toolset: an on-demand "did I break it?" probe the agent runs after editing a code
- *  file. Read-only (reads the file, queries its language server) → plan-mode safe. */
-export function buildLspTools() {
-  return [
+/** The LSP toolset: an on-demand "did I break it?" probe the agent runs after editing a code file.
+ *  Read-only (reads the file, queries its language server) → plan-mode safe (manifest `planSafe`).
+ *
+ *  Names, labels, descriptions and parameter schemas are byte-identical to the core built-ins these
+ *  were extracted from — those bytes sit in the model's cached prompt prefix, and the parity test
+ *  (tests/plugins/lsp/toolParity.test.ts) pins them. As PLUGIN tools they now compose into every
+ *  session kind instead of owner-chat only; that is correct for what they are — repo-scoped READ tools
+ *  guarded by ctx.assertPathAllowed, exactly like the files plugin's Read/Search, not control-plane
+ *  tools like the ones the agents extraction had to re-gate.
+ *
+ *  `manager` is resolved per call (never captured): the plugin's service owns the instance, so a reload
+ *  that replaced it can never leave a tool talking to language servers nobody will stop. */
+export function registerLspTools(ctx: PluginContext, manager: () => LspManager): void {
+  const assertPathAllowed = (path: string): string => ctx.assertPathAllowed(path);
+  for (const tool of [
     defineTool({
       name: 'LspDiagnostics', label: 'Check diagnostics',
       description: 'Type-check a file with its language server (LSP) and return errors/warnings with exact line:column. Call this right after editing a code file to immediately confirm it still compiles. Returns "no problems" for a clean file, and a clear note when LSP is off (/lsp) or no server is installed for the language.',
@@ -94,7 +84,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return { content: [{ type: 'text' as const, text: `LSP: ${(e as Error).message}` }], details: {} }; }
-        const result = await lspManager().checkFile(path, lspBoundary(path));
+        const result = await manager().checkFile(path, lspBoundary(ctx, path));
         const text = formatCheckResult(result) || `LSP: nothing to check for ${p.path}.`;
         return { content: [{ type: 'text' as const, text }], details: {} };
       },
@@ -113,7 +103,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await lspManager().definition(path, p.line, p.character, lspBoundary(path));
+        const out = await manager().definition(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatLocations, 'No definition found.'));
       },
     }),
@@ -131,7 +121,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await lspManager().references(path, p.line, p.character, lspBoundary(path));
+        const out = await manager().references(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatLocations, 'No references found.'));
       },
     }),
@@ -149,7 +139,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await lspManager().hover(path, p.line, p.character, lspBoundary(path));
+        const out = await manager().hover(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatHover, 'No hover information available.'));
       },
     }),
@@ -163,7 +153,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await lspManager().documentSymbol(path, lspBoundary(path));
+        const out = await manager().documentSymbol(path, lspBoundary(ctx, path));
         return lspText(renderOp(out, (r) => formatDocumentSymbols(r), 'No symbols found.'));
       },
     }),
@@ -174,11 +164,11 @@ export function buildLspTools() {
         query: Type.String({ description: 'Symbol name to search for (fuzzy match)' }),
       }),
       execute: async (_id: string, p: { query: string }) => {
-        const out = await lspManager().workspaceSymbol(p.query, workspaceBoundary());
+        const out = await manager().workspaceSymbol(p.query, workspaceBoundary(ctx));
         return lspText(renderOp(out, formatWorkspaceSymbols, 'No symbols found.'));
       },
     }),
-  ];
+  ]) ctx.registerTool(tool);
 }
 
 // ── LSP result formatters ──────────────────────────────────────────────────────────────────────────

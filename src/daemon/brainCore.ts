@@ -26,7 +26,6 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
 import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { BrainService } from '../brain/brainService.js';
-import { lspManager } from '../brain/tools/lspTools.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -168,9 +167,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Config wave 2 (batch 3a): the remaining agents-only keys (pilot/overseer execs, reviewOnDone,
   // tddMode, prEnabled, ghToken) follow the same one-shot lossless copy.
   if (opts.migrate !== false) config.migrateAgentsPluginConfigWave2();
-  // Seed the daemon-wide LSP manager from the persisted toggle — before this, /lsp silently reset to
-  // "on" at every daemon restart. Runtime flips (the /lsp command, PUT /config) keep both in sync.
-  lspManager().setEnabled(config.get().lspEnabled);
+  // One-shot copy of the core `lspEnabled` toggle into plugins.config.lsp + auto-enable of the
+  // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
+  // rollback). The plugin's own service seeds its manager from that slice at start.
+  if (opts.migrate !== false) config.migrateLspPlugin();
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {

@@ -1,0 +1,53 @@
+{
+  "name": "lsp",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Language-server code intelligence: type-check an edit the moment it lands (LspDiagnostics), jump to a definition, find every reference, read a hover signature and list document or workspace symbols — all answered by the real language server for the file, not a text search. Elowen drives the servers it knows (TypeScript, Pyright, gopls, rust-analyzer, clangd, …) and can install the npm-based ones into its own prefix. Disabling it stops every language server and withdraws the tools.",
+  "entry": "dist/index.js",
+  "capabilities": {
+    "network": true
+  },
+  "provides": {
+    "tools": [
+      "LspDiagnostics",
+      "LspGoToDefinition",
+      "LspFindReferences",
+      "LspHover",
+      "LspDocumentSymbol",
+      "LspWorkspaceSymbol"
+    ],
+    "apiRoutes": [
+      "/brain/lsp",
+      "/brain/lsp/install",
+      "/brain/lsp/uninstall"
+    ]
+  },
+  "icons": {
+    "LspDiagnostics": "🔎",
+    "LspGoToDefinition": "🔎",
+    "LspFindReferences": "🔎",
+    "LspHover": "🔎",
+    "LspDocumentSymbol": "🔎",
+    "LspWorkspaceSymbol": "🔎"
+  },
+  "showOutput": [
+    "Lsp*"
+  ],
+  "planSafe": [
+    "LspDiagnostics",
+    "LspGoToDefinition",
+    "LspFindReferences",
+    "LspHover",
+    "LspDocumentSymbol",
+    "LspWorkspaceSymbol"
+  ],
+  "configSchema": [
+    {
+      "key": "diagnosticsEnabled",
+      "label": "Live diagnostics",
+      "type": "boolean",
+      "default": true,
+      "hint": "Type-check edits through language servers. Turning this off stops every running server; the tools stay listed and report that LSP is off. The `/lsp` command flips the same switch."
+    }
+  ]
+}

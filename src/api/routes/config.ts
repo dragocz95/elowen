@@ -312,12 +312,6 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     const patch = await parseBody(c, configPatchSchema);
     const before = d.config.get();
     const updated = d.config.update(patch);
-    // Apply a patched LSP toggle to the live manager too — it otherwise reads the flag only at boot,
-    // and a config-only write would leave the runtime out of sync until the next restart.
-    if (typeof patch.lspEnabled === 'boolean') {
-      const { lspManager } = await import('../../brain/tools/lspTools.js');
-      lspManager().setEnabled(patch.lspEnabled);
-    }
     // A persona rename sits at the very top of every live system prompt. Respawn live sessions so the
     // chat does not keep speaking as the old name while the UI shows the new one. Fire-and-forget for
     // the same reason cli-settings does it: restart waits for in-flight turns, and the save response

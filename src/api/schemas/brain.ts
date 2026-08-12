@@ -128,11 +128,6 @@ export const brainGoalSchema = z.object({
   session: z.string().max(200).optional(),
 });
 
-/** Install one registry language server by its binary name (POST /brain/lsp/install, admin-only). */
-export const lspInstallSchema = z.object({
-  command: z.string().min(1).max(100),
-});
-
 /** The owner talking into a delegated sub-agent's session (POST /brain/subagent/send): steered into the
  *  child's running turn, or run as a fresh turn when it is idle. Ownership + the `brain-ch-subagent-`
  *  kind are enforced in BrainService.sendToSubagent. */

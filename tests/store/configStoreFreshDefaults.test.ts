@@ -13,8 +13,10 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *  do I set this up?" on the fresh install where nothing is set up yet.
  *
  *  agents qualifies too: it replaces the formerly-core tmux-agent/mission subsystem, needs no config
- *  field to load, and every optional capability (relay, PR mode) degrades the same way it did in core. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents'];
+ *  field to load, and every optional capability (relay, PR mode) degrades the same way it did in core.
+ *  So does lsp, the formerly-core language-server subsystem: no config field, and a language whose
+ *  server is not installed degrades to an honest "not installed" exactly as it did in core. */
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp'];
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {
@@ -30,15 +32,17 @@ describe('ConfigStore fresh-install defaults', () => {
     expect(cfg.get().plugins.enabled).toEqual(['files']);
   });
 
-  it('lspEnabled defaults to true, and a persisted "off" survives unrelated patches (restart-safe toggle)', () => {
+  it('the live-diagnostics toggle is the lsp plugin\'s config slice, and a persisted "off" survives unrelated patches', () => {
     const cfg = new ConfigStore(openDb(':memory:'));
-    expect(cfg.get().lspEnabled).toBe(true); // fresh install: diagnostics on
-    cfg.update({ lspEnabled: false }); // the /lsp toggle persists off
-    expect(cfg.get().lspEnabled).toBe(false);
+    // The core `lspEnabled` field is gone from the public view AND from ConfigPatch: the plugin owns it.
+    expect('lspEnabled' in (cfg.get() as Record<string, unknown>)).toBe(false);
+    expect(cfg.pluginConfig('lsp')).toEqual({}); // fresh install: unset → the plugin's own default (on)
+    cfg.update({ plugins: { config: { lsp: { diagnosticsEnabled: false } } } }); // the /lsp toggle persists off
+    expect(cfg.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: false });
     cfg.update({ autoUpdate: true }); // unrelated patch must not flip it back
-    expect(cfg.get().lspEnabled).toBe(false);
-    cfg.update({ lspEnabled: true });
-    expect(cfg.get().lspEnabled).toBe(true);
+    expect(cfg.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: false });
+    cfg.update({ plugins: { config: { lsp: { diagnosticsEnabled: true } } } });
+    expect(cfg.pluginConfig('lsp')).toEqual({ diagnosticsEnabled: true });
   });
 });
 

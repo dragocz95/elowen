@@ -17,13 +17,13 @@ const toolNamed = (f: typeof fetch, name: string) =>
   buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === name)!;
 
 describe('buildElowenTools', () => {
-  it('exposes the expected tool names (elowen control plane + the owner-chat LSP probe)', () => {
+  it('exposes the expected tool names (the elowen control plane, nothing else)', () => {
     const names = buildElowenTools({ url: 'http://x', token: 't' }).map((t) => t.name).sort();
-    // ElowenListMissions/ElowenListSessions moved to the agents plugin (registered via its manifest).
+    // ElowenListMissions/ElowenListSessions moved to the agents plugin, the six Lsp* tools to the lsp
+    // plugin — both registered via their manifests, so this group is the control plane alone.
     expect(names).toEqual([
       'ElowenCreateTask', 'ElowenGetTask', 'ElowenListTasks',
       'ElowenPlan', 'ElowenStopTask', 'ElowenTaskOutput', 'ElowenUpdateTask',
-      'LspDiagnostics', 'LspDocumentSymbol', 'LspFindReferences', 'LspGoToDefinition', 'LspHover', 'LspWorkspaceSymbol',
     ]);
   });
 

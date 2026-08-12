@@ -5,6 +5,7 @@
       "entry": [
         "plugins/**/index.mjs",
         "plugins/agents/src/index.ts",
+        "plugins/lsp/src/index.ts",
         "plugins/*/web-src/index.tsx"
       ],
       "project": [

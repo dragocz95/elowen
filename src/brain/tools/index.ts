@@ -1,7 +1,6 @@
 import type { ElowenToolCtx } from './elowenTools.js';
 import { elowenListTasks, elowenCreateTask, elowenUpdateTask, elowenPlan, elowenGetTask, elowenStopTask, elowenTaskOutput } from './elowenTools.js';
 import { buildMemoryTools } from './memoryTools.js';
-import { buildLspTools } from './lspTools.js';
 import { buildShareImageTool } from './shareImageTool.js';
 export type BuiltinToolGroup = 'elowen' | 'memory' | 'image';
 
@@ -14,7 +13,6 @@ export { buildMemoryTools } from './memoryTools.js';
 export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'Elowen*': '🔥',
   'Memory*': '🧠',
-  'Lsp*': '🔎',
   'ToolSearch': '🧭',
   'ShareImage': '🖼',
   'ExitPlanMode': '📋',
@@ -25,7 +23,7 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
 
 /** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
  *  manifest's `showOutput`). Output is HIDDEN by default; only the tools listed here surface their
- *  SUCCESSFUL output in the transcript. `Lsp*` diagnostics are worth showing. The control plane
+ *  SUCCESSFUL output in the transcript. The control plane
  *  (`Elowen*`) and memory (`Memory*`) are deliberately ABSENT — they return structured data the model
  *  acts on, not something the reader needs echoed, so their success stays hidden and repeated calls
  *  collapse into one row (a failure or a hook note still surfaces; see `toolOutputView`). Keys are
@@ -36,7 +34,7 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
 export const BUILTIN_TOOL_DEFER_LOADING: readonly string[] = ['GenerateImage', 'EditImage'];
 
 export const BUILTIN_TOOL_OUTPUT_SHOWN: string[] = [
-  'Lsp*',
+  // NOTE: `Lsp*` moved out with the subsystem — the lsp plugin's manifest `showOutput` carries it now.
   // NOTE: ExitPlanMode is deliberately absent. Its result text is an instruction addressed to the MODEL
   // ("stop here and wait"); the part worth showing is the plan, which travels separately as the `plan`
   // field on the tool event and gets its own panel.
@@ -52,7 +50,8 @@ export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
   // declares them, so the composed plan-mode set is unchanged while the plugin is enabled.
   'ElowenListTasks',
   'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
-  'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover', 'LspDocumentSymbol', 'LspWorkspaceSymbol',
+  // The six Lsp* tools live in the lsp plugin now; its manifest `planSafe` declares them, so the
+  // composed plan-mode set is unchanged while the plugin is enabled.
   // Showing the user a screenshot is exactly what planning a UI change needs, and it mutates nothing: the
   // file is copied into the conversation's own image store, nothing the user owns is touched.
   'ShareImage',
@@ -63,10 +62,10 @@ export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
 ];
 
 /** The brain's Elowen capability toolset. Every tool wraps callElowenApi (single source of truth), so a
- *  new REST endpoint needs no changes here beyond adding one more thin wrapper. Bundles the LSP
- *  diagnostics tool (owner-chat only, like the Elowen* control plane). */
+ *  new REST endpoint needs no changes here beyond adding one more thin wrapper. The LSP tools that used
+ *  to ride along here live in the `lsp` plugin now — they compose as plugin tools. */
 export function buildElowenTools(ctx: ElowenToolCtx) {
-  return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenGetTask(ctx), elowenStopTask(ctx), elowenTaskOutput(ctx), ...buildLspTools()];
+  return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenGetTask(ctx), elowenStopTask(ctx), elowenTaskOutput(ctx)];
 }
 
 /** Name/label/group for every BUILT-IN (native, non-plugin) brain tool, derived from the real tool

@@ -67,9 +67,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // CLI-local: downloads the conversation to the launch directory (HTML transcript or JSONL). The web
   // dock has its own download buttons in the Sessions panel, so this stays CLI-only.
   { name: 'export', description: 'Download this conversation ("html" or "jsonl")', kind: 'action', surfaces: ['cli'] },
-  // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
-  // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
-  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'action', surfaces: ['cli'], adminOnly: true },
+  // A `picker` (like `/statusline`): the CLI opens its own modal and drives the lsp plugin's REST
+  // surface — `/brain/lsp` for the status rows, the plugin's config slice for the on/off flip — so it is
+  // never server-dispatched through POST /brain/command. Core carries the NAME only, because a plugin
+  // can contribute a prompt macro but not a native modal command; with the plugin disabled the modal
+  // reports exactly that (GET /brain/lsp answers 503). adminOnly: the toggle stops/starts language
+  // servers for everyone, so it stays operator-gated.
+  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'picker', surfaces: ['cli'], adminOnly: true },
   // adminOnly: the toggle flips the daemon-wide TDD flag (plugins.config.agents.tddMode — affects every worker the
   // autopilot spawns), so it must be gated to operators — exactly like `/lsp`.
   { name: 'tdd', description: 'TDD mission mode — autopilot workers write a failing test first ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'], adminOnly: true },

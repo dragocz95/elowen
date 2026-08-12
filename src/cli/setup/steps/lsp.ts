@@ -1,58 +1,76 @@
 import * as p from '../../ui/prompts.js';
-import { commandExists, serverForLanguage } from '../../../lsp/servers.js';
-import { npmInstallGlobal } from '../../../lsp/install.js';
+import type { LspServerView, LspStatus } from '../../chat/brainClient.js';
 import { apiJson } from '../http.js';
 import { guard, type StepResult, type WizardCtx } from '../types.js';
 
 /** What `elowen setup` offers to install for out-of-the-box diagnostics: the TypeScript/JavaScript
- *  language server (plus the `typescript` package it drives). Other languages' servers ship with their
- *  own toolchains (pyright, gopls, rust-analyzer, …) and are surfaced in the CLI's /lsp modal instead.
- *  Command, packages and hint come from the ONE server catalog (src/lsp/servers.ts). */
-const TS_SPEC = serverForLanguage('typescript')!;
-export const TS_SERVER_COMMAND = TS_SPEC.command;
+ *  language server. Other languages' servers ship with their own toolchains (pyright, gopls,
+ *  rust-analyzer, …) and are surfaced in the CLI's /lsp modal instead.
+ *
+ *  The catalog itself lives in the `lsp` plugin (daemon-side) since the extraction, so this step asks
+ *  the DAEMON — GET /brain/lsp for the server row (installed? installable? install hint?) and POST
+ *  /brain/lsp/install to install it. That is also the only correct place to ask: the daemon resolves
+ *  servers from ITS OWN prefix, and the wizard may run as a different user, so a local PATH probe or a
+ *  local npm install could report success for a server the daemon can never spawn. Only the binary NAME
+ *  is spelled here — it is what identifies the row and the install target on the wire. */
+export const TS_SERVER_COMMAND = 'typescript-language-server';
 
-/** Human-readable install command, shown as the hint and in the "do it later" tip. */
-export const TS_SERVER_INSTALL_HINT = TS_SPEC.installHint;
-
-/** Install the TypeScript server. Prefers the DAEMON route (POST /brain/lsp/install): the daemon
- *  resolves servers from ITS OWN prefix, and the wizard may run as a different user — a local npm
- *  install could land where the daemon never looks, reporting success for a server it can't spawn.
- *  `verified:true` means the daemon confirmed the binary resolves on ITS side (skip local re-checks).
- *  Falls back to a local install only when the daemon is unreachable. */
-export async function installTsServer(ctx?: WizardCtx): Promise<{ ok: boolean; detail: string; verified?: boolean }> {
-  if (ctx) {
-    try {
-      const r = await apiJson<{ message?: string; error?: string }>(ctx, 'POST', '/brain/lsp/install', { command: TS_SERVER_COMMAND });
-      if (r.ok) return { ok: true, detail: r.data?.message ?? 'installed', verified: true };
-      return { ok: false, detail: r.data?.error ?? `daemon answered ${r.status}` };
-    } catch { /* daemon unreachable — fall back to a local install */ }
-  }
-  return npmInstallGlobal(TS_SPEC.npmPackages ?? [TS_SPEC.command]);
+/** The daemon's row for the TypeScript server, or a reason it cannot be reported (plugin disabled,
+ *  daemon unreachable, server unknown to this daemon). Never guesses. */
+export async function tsServerRow(ctx: WizardCtx): Promise<{ row: LspServerView } | { error: string }> {
+  let r: { ok: boolean; status: number; data: LspStatus | null };
+  try { r = await apiJson<LspStatus>(ctx, 'GET', '/brain/lsp'); }
+  catch { return { error: 'the daemon is not reachable' }; }
+  if (r.status === 503) return { error: 'the lsp plugin is disabled on this daemon' };
+  if (!r.ok || !r.data) return { error: `the daemon answered ${r.status}` };
+  const row = r.data.servers.find((s) => s.command === TS_SERVER_COMMAND);
+  return row ? { row } : { error: 'this daemon has no TypeScript language server registered' };
 }
 
-/** Injected so the step is unit-testable without touching PATH or actually running npm. */
+/** Install the TypeScript server daemon-side. Resolves — never rejects — so the step can report the
+ *  failure instead of crashing the wizard. */
+export async function installTsServer(ctx: WizardCtx): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const r = await apiJson<{ message?: string; error?: string }>(ctx, 'POST', '/brain/lsp/install', { command: TS_SERVER_COMMAND });
+    if (r.ok) return { ok: true, detail: r.data?.message ?? 'installed' };
+    return { ok: false, detail: r.data?.error ?? `daemon answered ${r.status}` };
+  } catch { return { ok: false, detail: 'the daemon is not reachable' }; }
+}
+
+/** Injected so the step is unit-testable without a daemon. */
 export interface LspStepDeps {
-  exists: (command: string) => boolean;
-  install: (ctx: WizardCtx) => Promise<{ ok: boolean; detail: string; verified?: boolean }>;
+  status: (ctx: WizardCtx) => Promise<{ row: LspServerView } | { error: string }>;
+  install: (ctx: WizardCtx) => Promise<{ ok: boolean; detail: string }>;
 }
-const defaultDeps: LspStepDeps = { exists: commandExists, install: (ctx) => installTsServer(ctx) };
+const defaultDeps: LspStepDeps = { status: tsServerRow, install: installTsServer };
 
-/** Step 5 — code intelligence. Offers to install the TypeScript language server globally so the agent
- *  can type-check its own edits (the LspDiagnostics tool) out of the box. Local-only (no daemon call)
- *  and fully optional. */
+/** Step 5 — code intelligence. Offers to install the TypeScript language server so the agent can
+ *  type-check its own edits (the LspDiagnostics tool) out of the box. Fully optional: anything that
+ *  stops it (no daemon, plugin off, npm failure) reports the reason and skips. */
 export async function runLspStep(ctx: WizardCtx, deps: LspStepDeps = defaultDeps): Promise<StepResult> {
   p.note('Elowen can type-check its own edits live through language servers (LSP). Optional.', 'Code intelligence');
 
-  if (deps.exists(TS_SERVER_COMMAND)) {
+  const probe = await deps.status(ctx);
+  if ('error' in probe) {
+    p.log.warn(`Skipping code intelligence — ${probe.error}.`);
+    return skip(ctx);
+  }
+  const { row } = probe;
+
+  if (row.installed) {
     p.log.success(`${TS_SERVER_COMMAND} is already installed.`);
     ctx.answers.lsp = { status: 'done', summary: `${TS_SERVER_COMMAND} installed` };
     return { status: 'done' };
+  }
+  if (!row.installable) {
+    p.log.warn(`Elowen cannot install ${row.label} itself — ${row.installHint}.`);
+    return skip(ctx);
   }
 
   const choice = guard(await p.select({
     message: 'Install the TypeScript/JavaScript language server?',
     options: [
-      { value: 'install', label: 'Install now', hint: TS_SERVER_INSTALL_HINT },
+      { value: 'install', label: 'Install now', hint: row.installHint },
       { value: 'skip', label: 'Skip for now' },
       { value: 'back', label: '← Go back' },
     ],
@@ -63,15 +81,15 @@ export async function runLspStep(ctx: WizardCtx, deps: LspStepDeps = defaultDeps
   const s = p.spinner();
   s.start(`Installing ${TS_SERVER_COMMAND} (npm)…`);
   const r = await deps.install(ctx);
-  if (r.ok && (r.verified || deps.exists(TS_SERVER_COMMAND))) {
+  if (r.ok) {
+    // The daemon only answers ok after it re-resolved the binary in its own prefix, so this is a
+    // verified install, not an npm exit code taken on trust.
     s.stop(`${TS_SERVER_COMMAND} installed.`);
     ctx.answers.lsp = { status: 'done', summary: `${TS_SERVER_COMMAND} installed` };
     return { status: 'done' };
   }
-  // Either npm failed, or it "succeeded" into a global bin dir that isn't on PATH — both mean
-  // diagnostics won't work yet, so report honestly instead of claiming success.
-  s.stop(r.ok ? `Installed, but ${TS_SERVER_COMMAND} is not on PATH — check your npm global bin directory.` : `Install failed: ${r.detail}`, 'error');
-  p.log.warn(`You can install it later: ${TS_SERVER_INSTALL_HINT} (may need sudo).`);
+  s.stop(`Install failed: ${r.detail}`, 'error');
+  p.log.warn(`You can install it later: ${row.installHint} (or from the /lsp modal).`);
   return skip(ctx);
 }
 

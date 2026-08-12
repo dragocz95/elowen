@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainRenameSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainTerminalSchema, brainGoalSchema, brainAnswerSchema, lspInstallSchema, subagentSendSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainRenameSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainTerminalSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
 import { brainConfigFromElowen } from '../../brain/config.js';
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
@@ -94,17 +94,20 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const statusline = d.config.get().plugins.enabled.includes('statusline')
       ? d.config.pluginConfig('statusline')
       : null;
-    // Live LSP diagnostics state (the `/lsp` toggle's source of truth) so chat clients can show it.
-    const { lspEnabled } = await import('../../brain/tools/lspTools.js');
+    const registry = await d.plugins?.get().catch(() => null);
+    // Live LSP diagnostics state, read from the lsp plugin's control so chat clients can show it. The
+    // plugin owns the subsystem: with it disabled there is no control, the field is OMITTED (never a
+    // fabricated `false`) and every client hides its LSP row instead of claiming diagnostics are off.
+    const lsp = registry?.control('lsp');
     // MCP servers are DAEMON-GLOBAL state, not the caller's: they stay behind the same admin gate as
     // GET /plugins/mcp/servers. A non-admin gets null, which hides the section instead of naming another
     // account's tooling. Reading the memoized registry costs no plugin load on this hot poll.
     const mcp = c.get('user')?.is_admin
-      ? (await d.plugins?.get().catch(() => null))?.control('mcp')?.listServers()
+      ? registry?.control('mcp')?.listServers()
         .map((s) => ({ name: s.name, status: s.status })) ?? null
       : null;
     // `?session=<id>`: a session-bound client (the CLI) asks about ITS conversation, not the active one.
-    try { return c.json({ ...d.brain.status(c.get('user').id, c.req.query('session')), statusline, lspEnabled: lspEnabled(), mcp }); }
+    try { return c.json({ ...d.brain.status(c.get('user').id, c.req.query('session')), statusline, ...(lsp ? { lspEnabled: lsp.diagnosticsEnabled() } : {}), mcp }); }
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
@@ -574,63 +577,10 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);
           return c.json({ ok: true, message: 'Restarting the Elowen daemon…' });
-        case 'lsp': {
-          const { toggleLsp } = await import('../../brain/tools/lspTools.js');
-          const r = toggleLsp();
-          // Persist the flip so a daemon restart keeps the operator's choice (bootstrap re-seeds from it).
-          d.config.update({ lspEnabled: r.enabled });
-          return c.json({ ok: true, message: r.message, data: { enabled: r.enabled } });
-        }
         default: return c.json({ error: 'command is not server-dispatchable' }, 400);
       }
     } catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
-
-  // LSP health at a glance: enabled?, any server running?, and a per-server installed/running row.
-  // Read-only for every chat user (the toggle above stays admin-only) — drives the CLI /lsp modal and
-  // any panel indicator. Dynamic import mirrors the command dispatch (the manager is a lazy singleton).
-  app.get('/brain/lsp', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const { lspManager } = await import('../../brain/tools/lspTools.js');
-    return c.json(lspManager().status());
-  });
-
-  // Install a registry language server daemon-side (the /lsp modal's ctrl+i). Admin-only — it installs
-  // software on the host. Only npm-canonical servers are self-installable; the rest 400 with their
-  // toolchain's install hint so the CLI shows the exact command to run instead.
-  app.post('/brain/lsp/install', async c => {
-    if (forbidden(c) || !c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
-    const { command } = await parseBody(c, lspInstallSchema);
-    const { listServers, commandExists } = await import('../../lsp/servers.js');
-    const spec = listServers().find((s) => s.command === command);
-    if (!spec) return c.json({ error: 'unknown language server' }, 404);
-    if (commandExists(spec.command)) return c.json({ ok: true, message: `${spec.label} is already installed.` });
-    if (!spec.npmPackages?.length) return c.json({ error: `${spec.label} ships with its toolchain — install it with: ${spec.installHint}` }, 400);
-    const { npmInstallGlobal } = await import('../../lsp/install.js');
-    const r = await npmInstallGlobal(spec.npmPackages);
-    if (r.ok && commandExists(spec.command)) return c.json({ ok: true, message: `${spec.label} installed.` });
-    // npm may "succeed" into a global bin dir that isn't on PATH — report honestly either way.
-    return c.json({ error: r.ok ? `Installed, but ${spec.command} is not on PATH — check the npm global bin directory.` : `Install failed: ${r.detail}` }, 502);
-  });
-
-  // Uninstall a server from Elowen's own LSP prefix (the /lsp modal's ctrl+u). Admin-only, npm-managed
-  // servers only; a live client for it is disposed first so nothing keeps running from a removed binary.
-  app.post('/brain/lsp/uninstall', async c => {
-    if (forbidden(c) || !c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
-    const { command } = await parseBody(c, lspInstallSchema);
-    const { listServers, commandExists } = await import('../../lsp/servers.js');
-    const spec = listServers().find((s) => s.command === command);
-    if (!spec) return c.json({ error: 'unknown language server' }, 404);
-    if (!spec.npmPackages?.length) return c.json({ error: `${spec.label} is not managed by Elowen — remove it with your toolchain (installed via: ${spec.installHint}).` }, 400);
-    if (!commandExists(spec.command)) return c.json({ ok: true, message: `${spec.label} is not installed.` });
-    const { lspManager } = await import('../../brain/tools/lspTools.js');
-    lspManager().disposeAll(); // free any live client before its binary disappears
-    const { npmUninstallGlobal } = await import('../../lsp/install.js');
-    const r = await npmUninstallGlobal(spec.npmPackages);
-    if (!r.ok) return c.json({ error: `Uninstall failed: ${r.detail}` }, 502);
-    // Still resolvable afterwards = a system copy outside Elowen's prefix; say so instead of "removed".
-    return c.json({ ok: true, message: commandExists(spec.command) ? `${spec.label} removed from Elowen's prefix — a system-installed copy remains on PATH.` : `${spec.label} uninstalled.` });
-  });
 
   app.post('/brain/send', withBrain(async (c, brain) => {
     const { text, images, mode, cwd, session, display, client, generation } = await parseBody(c, brainSendSchema);

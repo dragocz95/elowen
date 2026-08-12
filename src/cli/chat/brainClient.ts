@@ -6,7 +6,6 @@ import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState } fr
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
-import type { LspStatus } from '../../lsp/manager.js';
 import type { BrainContextBreakdown } from '../../shared/wireContract.js';
 import {
   stampBrainEventReplayCursor,
@@ -72,6 +71,11 @@ export interface BrainRateLimits {
   stale: boolean;
 }
 export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+/** One language server as GET /brain/lsp reports it. The subsystem lives in the `lsp` plugin now, so
+ *  this is a WIRE contract the CLI owns as that endpoint's client — like McpServerView below — and not
+ *  a type reaching across the core→plugin boundary. */
+export interface LspServerView { language: string; label: string; command: string; installed: boolean; running: boolean; installable: boolean; installHint: string }
+export interface LspStatus { enabled: boolean; running: boolean; servers: LspServerView[] }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export type GoalView = BrainGoalState;
@@ -592,12 +596,27 @@ export class BrainClient {
   }
 
   /** The daemon's LSP health (enabled/running + per-server rows) — drives the /lsp modal and can back
-   *  any other status indicator (e.g. an Active/Inactive line in the side panel). */
+   *  any other status indicator (e.g. an Active/Inactive line in the side panel). 503 when the operator
+   *  has the `lsp` plugin turned off: surfaced as that, never as an empty/off-looking status. */
   async lspStatus(): Promise<LspStatus> {
     const res = await this.f(`${this.o.base}/brain/lsp`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
+    if (res.status === 503) throw new Error('the lsp plugin is disabled — enable it in Settings → Plugins');
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/lsp`);
     return (await res.json()) as LspStatus;
+  }
+
+  /** Flip live diagnostics (the `/lsp` modal's toggle; admin-only). The flag is the lsp plugin's own
+   *  config since the extraction, so this PATCHes the plugin slice exactly like `/tdd` does — the save
+   *  persists the choice AND hot-reloads the plugin, which stops or re-seeds the language servers. */
+  async setLspDiagnostics(on: boolean): Promise<void> {
+    const res = await this.f(`${this.o.base}/plugins/lsp/config`, {
+      method: 'PATCH', headers: this.headers(true), body: JSON.stringify({ values: { diagnosticsEnabled: on } }),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (res.status === 403) throw new Error('only an admin can toggle LSP diagnostics');
+    if (res.status === 404) throw new Error('LSP diagnostics need the lsp plugin');
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/lsp/config`);
   }
 
   /** The caller's web Account → Terminal settings — the CLI derives its chat theme from a CUSTOM palette

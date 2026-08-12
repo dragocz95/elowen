@@ -67,10 +67,10 @@ describe('agents plugin tool parity (prompt cache)', () => {
       pluginTools: capturedAgentsTools(),
     } as never);
     expect(composed.map((t) => t.name)).toEqual([
-      // Core Elowen control plane + LSP (owner-chat only).
+      // Core Elowen control plane (owner-chat only). The Lsp* tools used to sit here too; they moved
+      // into the lsp plugin and now compose with the plugin tools below.
       'ElowenListTasks', 'ElowenCreateTask', 'ElowenUpdateTask', 'ElowenPlan',
       'ElowenGetTask', 'ElowenStopTask', 'ElowenTaskOutput',
-      'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover', 'LspDocumentSymbol', 'LspWorkspaceSymbol',
       // Plugin tools compose after the core groups — the agents plugin's tools land HERE.
       'ElowenListMissions', 'ElowenListSessions',
       // Owner-chat always carries the plan-mode exit tool last.

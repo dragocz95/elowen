@@ -9,8 +9,7 @@ import { getBrainProviders, keepProvider, putEmbeddedExec } from './steps/shared
 import { realRunner } from '../install/runner.js';
 import { flagValue, requireFlagValues } from '../flags.js';
 import { provisionOllama } from '../provision/ollama.js';
-import { installTsServer, TS_SERVER_COMMAND, TS_SERVER_INSTALL_HINT } from './steps/lsp.js';
-import { commandExists } from '../../lsp/servers.js';
+import { installTsServer, tsServerRow, TS_SERVER_COMMAND } from './steps/lsp.js';
 import type { BrainProviderType } from '../../store/configStore.js';
 import type { WizardCtx } from './types.js';
 import type { ReadinessCheck } from '../doctor.js';
@@ -143,14 +142,18 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
   }
 
   // ── LSP (opt-in via --lsp) — install the TypeScript language server so the agent can type-check its
-  //    own edits. Goes through the daemon (its prefix is what the diagnostics tool resolves), falling
-  //    back to local npm without one; a failure warns but never fails the run. ─────────────────────
+  //    own edits. Everything goes through the daemon: it owns the server catalog (the `lsp` plugin) and
+  //    installs into ITS OWN prefix, which is the only prefix the diagnostics tool resolves from. A
+  //    failure warns but never fails the run. ────────────────────────────────────────────────────────
   if (o.lsp) {
-    if (commandExists(TS_SERVER_COMMAND)) ok('lsp', `${TS_SERVER_COMMAND} already installed`);
+    const probe = await tsServerRow(ctx);
+    if ('error' in probe) warn('lsp', `skipped — ${probe.error}`);
+    else if (probe.row.installed) ok('lsp', `${TS_SERVER_COMMAND} already installed`);
+    else if (!probe.row.installable) warn('lsp', `Elowen cannot install ${probe.row.label} itself (try: ${probe.row.installHint})`);
     else {
       const r = await installTsServer(ctx);
-      if (r.ok && (r.verified || commandExists(TS_SERVER_COMMAND))) ok('lsp', `${TS_SERVER_COMMAND} installed`);
-      else warn('lsp', `install failed — ${r.ok ? `${TS_SERVER_COMMAND} not on PATH` : r.detail} (try: ${TS_SERVER_INSTALL_HINT})`);
+      if (r.ok) ok('lsp', `${TS_SERVER_COMMAND} installed`);
+      else warn('lsp', `install failed — ${r.detail} (try: ${probe.row.installHint})`);
     }
   }
 

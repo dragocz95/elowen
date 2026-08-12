@@ -794,6 +794,15 @@ export interface McpListControl {
   bridgeSnapshot(): McpBridgeSnapshot;
 }
 
+/** The lsp plugin's read-only state seam — the ONE thing core still asks the extracted LSP subsystem:
+ *  whether live diagnostics are currently on, so GET /brain/status can carry the Active/Inactive flag a
+ *  chat client renders next to its `/lsp` toggle. No control is offered (the toggle is a write to the
+ *  plugin's own config slice, which hot-reloads it), and an absent control — the plugin disabled —
+ *  makes core omit the field entirely, which every client already renders as "no LSP row". */
+export interface LspStateControl {
+  diagnosticsEnabled(): boolean;
+}
+
 /** An executor spec (`program`/`model` pair) as every agents-subsystem seam passes it. Structural twin
  *  of the spawn commandBuilder's AgentSpec, spelled here so the control contract needs no import from
  *  the subsystem it describes. */
@@ -979,6 +988,7 @@ export interface KnownControls {
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl;
   mcp: McpListControl;
   agents: AgentsControl;
+  lsp: LspStateControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
@@ -1140,6 +1150,12 @@ export interface PluginContext {
    *  the daemon's own cwd. Evaluated per tool call against the per-run turn scope, so a directory the
    *  agent moved to in an earlier run never leaks into the next one. */
   defaultCwd(): string;
+  /** The project path the current turn's session is BOUND to, or undefined when it is bound to none —
+   *  the first term of {@link defaultCwd}, without its fallbacks. A plugin that needs to know whether
+   *  the turn actually names a directory (rather than "some directory to run in") must read this: the
+   *  fallbacks answer with an allowed root, or the daemon's own cwd (`/` under systemd), and a plugin
+   *  treating either as "the caller's project" reasons about a scope the turn never chose. */
+  workDir(): string | undefined;
   /** Per-plugin writable data directory (created on first call) — cron job files, generated images… */
   dataDir(): string;
   /** Whether the CURRENT turn runs with the owner's all-access policy (admin chat session). Tools that

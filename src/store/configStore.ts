@@ -63,9 +63,6 @@ export interface ElowenConfig {
   /** When on, the hourly systemd timer (`elowen update --auto`) upgrades to the latest npm release and
    *  restarts the services — but only while no mission is running. Off by default (opt-in). */
   autoUpdate: boolean;
-  /** Live language diagnostics (LSP) after edits. Persisted so the `/lsp` toggle survives a daemon
-   *  restart; the daemon seeds the runtime LspManager from this at boot. On by default. */
-  lspEnabled: boolean;
   /** Web Push VAPID public key (safe to expose) + whether a keypair has been generated. The private
    *  key NEVER leaves the daemon — read it only via `webPushKeys()`. */
   webPush: { publicKey: string; publicKeySet: boolean };
@@ -581,21 +578,21 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // accumulate it is what turns the message store into the largest table in the database.
   sessionRetention: { enabled: true, days: 10 },
   autoUpdate: false,
-  lspEnabled: true,
   webPush: { publicKey: '', publicKeySet: false },
   webPushContact: '',
   // Everything that works without being configured first ships on, so a fresh install behaves like a
   // tuned one instead of like a stripped one. elowen-docs is how the agent answers questions about
   // Elowen itself and looks a setting up before changing it; codebase and mcp stay inert until an
   // embedding provider resp. a server is configured; agents is the extracted tmux-agent/mission
-  // subsystem (previously core — a fresh install must behave like the pre-extraction daemon). The chat
+  // subsystem and lsp the extracted language-server subsystem (both previously core — a fresh install
+  // must behave like the pre-extraction daemon). The chat
   // platforms stay OFF because each declares a required credential, and a plugin that ships on may not
   // open by asking for one — the fresh-default suite enforces exactly that. Also off: dev-commands and
   // formatters, which act on the repo unasked.
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents',
+      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp',
     ],
     removed: [],
   },
@@ -618,6 +615,11 @@ interface Stored {
   security: { tokenTtlDays: number };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
+  /** FROZEN: the pre-extraction live-diagnostics toggle. The `lsp` plugin owns the live flag now
+   *  (plugins.config.lsp.diagnosticsEnabled); this field is kept, and kept readable, ONLY as the source
+   *  migrateLspPlugin() copies from — a lossless rollback to a build that still reads it. Nothing writes
+   *  it any more: it is absent from the public view and from ConfigPatch, so a `PUT /config` cannot
+   *  pretend to change diagnostics. */
   lspEnabled: boolean;
   /** Persisted VAPID keypair; null until generated on first boot. Private key stays daemon-side. */
   webPush: { publicKey: string; privateKey: string } | null;
@@ -635,6 +637,10 @@ interface Stored {
    *  overseerExec, reviewOnDone, tddMode, prEnabled + the top-level ghToken) have been COPIED into
    *  plugins.config.agents. See migrateAgentsPluginConfigWave2(). */
   agentsPluginConfigMigrated2: boolean;
+  /** One-shot upgrade marker: the `lsp` plugin (the extracted, previously-core language-server
+   *  subsystem) has been auto-enabled AND the core `lspEnabled` toggle COPIED into
+   *  plugins.config.lsp.diagnosticsEnabled for this pre-existing install. See migrateLspPlugin(). */
+  lspPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -715,6 +721,8 @@ const defaultStored = (): Stored => ({
   // Fresh installs need no autopilot→plugin config copy: the plugin's own defaults apply.
   agentsPluginConfigMigrated: true,
   agentsPluginConfigMigrated2: true,
+  // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
+  lspPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -732,7 +740,6 @@ export interface ConfigPatch {
   security?: { tokenTtlDays?: number };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
-  lspEnabled?: boolean;
   webPushContact?: string;
   plugins?: { enabled?: string[]; removed?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
@@ -807,6 +814,7 @@ export class ConfigStore {
         agentsConfigMigrated: p.agentsConfigMigrated === true,
         agentsPluginConfigMigrated: p.agentsPluginConfigMigrated === true,
         agentsPluginConfigMigrated2: p.agentsPluginConfigMigrated2 === true,
+        lspPluginMigrated: p.lspPluginMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -856,7 +864,6 @@ export class ConfigStore {
       security: s.security,
       sessionRetention: s.sessionRetention,
       autoUpdate: s.autoUpdate,
-      lspEnabled: s.lspEnabled,
       // Only the public key is exposed; `publicKeySet` reflects whether a full keypair exists.
       webPush: { publicKey: s.webPush?.publicKey ?? '', publicKeySet: !!s.webPush },
       webPushContact: s.webPushContact,
@@ -972,6 +979,30 @@ export class ConfigStore {
     });
   }
 
+  /** One-shot upgrade for the LSP extraction: enable the `lsp` plugin for EXISTING installs and COPY
+   *  (never move — `lspEnabled` keeps its value for a lossless rollback) the live-diagnostics toggle
+   *  into plugins.config.lsp.diagnosticsEnabled, where the plugin reads it.
+   *
+   *  Same deliberate exception as migrateAgentsEnabled: `lsp` is not a new capability but the extracted,
+   *  previously-CORE language-server subsystem, so skipping this would silently take diagnostics away
+   *  from an install that already had them. An existing plugins.config.lsp value wins (an admin who
+   *  already configured the slice is not overwritten). Runs once per install (the persisted marker), so
+   *  an admin who later disables the plugin — or flips the toggle — stays where they put it.
+   *  Daemon-only, like its siblings. */
+  migrateLspPlugin(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.lspPluginMigrated) return;
+    const enabled = cur.plugins.enabled.includes('lsp') ? cur.plugins.enabled : [...cur.plugins.enabled, 'lsp'];
+    const slice: Record<string, unknown> = { ...cur.plugins.config['lsp'] };
+    if (slice['diagnosticsEnabled'] === undefined) slice['diagnosticsEnabled'] = cur.lspEnabled;
+    this.write({
+      ...cur,
+      plugins: { ...cur.plugins, enabled, config: { ...cur.plugins.config, lsp: slice } },
+      lspPluginMigrated: true,
+    });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -1004,7 +1035,9 @@ export class ConfigStore {
         days: clampTtlDays(patch.sessionRetention?.days, cur.sessionRetention.days),
       },
       autoUpdate: patch.autoUpdate ?? cur.autoUpdate,
-      lspEnabled: typeof patch.lspEnabled === 'boolean' ? patch.lspEnabled : cur.lspEnabled,
+      // Carried, never patched: the live diagnostics flag is the lsp plugin's config slice now, and this
+      // frozen copy exists only so migrateLspPlugin() (and a rollback) can still read the old value.
+      lspEnabled: cur.lspEnabled,
       webPush: cur.webPush, // VAPID keys are managed via setWebPushKeys, never through the config patch
       webPushContact: typeof patch.webPushContact === 'string' ? patch.webPushContact.trim() : cur.webPushContact,
       plugins: {
@@ -1019,6 +1052,7 @@ export class ConfigStore {
       agentsConfigMigrated: cur.agentsConfigMigrated,
       agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
       agentsPluginConfigMigrated2: cur.agentsPluginConfigMigrated2,
+      lspPluginMigrated: cur.lspPluginMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

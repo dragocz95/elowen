@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { LspClient, spawnStdioTransport, type Diagnostic, type LspTransport } from './client.js';
+import { canonical, pathWithin } from './paths.js';
 import { commandExists, detectLanguage, listServers, serverForLanguage, type LanguageServerSpec } from './servers.js';
 
 /** The outcome of checking one file. `skipped` explains a non-check so the agent gets honest, correctly
@@ -63,16 +64,6 @@ const PROJECT_MARKERS = [
   '.git', 'package.json', 'tsconfig.json', 'jsconfig.json', 'pyproject.toml', 'setup.py',
   'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'compile_commands.json',
 ] as const;
-
-function canonical(path: string): string {
-  try { return realpathSync(path); }
-  catch { return resolve(path); }
-}
-
-function pathWithin(path: string, root: string): boolean {
-  const rel = relative(root, path);
-  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
-}
 
 /** Find the closest project-looking ancestor of `path`, bounded by `boundary` when supplied. With no
  *  marker, use the boundary (a known allowed project) or the file's own directory — never the daemon's

@@ -50,13 +50,22 @@ module.exports = {
       to: { path: '^src/', pathNot: '^src/shared/wireContract\\.ts$' },
     },
     {
-      name: 'core-not-to-agents-plugin',
+      name: 'core-not-to-plugins',
       severity: 'error',
-      comment: 'The daemon core (src) must NEVER import the agents plugin — not even type-only. The '
-        + 'contract lives in src/plugins/api.ts (AgentsControl and friends) + src/shared/agentEvents.ts; '
-        + 'core reaches the running subsystem exclusively through the loaded registry\'s control.',
+      comment: 'The daemon core (src) must NEVER import a plugin — not even type-only. The contract '
+        + 'lives in src/plugins/api.ts (AgentsControl, LspControl and friends) + src/shared/agentEvents.ts; '
+        + 'core reaches a running subsystem exclusively through the loaded registry\'s control.',
       from: { path: '^src/' },
       to: { path: '^plugins/' },
+    },
+    {
+      name: 'lsp-plugin-runtime-not-to-core',
+      severity: 'error',
+      comment: 'The lsp plugin may import src/ TYPE-ONLY (PluginContext and friends). A runtime import '
+        + 'would drag the daemon\'s module graph into the built plugin — the same independence the '
+        + 'agents plugin keeps.',
+      from: { path: '^plugins/lsp/' },
+      to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
       name: 'agents-plugin-runtime-not-to-core',

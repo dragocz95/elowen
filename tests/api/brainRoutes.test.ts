@@ -295,6 +295,26 @@ function mcpPluginProvider(servers: { name: string; status: string }[]): PluginR
   }));
 }
 
+/** A minimal on-disk `lsp` plugin registering the state control GET /brain/status reads. The real
+ *  plugin's control has exactly this one method, so the fixture carries the whole contract. */
+function lspPluginProvider(diagnosticsEnabled: boolean): PluginRegistryProvider {
+  const root = mkdtempSync(join(tmpdir(), 'brain-lsp-plugin-'));
+  pluginRoots.push(root);
+  const dir = join(root, 'lsp');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
+    name: 'lsp', version: '1.0.0', apiVersion: '1', description: 'lsp', entry: 'index.mjs',
+  }));
+  writeFileSync(join(dir, 'index.mjs'), `
+    export function register(ctx){
+      ctx.registerControl('lsp', { diagnosticsEnabled: () => ${diagnosticsEnabled} });
+    }
+  `);
+  return new PluginRegistryProvider(() => loadPlugins({
+    dirs: [root], enabled: ['lsp'], logger: { info() {}, warn() {}, error() {} },
+  }));
+}
+
 function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegistryProvider } = {}) {
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -933,26 +953,29 @@ describe('brain routes', () => {
 // The telemetry payload the CLI rail renders and the web panel now shares: context usage, project
 // (cwd + branch), LSP state and the MCP server table — one poll, scoped to the caller.
 describe('GET /brain/status telemetry', () => {
-  it('carries the caller\'s own project section (cwd + branch) and the LSP state', async () => {
+  it('carries the caller\'s own project section (cwd + branch), scoped per caller', async () => {
     const { app, adminTok, amyTok } = setup();
     const body = await (await app.request('/brain/status', auth(amyTok))).json() as {
-      project: { cwd: string | null; branch: string | null }; lspEnabled: boolean;
+      project: { cwd: string | null; branch: string | null };
     };
     expect(body.project).toEqual({ cwd: '/work/user-2', branch: 'branch-2' });
-    // The LSP flag must MIRROR the live manager, not a constant: drive it to both states and read it back.
-    const { lspManager } = await import('../../src/brain/tools/lspTools.js');
-    const lsp = lspManager();
-    const reportedLsp = async (): Promise<boolean> =>
-      ((await (await app.request('/brain/status', auth(amyTok))).json()) as { lspEnabled: boolean }).lspEnabled;
-    try {
-      lsp.setEnabled(false);
-      expect(await reportedLsp()).toBe(false);
-      lsp.setEnabled(true);
-      expect(await reportedLsp()).toBe(true);
-    } finally { lsp.setEnabled(true); } // daemon-wide singleton — never leak a flip into another test
     // Each caller is described by THEIR conversation, never the other account's directory.
     const other = await (await app.request('/brain/status', auth(adminTok))).json() as { project: { cwd: string | null } };
     expect(other.project.cwd).toBe('/work/user-1');
+  });
+
+  it('mirrors the lsp plugin\'s live diagnostics state', async () => {
+    for (const on of [true, false]) {
+      const { app, amyTok } = setup({ plugins: lspPluginProvider(on) });
+      const body = await (await app.request('/brain/status', auth(amyTok))).json() as { lspEnabled?: boolean };
+      expect(body.lspEnabled).toBe(on);
+    }
+  });
+
+  it('OMITS lspEnabled entirely without the lsp plugin — never a fabricated "off"', async () => {
+    const { app, amyTok } = setup();
+    const body = await (await app.request('/brain/status', auth(amyTok))).json() as Record<string, unknown>;
+    expect('lspEnabled' in body).toBe(false);
   });
 
   it('lists MCP servers for an admin and hides the daemon-wide table from a non-admin', async () => {
@@ -1028,74 +1051,6 @@ describe('GET /brain/models allow-list', () => {
     users.setAllowedExecs(amy.id, ['elowen:relay/glm']);
     models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
     expect(models.map((m) => m.exec)).toEqual(['elowen:relay/glm']);
-  });
-});
-
-describe('LSP status + toggle routes', () => {
-  function setupLsp() {
-    const db = openAgentsDb(':memory:');
-    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-    const users = new UserStore(db);
-    const admin = users.create('admin', 'pw');
-    const amy = users.create('amy', 'pw');
-    const config = new ConfigStore(db);
-    const app = createServer({
-      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-      engine: null as never, spawn: null as never, tmux: null as never,
-      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-      brain: fakeBrain() as never,
-    });
-    return { app, config, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
-  }
-
-  it('GET /brain/lsp reports enabled/running plus per-server rows (readable by any chat user)', async () => {
-    const { app, amyTok } = setupLsp();
-    const res = await app.request('/brain/lsp', auth(amyTok));
-    expect(res.status).toBe(200);
-    const s = await res.json() as { enabled: boolean; running: boolean; servers: { command: string; label: string; installed: boolean; running: boolean }[] };
-    expect(typeof s.enabled).toBe('boolean');
-    expect(typeof s.running).toBe('boolean');
-    expect(s.servers.length).toBeGreaterThan(0);
-    expect(s.servers.find((x) => x.command === 'typescript-language-server')).toMatchObject({ label: 'TypeScript' });
-  });
-
-  it('per-server rows carry the install metadata for the ctrl+i flow', async () => {
-    const { app, amyTok } = setupLsp();
-    const s = await (await app.request('/brain/lsp', auth(amyTok))).json() as { servers: { command: string; installable: boolean; installHint: string }[] };
-    expect(s.servers.find((x) => x.command === 'typescript-language-server')).toMatchObject({ installable: true, installHint: 'npm install -g typescript-language-server typescript' });
-    expect(s.servers.find((x) => x.command === 'gopls')).toMatchObject({ installable: false, installHint: 'go install golang.org/x/tools/gopls@latest' });
-  });
-
-  it('POST /brain/lsp/install is admin-only and 404s an unknown server', async () => {
-    const { app, adminTok, amyTok } = setupLsp();
-    expect((await app.request('/brain/lsp/install', post(amyTok, { command: 'gopls' }))).status).toBe(403);
-    expect((await app.request('/brain/lsp/install', post(adminTok, { command: 'not-a-server' }))).status).toBe(404);
-  });
-
-  it('POST /brain/lsp/uninstall mirrors the guards and refuses toolchain-shipped servers', async () => {
-    const { app, adminTok, amyTok } = setupLsp();
-    expect((await app.request('/brain/lsp/uninstall', post(amyTok, { command: 'gopls' }))).status).toBe(403);
-    expect((await app.request('/brain/lsp/uninstall', post(adminTok, { command: 'not-a-server' }))).status).toBe(404);
-    const toolchain = await app.request('/brain/lsp/uninstall', post(adminTok, { command: 'gopls' }));
-    expect(toolchain.status).toBe(400);
-    expect(((await toolchain.json()) as { error: string }).error).toContain('go install');
-  });
-
-  it('POST /brain/command lsp is admin-only, flips the live manager AND persists the flag', async () => {
-    const { app, config, adminTok, amyTok } = setupLsp();
-    expect((await app.request('/brain/command', post(amyTok, { name: 'lsp' }))).status).toBe(403);
-
-    const before = (await (await app.request('/brain/lsp', auth(adminTok))).json() as { enabled: boolean }).enabled;
-    const r = await app.request('/brain/command', post(adminTok, { name: 'lsp' }));
-    expect(r.status).toBe(200);
-    const body = await r.json() as { ok: boolean; data: { enabled: boolean } };
-    expect(body.data.enabled).toBe(!before);
-    expect(config.get().lspEnabled).toBe(!before); // survives a daemon restart via bootstrap re-seed
-    // …and the live status endpoint agrees with the persisted flag.
-    expect((await (await app.request('/brain/lsp', auth(adminTok))).json() as { enabled: boolean }).enabled).toBe(!before);
-    // Flip back — the manager is a daemon-wide singleton, don't leak state into other tests.
-    await app.request('/brain/command', post(adminTok, { name: 'lsp' }));
   });
 });
 

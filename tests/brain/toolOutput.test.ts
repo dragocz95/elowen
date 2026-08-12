@@ -23,8 +23,10 @@ describe('makeToolOutputPolicy', () => {
   it('merges built-in defaults with plugin patterns and reads the set live', () => {
     let pluginPatterns: string[] = [];
     const shown = makeToolOutputPolicy(() => [...BUILTIN_TOOL_OUTPUT_SHOWN, ...pluginPatterns]);
-    // Built-in defaults: Lsp* shown; Elowen*/Memory* deliberately hidden (not on the allowlist).
-    expect(shown('LspDiagnostics')).toBe(true);
+    // Built-in defaults: Elowen*/Memory* deliberately hidden (not on the allowlist). `Lsp*` is no
+    // longer a built-in default — the lsp plugin's manifest `showOutput` contributes it, exercised by
+    // the plugin-patterns half below.
+    expect(shown('LspDiagnostics')).toBe(false);
     expect(shown('ElowenListTasks')).toBe(false);
     expect(shown('MemorySearch')).toBe(false);
     // A plugin's tool stays hidden until its patterns land — then shown without a rebuild (live thunk).
