@@ -6,7 +6,7 @@ import { useBrainChat } from './BrainChatProvider';
 import { useBrainContextUsage, useModelUsage } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { formatTokens, formatCost, formatSpeed } from '../../lib/format';
-import { buildUsageSummary, cacheHitPct } from '../stats/usageBars';
+import { buildUsageSummary, cacheHitPct } from '../../lib/usageBars';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Modal, ModalBody } from '../../components/ui/Modal';

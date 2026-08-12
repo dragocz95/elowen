@@ -91,7 +91,7 @@ import {
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
 import { formatTaskTime } from './format';
-import { taskTypeMeta } from '../modules/tasks/taskMeta';
+import { taskTypeMeta } from './taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */

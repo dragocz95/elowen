@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildUsageSummary } from '../../../modules/stats/usageBars';
-import type { ModelUsage } from '../../../lib/types';
+import { buildUsageSummary } from '../../lib/usageBars';
+import type { ModelUsage } from '../../lib/types';
 
 const mk = (exec: string, total: number, costUsd: number | null): ModelUsage => ({
   exec,

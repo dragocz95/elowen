@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef } from 'react';
 import { ShieldQuestion, Coins, Radio, AlarmClock, type LucideIcon } from 'lucide-react';
 import { currentMonthBounds } from './metrics';
-import { buildUsageSummary } from '../stats/usageBars';
+import { buildUsageSummary } from '../../lib/usageBars';
 import { nextCronRun } from '../../lib/cron';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';

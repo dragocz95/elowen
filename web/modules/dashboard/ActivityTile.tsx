@@ -1,5 +1,5 @@
 'use client';
-import { eventIcon } from '../timeline/eventMeta';
+import { eventIcon } from '../../lib/eventMeta';
 import { useActivity } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs, compactElapsed } from '../../lib/format';

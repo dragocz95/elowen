@@ -1,15 +1,9 @@
-import { ListChecks, Rocket, Radio, ShieldCheck, Circle, type LucideIcon } from 'lucide-react';
 import type { Tone } from '../../components/ui/tone';
 
-export function eventIcon(type: string): LucideIcon {
-  switch (type) {
-    case 'task': return ListChecks;
-    case 'mission': return Rocket;
-    case 'signal': return Radio;
-    case 'review': return ShieldCheck;
-    default: return Circle;
-  }
-}
+// The icon map is HOST-owned (web/lib/eventMeta): the core activity tile renders it too, and the
+// activity log stays in core when the timeline view moves out. Re-exported for this module's own views.
+export { eventIcon } from '../../lib/eventMeta';
+
 export function eventTone(type: string): Tone {
   switch (type) {
     case 'task': return 'accent';

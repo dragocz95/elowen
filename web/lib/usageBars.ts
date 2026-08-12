@@ -1,5 +1,5 @@
-import { formatTokens, formatCost, formatSpeed } from '../../lib/format';
-import type { ModelUsage } from '../../lib/types';
+import { formatTokens, formatCost, formatSpeed } from './format';
+import type { ModelUsage } from './types';
 
 /** One model's row on the stats page: figures plus a max-normalized bar width (by tokens). */
 interface UsageRow {

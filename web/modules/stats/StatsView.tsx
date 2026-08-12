@@ -12,7 +12,7 @@ import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, rangeBounds }
 import { usePersistentState } from '../../lib/usePersistentState';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
-import { buildUsageSummary } from './usageBars';
+import { buildUsageSummary } from '../../lib/usageBars';
 import { ResetUsageModal } from './ResetUsageModal';
 import { SpatialWorkspaceLayout, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
