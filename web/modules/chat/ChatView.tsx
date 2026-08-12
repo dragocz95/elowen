@@ -1,8 +1,12 @@
 'use client';
 import { useRef, useState } from 'react';
+import { Library } from 'lucide-react';
 import { useFillHeight } from '../../lib/useFillHeight';
 import { useMobileViewport } from '../../lib/useMobile';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useTranslation } from '../../lib/i18n';
+import { Modal, ModalBody } from '../../components/ui/Modal';
+import { BrainSessionsPanel } from '../../components/brain/BrainSessionsPanel';
 import { BrainChatSurface } from '../advisor/BrainChatSurface';
 import { ChatHistoryRail } from '../advisor/ChatHistoryRail';
 import { TelemetryPanel } from '../advisor/TelemetryPanel';
@@ -27,11 +31,15 @@ const RAIL_VISIBILITY = ['shown', 'hidden'] as const;
 type RailVisibility = typeof RAIL_VISIBILITY[number];
 
 export function ChatView() {
+  const { t } = useTranslation();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const fillHeight = useFillHeight(surfaceRef);
   const mobile = useMobileViewport();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [telemetryOpen, setTelemetryOpen] = useState(false);
+  // The full conversation register (BrainSessionsPanel: channels + task agents, admin oversight) lives
+  // behind the history drawer as a modal — core data stays reachable with the agents plugin disabled.
+  const [registerOpen, setRegisterOpen] = useState(false);
   // Whether the docked column is shown is a per-device display choice, like the nav pin and the UI scale:
   // it belongs to the screen you are on, not to the user record. The drawer on a phone is transient and
   // deliberately NOT persisted — a drawer that reopens itself on every visit is a nuisance, not a setting.
@@ -65,11 +73,26 @@ export function ChatView() {
         {/* On a phone the global TopBar is gone (see Shell), so the drawer that lists conversations is also
             the only way back to the rest of the app — it carries a "← dashboard" link. Desktop keeps the
             TopBar, so the link would be redundant there. */}
-        <ChatHistoryRail variant="drawer" open={historyOpen} onClose={() => setHistoryOpen(false)} homeLink={mobile === true} />
+        <ChatHistoryRail
+          variant="drawer"
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          homeLink={mobile === true}
+          onOpenRegister={() => setRegisterOpen(true)}
+        />
         {mobile === true ? (
           <TelemetryPanel variant="drawer" open={telemetryOpen} onClose={() => setTelemetryOpen(false)} onOpenWorkflow={openDag} />
         ) : null}
         {dagId ? <WorkflowModal workflowId={dagId} onClose={() => setDagId(null)} /> : null}
+        {registerOpen ? (
+          <Modal title={t.chat.openRegister} icon={Library} size="xl" onClose={() => setRegisterOpen(false)}>
+            <ModalBody>
+              {/* Opening a row hands the conversation to THIS page's surface (the shared controller
+                  switches it), so the modal dismisses itself instead of covering the loaded chat. */}
+              <BrainSessionsPanel afterOpen={() => setRegisterOpen(false)} />
+            </ModalBody>
+          </Modal>
+        ) : null}
       </div>
     </>
   );

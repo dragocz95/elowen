@@ -75,6 +75,24 @@ describe('ChatView (/chat page)', () => {
     expect(screen.getByRole('dialog', { name: /Conversation history|Historie konverzací/i })).toBeInTheDocument();
   });
 
+  it('opens the conversation register from the history drawer and hands a row to the page surface', async () => {
+    renderChat(<ChatView />);
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+    fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
+
+    // The drawer's footer entry opens the full register (BrainSessionsPanel) as a modal and dismisses
+    // the drawer — the register is core data and must stay reachable without the agents plugin.
+    fireEvent.click(screen.getByRole('button', { name: /All conversations|Všechny konverzace/i }));
+    const modal = await screen.findByRole('dialog', { name: /All conversations|Všechny konverzace/i });
+    expect(screen.queryByRole('dialog', { name: /Conversation history|Historie konverzací/i })).toBeNull();
+    expect(await screen.findByTestId('brain-sessions-list')).toBeInTheDocument();
+
+    // Opening a row loads it into THIS page's surface, so the modal dismisses itself.
+    fireEvent.click(await screen.findByRole('button', { name: /Open in web chat: Second chat/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /All conversations|Všechny konverzace/i })).toBeNull());
+    expect(modal).not.toBeInTheDocument();
+  });
+
   it('hides and restores the desktop telemetry rail from the header button, and remembers the choice', async () => {
     const { unmount } = renderChat(<ChatView />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);

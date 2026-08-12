@@ -1761,6 +1761,8 @@ export const sk = {
   chat: {
     historyTitle: 'Konverzácie',
     openHistory: 'História konverzácií',
+    openRegister: 'Všetky konverzácie',
+    registerHint: 'Úplný register — web, CLI, kanály a agenti úloh.',
     moreOptions: 'Ďalšie možnosti',
     showStats: 'Zobraziť štatistiky',
     hideStats: 'Skryť štatistiky',

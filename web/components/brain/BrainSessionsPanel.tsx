@@ -26,8 +26,9 @@ const PAGE_SIZE = 12;
 interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number }
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
- *  defaults to every user's oversight view and can switch to their own. */
-export function BrainSessionsPanel() {
+ *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
+ *  (the Chat page) dismiss itself once a row hands the conversation to the chat surface. */
+export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {}) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -146,7 +147,7 @@ export function BrainSessionsPanel() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => openBrainSession(s.id, continuable)}
+                          onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
                           title={label}
                           aria-label={`${label}: ${title}`}
                           className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"

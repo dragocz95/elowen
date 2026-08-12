@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
+import { Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { elowenClient } from '../../lib/elowenClient';
@@ -31,7 +31,7 @@ const MENU_ITEM = 'flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm
  *  (BrainChatProvider) so there is never a second session list or a second mutation surface. Delete goes
  *  through the controller (it re-targets the active conversation); rename/export/search hit the client
  *  directly (pure metadata / read-only), mirroring Fáze 1's search split. */
-export function ChatHistoryRail({ variant, open = false, onClose, className, homeLink = false }: {
+export function ChatHistoryRail({ variant, open = false, onClose, className, homeLink = false, onOpenRegister }: {
   variant: 'rail' | 'drawer' | 'dropdown';
   open?: boolean;
   onClose?: () => void;
@@ -39,6 +39,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   // On a phone /chat hides the global TopBar, so this drawer becomes the only way back to the app — it
   // then shows a "← dashboard" link at its top. Off everywhere the TopBar still carries navigation.
   homeLink?: boolean;
+  // The Chat page passes this to surface the full conversation register (channels + task agents, admin
+  // oversight, exports) as a modal; this list itself stays the caller's own conversations.
+  onOpenRegister?: () => void;
 }) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
@@ -263,6 +266,20 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           </div>
         ))}
       </div>
+
+      {onOpenRegister ? (
+        <button
+          type="button"
+          onClick={() => { dismiss(); onOpenRegister(); }}
+          className="flex shrink-0 items-center gap-2 border-t border-border px-2 py-2 text-left text-sm text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        >
+          <Library size={15} aria-hidden />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{t.chat.openRegister}</span>
+            <span className="truncate text-tiny text-text-muted">{t.chat.registerHint}</span>
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 

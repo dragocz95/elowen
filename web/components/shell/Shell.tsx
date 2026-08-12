@@ -64,15 +64,17 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const onChat = usePathname() === '/chat';
   // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in
   // web chat (Sessions → open in chat). BrainChat mounts on open and switches to the requested session.
+  // On /chat the full-page surface reads the same controller and IS the chat host — the request loads
+  // there directly, so popping the dock over it would only duplicate the conversation.
   useEffect(() => {
-    const onOpen = () => { dock.addAdvisorPane(); dock.setOpen(true); };
+    const onOpen = () => { if (onChat) return; dock.addAdvisorPane(); dock.setOpen(true); };
     window.addEventListener(BRAIN_OPEN_EVENT, onOpen);
     window.addEventListener(BRAIN_COMPOSE_EVENT, onOpen);
     return () => {
       window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
       window.removeEventListener(BRAIN_COMPOSE_EVENT, onOpen);
     };
-  }, [dock]);
+  }, [dock, onChat]);
   // When the dock takes the left edge, the sidebar moves to the right edge (mirrored) so the two
   // never stack on the same side. Top/bottom docks span the full width above/below the row.
   const dockLeft = docked && dock.state.side === 'left';

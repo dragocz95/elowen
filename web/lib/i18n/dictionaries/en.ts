@@ -1761,6 +1761,8 @@ export const en = {
   chat: {
     historyTitle: 'Conversations',
     openHistory: 'Conversation history',
+    openRegister: 'All conversations',
+    registerHint: 'The full register — web, CLI, channels and task agents.',
     moreOptions: 'More options',
     showStats: 'Show stats',
     hideStats: 'Hide stats',

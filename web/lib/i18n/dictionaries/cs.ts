@@ -1761,6 +1761,8 @@ export const cs = {
   chat: {
     historyTitle: 'Konverzace',
     openHistory: 'Historie konverzací',
+    openRegister: 'Všechny konverzace',
+    registerHint: 'Úplný registr — web, CLI, kanály a agenti úloh.',
     moreOptions: 'Další možnosti',
     showStats: 'Zobrazit statistiky',
     hideStats: 'Skrýt statistiky',
