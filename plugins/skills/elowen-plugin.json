@@ -7,9 +7,17 @@
   "provides": {
     "skills": [
       "*"
+    ],
+    "apiRoutes": [
+      "/plugins/skills",
+      "/plugins/skills/list",
+      "/plugins/skills/:name"
     ]
   },
-  "deferLoading": ["CreateSkill", "DeleteSkill"],
+  "deferLoading": [
+    "CreateSkill",
+    "DeleteSkill"
+  ],
   "icons": {
     "CreateSkill": "📖",
     "ListSkills": "📖",
@@ -17,5 +25,42 @@
   },
   "planSafe": [
     "ListSkills"
-  ]
+  ],
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "settings": [
+      {
+        "id": "skills",
+        "label": "Skills",
+        "icon": "GraduationCap"
+      }
+    ],
+    "strings": {
+      "title": "Skills",
+      "sectionHint": "Reusable instructions injected into the system prompt. Apply to new conversations.",
+      "empty": "No skills yet.",
+      "badgeBundled": "bundled",
+      "badgeUser": "custom",
+      "add": "Add skill",
+      "edit": "Edit skill",
+      "remove": "Delete skill",
+      "deleteTitle": "Delete skill",
+      "deleteDesc": "The skill “{name}” will be removed permanently.",
+      "name": "Name",
+      "description": "Description",
+      "content": "Content",
+      "save": "Save skill",
+      "cancel": "Cancel",
+      "created": "Skill saved",
+      "updated": "Skill updated",
+      "deleted": "Skill deleted",
+      "disableModelInvocation": "Hide from the model",
+      "disableModelInvocationHint": "The model won’t offer this skill on its own — it stays available only via /skill:name.",
+      "manualOnlyBadge": "manual only",
+      "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “deploy-checklist”).",
+      "helpDescription": "One line: when the assistant should use this skill.",
+      "helpContent": "The skill body — markdown instructions for the assistant."
+    }
+  }
 }

@@ -1121,7 +1121,7 @@ function useBrainChatController(): BrainChatValue {
         return;
       }
       // Inspect loaded skills — list the invocable /skill:name commands (PI expands them on send).
-      if (cmd.name === 'skills') { const sk = await elowenClient.pluginSkills(); toast(sk.length ? sk.map((s) => `/skill:${s.name}`).join('  ') : t.skills.empty, 'ok'); return; }
+      if (cmd.name === 'skills') { const sk = await elowenClient.pluginSkills(); toast(sk.length ? sk.map((s) => `/skill:${s.name}`).join('  ') : t.managePicker.noResults, 'ok'); return; }
       if (cmd.kind === 'mode') {
         const mode = WORK_MODES.find((m) => m === cmd.name);
         if (mode) { runMode(mode); return; }

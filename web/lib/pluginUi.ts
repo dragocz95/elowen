@@ -59,6 +59,7 @@ import { ChoiceField } from '../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
 import { isValidSchedule } from './cronSchedule';
@@ -68,11 +69,12 @@ import { usePersistentState } from './usePersistentState';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
-  useCronJobs, useDiscordChannels,
+  useCronJobs, useDiscordChannels, usePluginSkills,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
   useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
+  useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
 } from './mutations';
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
@@ -132,7 +134,7 @@ export function ensurePluginUiRuntime(): void {
       SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
-      ManageSelectionModal, SelectionSummary, BrainModelField,
+      ManageSelectionModal, SelectionSummary, BrainModelField, MarkdownAssetEditor,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
@@ -147,6 +149,7 @@ export function ensurePluginUiRuntime(): void {
       // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
       // the cronjob plugin's settings editor reaches them here.
       useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
+      usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {

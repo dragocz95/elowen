@@ -13,6 +13,8 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -20,25 +22,31 @@ afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true
 
 const skillMd = (name: string, description: string) => `---\nname: ${name}\ndescription: ${description}\n---\n\nBody of ${name}.\n`;
 
-function setup() {
+// The '/plugins/skills/*' surface is served by the REAL skills plugin (root mounts), loaded from the
+// repo's plugins dir — so the "bundled" fixtures below are the plugin's actual shipped skills
+// ('skill-creation', 'elowen-control'), not synthetic ones: the .mjs resolves its bundled dir next to
+// its own file, and copying it into a tmp scan root would break its bare-specifier imports.
+const pluginsDir = join(process.cwd(), 'plugins');
+const BUNDLED = 'skill-creation';
+
+function setup(opts: { enabled?: string[] } = {}) {
   const dataRoot = tmpDir('skills-data');
-  // A plugin scan root shaped like the real one: <root>/skills is the plugin folder, its bundled
-  // .md skills live one level deeper in <root>/skills/skills.
-  const pluginsRoot = tmpDir('skills-plugins');
-  const bundledDir = join(pluginsRoot, 'skills', 'skills');
-  mkdirSync(bundledDir, { recursive: true });
-  writeFileSync(join(bundledDir, 'greeting.md'), skillMd('greeting', 'How to greet.'));
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
   const amy = users.create('amy', 'pw');
+  const provider = new PluginRegistryProvider(() => loadPlugins({
+    dirs: [pluginsDir], enabled: opts.enabled ?? ['skills'], dataRoot,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+  }));
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-    pluginDirs: [pluginsRoot], pluginDataRoot: dataRoot,
+    pluginDirs: [pluginsDir], pluginDataRoot: dataRoot,
+    plugins: provider,
   });
   return { app, userDir: join(dataRoot, 'skills'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
@@ -56,16 +64,18 @@ describe('skills routes', () => {
     writeFileSync(join(userDir, 'my-skill.md'), skillMd('my-skill', 'A user skill.'));
     const res = await app.request('/plugins/skills/list', auth(adminTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([
-      expect.objectContaining({ name: 'greeting', description: 'How to greet.', source: 'bundled', scope: 'bundled/system', active: true, canDelete: false }),
-      expect.objectContaining({ name: 'my-skill', description: 'A user skill.', source: 'user', scope: 'user-defined', active: true, canDelete: true }),
-    ]);
+    const list = (await res.json()) as { name: string }[];
+    expect(list).toContainEqual(expect.objectContaining({ name: BUNDLED, source: 'bundled', scope: 'bundled/system', active: true, canDelete: false }));
+    expect(list).toContainEqual(expect.objectContaining({ name: 'my-skill', description: 'A user skill.', source: 'user', scope: 'user-defined', active: true, canDelete: true }));
   });
 
   it('GET lists bundled skills even when the user dir does not exist yet', async () => {
     const { app, adminTok } = setup();
     const res = await app.request('/plugins/skills/list', auth(adminTok));
-    expect(await res.json()).toEqual([expect.objectContaining({ name: 'greeting', description: 'How to greet.', source: 'bundled', canDelete: false })]);
+    const list = (await res.json()) as { name: string; source: string }[];
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.every((sk) => sk.source === 'bundled')).toBe(true);
+    expect(list).toContainEqual(expect.objectContaining({ name: BUNDLED, canDelete: false }));
   });
 
   it('POST creates the user skill file in the CreateSkill format and GET lists it', async () => {
@@ -95,7 +105,7 @@ describe('skills routes', () => {
 
   it('POST refuses a name colliding with a bundled skill (400) but overwrites a user skill', async () => {
     const { app, adminTok } = setup();
-    expect((await app.request('/plugins/skills', post(adminTok, skill({ name: 'greeting' })))).status).toBe(400);
+    expect((await app.request('/plugins/skills', post(adminTok, skill({ name: BUNDLED })))).status).toBe(400);
     expect((await app.request('/plugins/skills', post(adminTok, skill()))).status).toBe(201);
     expect((await app.request('/plugins/skills', post(adminTok, skill({ content: 'v2' })))).status).toBe(201);
   });
@@ -189,7 +199,7 @@ describe('skills routes', () => {
   it('PATCH rejects a bundled skill (400), a missing skill (404) and empty content (400)', async () => {
     const { app, adminTok } = setup();
     await app.request('/plugins/skills', post(adminTok, skill()));
-    expect((await app.request('/plugins/skills/greeting', patch(adminTok, { content: 'x' }))).status).toBe(400);
+    expect((await app.request(`/plugins/skills/${BUNDLED}`, patch(adminTok, { content: 'x' }))).status).toBe(400);
     expect((await app.request('/plugins/skills/nope', patch(adminTok, { content: 'x' }))).status).toBe(404);
     expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { content: '  ' }))).status).toBe(400);
   });
@@ -197,7 +207,7 @@ describe('skills routes', () => {
   it('DELETE removes a user skill; bundled → 400, missing → 404, bad name → 400', async () => {
     const { app, userDir, adminTok } = setup();
     await app.request('/plugins/skills', post(adminTok, skill()));
-    expect((await app.request('/plugins/skills/greeting', del(adminTok))).status).toBe(400);
+    expect((await app.request(`/plugins/skills/${BUNDLED}`, del(adminTok))).status).toBe(400);
     expect((await app.request('/plugins/skills/nope', del(adminTok))).status).toBe(404);
     expect((await app.request('/plugins/skills/Bad%20Name', del(adminTok))).status).toBe(400);
     const res = await app.request('/plugins/skills/deploy-checklist', del(adminTok));
@@ -220,6 +230,14 @@ describe('skills routes', () => {
     const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; description: string; content?: string }[];
     expect(list.find((s) => s.name === 'rules'))
       .toMatchObject({ description: 'R.', content: 'Part one.\n\n---\n\nPart two.' });
+  });
+
+  it('answers 503 "skills plugin is disabled" when the plugin is off', async () => {
+    const { app, adminTok } = setup({ enabled: [] });
+    const res = await app.request('/plugins/skills/list', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'skills plugin is disabled' });
+    expect((await app.request('/plugins/skills', post(adminTok, skill()))).status).toBe(503);
   });
 
   it('parses a BOM-prefixed user skill and keeps its frontmatter through an edit', async () => {

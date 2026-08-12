@@ -1,3 +1,34 @@
 {
-  "description": "Načítava markdown skilly z disku a sprístupňuje ich Elowen mozgu."
+  "description": "Načítava markdown skilly z disku a sprístupňuje ich Elowen mozgu.",
+  "web": {
+    "settings": {
+      "skills": "Skilly"
+    },
+    "strings": {
+      "title": "Skilly",
+      "sectionHint": "Opakovane použiteľné inštrukcie vkladané do systémového promptu. Prejavia sa v nových konverzáciách.",
+      "empty": "Zatiaľ žiadne skilly.",
+      "badgeBundled": "vstavaný",
+      "badgeUser": "vlastný",
+      "add": "Pridať skill",
+      "edit": "Upraviť skill",
+      "remove": "Vymazať skill",
+      "deleteTitle": "Vymazať skill",
+      "deleteDesc": "Skill „{name}“ bude natrvalo odstránený.",
+      "name": "Názov",
+      "description": "Popis",
+      "content": "Obsah",
+      "save": "Uložiť skill",
+      "cancel": "Zrušiť",
+      "created": "Skill uložený",
+      "updated": "Skill upravený",
+      "deleted": "Skill vymazaný",
+      "disableModelInvocation": "Skryť pred modelom",
+      "disableModelInvocationHint": "Model tento skill nenavrhne sám od seba — zostane dostupný len cez /skill:name.",
+      "manualOnlyBadge": "len ručne",
+      "helpName": "kebab-case: malé písmená, číslice a pomlčky (napr. „deploy-checklist“).",
+      "helpDescription": "Jedna veta: kedy má asistent tento skill použiť.",
+      "helpContent": "Telo skillu — markdown inštrukcie pre asistenta."
+    }
+  }
 }

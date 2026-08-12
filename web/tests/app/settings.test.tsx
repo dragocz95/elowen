@@ -5,7 +5,6 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
 import SettingsPage from '../../app/settings/page';
-import { SkillsEditor } from '../../modules/settings/SkillsEditor';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
@@ -257,55 +256,3 @@ describe('Settings depth', () => {
   });
 });
 
-describe('SkillsEditor (optimistic disclosure toggle)', () => {
-  const skillRow = (name: string, disableModelInvocation: boolean) => ({ name, description: `${name} desc`, source: 'user', disableModelInvocation, version: null, content: `Body ${name}.` });
-  const list = [skillRow('alpha', false), skillRow('beta', false)];
-  const toggles = () => screen.getAllByRole('switch', { name: en.skills.disableModelInvocation });
-
-  it('flips the clicked row immediately and disables only that row while the PATCH is in flight', async () => {
-    let alphaDisabled = false;
-    let resolvePatch!: () => void;
-    const patchDone = new Promise<void>((r) => { resolvePatch = r; });
-    server.use(
-      http.get('*/api/plugins/skills/list', () => HttpResponse.json([skillRow('alpha', alphaDisabled), skillRow('beta', false)])),
-      http.patch('*/api/plugins/skills/alpha', async () => { await patchDone; alphaDisabled = true; return HttpResponse.json({ ok: true }); }),
-    );
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SkillsEditor /></ToastProvider></Wrapper>);
-
-    await waitFor(() => expect(toggles()).toHaveLength(2));
-    const [alpha, beta] = toggles();
-    expect(alpha).not.toBeChecked();
-    expect(beta).not.toBeChecked();
-
-    fireEvent.click(alpha);
-    // Optimistic: alpha flips before the PATCH resolves, and only alpha is greyed out.
-    await waitFor(() => expect(alpha).toBeChecked());
-    expect(alpha).toBeDisabled();
-    expect(beta).not.toBeDisabled();
-    expect(beta).not.toBeChecked();
-
-    // Once the server confirms (and the refetch lands the updated list), alpha stays on and re-enables.
-    resolvePatch();
-    await waitFor(() => expect(alpha).toBeEnabled());
-    expect(alpha).toBeChecked();
-  });
-
-  it('rolls the toggle back when the PATCH fails', async () => {
-    let rejectPatch!: () => void;
-    const patchFail = new Promise<void>((r) => { rejectPatch = r; });
-    server.use(
-      http.get('*/api/plugins/skills/list', () => HttpResponse.json(list)),
-      http.patch('*/api/plugins/skills/alpha', async () => { await patchFail; return HttpResponse.json({ error: 'boom' }, { status: 500 }); }),
-    );
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SkillsEditor /></ToastProvider></Wrapper>);
-
-    await waitFor(() => expect(toggles()).toHaveLength(2));
-    const [alpha] = toggles();
-    fireEvent.click(alpha);
-    await waitFor(() => expect(alpha).toBeChecked()); // optimistic flip, held while the PATCH is pending
-    rejectPatch();
-    await waitFor(() => expect(alpha).not.toBeChecked()); // rolled back on error
-  });
-});

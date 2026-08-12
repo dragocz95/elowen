@@ -1267,11 +1267,14 @@ export class BrainService {
     }
   }
 
-  /** A plugin's request (from inside a turn) to apply a plugin-set change live — the skills plugin calls
-   *  it after CreateSkill/DeleteSkill writes to disk. Coalesced onto a flag and drained when the turn
-   *  settles; reloading synchronously here would tear down the session running the tool. */
+  /** A plugin's request to apply a plugin-set change live — the skills plugin calls it after a
+   *  CreateSkill/DeleteSkill tool or skills-API write hits disk. From inside a turn it is coalesced
+   *  onto a flag and drained when the turn settles (reloading synchronously would tear down the
+   *  session running the tool); with no turn in flight — an HTTP-triggered plugin route — nothing
+   *  would ever drain the flag, so the reload starts right away in the background instead. */
   requestPluginReload(): void {
     this.pendingPluginReload = true;
+    if (this.busy().turns === 0) this.drainDeferredPluginReload();
   }
 
   /** Post-turn hook (fired from the turn runner once a turn has fully settled): if a plugin requested a

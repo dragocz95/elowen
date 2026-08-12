@@ -1,7 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, GraduationCap, GitFork, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { SkillsEditor } from './SkillsEditor';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, GitFork, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { SubagentsEditor } from './SubagentsEditor';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
@@ -578,13 +577,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
         </>
       )}
-
-      {/* Same story for the skills plugin: its skills are .md files, not config schema. */}
-      {mode === 'behavior' && detail.name === 'skills' ? (
-        <SettingsGroup className="plugin-card" icon={GraduationCap} title={t.skills.title} description={t.skills.sectionHint}>
-          <div className="settings-group__panel"><SkillsEditor /></div>
-        </SettingsGroup>
-      ) : null}
 
       {/* The subagent plugin's typed sub-agents are .md files too — built-in explore/plan plus the user's own. */}
       {mode === 'behavior' && detail.name === 'subagent' ? (
