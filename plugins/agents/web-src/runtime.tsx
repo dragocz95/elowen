@@ -33,13 +33,13 @@ interface MutationResult<TVars> {
 }
 
 /** Main-config slices the moved settings sections read/write over GET/PUT /config. */
-export interface AutopilotConfig {
+interface AutopilotConfig {
   model: string; apiUrl: string; notes: string;
   providerId?: string; apiKeySet?: boolean;
   pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean;
 }
 export interface CliProviderConfig { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }
-export interface AppConfig {
+interface AppConfig {
   autopilot: AutopilotConfig;
   providers?: Record<string, CliProviderConfig>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
