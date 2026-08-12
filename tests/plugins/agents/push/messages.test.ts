@@ -6,7 +6,7 @@ describe('push message builders', () => {
     const p = buildReview({ missionId: 'm-e1', taskId: 't1', phaseTitle: 'Build', rationale: 'missing test' });
     expect(p.kind).toBe('review');
     expect(p.actions.map((a) => a.action)).toEqual(['approve', 'rerun']);
-    expect(p.url).toBe('/escalations');
+    expect(p.url).toBe('/p/agents/escalations');
     expect(p.body).toContain('missing test');
   });
 

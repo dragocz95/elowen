@@ -43,7 +43,7 @@ export function buildReview(input: { missionId: string; taskId: string; phaseTit
     missionId: input.missionId,
     taskId: input.taskId,
     actions: [{ action: 'approve', title: 'Schválit' }, { action: 'rerun', title: 'Spustit znovu' }],
-    url: '/escalations',
+    url: '/p/agents/escalations',
   };
 }
 
@@ -59,7 +59,7 @@ export function buildNeedsInput(input: { missionId?: string; taskId?: string; se
     taskId: input.taskId,
     session: input.session,
     actions: input.hasOptions ? [] : [{ action: 'allow', title: 'Povolit' }, { action: 'reject', title: 'Odmítnout' }],
-    url: '/sessions',
+    url: '/p/agents/sessions',
   };
 }
 
@@ -71,7 +71,7 @@ export function buildStalled(input: { missionId: string; epicTitle: string }): P
     body: `${input.epicTitle} čeká na vaši pozornost.`,
     missionId: input.missionId,
     actions: [{ action: 'open', title: 'Otevřít' }],
-    url: '/escalations',
+    url: '/p/agents/escalations',
   };
 }
 
@@ -84,7 +84,7 @@ export function buildBlocked(input: { missionId?: string; taskId: string; taskTi
     missionId: input.missionId,
     taskId: input.taskId,
     actions: [{ action: 'open', title: 'Otevřít' }],
-    url: '/escalations',
+    url: '/p/agents/escalations',
   };
 }
 
