@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { runtime } from '../runtime';
+import { AutopilotSection } from './AutopilotSection';
 
 interface SchemaField { key: string; label: string; type: string; hint?: string; placeholder?: string; default?: unknown }
 interface Detail {
@@ -8,12 +9,22 @@ interface Detail {
   i18n?: Record<string, { fields?: Record<string, { label?: string; hint?: string }> }>;
 }
 
-/** The agents plugin's own Settings section (the plugin settings deck): edits plugins.config.agents —
- *  the autopilot keys the plugin runtime owns since the F2 config split (overseer model + the mission
- *  PR lifecycle). Reads the manifest configSchema (with its cs/sk field i18n) so the deck stays in
- *  lockstep with what the daemon validates, and saves through PATCH /plugins/agents/config, which
- *  also hot-reloads the plugin so a change applies live. */
+/** The "Agents & Autopilot" settings entry: the moved core Autopilot section (main-config
+ *  `autopilot.*` + run defaults over PUT /config) on top, the plugin's own config editor below. */
 export function AgentsSettings() {
+  return (
+    <div className="flex flex-col gap-6">
+      <AutopilotSection />
+      <PluginConfigSection />
+    </div>
+  );
+}
+
+/** Edits plugins.config.agents — the autopilot keys the plugin runtime owns since the F2 config split
+ *  (overseer model + the mission PR lifecycle). Reads the manifest configSchema (with its cs/sk field
+ *  i18n) so the deck stays in lockstep with what the daemon validates, and saves through PATCH
+ *  /plugins/agents/config, which also hot-reloads the plugin so a change applies live. */
+function PluginConfigSection() {
   const { components: C, hooks, api } = runtime();
   const { t, locale } = hooks.useTranslation();
   const { toast } = hooks.useToast();

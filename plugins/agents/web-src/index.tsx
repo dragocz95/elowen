@@ -9,6 +9,7 @@ import { runtime, registerAgentsUi } from './runtime';
 import { SessionsView } from './sessions/SessionsView';
 import { EscalationsView } from './escalations/EscalationsView';
 import { AgentsSettings } from './settings/AgentsSettings';
+import { CliAgentsSettings } from './settings/CliAgentsSettings';
 
 /** /p/agents root: nothing lives here — forward to the sessions page (replace, no history entry). */
 function RootRedirect() {
@@ -25,5 +26,6 @@ registerAgentsUi({
   },
   settings: {
     'agents': AgentsSettings,
+    'cli-agents': CliAgentsSettings,
   },
 });

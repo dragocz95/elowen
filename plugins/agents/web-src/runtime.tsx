@@ -32,6 +32,22 @@ interface MutationResult<TVars> {
   isPending: boolean;
 }
 
+/** Main-config slices the moved settings sections read/write over GET/PUT /config. */
+export interface AutopilotConfig {
+  model: string; apiUrl: string; notes: string;
+  providerId?: string; apiKeySet?: boolean;
+  pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean;
+}
+export interface CliProviderConfig { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }
+export interface AppConfig {
+  autopilot: AutopilotConfig;
+  providers?: Record<string, CliProviderConfig>;
+  defaults: { exec: string; autonomy: string; maxSessions: number };
+  customModels?: { label: string; exec: string }[];
+  hiddenPresets?: string[];
+  brain?: { providers?: { id: string; label: string; apiKeySet?: boolean }[] };
+}
+
 /** The core translation catalog: section → key → string. Deliberately loose — the strings the moved
  *  views read (t.sessions.*, t.escalations.*, t.page.*, …) stay in the core dictionaries. */
 type Dict = Record<string, Record<string, string>>;
@@ -41,7 +57,7 @@ interface AgentsHooks {
   useToast(): { toast: (msg: string, tone?: 'ok' | 'error') => void };
   usePersistentState<T extends string>(key: string, initial: T, allowed: readonly T[]): [T, (v: T) => void];
   useTasks(): QueryResult<Task[]>;
-  useConfig(): QueryResult<{ autopilot?: { pilotExec?: string; overseerExec?: string } }>;
+  useConfig(): QueryResult<AppConfig>;
   useSessionInfos(): QueryResult<SessionInfo[]>;
   useSessionSignals(): Record<string, DerivedSignal>;
   useSessionSignal(name: string): DerivedSignal | undefined;
@@ -53,6 +69,16 @@ interface AgentsHooks {
   useResumeMission(): MutationResult<string>;
   useApproveGate(): MutationResult<string>;
   useReplyAsk(): MutationResult<{ taskId: string; askId: string; text: string }>;
+  useUpdateConfig(): MutationResult<Record<string, unknown>>;
+  useBrainModels(): QueryResult<{ provider: string; model: string }[]>;
+  useSystemSkills(): QueryResult<{ skills: { provider: string; present: boolean; installed: boolean; upToDate: boolean }[] }>;
+  useInstallSkills(): MutationResult<undefined>;
+  useAutoSaveStatus(
+    deps: readonly unknown[],
+    save: () => Promise<void> | void,
+    opts?: { ready?: boolean; savable?: boolean; delay?: number },
+  ): { status: 'idle' | 'saving' | 'saved' | 'error'; retry: () => void; flush: () => void };
+  usePluginStrings(plugin: string): Record<string, string>;
 }
 
 interface AgentsUtils {
@@ -67,6 +93,12 @@ interface AgentsUtils {
   apiErrorMessage(e: unknown): string;
   taskTypeMeta(type: string): { icon: ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean }> };
   contextMenuDivider: 'divider';
+  allModels(custom?: { label: string; exec: string }[], hidden?: string[]): { label: string; exec: string }[];
+  /** CLI provider metadata (id, brand label, bin/args hints, embedded/no-bypass flags). */
+  cliProviders: {
+    id: string; label: string; binHint: string; argsHint: string;
+    noBypassFlag?: boolean; embedded?: boolean;
+  }[];
 }
 
 // ---- component shapes (props narrowed to what the moved views pass) -----------------------------
@@ -76,7 +108,7 @@ interface AgentsUtils {
 type AnyComponent = ComponentType<any>;
 
 interface AgentsComponents {
-  Button: AnyComponent; Input: AnyComponent; Toggle: AnyComponent; Field: AnyComponent; HelpTip: AnyComponent;
+  Button: AnyComponent; Input: AnyComponent; Badge: AnyComponent; Toggle: AnyComponent; Field: AnyComponent; HelpTip: AnyComponent;
   ModuleHeader: AnyComponent; Segmented: AnyComponent; EntityList: AnyComponent; EntityRow: AnyComponent;
   LoadingState: AnyComponent; ErrorState: AnyComponent; EmptyState: AnyComponent;
   MotionLayoutItem: AnyComponent; MotionPresence: AnyComponent;
@@ -86,6 +118,9 @@ interface AgentsComponents {
   ModelIcon: AnyComponent; OutcomeBadge: AnyComponent; ProjectPill: AnyComponent; IconButton: AnyComponent;
   ActionMenu: AnyComponent; ContextMenu: AnyComponent; ChangeStrip: AnyComponent; TaskUsageBadge: AnyComponent;
   ConfirmDialog: AnyComponent; TerminalModal: AnyComponent; LiveTail: AnyComponent;
+  SettingsGroup: AnyComponent; SettingsRow: AnyComponent; BackendPicker: AnyComponent;
+  ProviderPicker: AnyComponent; ModelCatalogField: AnyComponent; ChoiceField: AnyComponent;
+  AutoSaveStatus: AnyComponent; ProviderLogo: AnyComponent;
 }
 
 interface AgentsRuntime {
