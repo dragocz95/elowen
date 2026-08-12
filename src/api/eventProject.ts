@@ -57,5 +57,9 @@ function coreEventProjectId(e: Exclude<ElowenEvent, { type: 'plugin' }>, d: Even
       // Memories are scoped by owner, not by project. The SSE gate handles this event by user id before
       // reaching here; null keeps it out of the project-scoped activity log.
       return null;
+    case 'plugins':
+      // Instance-wide and payload-free: it belongs to no project, and the SSE gate admits it for everyone
+      // explicitly. Null keeps it out of the project-scoped activity log.
+      return null;
   }
 }

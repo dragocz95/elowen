@@ -52,6 +52,10 @@ export interface BrainDeps {
    *  Shared with the brain workers and platform adapters so ALL consumers reload together. Absent →
    *  brain runs exactly as before plugins existed. */
   plugins?: PluginRegistryProvider;
+  /** Called once a plugin reload has actually SWAPPED the registry. A toggle is persisted the moment its
+   *  route answers, but the swap can land later — when running work settles — so surfaces that render the
+   *  offered set (nav worlds, pages, slash commands) need telling then, not at the write. */
+  onPluginsReloaded?: () => void;
   /** Bounded ring the mutating-hook runner writes one record per hook to (owner chat, per turn). Absent
    *  → hook executions aren't audited. Shared with the admin per-plugin hook-audit route. */
   hookAudit?: HookAuditBuffer;

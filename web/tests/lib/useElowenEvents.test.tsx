@@ -65,6 +65,21 @@ describe('useElowenEvents', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ['memory-vitality'] });
   });
 
+  // A plugin toggle is persisted the moment its route answers, but the registry swap can land much later
+  // (it waits for running work to settle). Without this the nav, the installed list and the slash-command
+  // menu kept showing the previous set until the user reloaded the page by hand.
+  it('refreshes the plugin surfaces when the daemon swaps its registry', () => {
+    const { spy, wrapper } = wrap();
+    renderHook(() => useElowenEvents(), { wrapper });
+
+    FakeES.last.emit({ type: 'plugins' });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['plugin-ui'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['plugins'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['marketplace'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['brain-commands'] });
+  });
+
   it('does not reopen the SSE connection when only the onReview identity changes', () => {
     const { wrapper } = wrap();
     const first = vi.fn();

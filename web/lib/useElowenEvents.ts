@@ -105,6 +105,16 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
       qc.invalidateQueries({ queryKey: ['memory-vitality'] });
     });
 
+    // The daemon swapped its plugin registry, so what the instance offers changed — nav worlds, plugin
+    // pages, the installed list and the slash-command menu. The swap can land well after the toggle was
+    // saved (it waits for running work), which is why this is an event and not the write's response.
+    const pluginsHandler = makeHandler(() => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.pluginUi });
+      qc.invalidateQueries({ queryKey: ['plugins'] });
+      qc.invalidateQueries({ queryKey: ['marketplace'] });
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
+    });
+
     // Same-origin SSE through the /api proxy; the httpOnly session cookie rides along via credentials.
     // Reconnects itself with capped exponential backoff so a daemon restart / proxy timeout recovers on
     // its own — load-bearing now that cache freshness relies on SSE invalidation, not a polling fallback.
@@ -135,6 +145,7 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
       es.addEventListener('ask', askHandler);
       es.addEventListener('change', changeHandler);
       es.addEventListener('memory', memoryHandler);
+      es.addEventListener('plugins', pluginsHandler);
     }
 
     const reconnect = createReconnectController(connect);

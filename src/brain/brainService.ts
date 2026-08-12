@@ -56,9 +56,10 @@ export type { BrainDeps } from './brainDeps.js';
 
 /** How long a reload attempt waits for running work to drain before giving up on THIS attempt. Waiting
  *  closes admission (that is what lets the work drain at all), so the budget is the length of a request
- *  the whole instance would spend refusing new turns — it is deliberately short. Giving up does not lose
- *  the change: the caller re-arms the deferred flag and the next settled turn applies it. */
-const PLUGIN_RELOAD_DRAIN_MS = 20_000;
+ *  the whole instance would spend refusing new turns — it is deliberately short. An idle instance is
+ *  quiescent on the first poll and swaps immediately; on a busy one no amount of waiting helps, because
+ *  the deferred flag re-arms and the next settled turn applies the change and announces it. */
+const PLUGIN_RELOAD_DRAIN_MS = 2_000;
 const PLUGIN_RELOAD_POLL_MS = 100;
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
@@ -1282,6 +1283,10 @@ export class BrainService {
         const after = await this.d.plugins?.get();
         if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
       });
+      // The offered set changed only NOW. Announced after the swap so a browser that was told "saved,
+      // applies when the work finishes" learns the moment it did, rather than showing the old worlds
+      // until someone reloads the page.
+      this.d.onPluginsReloaded?.();
       return true;
     } finally {
       this.pluginReloadWaiters -= 1;

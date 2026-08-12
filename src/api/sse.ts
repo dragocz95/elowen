@@ -26,7 +26,12 @@ export type ElowenEvent =
   // A plugin-originated event (plugin platform). `projectId` IS the tenancy: subscribers scoped to
   // projects receive it only when it names one of theirs, and null reaches admins alone (fail closed —
   // see eventProject.ts). `plugin` is stamped by the host from the publishing plugin's own name.
-  | { type: 'plugin'; plugin: string; kind: string; projectId: number | null; data: unknown };
+  | { type: 'plugin'; plugin: string; kind: string; projectId: number | null; data: unknown }
+  // The live plugin registry was just swapped, so what the instance offers — nav worlds, pages, tools,
+  // slash commands — changed. A toggle is only PERSISTED when its route answers; the swap itself can
+  // land later, once running work settles, and without this the browser kept showing the old set until
+  // a manual reload. Carries no payload: every listener refetches the listings it already reads.
+  | { type: 'plugins' };
 
 export class EventBus implements SignalSink {
   private subs = new Set<(e: ElowenEvent) => void>();

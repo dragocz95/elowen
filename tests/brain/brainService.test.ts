@@ -278,6 +278,35 @@ describe('BrainService', () => {
       .resolves.toBeUndefined();
   });
 
+  it('announces a plugin reload only once the registry actually swapped', async () => {
+    // The browser is told "saved, applies when the work finishes" by the toggle route, so the swap itself
+    // is what it waits for: announcing while work is still draining would refresh the nav to the OLD set.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    let activeDelegations = 1;
+    ctx.registerControl('subagent', {
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => activeDelegations,
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const onPluginsReloaded = vi.fn();
+    (d as unknown as { onPluginsReloaded: unknown }).onPluginsReloaded = onPluginsReloaded;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    const reload = svc.reloadPlugins();
+    // Admission closes as soon as the drain starts; that is the observable "reload in flight, not applied".
+    await vi.waitFor(async () => {
+      await expect(svc.send({ userId: 1, text: 'blocked', mode: 'build', session: 'brain-1' })).rejects.toThrow(/shutting down/);
+    });
+    expect(onPluginsReloaded).not.toHaveBeenCalled(); // still draining — nothing has changed yet
+
+    activeDelegations = 0;
+    await expect(reload).resolves.toBe(true);
+    expect(onPluginsReloaded).toHaveBeenCalledOnce();
+  });
+
   it('counts runner-local core, child and plugin work for reload activity IPC', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();

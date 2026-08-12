@@ -553,6 +553,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         projectPath: () => homeProject.path,
         projects,
         chatImagesDir,
+        // The registry swap can happen long after the toggle was saved (it waits for running work), so the
+        // web learns from this event instead of polling or needing a manual page reload.
+        onPluginsReloaded: () => bus.publish({ type: 'plugins' }),
         // An owner turn finished with the device it was sent from off screen → push it to the user's phone.
         // No subscription registered ⇒ sendToUsers is a no-op, so this needs no separate enable flag.
         notifyTurnComplete: opts.notifyTurnComplete,

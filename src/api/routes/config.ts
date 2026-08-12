@@ -456,6 +456,10 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       // owner rather than by project, and an admin does not get another user's. Checked before the project
       // gate, which would withhold it from every tenant (a memory event resolves to no project).
       if (e.type === 'memory') return !subscriber || e.userId === subscriber.id;
+      // A registry swap changes the app shell for EVERY user (nav worlds, pages, slash commands) and the
+      // event carries no payload at all — nothing to scope. Withholding it from tenants under the project
+      // gate would leave exactly the stale sidebar this event exists to prevent.
+      if (e.type === 'plugins') return true;
       if (!allowed) return true;
       const pid = eventProjectId(e, eventDeps);
       return pid !== null && allowed.has(pid);
