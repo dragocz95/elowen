@@ -311,6 +311,31 @@ engine). Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
 registry narrows to function-valued members, so accessor methods are the
 idiomatic shape — the first call can lazily build the runtime.
 
+A control is also how ONE PLUGIN DEPENDS ON ANOTHER. With
+`reads: ["controls"]`, a plugin resolves a sibling's control through
+`ctx.control('<key>')`:
+
+```javascript
+const tasks = ctx.control('tasks');            // never keep this in a variable
+if (!tasks) return c.json({ error: 'the tasks domain is unavailable' }, 503);
+const task = tasks.store().get(id);
+```
+
+Three rules make that dependency safe:
+
+- **Key the control by the DOMAIN, not by the plugin** (`tasks`, not the name
+  of the plugin that happens to own it). Core and the consumer then ask for a
+  capability, and the owner can be replaced or renamed without anyone knowing
+  who implements it.
+- **Resolve at call time, never inside `register()`.** Plugins load
+  name-sorted, so a consumer usually registers before the owner exists;
+  resolution walks the merged registry, which also means a plugin reload swaps
+  the owner underneath you. A control kept in a variable is a dead generation.
+- **Handle `undefined` honestly.** It means "the owner is switched off", which
+  is a legitimate configuration — refuse the operation with a clear error, or
+  report the subsystem as unavailable. Never substitute an empty result: after
+  that, nobody can tell "nothing there" from "nobody answered".
+
 ### Browser UI bundles (manifest `web` block)
 
 A plugin can ship pages, sidebar navigation, and a Settings section for the
@@ -366,9 +391,11 @@ Capabilities are deny-by-default. Declare only what the plugin needs:
 }
 ```
 
-`reads: ["embeddings"]` permits `ctx.embeddings` only when the operator has
-also configured the shared embedding model. `reads: ["providers"]` permits
-provider resolution beyond IDs explicitly present in the plugin's own config.
+`reads: ["controls"]` permits `ctx.control(...)` — depending on a domain another
+plugin owns (see Controls above). `reads: ["embeddings"]` permits
+`ctx.embeddings` only when the operator has also configured the shared embedding
+model. `reads: ["providers"]` permits provider resolution beyond IDs explicitly
+present in the plugin's own config.
 Hook patches are checked against the declaring plugin's `mutates` list; an
 undeclared capability does not become active merely because code calls it.
 
