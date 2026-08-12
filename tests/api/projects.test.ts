@@ -101,6 +101,35 @@ describe('projects api', () => {
     expect(await tmux.list()).not.toContain('elowen-Nova'); // the standalone task's agent was stopped too
     expect((await (await app.request('/projects')).json()).some((p: { id: number }) => p.id === 2)).toBe(false);
   });
+  it('refuses to delete a project whose mission teardown cannot run or fails, keeping its rows', async () => {
+    // The rows are the ONLY handle on a live agent or an on-disk worktree: delete them and a mission
+    // that is still running becomes unreachable. So an unavailable engine (agents plugin off) and a
+    // failing cleanup both stop the delete instead of proceeding quietly.
+    const seedRunningMission = (db: ReturnType<typeof makeApp>['db'], tasks: ReturnType<typeof makeApp>['tasks']) => {
+      db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'doomed','/d')").run();
+      tasks.create({ id: 'ep', project_id: 2, title: 'Epic', type: 'epic' });
+      db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-ep','ep','L3','active')").run();
+    };
+    const stillThere = async (app: ReturnType<typeof makeApp>['app']) =>
+      (await (await app.request('/projects')).json() as { id: number }[]).some((p) => p.id === 2);
+
+    const off = makeApp({ missionGit: { cleanup: vi.fn() } }); // no engine ⇒ agents plugin disabled
+    seedRunningMission(off.db, off.tasks);
+    const refused = await off.app.request('/projects/2', { method: 'DELETE' });
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toEqual({ error: 'agents plugin is disabled' });
+    expect(await stillThere(off.app)).toBe(true);
+
+    const broken = makeApp({
+      engine: { disengage: vi.fn().mockResolvedValue(undefined) },
+      missionGit: { cleanup: vi.fn().mockRejectedValue(new Error('worktree busy')) },
+    });
+    seedRunningMission(broken.db, broken.tasks);
+    const failed = await broken.app.request('/projects/2', { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'mission teardown failed' });
+    expect(await stillThere(broken.app)).toBe(true);
+  });
   it('PATCH /projects/:id round-trips the tri-state pr_enabled override', async () => {
     const { app } = makeApp();
     const on = await app.request('/projects/1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pr_enabled: true }) });

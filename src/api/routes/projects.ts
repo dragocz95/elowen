@@ -7,7 +7,7 @@ import type { ElowenApp, RouteContext } from '../context.js';
 /** Project registration, tenancy and project metadata. The optional editor plugin owns project-file
  * routes; the core keeps icon validation because the project record persists that metadata. */
 export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d, canAccessProject, notAdmin } = ctx;
+  const { d, canAccessProject, notAdmin, log } = ctx;
   app.get('/projects', (c) => {
     const all = d.projects ? d.projects.list() : [];
     if (!d.userProjects || !d.users) return c.json(all);
@@ -73,8 +73,20 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (t.type === 'epic') {
         const missionId = `m-${t.id}`;
         const mission = d.missions.get(missionId);
-        if (mission && mission.state !== 'disengaged') await d.engine?.disengage(missionId).catch(() => { /* best-effort */ });
-        await d.missionGit?.cleanup(missionId).catch(() => { /* best-effort */ });
+        // Teardown must SUCCEED before the rows go, exactly as at DELETE /tasks/:id. Swallowing a
+        // failure here — or proceeding with the agents plugin disabled, where nothing can stop a
+        // mission's agents at all — deletes the only records by which a live agent or an on-disk
+        // worktree could still be found.
+        try {
+          if (mission && mission.state !== 'disengaged') {
+            if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
+            await d.engine.disengage(missionId);
+          }
+          await d.missionGit?.cleanup(missionId);
+        } catch (e) {
+          log.error(`project ${id} not deleted — mission ${missionId} teardown failed`, e);
+          return c.json({ error: 'mission teardown failed' }, 500);
+        }
         continue;
       }
       if (t.status !== 'in_progress') continue;
