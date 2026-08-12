@@ -1,4 +1,9 @@
 @import "tailwindcss";
+/* Plugin bundles style themselves with this app's utilities, but Tailwind only scans sources inside the
+ * project root — so a utility used solely by a plugin was never generated and its page rendered without
+ * it. The blob is a generated mirror of every plugins/*'/web-src source (see
+ * scripts/collect-plugin-classes.mjs); scanning it is what makes those utilities exist. */
+@source "./styles/plugin-classes.txt";
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/components.css";
