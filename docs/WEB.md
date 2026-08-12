@@ -37,10 +37,15 @@ is intentionally chromeless while retaining the providers and auth gate.
 | `/account` | `AccountView` | Per-user profile and preferences |
 | `/onboarding` | first-run wizard | Setup and readiness flow |
 
+`/tasks`, `/kanban`, `/timeline`, `/stats`, `/sessions`, `/escalations` and
+`/editor` are kept as redirects (query string included): their views ship in a
+plugin bundle and are served under `/p/<plugin>/…`. The routes stay because the
+URLs are bookmarked and linked.
+
 Feature metadata lives in `web/modules/<feature>/meta.ts` and is registered in
-`web/modules/registry.ts`. `ModuleHeader` publishes a route's title/count to
-the shell state and browser title; it does not impose an additional fixed page
-header.
+`web/modules/registry.ts`; a plugin's pages come from its manifest instead.
+`ModuleHeader` publishes a route's title/count to the shell state and browser
+title; it does not impose an additional fixed page header.
 
 ## Shared layout patterns
 
