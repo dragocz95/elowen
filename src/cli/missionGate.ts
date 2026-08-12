@@ -13,7 +13,10 @@ export function hasLiveMission(env: NodeJS.ProcessEnv): boolean {
   // here would leave a wrongly-owned DB behind for the daemon. No DB means nothing has ever run: no mission.
   const path = dbPath(env);
   if (!existsSync(path)) return false;
-  const db = openDb(path);
+  // openDb applies the core schema + additive migrations; on a corrupted DB that itself can throw.
+  // An unopenable DB leaves the live set UNKNOWN → fail closed (see below).
+  let db: ReturnType<typeof openDb>;
+  try { db = openDb(path); } catch { return true; }
   try {
     // Inline query (the MissionStore class lives in the agents plugin now; this is a separate CLI
     // process with no plugin registry). Same live-set semantics as the plugin store's live(): active
@@ -22,7 +25,13 @@ export function hasLiveMission(env: NodeJS.ProcessEnv): boolean {
     try {
       const row = db.prepare("SELECT COUNT(*) AS n FROM missions WHERE state IN ('active','stalled')").get() as { n: number };
       return row.n > 0;
-    } catch { return false; }
+    } catch (error) {
+      // ONLY a missing table proves "no mission has ever run". Any other failure (corrupt schema,
+      // failed read) leaves the live set UNKNOWN — and this gate exists to stop a restart from killing
+      // a running mission, so unknown fails CLOSED: report a live mission and let the update wait.
+      if (error instanceof Error && /no such table/i.test(error.message)) return false;
+      return true;
+    }
   } finally {
     db.close();
   }
