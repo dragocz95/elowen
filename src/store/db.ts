@@ -19,14 +19,15 @@ function addColumn(db: Db, table: string, column: string, decl: string): void {
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 
-/** Run a statement that touches an AGENTS-PLUGIN-owned table (missions/mission_pr/agents/notes) from
- *  core cleanup code, tolerating the table's absence. A fresh install with the agents plugin disabled
- *  never creates those tables (their DDL lives in the plugin's migrations), yet core's destructive
- *  paths — epic/project/user delete, admin cleanup — must still run there AND must still purge plugin
- *  rows when the tables DO exist (cleanup routed through the plugin control would silently skip while
- *  it is off, stranding orphans that resurface on re-enable). Only "no such table/column" is treated
- *  as the fresh-install shape; any other failure propagates. */
-export function tolerateMissingAgentsTables<T>(fn: () => T, fallback: T): T {
+/** Run a statement that touches a PLUGIN-OWNED table from core cleanup code, tolerating the table's
+ *  absence. A fresh install with the owning plugin disabled never creates it (its DDL lives in that
+ *  plugin's migrations), yet core's destructive paths — epic/project/user delete, admin cleanup — must
+ *  still run there AND must still purge the plugin's rows when the tables DO exist (cleanup routed
+ *  through the plugin control would silently skip while it is off, stranding orphans that resurface on
+ *  re-enable). Only "no such table/column" is treated as the not-installed shape; any other failure
+ *  propagates. Today's callers cover the agents tables (missions/mission_pr/agents/notes); the task
+ *  tables join them as their domain moves out of core. */
+export function tolerateMissingPluginTables<T>(fn: () => T, fallback: T): T {
   try { return fn(); } catch (e) {
     if (e instanceof Error && /no such (table|column)/i.test(e.message)) return fallback;
     throw e;
@@ -357,7 +358,7 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
     // Column tolerance: missions.created_by is added by the AGENTS PLUGIN's migration v2 now, so an
     // ancient DB upgrading with the plugin disabled may hold the table without the column — which
     // also means no row ever referenced a user through it.
-    const m = tolerateMissingAgentsTables(
+    const m = tolerateMissingPluginTables(
       () => (db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number }).m, 0);
     if (m > highest) highest = m;
   }

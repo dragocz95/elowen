@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { tolerateMissingAgentsTables } from './db.js';
+import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import type { User } from '../shared/wireContract.js';
 
@@ -140,7 +140,7 @@ export class UserStore {
       this.db.prepare('UPDATE tasks SET created_by = NULL WHERE created_by = ?').run(id);
       // `missions` is an AGENTS-PLUGIN table (created_by arrives with its migration v2) — null the
       // attribution when present, tolerate a fresh/ancient install without the table or column.
-      tolerateMissingAgentsTables(() => { this.db.prepare('UPDATE missions SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);
+      tolerateMissingPluginTables(() => { this.db.prepare('UPDATE missions SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_terminals WHERE user_id = ?').run(id); // no orphan terminal bindings (their tokens went with auth_tokens above)
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments

@@ -1,4 +1,4 @@
-import { tolerateMissingAgentsTables } from './db.js';
+import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import type { TaskStoreContract } from './taskStoreContract.js';
 import type { Task, CreateTaskInput, TaskStatus } from './types.js';
@@ -132,14 +132,14 @@ export class TaskStore implements TaskStoreContract {
       // missions/mission_pr/notes are AGENTS-PLUGIN tables: a fresh install with the plugin disabled
       // never created them — tolerate that shape, but always wipe them when present (cleanup must not
       // depend on the plugin being on, or orphan rows resurface on re-enable).
-      const missions = tolerateMissingAgentsTables(
+      const missions = tolerateMissingPluginTables(
         () => (this.db.prepare('SELECT COUNT(*) c FROM missions').get() as { c: number }).c, 0);
       this.db.prepare('DELETE FROM task_deps').run();
-      tolerateMissingAgentsTables(() => {
+      tolerateMissingPluginTables(() => {
         this.db.prepare('DELETE FROM mission_pr').run();
         this.db.prepare('DELETE FROM missions').run();
       }, undefined);
-      tolerateMissingAgentsTables(() => { this.db.prepare('DELETE FROM notes').run(); }, undefined);
+      tolerateMissingPluginTables(() => { this.db.prepare('DELETE FROM notes').run(); }, undefined);
       const r = this.db.prepare('DELETE FROM tasks').run();
       return { tasks: r.changes, missions };
     })();
@@ -150,7 +150,7 @@ export class TaskStore implements TaskStoreContract {
    *  none) before deleteAll() wipes the row, so a paused or naturally-completed mission — which the
    *  live-only disengage sweep never reaches — doesn't leak its worktree. */
   listMissionIds(): string[] {
-    return tolerateMissingAgentsTables(
+    return tolerateMissingPluginTables(
       () => (this.db.prepare('SELECT id FROM missions').all() as { id: string }[]).map((r) => r.id), []);
   }
 

@@ -1,4 +1,4 @@
-import { tolerateMissingAgentsTables } from './db.js';
+import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 
 /** Delete tasks and everything scoped to them — the missions they drove and their dependency edges
@@ -29,13 +29,13 @@ export function deleteTasksAndDeps(db: Db, scope: 'project' | 'epic', id: string
   // missions/mission_pr/notes are AGENTS-PLUGIN tables: purge them when they exist (even with the
   // plugin off — skipping would strand orphans that resurface on re-enable), tolerate a fresh install
   // where the plugin never created them.
-  tolerateMissingAgentsTables(() => {
+  tolerateMissingPluginTables(() => {
     db.prepare(`DELETE FROM mission_pr WHERE mission_id IN (SELECT id FROM missions WHERE epic_id IN (${ph}))`).run(...ids);
     db.prepare(`DELETE FROM missions WHERE epic_id IN (${ph})`).run(...ids);
   }, undefined);
   // Handoff notes are keyed by epic id (across ALL scopes, not just 'mission') — purge them with the
   // task rows or an orphaned note lingers with no project gate left to guard it.
-  tolerateMissingAgentsTables(() => { db.prepare(`DELETE FROM notes WHERE target IN (${ph})`).run(...ids); }, undefined);
+  tolerateMissingPluginTables(() => { db.prepare(`DELETE FROM notes WHERE target IN (${ph})`).run(...ids); }, undefined);
   db.prepare(`DELETE FROM task_deps WHERE task_id IN (${ph}) OR depends_on_id IN (${ph})`).run(...ids, ...ids);
   return db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...ids).changes;
 }

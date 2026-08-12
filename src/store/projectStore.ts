@@ -1,4 +1,4 @@
-import { tolerateMissingAgentsTables } from './db.js';
+import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import { deleteTasksAndDeps } from './cascade.js';
 
@@ -53,7 +53,7 @@ export class ProjectStore {
       deleteTasksAndDeps(this.db, 'project', id);
       // `agents` is an AGENTS-PLUGIN table — purge when present (even with the plugin off), tolerate
       // a fresh install where the plugin never created it.
-      tolerateMissingAgentsTables(() => { this.db.prepare('DELETE FROM agents WHERE project_id = ?').run(id); }, undefined);
+      tolerateMissingPluginTables(() => { this.db.prepare('DELETE FROM agents WHERE project_id = ?').run(id); }, undefined);
       this.db.prepare('DELETE FROM user_projects WHERE project_id = ?').run(id);
       // Project-scoped categories must disappear with the project. Their memories become uncategorized,
       // which keeps them fail-closed until a person explicitly files them again.
