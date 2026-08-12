@@ -165,7 +165,7 @@ general-purpose public API.
 | `POST` | `/brain/command`, `/brain/answer`, `/brain/goal`, `/brain/goal/action`, `/brain/subgoal`, `/brain/subagent/send` | Commands, answers, goals, and subagents |
 | `GET`, `DELETE` | `/brain/queue`, `/brain/queue/:id` | Pending message queue |
 | `GET`, `POST`, `DELETE` | `/brain/processes`, `/brain/processes/:id/output`, `/brain/processes/:id` | Background process inspection and termination |
-| `GET`, `POST` | `/brain/lsp`, `/brain/lsp/install`, `/brain/lsp/uninstall` | Language-server controls |
+| `GET`, `POST` | `/brain/lsp`, `/brain/lsp/install`, `/brain/lsp/uninstall` | Language-server controls (served by the `lsp` plugin; 503 while it is disabled) |
 | `POST` | `/brain/providers/probe`, `/brain/test` | Provider discovery and test call |
 | `GET` | `/brain/images/:file`, `/brain/stream` | Stored image and SSE chat stream |
 

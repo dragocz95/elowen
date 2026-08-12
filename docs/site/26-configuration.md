@@ -110,7 +110,7 @@ The **skills editor** follows the same pattern for skills: a Markdown body with 
 
 ## LSP diagnostics
 
-Elowen can run language-server diagnostics after file edits, surfacing live type and lint errors in the session. It is on by default. The `/lsp` command in the CLI toggles it, and the choice persists across restarts. See [Slash Commands](slash-commands) for the command syntax.
+Elowen can run language-server diagnostics after file edits, surfacing live type and lint errors in the session. This is the **lsp** plugin, enabled by default; it is what starts the language servers, so turning it off in Settings → Plugins withdraws its tools and stops every running server. Diagnostics themselves are on by default and can be switched off without disabling the plugin — from its settings, or with the CLI's `/lsp` command — and the choice persists across restarts. See [Slash Commands](slash-commands) for the command syntax.
 
 ## Accounts and permissions
 
