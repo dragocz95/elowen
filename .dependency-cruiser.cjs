@@ -27,8 +27,10 @@ module.exports = {
           '(^|/)scripts/',
           '(^|/)src/daemon/index\\.ts$',
           '(^|/)web/(app|instrumentation|proxy)',
-          // A plugin's entry is loaded dynamically by the plugin loader, never imported statically.
+          // A plugin's entry is loaded dynamically by the plugin loader, never imported statically —
+          // both the TypeScript compile units and the JavaScript plugins that ship an index.mjs.
           '(^|/)plugins/[^/]+/src/index\\.ts$',
+          '(^|/)plugins/[^/]+/index\\.mjs$',
         ],
       },
       to: {},
@@ -59,28 +61,15 @@ module.exports = {
       to: { path: '^plugins/' },
     },
     {
-      name: 'lsp-plugin-runtime-not-to-core',
+      name: 'plugin-runtime-not-to-core',
       severity: 'error',
-      comment: 'The lsp plugin may import src/ TYPE-ONLY (PluginContext and friends). A runtime import '
-        + 'would drag the daemon\'s module graph into the built plugin — the same independence the '
-        + 'agents plugin keeps.',
-      from: { path: '^plugins/lsp/' },
-      to: { path: '^src/', dependencyTypesNot: ['type-only'] },
-    },
-    {
-      name: 'editor-plugin-runtime-not-to-core',
-      severity: 'error',
-      comment: 'The editor plugin may import src/ TYPE-ONLY for its host contract; runtime code must remain plugin-owned.',
-      from: { path: '^plugins/editor/' },
-      to: { path: '^src/', dependencyTypesNot: ['type-only'] },
-    },
-    {
-      name: 'agents-plugin-runtime-not-to-core',
-      severity: 'error',
-      comment: 'The agents plugin may import src/ TYPE-ONLY (erased at compile time — PluginContext, '
-        + 'store types, seam shapes). A runtime import would drag the daemon\'s module graph into the '
-        + 'built plugin and break its process independence.',
-      from: { path: '^plugins/agents/' },
+      comment: 'A plugin may import src/ TYPE-ONLY (erased at compile time — PluginContext, store '
+        + 'contracts, seam shapes). A runtime import would drag the daemon\'s module graph into the '
+        + 'built plugin and break its process independence; a plugin reaches the host through the '
+        + 'context it is handed. The rule is written for ALL of plugins/ rather than once per plugin '
+        + 'name, so a plugin added tomorrow is guarded the day it lands instead of the day someone '
+        + 'remembers to name it here.',
+      from: { path: '^plugins/' },
       to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
