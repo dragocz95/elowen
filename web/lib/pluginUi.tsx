@@ -16,6 +16,7 @@
 import * as React from 'react';
 import * as ReactDom from 'react-dom';
 import * as JsxRuntime from 'react/jsx-runtime';
+import { useQueries } from '@tanstack/react-query';
 import type { ComponentType, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 // The contract (runtime surface, registration shape, Window globals) lives in @elowen/plugin-ui-kit —
@@ -23,7 +24,7 @@ import type { LucideIcon } from 'lucide-react';
 // import would need Turbopack to resolve the symlinked package outside its root, while `import type`
 // is erased before bundling. Re-exported below for the app's own consumers.
 import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from '@elowen/plugin-ui-kit';
-import { BASE, apiErrorMessage } from './elowenClient';
+import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
@@ -59,6 +60,20 @@ import { ProviderPicker } from '../components/ui/ProviderPicker';
 import { ModelCatalogField } from '../components/ui/ModelCatalogField';
 import { ChoiceField } from '../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
+import { Checkbox } from '../components/ui/Checkbox';
+import { DataTable, DataTableCell, DataTableRow } from '../components/ui/DataTable';
+import { DateRangeFilter } from '../components/ui/DateRangeFilter';
+import { ExecutorPicker } from '../components/ui/ExecutorPicker';
+import { AgentIdentityStrip } from '../components/ui/AgentIdentityStrip';
+import { AgentStatusDot } from '../components/ui/AgentStatusDot';
+import { ProgressRibbon } from '../components/ui/ProgressRibbon';
+import { PatchView } from '../components/ui/PatchView';
+import { ProjectIcon } from '../components/ui/ProjectIcon';
+import { TaskContextLine } from '../components/ui/TaskContextLine';
+import { Spinner } from '../components/ui/states';
+import { MotionLayout } from '../components/ui/Motion';
+import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
+import { TONE_TEXT } from '../components/ui/tone';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
@@ -80,6 +95,9 @@ import {
   useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
+  useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
+  useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
+  useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
@@ -87,10 +105,28 @@ import {
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
   useSavePluginSubagent, useDeletePluginSubagent,
   useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
+  useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
+  useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
+  useOpenMissionPr, useMergeMissionPr, useResetUsage,
 } from './mutations';
-import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
+import {
+  needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
+  taskBlockers, taskSessionName, taskAgentName, taskElapsed, taskElapsedMs, taskStartedMs, phaseDetails,
+} from './agentUtils';
+import { epicChildren, epicEffectiveStatus, epicLive, epicProgress, phaseIds } from './taskTree';
+import {
+  DEFAULT_RANGE, inRange, isStoredRange, parseRange, serializeRange, rangeBounds, rangeWindowCapHours,
+} from './dateRange';
 import { execModel } from './modelProvider';
-import { formatTaskTime } from './format';
+import { formatTaskTime, formatCost, formatDuration } from './format';
+import { fileIcon } from './fileIcon';
+import { dirName } from './filePath';
+import { openTerminalWindow } from './openTerminalWindow';
+import { useSessionStall } from './useSessionStall';
+import { useTaskControls } from './useTaskControls';
+import { buildUsageSummary } from './usageBars';
+import { eventIcon } from './eventMeta';
+import { statusTone } from '../modules/dashboard/statusTone';
 import { taskTypeMeta } from './taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
@@ -225,6 +261,12 @@ export function ensurePluginUiRuntime(): void {
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
       ManageSelectionModal, SelectionSummary, BrainModelField, MarkdownAssetEditor,
+      // The work-extraction surface (F4): the task/kanban/timeline/stats views compose these. They are
+      // app chrome shared with the surfaces that stay (the dashboard renders task shapes too), which is
+      // why they live here rather than inside the plugin bundle.
+      Checkbox, DataTable, DataTableRow, DataTableCell, DateRangeFilter, ExecutorPicker,
+      AgentIdentityStrip, AgentStatusDot, ProgressRibbon, PatchView, ProjectIcon, TaskContextLine,
+      Spinner, MotionLayout, WorkspaceDetailRail,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
@@ -249,6 +291,19 @@ export function ensurePluginUiRuntime(): void {
       // Layout/selection behaviour shared with the built-in workspaces: the same persisted project
       // filter Tasks and Kanban use, and the same window-measured fill height.
       useMobile, useProjectFilter, useFillHeight,
+      // The work plugin owns the task domain (tables, routes, tools, pages) but not a second copy of
+      // the browser's data plane: these hooks keep ONE react-query cache and ONE SSE invalidation path,
+      // shared with the core surfaces that still read tasks (dashboard tiles, the notification bell).
+      useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
+      useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
+      useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin,
+      useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
+      useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
+      useOpenMissionPr, useMergeMissionPr, useResetUsage,
+      useSessionStall, useTaskControls,
+      // Batched queries against the host's react-query client: a bundle that imported the library
+      // itself would get a second QueryClient context and read an empty cache.
+      useQueries,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {
@@ -259,6 +314,13 @@ export function ensurePluginUiRuntime(): void {
       // The Monaco theme is shared, not copied: the host embeds editors of its own (logs, personality,
       // plugin config) and a plugin bundle carrying its own colour table would drift from the UI.
       defineEditorThemes,
+      // Task/mission/date/formatting helpers the moved work views compose. `elowenClient` is the app's
+      // one HTTP client — a bundle narrows it to the calls it makes rather than shipping a second one.
+      taskBlockers, taskSessionName, taskAgentName, taskElapsed, taskElapsedMs, taskStartedMs, phaseDetails,
+      epicChildren, epicEffectiveStatus, epicLive, epicProgress, phaseIds,
+      DEFAULT_RANGE, inRange, isStoredRange, parseRange, serializeRange, rangeBounds, rangeWindowCapHours,
+      formatCost, formatDuration, fileIcon, dirName, openTerminalWindow, statusTone, TONE_TEXT,
+      buildUsageSummary, eventIcon, elowenClient, ElowenApiError,
     },
     api,
     navigate: (href) => navigateImpl(href),
