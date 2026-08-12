@@ -1,7 +1,7 @@
 'use client';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, Github, FileText, Layers3 } from 'lucide-react';
-import { useProjects, useProjectGit } from '../../lib/queries';
+import { useProjects, useProjectGit, useEditorPlugin } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
@@ -16,7 +16,6 @@ import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { EmptyState, ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../../components/ui/ContextMenu';
-import { ProjectEditor } from './editor/ProjectEditor';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { ProjectIconPicker } from './ProjectIconPicker';
 import { DirectoryPicker } from './DirectoryPicker';
@@ -33,10 +32,8 @@ const PROJECT_FILTERS: readonly ProjectFilter[] = ['all', 'inherit', 'override']
 
 export function ProjectsView() {
   const projects = useProjects();
+  const editorEnabled = useEditorPlugin();
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingCommit, setEditingCommit] = useState<string | null>(null);
-  const [editingWorking, setEditingWorking] = useState(false);
   const [creating, setCreating] = useState(false);
   // Search is transient (an immediate intent); the bucket filter is a view setting and survives a reload.
   const [query, setQuery] = useState('');
@@ -44,15 +41,14 @@ export function ProjectsView() {
   const deferredQuery = useDeferredValue(query);
 
   const openProjectEditor = (projectId: number | null, commit: string | null, working = false) => {
-    if (projectId == null) return;
-    setEditingId(projectId);
-    setEditingCommit(commit);
-    setEditingWorking(working);
-    setSelectedId(null);
+    if (projectId == null || !editorEnabled) return;
+    const params = new URLSearchParams({ project: String(projectId) });
+    if (commit) params.set('commit', commit);
+    if (working) params.set('working', '1');
+    window.location.assign(`/p/editor?${params}`);
   };
   const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
   const openWorking = () => openProjectEditor(selectedId, null, true);
-  const closeEditor = () => { setEditingId(null); setEditingCommit(null); setEditingWorking(false); };
   const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
@@ -101,7 +97,7 @@ export function ProjectsView() {
   // second copy of the list is exactly how the two menus drifted apart before.
   const projectActionGroups = (p: Project): ActionMenuItem[][] => [
     [
-      { label: t.projects.ctxOpenEditor, icon: Code2, onSelect: () => openProjectEditor(p.id, null) },
+      ...(editorEnabled ? [{ label: t.projects.ctxOpenEditor, icon: Code2, onSelect: () => openProjectEditor(p.id, null) }] : []),
       { label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } },
     ],
     [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
@@ -121,9 +117,8 @@ export function ProjectsView() {
           setPath('');
           setNotes('');
           toast(t.projects.created);
-          // Offer the icon picker right away (it browses the new project's own images, so it needs the
-          // project to exist first) — same flow as editing a project.
-          setIconFor(created);
+          // The picker reads through the optional editor's project-file routes.
+          if (editorEnabled) setIconFor(created);
         },
         onError: (e) => toast(String(e), 'error'),
       }
@@ -298,7 +293,7 @@ export function ProjectsView() {
                     {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-text-muted">{selectedProject.notes}</p> : null}
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
-                      <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button>
+                      {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button>
                     </div>
 
@@ -311,7 +306,8 @@ export function ProjectsView() {
                           <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
                           {git.data.status.clean
                             ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
-                            : <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>}
+                            : editorEnabled ? <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"><Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge></button>
+                            : <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>}
                           {git.data.status.ahead > 0 ? <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{git.data.status.ahead}</Badge> : null}
                           {git.data.status.behind > 0 ? <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{git.data.status.behind}</Badge> : null}
                         </div>
@@ -331,10 +327,13 @@ export function ProjectsView() {
                         <EntityList>
                           {git.data.commits.map((commit) => (
                             <EntityRow key={commit.hash} interactive={false} className="py-0">
-                              <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
+                              {editorEnabled ? <button type="button" onClick={() => openEditor(commit.hash)} title={t.projects.viewCommit} className="flex w-full min-w-0 flex-col gap-1 px-1 py-3 text-left transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
                                 <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
                                 <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
-                              </button>
+                              </button> : <div className="flex min-w-0 flex-col gap-1 px-1 py-3">
+                                <span className="flex min-w-0 items-center gap-2"><span className="font-mono text-[11px] text-accent">{commit.hash}</span><span className="min-w-0 flex-1 truncate text-xs text-text">{commit.subject}</span></span>
+                                <span className="text-[10px] text-text-muted">{commit.author} · {commit.relative}</span>
+                              </div>}
                             </EntityRow>
                           ))}
                         </EntityList>
@@ -347,18 +346,6 @@ export function ProjectsView() {
             )}
         </ControlSurfaceDocument>
       </SpatialWorkspaceLayout>
-
-      {editingId ? (
-        <Modal title={t.projects.editorTitle} size="lg" icon={Code2} onClose={closeEditor}>
-          <ProjectEditor
-            key={editingWorking ? 'working' : (editingCommit ?? 'files')}
-            projectId={editingId}
-            initialCommit={editingCommit}
-            initialWorking={editingWorking}
-            fill
-          />
-        </Modal>
-      ) : null}
 
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>
@@ -398,7 +385,7 @@ export function ProjectsView() {
                     <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated">
                       <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-text-muted" />
                     </span>
-                    <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button>
+                    {editorEnabled ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
                     {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted" title={live.icon}>{live.icon}</span> : null}
                   </div>
                 );
@@ -439,7 +426,7 @@ export function ProjectsView() {
         />
       )}
 
-      {iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
+      {editorEnabled && iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
 
       {removing && (
         <Modal title={t.projects.removeConfirmTitle} onClose={() => setRemoving(null)} size="sm" icon={AlertTriangle}>

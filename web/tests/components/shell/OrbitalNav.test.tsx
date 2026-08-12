@@ -12,7 +12,10 @@ function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollap
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
   // The Sessions destination is plugin-supplied now — seed the /plugins/ui listing the shell nav maps
   // into worlds (key carries the locale; tests run with the default 'en').
-  client.setQueryData(['plugin-ui', 'en'], [{ name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }, { label: 'Escalations', icon: 'ShieldAlert', route: 'escalations' }] }]);
+  client.setQueryData(['plugin-ui', 'en'], [
+    { name: 'agents', nav: [{ label: 'Sessions', icon: 'SquareTerminal', route: 'sessions' }, { label: 'Escalations', icon: 'ShieldAlert', route: 'escalations' }] },
+    { name: 'editor', nav: [{ label: 'Editor', icon: 'Code2', route: '' }] },
+  ]);
   return render(<Wrapper><OrbitalNav compact={compact} {...props} /></Wrapper>);
 }
 
@@ -104,7 +107,7 @@ describe('OrbitalNav', () => {
     expect(screen.getByRole('link', { name: 'Sessions' })).toHaveAttribute('href', '/p/agents/sessions');
     expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/timeline');
     expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects');
-    expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/editor');
+    expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/p/editor');
     expect(screen.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
     expect(screen.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');

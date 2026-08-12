@@ -11,35 +11,6 @@ export function WorkspacePage({ children, className = '' }: { children: ReactNod
   return <div className={`workspace-page ${className}`}>{children}</div>;
 }
 
-export function CompactWorkspaceHeader({ eyebrow, title, count, description, status, action, icon: Icon }: {
-  eyebrow?: string;
-  title: string;
-  count?: number;
-  description?: string;
-  status?: ReactNode;
-  action?: ReactNode;
-  icon?: LucideIcon;
-}) {
-  return (
-    <header className="workspace-header">
-      <div className="flex min-w-0 items-start gap-4">
-        {Icon ? <span className="workspace-header__icon"><Icon size={20} strokeWidth={1.5} aria-hidden /></span> : null}
-        <div className="min-w-0">
-          {eyebrow ? <div className="workspace-header__eyebrow">{eyebrow}</div> : null}
-          <div className="flex min-w-0 items-baseline gap-3">
-            <h1>{title}</h1>
-            {count !== undefined ? <span className="workspace-header__count">{count}</span> : null}
-          </div>
-          {description ? <p>{description}</p> : null}
-        </div>
-      </div>
-      <div className="workspace-header__actions">
-        {status}
-        {action}
-      </div>
-    </header>
-  );
-}
 
 export interface SpatialWorkspaceHeroProps {
   eyebrow?: string;

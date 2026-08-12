@@ -9,7 +9,7 @@ import { baseName, dirName } from '../../lib/filePath';
 import { Badge } from '../../components/ui/Badge';
 import { ProjectPill } from '../../components/ui/ProjectPill';
 import { Modal } from '../../components/ui/Modal';
-import { PatchView } from '../projects/editor/PatchView';
+import { PatchView } from '../../components/ui/PatchView';
 
 export type TimelineCommit = CommitLogEntry & { projectId: number };
 

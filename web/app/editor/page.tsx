@@ -1,12 +1,10 @@
 'use client';
-export const dynamic = 'force-dynamic';
-import { ModuleShell } from '../../components/shell/ModuleShell';
-import { EditorView } from '../../modules/editor/EditorView';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
+/** Historical editor URL. Keep browser navigation inside the authenticated app shell. */
 export default function EditorPage() {
-  return (
-    <ModuleShell moduleId="editor">
-      <EditorView />
-    </ModuleShell>
-  );
+  const router = useRouter();
+  useEffect(() => { router.replace('/p/editor'); }, [router]);
+  return null;
 }

@@ -2,16 +2,17 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import { createWrapper } from '../../test-utils';
-import { ToastProvider } from '../../../components/ui/Toast';
+import { createWrapper } from '../../../../web/tests/test-utils';
+import { ToastProvider } from '../../../../web/components/ui/Toast';
+import { ensurePluginUiRuntime } from '../../../../web/lib/pluginUi';
 
 // Monaco is browser-only — stub it with a textarea and capture the Cmd+S command the editor
 // registers via `onMount`, so a test can save exactly the way a keyboard user does (the toolbar
 // Save button is disabled while a write is pending; Cmd+S is not).
 const monaco = vi.hoisted(() => ({ save: (() => {}) as () => void }));
-vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
+vi.mock('./monacoLoader', () => ({
   MonacoEditor: ({ value, onChange, onMount }: {
     value: string;
     onChange: (v: string | undefined) => void;
@@ -25,7 +26,8 @@ vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
 
 // Only the surrounding views are stubbed: the file content itself goes through the real query, so a
 // save's cache update is what the pane falls back to when it retires its draft.
-vi.mock('../../../lib/queries', async (orig) => ({
+vi.mock('./MarkdownPreview', () => ({ MarkdownPreview: () => null }));
+vi.mock('../../../../web/lib/queries', async (orig) => ({
   ...(await orig() as object),
   useProjectFiles: () => ({ data: [{ path: 'a.ts', type: 'file' }, { path: 'b.ts', type: 'file' }], isLoading: false }),
   useProjectFileAtHead: () => ({ data: { content: '' }, isLoading: false }),
@@ -35,7 +37,11 @@ vi.mock('../../../lib/queries', async (orig) => ({
   useProjectChanges: () => ({ data: undefined, isLoading: false }),
 }));
 
-import { ProjectEditor } from '../../../modules/projects/editor/ProjectEditor';
+let ProjectEditor: ComponentType<{ projectId: number }>;
+beforeAll(async () => {
+  ensurePluginUiRuntime();
+  ({ ProjectEditor } = await import('./ProjectEditor'));
+});
 
 // Server-side file state. Writes are held open (one gate per path) so a test can type — or start a
 // second save — while the first one is still in flight.

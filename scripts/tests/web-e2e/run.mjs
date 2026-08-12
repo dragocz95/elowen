@@ -202,7 +202,7 @@ async function main() {
     const PAGES = [
       '/', '/dash', '/settings', '/users', '/stats', '/kanban', '/tasks',
       '/chat', '/sessions', '/projects', '/memory', '/timeline', '/escalations', '/account',
-      '/editor', '/terminal/e2e', // dynamic route [name] — arbitrary segment must still render
+      '/p/editor', '/terminal/e2e', // plugin UI host + dynamic route [name] — arbitrary segment must still render
       '/p/agents/sessions', // plugin UI host route [plugin] — serves the shell even for a deep page
     ];
     for (const path of PAGES) {

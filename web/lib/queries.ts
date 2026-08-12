@@ -206,8 +206,8 @@ export const useProjectFileAtHead = (id: number | null, path: string | null, ena
 export const useProjectCommitFileDiff = (id: number | null, hash: string | null, path: string | null) =>
   useQuery({ queryKey: ['project-commit-file', id, hash, path], queryFn: () => elowenClient.projectCommitFileDiff(id as number, hash as string, path as string), enabled: !!id && !!hash && !!path });
 
-export const useProjectChanged = (id: number | null) =>
-  useQuery({ queryKey: ['project-changed', id], queryFn: () => elowenClient.projectChanged(id as number), enabled: !!id });
+export const useProjectChanged = (id: number | null, enabled = true) =>
+  useQuery({ queryKey: ['project-changed', id], queryFn: () => elowenClient.projectChanged(id as number), enabled: !!id && enabled });
 
 /** A task's autopilot conversation (its decision + review events), oldest-first. SSE `decision`/`review`
  *  events invalidate ['task-activity']; no poll. */
@@ -237,11 +237,12 @@ export const useProjectChanges = (id: number | null, enabled: boolean) =>
 /** Commit history across several projects, merged into one time-sorted stream tagged with projectId,
  *  for the timeline's "changes over time" view. Each commit older than the window is dropped so the
  *  stream lines up with the axis above it. */
-export const useProjectsCommits = (projectIds: number[], hours: number) =>
+export const useProjectsCommits = (projectIds: number[], hours: number, enabled = true) =>
   useQueries({
     queries: projectIds.map((id) => ({
       queryKey: ['project-commits', id],
       queryFn: () => elowenClient.projectCommits(id, 25),
+      enabled,
       // Commits change on the scale of a push, not seconds — poll lazily to keep the timeline's
       // background git fan-out (one `git log` per project) light.
       refetchInterval: 60000,
@@ -275,6 +276,14 @@ export const useAgentsPlugin = (): boolean => {
   const { locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
   return (pluginUi.data ?? []).some((p) => p.name === 'agents');
+};
+
+/** Whether the optional project editor is available. Core project screens use this gate before linking
+ * to plugin-owned file routes, so a disabled editor cannot leave dead affordances or 503 requests. */
+export const useEditorPlugin = (): boolean => {
+  const { locale } = useTranslation();
+  const pluginUi = usePluginUi(locale);
+  return (pluginUi.data ?? []).some((p) => p.name === 'editor');
 };
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never

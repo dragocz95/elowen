@@ -6,6 +6,7 @@
         "plugins/**/index.mjs",
         "plugins/agents/src/index.ts",
         "plugins/lsp/src/index.ts",
+        "plugins/editor/src/index.ts",
         "plugins/*/web-src/index.tsx"
       ],
       "project": [
@@ -71,6 +72,13 @@
   "ignoreDependencies": [
     "@types/react",
     "@types/react-dom",
-    "lucide-react"
+    "lucide-react",
+    "react",
+    "marked",
+    "dompurify",
+    "@monaco-editor/react",
+    "@testing-library/react",
+    "@tanstack/react-query",
+    "msw"
   ]
 }

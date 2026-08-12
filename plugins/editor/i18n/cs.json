@@ -1,0 +1,13 @@
+{
+  "description": "Projektový editor souborů s Monaco editorem, správou souborů, náhledy obrázků a Markdownu a historií Git. Vypnutím se odstraní editor i jeho rozhraní pro soubory projektů; správa projektů a Git historie úkolů zůstávají dostupné.",
+  "web": {
+    "nav": {
+      "": "Editor"
+    },
+    "strings": {
+      "title": "Editor",
+      "project": "Projekt",
+      "empty": "Žádný dostupný projekt"
+    }
+  }
+}

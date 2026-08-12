@@ -1,5 +1,6 @@
 'use client';
 import { ChevronRight, File as FileIcon, Folder, FolderOpen } from 'lucide-react';
+import type { MouseEvent } from 'react';
 import type { TreeNode } from './helpers';
 
 interface RowProps {
@@ -7,12 +8,12 @@ interface RowProps {
   expanded: Set<string>; onToggle: (p: string) => void;
   selected: string | null; onSelect: (p: string) => void;
   changed: Set<string>;
-  onContextMenu: (e: React.MouseEvent, node: TreeNode) => void;
+  onContextMenu: (e: MouseEvent, node: TreeNode) => void;
 }
 
 function TreeRow({ node, depth, expanded, onToggle, selected, onSelect, changed, onContextMenu }: RowProps) {
   const isOpen = expanded.has(node.path);
-  const ctx = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, node); };
+  const ctx = (e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, node); };
   if (node.type === 'dir') {
     const hasChange = changed.size > 0 && [...changed].some((c) => c.startsWith(node.path + '/'));
     const FolderIcon = isOpen ? FolderOpen : Folder;
@@ -46,7 +47,7 @@ export function FileTree({ tree, expanded, onToggle, selected, onSelect, changed
   expanded: Set<string>; onToggle: (p: string) => void;
   selected: string | null; onSelect: (p: string) => void;
   changed: Set<string>;
-  onContextMenu: (e: React.MouseEvent, node: TreeNode | null) => void;
+  onContextMenu: (e: MouseEvent, node: TreeNode | null) => void;
   emptyLabel: string; treeLabel: string;
 }) {
   return (

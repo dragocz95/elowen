@@ -16,7 +16,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *  field to load, and every optional capability (relay, PR mode) degrades the same way it did in core.
  *  So does lsp, the formerly-core language-server subsystem: no config field, and a language whose
  *  server is not installed degrades to an honest "not installed" exactly as it did in core. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor'];
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {

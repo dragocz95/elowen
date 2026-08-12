@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 
 // Monaco is browser-only and never mounts under jsdom; stub the personality body editor.
-vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
+vi.mock('../../../lib/monaco/monacoLoader', () => ({
   MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <textarea aria-label="personality-body" value={value} onChange={(e) => onChange(e.target.value)} />
   ),

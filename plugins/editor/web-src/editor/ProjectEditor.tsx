@@ -1,22 +1,8 @@
-'use client';
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, type MouseEvent } from 'react';
 import { File as FileIcon, Save, Code2, GitCompare, X, FilePlus, FolderPlus, Pencil, Copy, Trash2, ClipboardCopy, Eye, WrapText, Maximize2, Minimize2, PanelLeft, ChevronLeft } from 'lucide-react';
-import {
-  useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit, useProjectCommitFileDiff,
-  useProjectChanged, useProjectChanges,
-} from '../../../lib/queries';
-import {
-  useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
-} from '../../../lib/mutations';
-import { Button } from '../../../components/ui/Button';
-import { LoadingState, EmptyState } from '../../../components/ui/states';
-import { useToast } from '../../../components/ui/Toast';
-import { useTranslation } from '../../../lib/i18n';
-import { baseName } from '../../../lib/filePath';
-import { copyText } from '../../../lib/clipboard';
-import { buildTree, parentDir, joinPath, copyName, isImage, isMarkdown, type TreeNode } from './helpers';
+import { runtime } from '../runtime';
+import { buildTree, parentDir, joinPath, copyName, isImage, isMarkdown, baseName, type TreeNode } from './helpers';
 import { FileTree } from './FileTree';
-import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../../../components/ui/ContextMenu';
 import { PromptDialog, ConfirmDialog } from './dialogs';
 import { EditorPane } from './EditorPane';
 import { DiffEditorPane } from './DiffEditorPane';
@@ -24,7 +10,13 @@ import { PatchView } from './PatchView';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ImagePreview } from './ImagePreview';
 import { Tabs } from './Tabs';
-import { useMobile } from '../../../lib/useMobile';
+
+const { hooks, components, utils } = runtime();
+const { useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit, useProjectCommitFileDiff, useProjectChanged, useProjectChanges, useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry, useMobile, useToast, useTranslation } = hooks;
+const { Button, LoadingState, EmptyState, ContextMenu } = components;
+const DIVIDER = 'divider';
+type ContextMenuState = { x: number; y: number; items: MenuEntry[] };
+type MenuEntry = { label: string; icon?: unknown; onClick?: () => void; danger?: boolean } | typeof DIVIDER;
 
 type Tab = 'edit' | 'diff' | 'preview';
 type Dialog =
@@ -194,7 +186,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
   };
 
   const err = (e: unknown) => toast(String(e), 'error');
-  const copyPath = (p: string) => { void copyText(p).then((ok) => { if (ok) toast(t.projects.pathCopied); else toast(t.projects.copyFailed, 'error'); }); };
+  const copyPath = (p: string) => { void utils.copyText(p).then((ok) => { if (ok) toast(t.projects.pathCopied); else toast(t.projects.copyFailed, 'error'); }); };
 
   const submitDialog = (val: string) => {
     if (!dialog) return;
@@ -243,7 +235,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
       DIVIDER, ...common,
     ];
   };
-  const onContextMenu = (e: React.MouseEvent, node: TreeNode | null) => setMenu({ x: e.clientX, y: e.clientY, items: buildMenu(node) });
+  const onContextMenu = (e: MouseEvent, node: TreeNode | null) => setMenu({ x: e.clientX, y: e.clientY, items: buildMenu(node) });
 
   const dialogTitle = dialog?.kind === 'newFile' ? t.projects.dlgNewFile
     : dialog?.kind === 'newFolder' ? t.projects.dlgNewFolder

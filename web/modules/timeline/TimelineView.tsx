@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, Clock, Columns3, ArrowUpRight, FileDiff, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { useActivity, useProjectChanged, useProjectChanges, useProjects, useProjectsCommits, useTasks } from '../../lib/queries';
+import { useActivity, useEditorPlugin, useProjectChanged, useProjectChanges, useProjects, useProjectsCommits, useTasks } from '../../lib/queries';
 import { parseTs } from '../../lib/format';
 import { ChangesOverTime } from './ChangesOverTime';
 import { plotAxis, type AxisEvent, type AxisPoint } from './axis';
@@ -12,7 +12,7 @@ import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Badge } from '../../components/ui/Badge';
 import { ProjectPill } from '../../components/ui/ProjectPill';
 import type { Task } from '../../lib/types';
-import { PatchView } from '../projects/editor/PatchView';
+import { PatchView } from '../../components/ui/PatchView';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { TONE_TEXT, type Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
@@ -178,8 +178,9 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
   const tone = markerTone(point.type, point.detail);
   const projectId = display.projectId;
   const taskId = taskIdOf(point);
-  const changed = useProjectChanged(projectId);
-  const changes = useProjectChanges(projectId, true);
+  const editorEnabled = useEditorPlugin();
+  const changed = useProjectChanged(projectId, editorEnabled);
+  const changes = useProjectChanges(projectId, editorEnabled);
   return (
       <div className="@container flex min-h-0 flex-col gap-4 overflow-hidden">
         <div className="flex flex-wrap items-start gap-3">
@@ -201,7 +202,7 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
           ) : null}
         </div>
 
-        {changed.data?.changed?.length ? (
+        {editorEnabled && changed.data?.changed?.length ? (
           <div className="flex flex-wrap gap-1.5">
             {changed.data.changed.slice(0, 12).map((f) => (
               <span key={f} className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-muted">
@@ -211,13 +212,11 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
           </div>
         ) : null}
 
-        {projectId ? (
+        {editorEnabled && projectId ? (
           <div className="min-h-48 flex-1 overflow-hidden border-y border-border">
             {changes.isLoading ? <LoadingState /> : <PatchView diff={changes.data?.diff ?? ''} empty={t.timeline.noChanges} />}
           </div>
-        ) : (
-          <p className="border-y border-border py-4 text-center text-sm text-text-muted">{t.timeline.noChanges}</p>
-        )}
+        ) : null}
       </div>
   );
 }
@@ -322,11 +321,12 @@ export function TimelineView() {
   // Merge project commit history into "changes over time" — scoped to the selected project when
   // a filter is active, or all accessible projects when showing everything.
   const projects = useProjects();
+  const editorEnabled = useEditorPlugin();
   const projectIds = useMemo(() => {
     const all = (projects.data ?? []).map((p) => p.id);
     return selectedProject === 'all' ? all : all.filter((id) => id === selectedProject);
   }, [projects.data, selectedProject]);
-  const commitsQ = useProjectsCommits(projectIds, windowHours);
+  const commitsQ = useProjectsCommits(projectIds, windowHours, editorEnabled);
 
   return (
     <div className="@container">
@@ -377,7 +377,7 @@ export function TimelineView() {
                   ) : <MotionLayoutItem key="axis"><TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} /></MotionLayoutItem>}</MotionPresence>}
               </section>
 
-              {hasData ? (
+              {editorEnabled && hasData ? (
                 <div className="mt-5">
                   <ChangesOverTime commits={commitsQ.commits} windowStart={Date.now() - windowHours * 3_600_000} now={Date.now()} multiProject={projectIds.length > 1} />
                 </div>

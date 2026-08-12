@@ -33,7 +33,7 @@ import { Toggle } from '../components/ui/Toggle';
 import { ModuleHeader } from '../components/ui/ModuleHeader';
 import { Segmented } from '../components/ui/Segmented';
 import { EntityList, EntityRow } from '../components/ui/EntityList';
-import { LoadingState, ErrorState, EmptyState } from '../components/ui/states';
+import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
 import { SpatialWorkspaceLayout, WorkspaceMetric } from '../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
@@ -64,18 +64,24 @@ import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
 import { isValidSchedule } from './cronSchedule';
 import { useAutoSaveStatus } from './useAutoSaveStatus';
+import { useMobile } from './useMobile';
+import { baseName } from './filePath';
+import { copyText } from './clipboard';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
   useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents,
+  useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
+  useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
   useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
   useSavePluginSubagent, useDeletePluginSubagent,
+  useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
 } from './mutations';
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
@@ -127,7 +133,7 @@ export function ensurePluginUiRuntime(): void {
     // settings document primitives, the model/provider pickers and the autosave indicator.
     components: {
       Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
-      Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, ErrorState, EmptyState,
+      Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
@@ -152,13 +158,19 @@ export function ensurePluginUiRuntime(): void {
       useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
       usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
       usePluginSubagents, useSavePluginSubagent, useDeletePluginSubagent,
+      // The editor plugin owns the UI and API routes; these host-bound query/mutation hooks retain the
+      // shared react-query cache for the project surfaces that link into it.
+      useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
+      useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
+      useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
+      useMobile,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {
       needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
       execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
       allModels, cliProviders: PROVIDERS,
-      compactElapsed, parseTs, isValidSchedule,
+      compactElapsed, parseTs, isValidSchedule, baseName, copyText,
     },
     api,
     navigate: (href) => navigateImpl(href),

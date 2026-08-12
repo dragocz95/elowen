@@ -10,21 +10,31 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { join } from 'node:path';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { safeProjectPath } from '../../src/integrations/projectFiles.js';
 
 function setup() {
   const db = openAgentsDb(':memory:');
-  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen',?)").run(process.cwd());
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user → is_admin
   const bob = users.create('bob', 'pw');
   const adminTok = users.issueToken(admin.id);
   const bobTok = users.issueToken(bob.id);
+  const projects = new ProjectStore(db);
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+    project: { id: 1, path: process.cwd() }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    users, projects, userProjects: new UserProjectStore(db),
+    plugins: new PluginRegistryProvider(() => loadPlugins({
+      dirs: [join(process.cwd(), 'plugins')], enabled: ['editor'], logger: { info() {}, warn() {}, error() {} },
+      host: { stores: { projects } as never, projectFiles: { safe: safeProjectPath } },
+    })),
+    pluginDirs: [join(process.cwd(), 'plugins')],
   });
   return { app, adminTok, bobTok, bob };
 }

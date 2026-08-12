@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defineEditorThemes } from '../../../../modules/projects/editor/oledTheme';
+import { defineEditorThemes } from '../../web/lib/monaco/oledTheme';
 
 interface CapturedTheme {
   base?: string;

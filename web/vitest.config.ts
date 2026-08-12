@@ -10,6 +10,7 @@ export default defineConfig({
   // Plugin-bundle sources under ../plugins/*/web-src are tested here against the real
   // window.ElowenUiRuntime; they live outside web/, so their react/lucide imports must resolve to
   // THIS app's node_modules (one React instance — the same guarantee the production build shim gives).
+  server: { fs: { allow: ['..'] } },
   resolve: {
     alias: {
       'react/jsx-dev-runtime': dep('react/jsx-dev-runtime.js'),
@@ -17,10 +18,19 @@ export default defineConfig({
       'react-dom': dep('react-dom'),
       react: dep('react'),
       'lucide-react': dep('lucide-react'),
+      '@testing-library/react': dep('@testing-library/react'),
+      msw: dep('msw'),
+      'msw/node': dep('msw/node'),
     },
   },
   // Playwright E2E lives under tests/e2e/ (specs are `*.e2e.ts`, not `*.test.ts`, so `include` already
   // skips them). The explicit exclude is belt-and-suspenders: vitest must never load the fake daemon,
   // its handlers, or the Playwright specs (which import `@playwright/test`, absent from the vitest env).
-  test: { environment: 'jsdom', globals: true, setupFiles: ['./tests/setup.ts'], include: ['tests/**/*.test.{ts,tsx}'], exclude: ['tests/e2e/**'] },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./tests/setup.ts'],
+    include: ['tests/**/*.test.{ts,tsx}', '../plugins/*/web-src/**/*.test.{ts,tsx}'],
+    exclude: ['tests/e2e/**'],
+  },
 });

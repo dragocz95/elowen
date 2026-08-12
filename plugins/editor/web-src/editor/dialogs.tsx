@@ -1,11 +1,10 @@
 'use client';
 import { useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
-import { Button } from '../../../components/ui/Button';
-import { Input } from '../../../components/ui/Input';
-import { Field } from '../../../components/ui/Field';
-import { useTranslation } from '../../../lib/i18n';
+import { runtime } from '../runtime';
+
+const { Modal, ModalBody, ModalFooter, Button, Input, Field } = runtime().components;
+const { useTranslation } = runtime().hooks;
 
 /** A single-text-input dialog (new file/folder, rename, duplicate). Submits on Enter; the confirm
  *  button is disabled while empty or unchanged. */

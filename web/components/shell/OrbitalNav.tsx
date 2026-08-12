@@ -18,7 +18,7 @@ import type { NavEntry } from './NavItem';
 const SPATIAL_ROUTE_ORDER = [
   '/dash', '/chat',                               // home, then chat
   '/tasks', '/kanban', '/p/agents', '/timeline',  // the work
-  '/projects', '/editor', '/memory', '/stats',    // what the work runs on
+  '/projects', '/p/editor', '/memory', '/stats',  // what the work runs on
   '/account', '/settings', '/users',              // administration
 ];
 /** Where an entry parks on the axis. Prefix-matched, not exact: a plugin world links to its first

@@ -28,6 +28,7 @@ describe('ctx.host capability gates', () => {
     brainWorker: () => fakeWorker,
     elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:4400', token: 't', tokenForTask: () => 'tt' },
     stores: fakeStores,
+    projectFiles: { safe: (root, path) => `${root}/${path}` },
   };
 
   it('every accessor is deny-by-default behind its own reads grant', () => {
@@ -36,6 +37,7 @@ describe('ctx.host capability gates', () => {
     expect(() => denied.host.brainWorker()).toThrow("reads:['brain-worker']");
     expect(() => denied.host.elowenCli()).toThrow("reads:['elowen-cli']");
     expect(() => denied.host.stores()).toThrow("reads:['stores']");
+    expect(() => denied.host.projectFiles()).toThrow("reads:['project-files']");
     // one grant does not open the others
     const tmuxOnly = wire({ reads: ['tmux'] }, fullHost);
     expect(tmuxOnly.host.tmux()).toBe(fakeTmux);
@@ -43,11 +45,12 @@ describe('ctx.host capability gates', () => {
   });
 
   it('a granted accessor hands back exactly what the host wired', () => {
-    const ctx = wire({ reads: ['tmux', 'brain-worker', 'elowen-cli', 'stores'] }, fullHost);
+    const ctx = wire({ reads: ['tmux', 'brain-worker', 'elowen-cli', 'stores', 'project-files'] }, fullHost);
     expect(ctx.host.tmux()).toBe(fakeTmux);
     expect(ctx.host.brainWorker()).toBe(fakeWorker);
     expect(ctx.host.elowenCli().tokenForTask('t1')).toBe('tt');
     expect(ctx.host.stores()).toBe(fakeStores);
+    expect(ctx.host.projectFiles().safe('/project', 'file.ts')).toBe('/project/file.ts');
   });
 
   it('an unwired process refuses with a clear error even WITH the grant', () => {

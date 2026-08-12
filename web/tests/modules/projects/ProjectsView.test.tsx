@@ -12,6 +12,7 @@ const server = setupServer(
   http.get('*/api/projects/1/files', () => HttpResponse.json([])),
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
   http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
+  http.get('*/api/plugins/ui', () => HttpResponse.json([])),
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -38,16 +39,13 @@ describe('ProjectsView', () => {
     expect(await screen.findByText('master')).toBeTruthy();
   });
 
-  it('opens a selected commit in a modal instead of appending the editor below the workspace', async () => {
+  it('withholds editor controls when the editor plugin is unavailable', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
 
     fireEvent.click(await screen.findByText('elowen'));
-    fireEvent.click(await screen.findByText('feat: x'));
-
-    expect(await screen.findByRole('dialog', { name: 'Code editor' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Project detail' })).not.toBeInTheDocument();
-    expect(screen.getByTestId('spatial-workspace-layout')).not.toContainElement(screen.getByRole('dialog', { name: 'Code editor' }));
+    expect(await screen.findByText('master')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open editor' })).toBeNull();
   });
 
   // The row's hover menu and the right-click menu are two renderings of ONE action list. They used to be two
@@ -66,7 +64,7 @@ describe('ProjectsView', () => {
     fireEvent.contextMenu(row);
     const contextActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
 
-    expect(hoverActions).toEqual(['Open editor', 'Edit project', 'Copy path', 'Remove project']);
+    expect(hoverActions).toEqual(['Edit project', 'Copy path', 'Remove project']);
     expect(contextActions).toEqual(hoverActions);
   });
 

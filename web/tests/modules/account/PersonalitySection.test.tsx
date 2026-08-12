@@ -9,7 +9,7 @@ import type { CliSettings } from '../../../lib/types';
 
 // Monaco is browser-only (web workers) and never mounts under jsdom; stub it with a plain textarea that
 // forwards value/onChange so the body field is exercisable without loading the real editor.
-vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
+vi.mock('../../../lib/monaco/monacoLoader', () => ({
   MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <textarea aria-label="personality-body" value={value} onChange={(e) => onChange(e.target.value)} />
   ),

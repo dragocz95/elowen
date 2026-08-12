@@ -2,8 +2,8 @@
 import { useState, type ReactNode } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
-import { MonacoEditor } from '../projects/editor/monacoLoader';
-import { defineEditorThemes } from '../projects/editor/oledTheme';
+import { MonacoEditor } from '../../lib/monaco/monacoLoader';
+import { defineEditorThemes } from '../../lib/monaco/oledTheme';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';

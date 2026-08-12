@@ -11,6 +11,9 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { safeProjectPath } from '../../src/integrations/projectFiles.js';
 
 // Open mode (no UserStore) so canAccessProject always passes — the focus here is the file-editor
 // behaviour, not the tenancy gate (covered in projectAccess.test.ts). The project points at a real
@@ -24,6 +27,11 @@ function makeApp() {
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), projects,
+    plugins: new PluginRegistryProvider(() => loadPlugins({
+      dirs: [join(process.cwd(), 'plugins')], enabled: ['editor'], logger: { info() {}, warn() {}, error() {} },
+      host: { stores: { projects } as never, projectFiles: { safe: safeProjectPath } },
+    })),
+    pluginDirs: [join(process.cwd(), 'plugins')],
   });
   return { app, projects };
 }

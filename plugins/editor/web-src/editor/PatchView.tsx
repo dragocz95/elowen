@@ -1,4 +1,6 @@
-import { LoadingLine } from '../../../components/ui/states';
+import { runtime } from '../runtime';
+
+const { LoadingLine } = runtime().components;
 /** Colored unified-diff view for a raw git patch (full commit, working tree, or a single file within
  *  a commit) — these come from git as patch text, not two file versions, so we render them inline. */
 export function PatchView({ diff, empty, loading = false }: { diff: string; empty: string; loading?: boolean }) {

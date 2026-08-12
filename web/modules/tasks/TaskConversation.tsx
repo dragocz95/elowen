@@ -10,7 +10,7 @@ import { formatTaskTime, parseTs } from '../../lib/format';
 import { fileIcon } from '../../lib/fileIcon';
 import { baseName, dirName } from '../../lib/filePath';
 import { Modal } from '../../components/ui/Modal';
-import { PatchView } from '../projects/editor/PatchView';
+import { PatchView } from '../../components/ui/PatchView';
 
 /** The JSON payload an autopilot `decision` event carries in its `detail` column. */
 interface DecisionPayload { kind: 'prompt' | 'choice'; question: string; outcome: 'approved' | 'escalated' | 'chose'; rationale: string; confidence: number; optionLabel?: string }

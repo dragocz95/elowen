@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { FolderGit2 } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
+import { useEditorPlugin } from '../../lib/queries';
 
 /** Single source of truth for rendering a project's identity glyph. When the project has an `icon`
  *  (a project-relative image path chosen from the repo), it renders that image; otherwise the default
@@ -10,9 +11,10 @@ import { elowenClient } from '../../lib/elowenClient';
  *  project is shown (ProjectPill, filter pills, the Projects grid) so the icon stays consistent. */
 export function ProjectIcon({ project, size = 16, className = '' }: { project: { id: number; icon?: string }; size?: number; className?: string }) {
   const icon = project.icon ?? '';
+  const editorEnabled = useEditorPlugin();
   const { data: src } = useQuery({
     queryKey: ['project-icon', project.id, icon],
-    enabled: !!icon,
+    enabled: !!icon && editorEnabled,
     staleTime: Infinity,
     queryFn: async () => {
       const blob = await elowenClient.projectRawBlob(project.id, icon);

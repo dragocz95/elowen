@@ -1,6 +1,6 @@
 'use client';
 import { X } from 'lucide-react';
-import { baseName } from '../../../lib/filePath';
+import { baseName } from './helpers';
 
 /** Open-file tabs (VS Code-like). A dirty file shows an accent dot that turns into a close button on
  *  hover. Switching tabs never discards edits (drafts live in the parent). */

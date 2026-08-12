@@ -93,20 +93,16 @@ describe('TimelineView', () => {
     expect(lane?.className).toContain('@3xl:grid-cols-');
   });
 
-  it('opens a drill-down detail with the review rationale and the working diff on marker click', async () => {
+  it('opens a drill-down detail with the review rationale on marker click', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><TimelineView /></Wrapper>);
     const dots = await screen.findAllByTestId('axis-dot');
-    // The review marker carries its verdict in the aria-label.
     const reviewDot = dots.find((d) => d.getAttribute('aria-label')?.includes('escalated'));
     expect(reviewDot).toBeTruthy();
     fireEvent.click(reviewDot!);
-    // Drawer shows the verdict rationale…
     expect((await screen.findAllByText(/missing tests/)).length).toBeGreaterThanOrEqual(1);
-    // …the friendly task title (not the raw elowen-id)…
     expect((await screen.findAllByText('Refactor the parser')).length).toBeGreaterThanOrEqual(1);
-    // …and pulls the project's working diff (project_id = 5 on the event).
-    expect(await screen.findByText(/\+new line here/)).toBeTruthy();
+    expect(screen.queryByText(/\+new line here/)).toBeNull();
   });
 
   it('labels an agent (signal) marker with its name, not the raw elowen- session', async () => {
@@ -128,9 +124,9 @@ describe('TimelineView', () => {
   });
 
   // Regression: when the range is widened to 30d or 'all', events older than 7 days must
-  // appear as markers, populate the summary stats strip, and surface their project diff on
-  // marker click — the original bug silently kept the 7d filter regardless of the selection.
-  it('30d range shows markers, stats and detail diff for events older than 7 days', async () => {
+  // appear as markers and populate the summary stats strip — the original bug silently kept
+  // the 7d filter regardless of the selection.
+  it('30d range shows markers, stats and detail for events older than 7 days', async () => {
     const tenDaysAgo = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
     server.use(
       http.get('*/api/activity', () =>
@@ -152,12 +148,11 @@ describe('TimelineView', () => {
     // The summary stats strip must appear (it is hidden when no events pass the range filter).
     expect(await screen.findByTestId('timeline-summary')).toBeTruthy();
 
-    // Clicking the old review marker must open the detail and show the project diff,
-    // confirming the event's project linkage works for out-of-7d events too.
+    // Clicking the old review marker must open its detail.
     const reviewDot = dots.find((d) => d.getAttribute('aria-label')?.includes('old review'));
     expect(reviewDot).toBeTruthy();
     fireEvent.click(reviewDot!);
-    expect(await screen.findByText(/\+new line here/)).toBeTruthy();
+    expect(await screen.findByText('escalated: old review')).toBeTruthy();
   });
 
   it('all range shows markers and stats for events older than 7 days', async () => {

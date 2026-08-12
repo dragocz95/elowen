@@ -8,4 +8,3 @@ loader.config({ paths: { vs: '/monaco/vs' } });
 
 // Monaco is browser-only (web workers); never SSR it.
 export const MonacoEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.default), { ssr: false });
-export const MonacoDiffEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.DiffEditor), { ssr: false });
