@@ -71,8 +71,7 @@ describe('agents plugin tool parity (prompt cache)', () => {
       'ElowenListTasks', 'ElowenCreateTask', 'ElowenUpdateTask', 'ElowenPlan',
       'ElowenGetTask', 'ElowenStopTask', 'ElowenTaskOutput',
       'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover', 'LspDocumentSymbol', 'LspWorkspaceSymbol',
-      // Plugin tools compose after the core groups — the agents subsystem's moved tools land HERE.
-      // This is the one-time advertised-order change the extraction plan accepts (risk 1).
+      // Plugin tools compose after the core groups — the agents plugin's tools land HERE.
       'ElowenListMissions', 'ElowenListSessions',
       // Owner-chat always carries the plan-mode exit tool last.
       'ExitPlanMode',

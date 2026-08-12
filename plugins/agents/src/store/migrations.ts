@@ -5,10 +5,10 @@ import type { PluginDbMigrationStep } from '../../../../src/plugins/api.js';
  *  Table names are GRANDFATHERED from the core era on purpose — agents/missions/mission_pr/notes, not
  *  p_agents_* — because existing installs already hold data under these names and the extraction must
  *  never move or rename a row (plan: upgrade path is the top risk, rollback stays lossless). The DDL
- *  is byte-matched to what src/store/schema.sql creates today; while core still ships those blocks the
- *  IF NOT EXISTS forms make both owners no-op against each other, and when core's blocks are removed
- *  (extraction step 8) this becomes the single owner — a fresh install with the plugin enabled gets
- *  the tables from HERE. */
+ *  is byte-matched to what src/store/schema.sql creates today; core still ships those blocks (their
+ *  removal is a planned cleanup), so the IF NOT EXISTS forms make both owners no-op against each
+ *  other. Once core's blocks go, this is the single owner — a fresh install with the plugin enabled
+ *  gets the tables from HERE. */
 export const AGENTS_MIGRATIONS: PluginDbMigrationStep[] = [
   {
     version: 1,

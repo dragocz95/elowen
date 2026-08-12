@@ -81,7 +81,7 @@ module.exports = {
     // web/tests/e2e is the Playwright harness: a standalone fake daemon + specs that deliberately
     // type-only-import src/brain/events (the wire contract) and `@playwright/test`; it is not part of
     // the web app's module graph, so keep it out of the architecture guard entirely.
-    exclude: { path: 'node_modules|/dist/|/web-dist/|/\\.next/|/coverage/|web/public/|web/tests/e2e/' },
+    exclude: { path: 'node_modules|/dist/|/web-dist/|/\\.next/|/coverage/|web/public/|web/tests/e2e/|plugins/[^/]+/web/' },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'],

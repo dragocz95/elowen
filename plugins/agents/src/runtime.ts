@@ -1,9 +1,6 @@
-/** The agents-subsystem composition root (extraction B1). Mirrors, wiring-for-wiring, what
- *  src/daemon/bootstrap.ts:476-627 (+ SpawnService in brainCore.ts:216, liveSessions at :711 and the
- *  reconciles at :781-806) builds in the core daemon — the comments are carried over on purpose so the
- *  two can be diffed while both exist. Everything reaches the host through ONE typed deps object; this
- *  module never touches a PluginContext, so it stays constructible in tests with plain fakes. The next
- *  step (B2) adapts ctx.* onto AgentsRuntimeDeps and registers services/intervals/boot-reconciles —
+/** The agents-subsystem composition root. Everything reaches the host through ONE typed deps object;
+ *  this module never touches a PluginContext, so it stays constructible in tests with plain fakes.
+ *  index.ts adapts ctx.* onto AgentsRuntimeDeps and registers services/intervals/boot-reconciles —
  *  registration is deliberately NOT done here. */
 import type { TmuxDriver } from '../../../src/tmux/types.js';
 import type { PluginDbHandle, PluginHostPrompts, PluginHostConfig, PluginElowenCli, PluginBrainWorker } from '../../../src/plugins/api.js';
@@ -48,7 +45,7 @@ import type { GitReader } from './lib/git.js';
 import type { AgentsBusWithSink } from './lib/bus.js';
 import type { Logger } from './lib/logger.js';
 
-/** Everything the subsystem needs from the host, as ONE typed object. B2 fills it from ctx:
+/** Everything the subsystem needs from the host, as ONE typed object. index.ts fills it from ctx:
  *  tmux ← ctx.host.tmux(), db ← ctx.db(), stores ← ctx.host.stores() (users adapted to is_admin rows),
  *  prompts/config/relayClient/git/elowenCli ← ctx.host.*, brainWorker ← ctx.host.brainWorker (late),
  *  publishEvent/subscribeEvents ← ctx, push ← the host push transport seam. */
@@ -216,8 +213,7 @@ function runLivenessSweep(d: LivenessDeps): void {
     .catch((e) => d.log.error('liveness sweep failed', e));
 }
 
-/** One interval loop the host should drive (ctx.registerInterval in B2). `ms` values are carried over
- *  from bootstrap's startLoops verbatim. */
+/** One interval loop the host drives via ctx.registerInterval. */
 interface AgentsInterval { name: string; ms: number; fn: () => void }
 
 /** The interval periods, ms-for-ms what bootstrap's startLoops scheduled for this subsystem. Exported
@@ -550,7 +546,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver,
     // resolution helpers (API routes and services build on these in later steps)
     taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock,
-    // boot reconciles (ctx.registerBootReconcile in B2) + interval loops (ctx.registerInterval in B2)
+    // boot reconciles (ctx.registerBootReconcile) + interval loops (ctx.registerInterval)
     reconcileZombies, reconcileOverseers, intervals,
     /** Tear down the bus subscriptions (push dispatch + usage recorder). The registry also disposes
      *  ctx.subscribeEvents handlers on plugin reload, so calling this twice is safe. */
