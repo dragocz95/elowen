@@ -430,13 +430,12 @@ describe('ConfigStore agents plugin config (F2 step 7)', () => {
     expect(cs.pluginConfig('agents')).toEqual({});
   });
 
-  it('mirrors an autopilot patch of a plugin-owned key into plugins.config.agents (transitional until F3)', () => {
+  it('an autopilot patch does NOT leak into plugins.config.agents (mirror removed)', () => {
+    // The transitional mirror is gone: plugins.config.agents is the single writable home for the
+    // plugin-owned keys (edited via the plugin settings deck), seeded once by the migration above.
     const cs = new ConfigStore(openDb(':memory:'));
     cs.update({ autopilot: { prBaseBranch: 'trunk', prAutoOpen: true } });
-    expect(cs.pluginConfig('agents')).toEqual({ prBaseBranch: 'trunk', prAutoOpen: true });
-    expect(cs.get().autopilot.prBaseBranch).toBe('trunk');
-    // A patch not touching the mirrored keys leaves the slice alone.
-    cs.update({ autopilot: { notes: 'x' } });
-    expect(cs.pluginConfig('agents')).toEqual({ prBaseBranch: 'trunk', prAutoOpen: true });
+    expect(cs.pluginConfig('agents')).toEqual({});
+    expect(cs.get().autopilot.prBaseBranch).toBe('trunk'); // the autopilot value itself still persists
   });
 });

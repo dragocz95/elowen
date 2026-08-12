@@ -13,7 +13,6 @@ import { LOG_DIR, logger } from '../../shared/logger.js';
 import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES } from '../../integrations/logFiles.js';
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
 import { resolveExecutor } from '../../shared/execRouting.js';
-import { AGENTS_PLUGIN_CONFIG_KEYS } from '../../store/configStore.js';
 import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseElowenExec } from '../../shared/execs.js';
 import type { ElowenEvent } from '../sse.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -321,12 +320,6 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // the same reason cli-settings does it: restart waits for in-flight turns, and the save response
     // must not hang on that. (A theme switch needs no sweep: ELOWEN_THEME only changes with a restart.)
     if (updated.brain.agentName !== before.brain.agentName) queueBrandChange();
-    // The agents-plugin-owned autopilot keys are mirrored into plugins.config.agents by the store;
-    // the plugin reads its config slice as a per-load snapshot, so a patch touching one must reload
-    // the plugin set for the change to apply live (fire-and-forget, like the brand sweep above).
-    if (patch.autopilot && AGENTS_PLUGIN_CONFIG_KEYS.some((k) => patch.autopilot?.[k] !== undefined)) {
-      void d.brain?.reloadPlugins().catch(() => { /* no brain wired (tests) — the next boot picks it up */ });
-    }
     return c.json(updated);
   });
 

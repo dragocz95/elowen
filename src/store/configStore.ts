@@ -670,24 +670,10 @@ function mergeAutopilot(src: Partial<Stored['autopilot']> | undefined, fallback:
 
 /** The autopilot keys consumed EXCLUSIVELY by the agents plugin runtime (mission PR lifecycle + the
  *  overseer's decision model). Copied — never moved — into plugins.config.agents by the one-shot
- *  migrateAgentsPluginConfig(), and mirrored there on every autopilot patch while the Settings web
- *  still edits the autopilot fields (until F3). The remaining autopilot keys stay shared: the core
+ *  migrateAgentsPluginConfig(); the Settings web edits the plugin slice directly (F3), so the
+ *  plugin slice is the single writable home. The remaining autopilot keys stay shared: the core
  *  plan/review paths read model/prompt/pilotExec/overseerExec/reviewOnDone/prEnabled/tddMode too. */
-export const AGENTS_PLUGIN_CONFIG_KEYS = ['overseerModel', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand'] as const;
-
-/** Mirror an autopilot patch's agents-plugin-owned keys into the plugins.config.agents slice (see
- *  AGENTS_PLUGIN_CONFIG_KEYS). Returns `config` untouched when the patch carries none of them. */
-function mirrorAgentsPluginConfig(
-  config: Record<string, Record<string, unknown>>,
-  autopilotPatch: ConfigPatch['autopilot'],
-): Record<string, Record<string, unknown>> {
-  if (!autopilotPatch) return config;
-  const touched = AGENTS_PLUGIN_CONFIG_KEYS.filter((k) => autopilotPatch[k] !== undefined && autopilotPatch[k] !== null);
-  if (touched.length === 0) return config;
-  const slice = { ...config['agents'] };
-  for (const k of touched) slice[k] = autopilotPatch[k];
-  return { ...config, agents: slice };
-}
+const AGENTS_PLUGIN_CONFIG_KEYS = ['overseerModel', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand'] as const;
 
 /** The plugins block for a settings row that predates the plugin system (or whose plugins block is
  *  malformed): NO plugins enabled. This is a DELIBERATE asymmetry with `defaultStored()`, which enables
@@ -983,14 +969,11 @@ export class ConfigStore {
       plugins: {
         enabled: sanitizeStringList(patch.plugins?.enabled ?? cur.plugins.enabled),
         removed: sanitizeStringList(patch.plugins?.removed ?? cur.plugins.removed),
-        // Merge per-plugin config so a patch touching one plugin never wipes another's slice. Then
-        // mirror any autopilot patch of the agents-plugin-owned keys into plugins.config.agents.
-        // TRANSITIONAL: the Settings web edits the plugin slice directly since F3, but older clients
-        // (CLI, scripts) still PUT the autopilot keys — keep mirroring until that surface has settled
-        // in production, then drop the mirror together with the schema.sql agents blocks.
-        config: mirrorAgentsPluginConfig(
-          patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
-          patch.autopilot),
+        // Merge per-plugin config so a patch touching one plugin never wipes another's slice.
+        // An autopilot patch is NOT mirrored in here: the extraction never shipped, so no release
+        // ever owned these keys via autopilot.* — plugins.config.agents (edited by the plugin's own
+        // settings deck, seeded once by migrateAgentsPluginConfig) is the single source.
+        config: patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
       },
       agentsConfigMigrated: cur.agentsConfigMigrated,
       agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,

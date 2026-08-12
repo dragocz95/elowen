@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { PluginHostConfig } from '../../../src/plugins/api.js';
 
 /** The plugin's OWN config keys (plugins.config.agents) — the autopilot keys consumed exclusively by
- *  this runtime, copied there by the core's one-shot migrateAgentsPluginConfig() and mirrored on every
- *  autopilot patch until F3 moves the Settings web over. Matches the manifest `configSchema`. */
+ *  this runtime, seeded there by the core's one-shot migrateAgentsPluginConfig() and edited by the
+ *  plugin's settings deck since F3 (the transitional autopilot→slice mirror is gone). Matches the
+ *  manifest `configSchema`. */
 const agentsConfigSchema = z.object({
   overseerModel: z.string().optional(),
   prBaseBranch: z.string().optional(),
@@ -23,8 +24,13 @@ export interface AgentsPluginConfig {
 }
 
 /** Resolve the plugin's effective config: its own validated plugins.config.agents slice first, the
- *  LIVE autopilot value as the fallback for a key the slice does not carry (pre-migration DB read by
- *  a runner, or a value cleared from the slice). A malformed slice degrades to the fallback whole. */
+ *  LIVE autopilot value as the fallback for a key the slice does not carry. DELIBERATELY KEPT after
+ *  the mirror's removal: the one-shot migration runs on the first DAEMON boot of the new version, but
+ *  a runner process opens the DB read-only and can load this plugin against a pre-migration row in
+ *  the window before that boot — without the fallback, a configured prVerifyCommand would silently
+ *  vanish there and a PR could open unverified. Post-migration the slice carries every key (the
+ *  migration copies all four, empty values included), so the fallback is dead weight only then.
+ *  A malformed slice degrades to the fallback whole. */
 export function agentsPluginConfig(slice: Record<string, unknown>, host: PluginHostConfig): AgentsPluginConfig {
   const parsed = agentsConfigSchema.safeParse(slice);
   const own = parsed.success ? parsed.data : {};
