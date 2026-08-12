@@ -11,6 +11,11 @@ platform any plugin can build on. An existing install is enabled automatically o
 mission continues across it), and disabling the plugin cleanly turns the whole layer off while chat,
 tasks, projects and memory keep working.
 
+Task tracking itself now ships the same way, as the bundled `work` plugin: the task tables, the task
+API, the task brain tools and the Tasks, Kanban, Timeline and Stats pages are one plugin that owns the
+whole domain. Bare Elowen is the agent — chat, memory, projects, users, settings — and everything else
+is a plugin that adds a feature.
+
 ### Added
 - **Plugin platform (daemon).** Plugins can now mount authenticated API routes (including root mounts
   that grandfather formerly-core paths such as `/missions` and `/sessions`; core routes always win and a
@@ -35,6 +40,15 @@ tasks, projects and memory keep working.
   one-shot copy migration — `autopilot.*` keeps its values for a lossless rollback — and subsystem log
   lines now reach the admin per-plugin log view. The migration E2E suite proves a DB with a running
   mission upgrades with the plugin auto-enabled and nothing lost.
+- **Task tracking as a plugin.** The work domain moved into `plugins/work`: the `tasks`, `task_deps` and
+  `task_usage` tables are the plugin's (adopted in place — an existing install keeps every row), the task
+  API is served by the plugin on its unchanged paths, the seven `Elowen*` task tools and their MCP twins
+  are plugin tools, and the Tasks, Kanban, Timeline and Stats pages ship in the plugin's bundle
+  (`/tasks`, `/kanban`, `/timeline` and `/stats` redirect, deep links and query strings included). An
+  existing install is enabled automatically on upgrade. With the plugin off the instance is a pure agent:
+  the core surfaces that read tasks — today's tile, the decisions pod, the bell's inbox row, the palette's
+  create commands — hide rather than reporting an empty register, and the missions layer refuses honestly
+  instead of pretending a mission exists.
 
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the

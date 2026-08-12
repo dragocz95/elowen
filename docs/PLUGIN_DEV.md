@@ -376,6 +376,24 @@ curated `components`/`hooks`/`utils` surface, an authenticated same-origin
 types live in the kit's `index.d.ts`; narrow the untyped records locally in
 the bundle instead of importing from `web/` sources.
 
+That last point is a hard boundary, enforced by dependency-cruiser
+(`plugin-bundle-not-to-web-app`): a bundle must not import from `web/` at all.
+It is compiled separately, so an import that looks harmless ships a second copy
+of the app — a second react-query client, a second component tree — inside a
+file the daemon serves next to the real one. When a page needs something the
+runtime does not expose, EXTEND the contract in `web/lib/pluginUi.tsx` and
+narrow it in the bundle's own `runtime.tsx`; do not simplify the page. A bundle
+that owns a domain (the `work` plugin owns tasks) still uses the host's data
+hooks on purpose: one react-query cache and one SSE invalidation path for the
+whole app, plugin pages included.
+
+If the plugin owns a domain other core surfaces read, gate those surfaces on
+its presence — `usePluginPresent('<name>')` in `web/lib/queries.ts`. Hide the
+affordance; never let it report a zero it cannot compute (see
+`web/tests/components/workGateDegradation.test.tsx`). Reads are the exception:
+keep them enabled until the `/plugins/ui` listing actually says the owner is
+gone, so a listing still in flight does not blank the page.
+
 ## Capabilities and hooks
 
 Capabilities are deny-by-default. Declare only what the plugin needs:
