@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { NoteStore } from '../../plugins/agents/src/store/noteStore.js';
@@ -11,10 +12,15 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 
 // Two projects; bob is assigned to #1 only. An agent token is confined to its live working set, so we
 // seed an in_progress agent task in project 1 to put project 1 (and its epic e1) in the agent's reach.
-function setup(withNotes = true) {
+// The '/notes' surface is served by the agents plugin's root mount — the REAL plugin is loaded here;
+// `withPlugin: false` leaves it discovered-but-disabled (the explicit-503 degradation).
+function setup(withPlugin = true) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
@@ -28,15 +34,24 @@ function setup(withNotes = true) {
   tasks.create({ id: 'e2', project_id: 2, title: 'E2', type: 'epic' });
   tasks.create({ id: 'w1', project_id: 1, title: 'W1', parent_id: 'e1' });
   tasks.setAgent('w1', 'Nova'); tasks.setStatus('w1', 'in_progress'); // puts project 1 in the agent working set
-  const notes = withNotes ? new NoteStore(db) : undefined;
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
+  const plugins = withPlugin
+    ? agentsPluginProvider({ db, tasks, readiness, config, projects, users })
+    : new PluginRegistryProvider(() => loadPlugins({
+        dirs: [join(process.cwd(), 'plugins')], enabled: [], logger: { info() {}, warn() {}, error() {} },
+      }));
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
-    notes,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects,
+    clock: new FakeClock(0), config,
+    users, projects, userProjects,
+    plugins, pluginDirs: [join(process.cwd(), 'plugins')],
   });
+  // Direct store handle over the SAME db for arranging/asserting rows beside the API.
+  const notes = new NoteStore(db);
   return { app, tasks, notes, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id), agentTok: users.issueToken(admin.id, 'agent') };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
@@ -76,9 +91,9 @@ describe('handoff notes API', () => {
     expect((await app.request('/notes?scope=mission&target=e2', auth(adminTok))).status).toBe(200);
   });
 
-  it('answers an explicit 503 on BOTH verbs when the notes store is absent (plugin disabled)', async () => {
-    // A 200-with-[] would silently strip a worker of its handoff context; the CLI must be able to
-    // tell "plugin off" from "no notes yet". Same degradation contract as the tasks.ts write paths.
+  it('answers an explicit 503 on BOTH verbs when the agents plugin is disabled', async () => {
+    // The mount is DECLARED in the plugin manifest but not live — the root dispatcher's
+    // declared-inactive degradation answers, so the CLI can tell "plugin off" from "no notes yet".
     const { app, adminTok } = setup(false);
     const got = await app.request('/notes?scope=mission&target=e1', auth(adminTok));
     expect(got.status).toBe(503);
@@ -86,6 +101,11 @@ describe('handoff notes API', () => {
     const posted = await app.request('/notes', post(adminTok, { target: 'e1', body: 'x' }));
     expect(posted.status).toBe(503);
     expect(await posted.json()).toEqual({ error: 'agents plugin is disabled' });
+  });
+
+  it('refuses an agent token outright while the plugin is disabled (no live agent-access route)', async () => {
+    const { app, agentTok } = setup(false);
+    expect((await app.request('/notes?scope=mission&target=e1', auth(agentTok))).status).toBe(403);
   });
 
   it('GET fails closed on an unknown target (404) — never lists notes for an unresolved target', async () => {
@@ -99,10 +119,10 @@ describe('handoff notes API', () => {
     // delete the epic. The reader must still refuse it (target no longer resolves), and the purge is
     // scope-wide so nothing lingers in storage either.
     await app.request('/notes', post(agentTok, { target: 'e1', body: 'set up X' }));
-    notes!.add({ scope: 'custom', target: 'e1', body: 'orphan secret' });
+    notes.add({ scope: 'custom', target: 'e1', body: 'orphan secret' });
     await app.request('/tasks/e1?subtree=1', { method: 'DELETE', headers: { authorization: `Bearer ${adminTok}` } });
     expect((await app.request('/notes?scope=custom&target=e1', auth(adminTok))).status).toBe(404);
-    expect(notes!.list('custom', 'e1')).toEqual([]); // purged across all scopes, not just 'mission'
+    expect(notes.list('custom', 'e1')).toEqual([]); // purged across all scopes, not just 'mission'
   });
 
   it('rejects an over-long note body (400)', async () => {
@@ -113,7 +133,7 @@ describe('handoff notes API', () => {
 
   it('caps the number of notes per target (429)', async () => {
     const { app, agentTok, notes } = setup();
-    for (let i = 0; i < 200; i++) notes!.add({ scope: 'mission', target: 'e1', body: `n${i}` });
+    for (let i = 0; i < 200; i++) notes.add({ scope: 'mission', target: 'e1', body: `n${i}` });
     expect((await app.request('/notes', post(agentTok, { target: 'e1', body: 'one too many' }))).status).toBe(429);
   });
 
@@ -122,6 +142,6 @@ describe('handoff notes API', () => {
     tasks.create({ id: 'm-abc', project_id: 1, title: 'M', type: 'epic' }); // epic literally 'm-<hex>'
     await app.request('/notes', post(adminTok, { target: 'm-abc', body: 'kept' }));
     const list = await (await app.request('/notes?scope=mission&target=m-abc', auth(adminTok))).json() as { body: string }[];
-    expect(list.map((n) => n.body)).toEqual(['kept']); // a blind m- strip would have missed this
+    expect(list.map((n) => n.body)).toEqual(['kept']);
   });
 });

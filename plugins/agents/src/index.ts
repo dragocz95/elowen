@@ -19,6 +19,7 @@ import { buildAgentsRuntime, AGENTS_INTERVAL_MS, type AgentsRuntime } from './ru
 import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
+import { registerNotesApi } from './api/notes.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
@@ -125,10 +126,12 @@ export function register(ctx: PluginContext): void {
     return null;
   });
 
-  // The grandfathered '/missions' + '/sessions' API surfaces (root-mounted; 404 while disabled).
+  // The grandfathered '/missions' + '/sessions' + '/notes' API surfaces (root-mounted; declared in
+  // the manifest, so a disabled plugin answers the explicit 503 instead of a bare 404).
   registerMissionsApi(ctx, rt);
   registerSessionsApi(ctx, rt);
   registerAsksApi(ctx, rt);
+  registerNotesApi(ctx, rt);
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);
@@ -146,7 +149,6 @@ export function register(ctx: PluginContext): void {
     agents: () => rt().agents,
     gitLock: () => rt().gitLock,
     missions: () => rt().missions,
-    notes: () => rt().notes,
   } satisfies AgentsControl);
 
   ctx.logger.info('agents plugin loaded (runtime lazy; engine/scheduler/deriver via host services)');

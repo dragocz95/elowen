@@ -1,6 +1,6 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsNotes, AgentsPlanJobs } from '../plugins/api.js';
+import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
@@ -54,9 +54,6 @@ export interface ServerDeps {
   config: ConfigStore;
   users?: UserStore;
   events?: EventStore;
-  /** Inter-agent handoff notes (plugin-owned table). Absent while the agents plugin is disabled →
-   *  the activity notes routes degrade (list [], add 400), same as any other absent optional dep. */
-  notes?: AgentsNotes;
   projects?: ProjectStore;
   userProjects?: UserProjectStore;
   /** Per-user web-push device subscriptions. Absent → push subscribe/unsubscribe routes degrade to no-ops. */

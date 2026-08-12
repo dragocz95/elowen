@@ -778,18 +778,6 @@ export interface AgentsMissions {
   activeForEpic(epicId: string): Mission | null;
 }
 
-/** A handoff note row, as the activity routes serve it (plugin-owned `notes` table). */
-export interface AgentsNote { id: number; scope: string; target: string; author: string; body: string; created_at: string }
-
-/** Inter-agent handoff notes over the plugin-owned table — the full core surface the activity routes
- *  and epic-delete cleanup use. */
-export interface AgentsNotes {
-  add(input: { scope: string; target: string; author?: string; body: string }): AgentsNote;
-  list(scope: string, target: string): AgentsNote[];
-  count(scope: string, target: string): number;
-  deleteAllForTarget(target: string): void;
-}
-
 /** The shared per-checkout git serialization lock — the SAME instance the plugin's scheduler and
  *  mission engine use, so an API-side phase commit can't interleave with an agent's baseline read. */
 export interface AgentsGitLock { run<T>(key: string, fn: () => Promise<T>): Promise<T> }
@@ -810,7 +798,6 @@ export interface AgentsControl {
   agents(): AgentsRegistryView;
   gitLock(): AgentsGitLock;
   missions(): AgentsMissions;
-  notes(): AgentsNotes;
 }
 
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may

@@ -406,10 +406,11 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
         log.error(`epic ${id} not deleted — mission teardown failed`, e);
         return c.json({ error: 'mission teardown failed' }, 500);
       }
+      // deleteEpic cascades the mission rows, PR records AND handoff notes (cascade.ts), so a removed
+      // mission leaves no orphan note under any scope.
       const removed = d.tasks.deleteEpic(id);
       d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' });
       d.events?.deleteForTarget(id);
-      d.notes?.deleteAllForTarget(id); // a removed mission leaves no orphan handoff notes under any scope
       return c.json({ ok: true, tasks: removed.tasks });
     }
     // A standalone task or a single mission phase: stop its own live agent FIRST — mirrors the

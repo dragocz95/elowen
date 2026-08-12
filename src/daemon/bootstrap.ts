@@ -493,7 +493,6 @@ export async function buildApp(opts: BuildOpts) {
   // routes answer 503 ("agents plugin is disabled").
   const app = createServer({
     tasks, readiness, missions, tmux, bus, events,
-    get notes() { return agentsControl()?.notes(); },
     get engine() { return agentsControl()?.engine(); },
     get missionGit() { return agentsControl()?.missionGit(); },
     get gitLock() { return agentsControl()?.gitLock(); },

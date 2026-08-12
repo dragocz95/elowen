@@ -27,6 +27,9 @@ export function deleteTasksAndDeps(db: Db, scope: 'project' | 'epic', id: string
   // the caller that holds missionGit (the subtree-delete endpoint); this keeps the DB consistent.
   db.prepare(`DELETE FROM mission_pr WHERE mission_id IN (SELECT id FROM missions WHERE epic_id IN (${ph}))`).run(...ids);
   db.prepare(`DELETE FROM missions WHERE epic_id IN (${ph})`).run(...ids);
+  // Handoff notes are keyed by epic id (across ALL scopes, not just 'mission') — purge them with the
+  // task rows or an orphaned note lingers with no project gate left to guard it.
+  db.prepare(`DELETE FROM notes WHERE target IN (${ph})`).run(...ids);
   db.prepare(`DELETE FROM task_deps WHERE task_id IN (${ph}) OR depends_on_id IN (${ph})`).run(...ids, ...ids);
   return db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...ids).changes;
 }

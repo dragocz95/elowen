@@ -17,7 +17,6 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
   //   • close its task        → PATCH /tasks/:id
   //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
   //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (elowen ls|ready|sessions)
-  //   • handoff notes         → GET /notes, POST /notes   (elowen note ls|add)
   //   • ask the autopilot     → POST /tasks/:id/ask, GET /tasks/:id/ask/:askId   (elowen ask)
   //   • read its control guide → GET /tasks/:id/guide   (elowen help)
   // Its task PATCH is field-scoped to status/outcome in the route (close only), not the full patch surface.
@@ -27,7 +26,6 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
   const agentAllowed = (method: string, path: string): boolean => {
     if (method === 'GET') {
       if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
-      if (path === '/notes') return true; // read a mission's handoff notes (elowen note ls)
       if (/^\/plan\/[^/]+$/.test(path)) return true;
       if (/^\/tasks\/[^/]+\/ask\/[^/]+$/.test(path)) return true; // long-poll an ask's reply (elowen ask)
       if (/^\/tasks\/[^/]+\/guide$/.test(path)) return true; // fetch the agent control guide (elowen help)
@@ -38,13 +36,13 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
     if (/^\/plugins\/[^/]+\/api\//.test(path)) return true;
     if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
     if (method === 'POST') {
-      if (path === '/notes') return true; // leave a handoff note for later phases (elowen note add)
       if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
       if (/^\/tasks\/[^/]+\/ask$/.test(path)) return true; // post an open question to the autopilot (elowen ask)
     }
-    // The overseer poll/decide verbs (GET /missions/:id/overseer/next, POST …/decide) are NOT listed
-    // here: they are plugin root-mounted routes declared access:'agent', so they pass through the
-    // rootApiRoute carve-out below — and correctly 403 when the agents plugin is disabled.
+    // The overseer poll/decide verbs (GET /missions/:id/overseer/next, POST …/decide) and the handoff
+    // notes (GET/POST /notes, elowen note ls|add) are NOT listed here: they are plugin root-mounted
+    // routes declared access:'agent', so they pass through the rootApiRoute carve-out below — and
+    // degrade explicitly (503) when the agents plugin is disabled.
     return false;
   };
   // Which task a `/tasks/...` request targets, or null when the route carries no task id. `/tasks/ready`

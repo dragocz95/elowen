@@ -27,6 +27,7 @@
     "apiRoutes": [
       "/missions",
       "/sessions",
+      "/notes",
       "/tasks/:id/ask",
       "/tasks/:id/guide",
       "/asks/pending"
