@@ -187,7 +187,7 @@ elowen send <session> "please show the failing command"
 elowen close <task-id> --outcome ok --summary "verified"
 ```
 
-Running workers also receive a narrow, authenticated control surface through environment variables. `elowen help`, `elowen ask`, `elowen note`, `elowen plan submit`, and `elowen overseer` are intended for those workers and mission roles; they are not a replacement for the normal user workflow.
+Running workers also receive a narrow, authenticated control surface through environment variables. `elowen help`, `elowen ask`, `elowen note`, `elowen plan submit`, and `elowen overseer` are intended for those workers and mission roles; they are not a replacement for the normal user workflow. They require the agents plugin — on an instance without it these commands (and `elowen sessions`) answer with "agents plugin is disabled".
 
 ## Service lifecycle
 

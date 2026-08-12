@@ -83,7 +83,8 @@ Project notes are fed to the planner and Pilot as project context via the
 
 ## Overseer (decision gate)
 
-The overseer vets actions before they execute. Two decision paths:
+Requires the agents plugin (missions, the overseer and its decision queue
+live there). The overseer vets actions before they execute. Two decision paths:
 
 ### Relay path (default)
 
@@ -269,6 +270,7 @@ Consumed by: Planner (decompose), Overseer (decidePrompt, decideTask).
 
 ## Handoff notes
 
+Requires the agents plugin (the `/notes` API is a plugin root mount).
 Agents working on the same mission leave notes for later phases:
 
 ```bash

@@ -240,7 +240,8 @@ root-owned prefixes transparently via sudo.
 ### Auto-update timer
 
 Provisioned by `elowen install`. Checks hourly, respects running missions
-(won't restart while a mission is active). Toggle in Settings → System.
+(won't restart while a mission is active; missions require the agents
+plugin). Toggle in Settings → System.
 
 ## Database
 

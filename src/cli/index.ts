@@ -77,7 +77,7 @@ TASKS
                                     --summary "<text>"        closing note
                                     --outcome ok|fail         record the outcome
 
-AGENT-FACING                      (invoked by running agents — rarely needed by hand)
+AGENT-FACING                      (invoked by running agents — rarely needed by hand; requires the agents plugin)
   help                            print this task's Elowen control guide (needs ELOWEN_TASK)
   ask "<text>"                    ask the autopilot a free-text question and wait for the reply
                                     (needs ELOWEN_TASK; the answer is printed to stdout)
