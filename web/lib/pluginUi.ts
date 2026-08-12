@@ -49,15 +49,24 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useToast } from '../components/ui/Toast';
 import { TerminalModal } from '../components/terminal/TerminalModal';
 import { LiveTail } from '../components/terminal/LiveTail';
+import { BackendPicker } from '../components/ui/BackendPicker';
+import { ProviderPicker } from '../components/ui/ProviderPicker';
+import { ModelCatalogField } from '../components/ui/ModelCatalogField';
+import { ChoiceField } from '../components/ui/ChoiceField';
+import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
+import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
+import { SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { allModels } from './execPresets';
+import { useAutoSaveStatus } from './useAutoSaveStatus';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
-  useEscalations, usePendingAsks,
+  useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
-  useUpdateConfig,
+  useUpdateConfig, useInstallSkills,
 } from './mutations';
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
@@ -68,6 +77,15 @@ import { taskTypeMeta } from '../modules/tasks/taskMeta';
  *  kit without updating this value is a type error, not a silent drift. */
 export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 1;
 export type { PluginPageProps, PluginUiRegistration };
+
+/** Localized view strings for one plugin's bundle: the /plugins/ui listing's merged `strings` record
+ *  (manifest English overlaid with the active locale's i18n `web.strings`). Empty while the listing
+ *  loads — callers render the empty string, which resolves on the next paint. */
+function usePluginStrings(plugin: string): Record<string, string> {
+  const { locale } = useTranslation();
+  const listing = usePluginUi(locale);
+  return listing.data?.find((p) => p.name === plugin)?.strings ?? {};
+}
 
 /** Same-origin JSON fetch against the daemon through the BFF (`/api` + path). Rejects on non-2xx. */
 async function api(path: string, init?: RequestInit): Promise<unknown> {
@@ -96,6 +114,8 @@ export function ensurePluginUiRuntime(): void {
     // Curated: what a plugin page needs to look native. Growing this list is cheap; shrinking it is a
     // breaking change — so every addition is deliberate. The second block is the agents-extraction
     // surface (F3): the workspace/control-surface primitives and terminal views its moved pages compose.
+    // The third block is the settings-extraction surface (moved CLI-agents + autopilot sections): the
+    // settings document primitives, the model/provider pickers and the autosave indicator.
     components: {
       Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, ErrorState, EmptyState,
@@ -103,6 +123,8 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
+      SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      AutoSaveStatus, ProviderLogo,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
@@ -113,11 +135,13 @@ export function ensurePluginUiRuntime(): void {
       useEscalations, usePendingAsks,
       useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
       useUpdateConfig,
+      useBrainModels, useSystemSkills, useInstallSkills, useAutoSaveStatus, usePluginStrings,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {
       needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
       execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
+      allModels, cliProviders: PROVIDERS,
     },
     api,
     navigate: (href) => navigateImpl(href),

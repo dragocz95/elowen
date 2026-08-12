@@ -509,8 +509,11 @@ export interface PluginWebUi {
   requiresApiVersion: number;
   nav: { label: string; icon?: string; route?: string }[];
   settings: { id: string; label: string; icon?: string }[];
-  /** Localized menu labels from `i18n/<lang>.json` `web` blocks: nav keyed by route, settings by id. */
-  i18n?: Record<string, { nav?: Record<string, string>; settings?: Record<string, string> }>;
+  /** Flat English view strings from the manifest `web.strings` block (bundle labels/hints). */
+  strings?: Record<string, string>;
+  /** Localized menu labels + view strings from `i18n/<lang>.json` `web` blocks: nav keyed by route,
+   *  settings by id, strings by the manifest's own string keys. */
+  i18n?: Record<string, { nav?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> }>;
 }
 
 /** A long-running background worker a plugin contributes — mission loops, sweepers, watchers. The host

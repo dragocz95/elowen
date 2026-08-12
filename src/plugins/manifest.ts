@@ -110,6 +110,10 @@ export interface PluginManifest {
     requiresApiVersion?: number;
     nav?: { label: string; icon?: string; route?: string }[];
     settings?: { id: string; label: string; icon?: string }[];
+    /** Flat English view strings for the bundle (labels, hints), keyed freely by the plugin. Locale
+     *  overrides come from `i18n/<lang>.json` `web.strings`; /plugins/ui serves the merged record so
+     *  bundle views localize without touching the app dictionaries. */
+    strings?: Record<string, string>;
   };
 }
 
@@ -186,6 +190,7 @@ const ManifestSchema = Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
     }))),
+    strings: Type.Optional(Type.Record(Type.String(), Type.String())),
   })),
 });
 

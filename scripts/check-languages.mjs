@@ -224,6 +224,15 @@ for (const name of pluginNames) {
     for (const id of webSettingsIds) {
       if (!i18n.web?.settings?.[id]) errors.push(`plugin ${name} (${locale}): missing web.settings.${id} translation`);
     }
+    // Bundle view strings (manifest `web.strings`): same coverage rule — every manifest key needs a
+    // translation, and an i18n key that no longer exists in the manifest is an orphan.
+    const webStringKeys = new Set(Object.keys(manifest.web?.strings ?? {}));
+    for (const key of Object.keys(i18n.web?.strings ?? {})) {
+      if (!webStringKeys.has(key)) errors.push(`plugin ${name} (${locale}): web.strings.${key} has no matching manifest web.strings key`);
+    }
+    for (const key of webStringKeys) {
+      if (!i18n.web?.strings?.[key]) errors.push(`plugin ${name} (${locale}): missing web.strings.${key} translation`);
+    }
     for (const [key, override] of Object.entries(i18n.fields ?? {})) {
       const field = fieldByKey.get(key);
       if (!field) {

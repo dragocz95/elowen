@@ -27,6 +27,7 @@ function uiPluginProvider(): PluginRegistryProvider {
             entry: 'web/index.js',
             nav: [{ label: 'Demo world', icon: 'Bot', route: '' }],
             settings: [{ id: 'demo-settings', label: 'Demo settings', icon: 'Puzzle' }],
+            strings: { greeting: 'Hello', untranslated: 'Stays English' },
           },
         }
       : {};
@@ -37,7 +38,7 @@ function uiPluginProvider(): PluginRegistryProvider {
     if (name === 'demo') {
       writeFileSync(join(dir, 'web', 'index.js'), BUNDLE);
       writeFileSync(join(dir, 'i18n', 'cs.json'), JSON.stringify({
-        web: { nav: { '': 'Demo svět' }, settings: { 'demo-settings': 'Nastavení dema' } },
+        web: { nav: { '': 'Demo svět' }, settings: { 'demo-settings': 'Nastavení dema' }, strings: { greeting: 'Ahoj' } },
       }));
     }
   }
@@ -66,15 +67,19 @@ describe('plugin browser UI routes', () => {
     expect(((await adminRes.json()) as unknown[]).length).toBe(1);
   });
 
-  it('?lang=cs localizes nav/settings labels from the plugin i18n web block', async () => {
+  it('?lang=cs localizes nav/settings labels and view strings from the plugin i18n web block', async () => {
     const { app, token } = await makeApp();
     const res = await app.request('/plugins/ui?lang=cs', auth(token));
-    const list = await res.json() as { nav: { label: string }[]; settings: { label: string }[] }[];
+    const list = await res.json() as { nav: { label: string }[]; settings: { label: string }[]; strings: Record<string, string> }[];
     expect(list[0]!.nav[0]!.label).toBe('Demo svět');
     expect(list[0]!.settings[0]!.label).toBe('Nastavení dema');
+    // View strings merge PER KEY: a translated key overrides, an untranslated one keeps English.
+    expect(list[0]!.strings).toEqual({ greeting: 'Ahoj', untranslated: 'Stays English' });
     // unknown locale falls back to manifest English
     const en = await app.request('/plugins/ui?lang=de', auth(token));
-    expect(((await en.json()) as { nav: { label: string }[] }[])[0]!.nav[0]!.label).toBe('Demo world');
+    const enList = await en.json() as { nav: { label: string }[]; strings: Record<string, string> }[];
+    expect(enList[0]!.nav[0]!.label).toBe('Demo world');
+    expect(enList[0]!.strings).toEqual({ greeting: 'Hello', untranslated: 'Stays English' });
   });
 
   it('serves the bundle immutably on the content-hash URL and 404s a stale hash', async () => {

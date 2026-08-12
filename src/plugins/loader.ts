@@ -19,8 +19,9 @@ import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 interface PluginI18n {
   description?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;
-  /** Localized browser-UI menu labels: nav keyed by route (`''` = the root page), settings by id. */
-  web?: { nav?: Record<string, string>; settings?: Record<string, string> };
+  /** Localized browser-UI menu labels + view strings: nav keyed by route (`''` = the root page),
+   *  settings by id, strings by the manifest `web.strings` keys. */
+  web?: { nav?: Record<string, string>; settings?: Record<string, string>; strings?: Record<string, string> };
 }
 
 /** A plugin found on disk (manifest parsed, code NOT imported). What the admin UI lists. */
@@ -227,6 +228,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
               plugin: name, file: webPath, hash,
               requiresApiVersion: manifest.web.requiresApiVersion ?? 1,
               nav: manifest.web.nav ?? [], settings: manifest.web.settings ?? [],
+              ...(manifest.web.strings ? { strings: manifest.web.strings } : {}),
               ...(Object.keys(webI18n).length > 0 ? { i18n: webI18n } : {}),
             });
           }

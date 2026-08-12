@@ -283,6 +283,9 @@ export interface PluginUiListing {
   apiVersion: number;
   nav: { label: string; icon?: string; route?: string }[];
   settings: { id: string; label: string; icon?: string }[];
+  /** Localized flat view strings for the bundle (manifest `web.strings` merged with the locale's
+   *  i18n overrides server-side). Optional so an older daemon's listing still parses. */
+  strings?: Record<string, string>;
 }
 
 export interface PluginInfo {
