@@ -17,7 +17,10 @@ export type SafePath = (root: string, rel: string, forWrite?: boolean) => string
 export class EditorFileError extends Error {}
 
 export function listProjectFiles(root: string, maxDepth = 8): FileNode[] {
-  const resolvedRoot = realpathSync(root);
+  // A project row can outlive its directory (moved, unmounted, deleted). Listing has nothing to show
+  // then, which is an empty tree — not a 500 that makes the whole editor look broken.
+  let resolvedRoot: string;
+  try { resolvedRoot = realpathSync(root); } catch { return []; }
   const out: FileNode[] = [];
   const visit = (dir: string, depth: number) => {
     let entries;
@@ -114,7 +117,12 @@ export async function projectFileDiff(safe: SafePath, root: string, rel: string)
   const clean = relative(resolvedRoot, safe(root, rel));
   try { return (await run('git', ['-C', resolvedRoot, 'diff', '--', clean], { maxBuffer: 4 * 1024 * 1024 })).stdout; } catch { return ''; }
 }
-const isGitSha = (value: string) => /^[0-9a-f]{7,64}$/i.test(value);
+/** Kept byte-identical to the host's `src/shared/gitSha.ts` (a plugin cannot import runtime code from
+ *  core, and `tests/contract/editorGitShaParity.test.ts` holds the two in step). Hex-only by design: the
+ *  value is interpolated into a `git` command line, and the plain-hex shape is what guarantees it can
+ *  never be read as a flag or a pathspec. The lower bound is 4, because that is the shortest hash git
+ *  itself abbreviates to and the UI passes through whatever the user pasted. */
+const isGitSha = (value: string) => /^[0-9a-f]{4,40}$/i.test(value);
 export async function projectCommitDiff(root: string, hash: string): Promise<string> {
   if (!isGitSha(hash)) return '';
   try { return (await run('git', ['-C', gitRoot(root), 'show', '--stat', '--patch', hash], { maxBuffer: 8 * 1024 * 1024 })).stdout; } catch { return ''; }
@@ -130,7 +138,8 @@ export async function projectCommitFileDiff(safe: SafePath, root: string, hash: 
   try { return (await run('git', ['-C', resolvedRoot, 'show', '--pretty=format:', hash, '--', clean], { maxBuffer: 4 * 1024 * 1024 })).stdout; } catch { return ''; }
 }
 export async function projectCommitLog(root: string, limit: number): Promise<{ hash: string; subject: string; author: string; timestamp: number; files: { path: string; added: number; deleted: number }[] }[]> {
-  const n = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : 30;
+  // The route clamps to [1,500]; this guards a direct caller without narrowing that range.
+  const n = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 500) : 30;
   try {
     const { stdout } = await run('git', ['-C', gitRoot(root), 'log', '-n', String(n), '--numstat', '--pretty=format:\x01%h\x09%ct\x09%an\x09%s'], { maxBuffer: 8 * 1024 * 1024 });
     const commits: { hash: string; subject: string; author: string; timestamp: number; files: { path: string; added: number; deleted: number }[] }[] = [];

@@ -20,8 +20,11 @@ export function buildTree(nodes: FileNode[]): TreeNode[] {
   return root.children;
 }
 
-const extOf = (path: string) => path.split('.').pop()?.toLowerCase() ?? '';
 export const baseName = (path: string) => path.split('/').pop() ?? path;
+// Split the FILE NAME so a dotted directory ("src/config.v2/file") cannot contribute segments at all.
+// Taking the last segment of the whole path happens to give the same answer today; scoping it to the
+// name is what makes that true by construction rather than by luck.
+const extOf = (path: string) => baseName(path).split('.').pop()?.toLowerCase() ?? '';
 export function langOf(path: string): string {
   const map: Record<string, string> = { ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', json: 'json', css: 'css', scss: 'scss', html: 'html', md: 'markdown', py: 'python', sh: 'shell', bash: 'shell', yml: 'yaml', yaml: 'yaml', sql: 'sql', toml: 'ini', env: 'ini', go: 'go', rs: 'rust', php: 'php' };
   return map[extOf(path)] ?? 'plaintext';

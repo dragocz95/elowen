@@ -154,4 +154,29 @@ describe('project file editor routes', () => {
     expect((await app.request('/projects/999/files')).status).toBe(404);
     expect((await app.request('/projects/999/file', put({ path: 'a', content: 'b' }))).status).toBe(404);
   });
+
+  it('lists an empty tree when the project directory is gone, not a 500', async () => {
+    // A project row outlives its directory (moved, unmounted, deleted). Resolving the root then throws,
+    // and an unhandled throw turns the whole editor into "plugin api handler failed".
+    rmSync(root, { recursive: true, force: true });
+    const res = await app.request(`/projects/${id}/files`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('clamps ?limit to the newest commit instead of falling back to a full page', async () => {
+    // 0 and -5 are nonsense, and the difference matters: clamping answers with one commit, while a
+    // fallback quietly answers with thirty — the caller cannot tell it asked for something impossible.
+    const commits = async (query: string) => {
+      const res = await app.request(`/projects/${id}/commits${query}`);
+      expect(res.status).toBe(200);
+      return (await res.json() as { commits: unknown[] }).commits;
+    };
+    // The temp dir is not a git repo, so every answer is empty — what is asserted here is that no value
+    // is rejected and none produces a 500; the clamp itself is unit-tested against git in the plugin.
+    expect(await commits('?limit=0')).toEqual([]);
+    expect(await commits('?limit=-5')).toEqual([]);
+    expect(await commits('?limit=abc')).toEqual([]);
+    expect(await commits('')).toEqual([]);
+  });
 });

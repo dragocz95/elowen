@@ -68,7 +68,10 @@ export function registerEditorApi(ctx: PluginContext): void {
   onePath('/projects/:id/head', (root, path) => projectFileAtHead(safe, root, path), 'content');
   route('/projects/:id/commit/:hash', 'GET', async (req, project) => ({ body: { diff: await projectCommitDiff(project.path, req.params.hash ?? ''), files: await projectCommitFiles(project.path, req.params.hash ?? '') } }));
   route('/projects/:id/commit/:hash/diff', 'GET', async (req, project) => { const path = requiredString(req.query.path); if (!path) return { status: 400, body: { error: 'path required' } }; try { return { body: { diff: await projectCommitFileDiff(safe, project.path, req.params.hash ?? '', path) } }; } catch (error) { return fileError(error); } });
-  route('/projects/:id/commits', 'GET', async (req, project) => { const parsed = Number(req.query.limit); return { body: { commits: await projectCommitLog(project.path, Number.isFinite(parsed) ? parsed : 30) } }; });
+  // `?limit` is clamped to [1,500] with a fallback of 30 — the contract the core route had. Clamping
+  // rather than rejecting keeps a nonsense value (0, -5, 0.5) returning the newest commit instead of
+  // silently falling back to a full page of them.
+  route('/projects/:id/commits', 'GET', async (req, project) => { const parsed = Number(req.query.limit); const limit = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 30; return { body: { commits: await projectCommitLog(project.path, limit) } }; });
   route('/projects/:id/changed', 'GET', async (_req, project) => ({ body: { changed: await projectChangedFiles(project.path) } }));
   route('/projects/:id/changes', 'GET', async (_req, project) => ({ body: { diff: await projectWorkingDiff(project.path) } }));
 }
