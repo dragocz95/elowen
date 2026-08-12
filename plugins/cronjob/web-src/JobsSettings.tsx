@@ -118,7 +118,10 @@ function CronJobRow({ job, persisted, channels, models, onRemoved }: {
   useEffect(() => {
     if (dirty.current || deleted.current) return;
     setDraft(job);
-  }, [serverCopy]); // serverCopy is the JSON identity of `job` — the intended dependency
+    // serverCopy is the JSON identity of `job` — the intended dependency. Depending on `job` itself
+    // would re-run on every render that hands over a new object with the same contents.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverCopy]);
 
   const patch = (p: Partial<CronJob>) => {
     dirty.current = true;
