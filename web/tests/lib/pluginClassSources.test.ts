@@ -15,6 +15,18 @@ describe('plugin class sources', () => {
     expect(css).toMatch(/@source\s+"\.\/styles\/plugin-classes\.txt"/);
   });
 
+  // CSS ignores an @import that follows any other rule, so a stray at-rule above the import block drops
+  // tokens, components, animations and skins from the build — the whole app renders unstyled while every
+  // component test still passes and the build still succeeds.
+  it('keeps every stylesheet import ahead of the other at-rules that would void it', () => {
+    const lines = readFileSync(join(repoRoot, 'web', 'app', 'globals.css'), 'utf8')
+      .split('\n').map((l) => l.trim()).filter((l) => l.startsWith('@'));
+    const lastImport = lines.findLastIndex((l) => l.startsWith('@import'));
+    const firstOther = lines.findIndex((l) => !l.startsWith('@import') && !l.startsWith('@charset') && !l.startsWith('@layer'));
+    expect(lastImport).toBeGreaterThan(-1);
+    if (firstOther > -1) expect(firstOther).toBeGreaterThan(lastImport);
+  });
+
   it('the mirror carries the markup of every plugin that ships a browser bundle', () => {
     const blob = collectPluginClassSources(repoRoot);
     // A container-query variant no core page uses: it exists in the built CSS only via this mirror.

@@ -1,9 +1,4 @@
 @import "tailwindcss";
-/* Plugin bundles style themselves with this app's utilities, but Tailwind only scans sources inside the
- * project root — so a utility used solely by a plugin was never generated and its page rendered without
- * it. The blob is a generated mirror of every plugins/*'/web-src source (see
- * scripts/collect-plugin-classes.mjs); scanning it is what makes those utilities exist. */
-@source "./styles/plugin-classes.txt";
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/components.css";
@@ -12,6 +7,14 @@
 /* Compiled-in design skins, LAST on purpose: their rules override the base styles above by both
  * cascade order and the higher specificity of the `:root[data-skin]` scope. */
 @import "../skins/index.css";
+
+/* Plugin bundles style themselves with this app's utilities, but Tailwind only scans sources inside the
+ * project root — so a utility used solely by a plugin was never generated and its page rendered without
+ * it. The blob is a generated mirror of every plugins/*'/web-src source (see
+ * scripts/collect-plugin-classes.mjs); scanning it is what makes those utilities exist.
+ * It sits AFTER every @import on purpose: CSS ignores an @import that follows another rule, so an
+ * @source above them silently dropped tokens, components, animations and skins from the build. */
+@source "./styles/plugin-classes.txt";
 
 /* Brain chat markdown: compact typography for the assistant bubbles (marked + DOMPurify output). */
 .chat-markdown p { margin: 0 0 .5em; }
