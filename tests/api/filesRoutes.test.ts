@@ -40,12 +40,17 @@ const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'a
 const put = (body: unknown) => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('project file editor routes', () => {
+  let sandbox: string;
   let root: string;
   let app: ReturnType<typeof makeApp>['app'];
   let id: number;
 
   beforeEach(async () => {
-    root = mkdtempSync(join(tmpdir(), 'elowen-files-'));
+    // The project root is nested one level inside the temp dir, so the traversal assertion below
+    // watches a parent this test OWNS — sitting directly in the system tmpdir, a stray escape.ts left
+    // by anything else on the machine would fail it (or hide a real escape).
+    sandbox = mkdtempSync(join(tmpdir(), 'elowen-files-'));
+    root = join(sandbox, 'root');
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src/index.ts'), 'export const hello = 1;\n');
     writeFileSync(join(root, 'README.md'), '# project\n');
@@ -54,7 +59,7 @@ describe('project file editor routes', () => {
     // Register the temp dir as a project and capture its id for the routes below.
     id = (await (await app.request('/projects', json({ slug: 'tmp', path: root }))).json()).id;
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
 
   it('GET /files lists the tree (dirs first, VCS noise skipped)', async () => {
     mkdirSync(join(root, '.git'), { recursive: true }); // must be ignored by the walker
