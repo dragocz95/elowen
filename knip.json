@@ -35,19 +35,7 @@
     "pgrep"
   ],
   "ignoreIssues": {
-    "web/lib/i18n/types.ts": [
-      "types"
-    ],
-    "web/lib/i18n/dictionaries/index.ts": [
-      "types"
-    ],
-    "src/integrations/cliDetection.ts": [
-      "types"
-    ],
     "src/plugins/api.ts": [
-      "types"
-    ],
-    "src/shared/agentEvents.ts": [
       "types"
     ],
     "src/brain/transcript.ts": [
