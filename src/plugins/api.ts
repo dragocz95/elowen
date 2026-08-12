@@ -516,6 +516,17 @@ export interface PluginAgentCatalog {
   remove(name: string): AgentCatalogResult;
 }
 
+/** One persisted activity-log row (see PluginContext.registerEventRowResolver). `labelTitleId`
+ *  optionally names the TASK whose title should be snapshotted as the row's human label (and used as
+ *  the project fallback for a direct record() call) — events outlive tasks, so the label is copied at
+ *  write time. */
+export interface EventPersistenceRow {
+  type: string;
+  target: string;
+  detail: string;
+  labelTitleId?: string | null;
+}
+
 /** Send-only view of the core PushSender (see PluginHost.push). */
 export interface PluginHostPush { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
 
@@ -990,6 +1001,13 @@ export interface PluginContext {
    *  cannot (the data moved into this plugin). Consulted after core, first non-null wins, exceptions
    *  fail closed. Gated by `mutates:['events']` — resolution decides tenant visibility. */
   registerEventProjectResolver(resolve: (event: ElowenEvent) => number | null): void;
+  /** Contribute a resolver mapping an event this plugin owns to its persisted activity-log row —
+   *  the persistence side of an extracted subsystem (the agents plugin claims mission/review/
+   *  decision/message/signal). Consulted only for events core does not persist itself; first claim
+   *  wins, exceptions are skipped, and returning null/undefined leaves the event unpersisted. Keep
+   *  the emitted `type` strings stable: old rows are read back by the same names. Gated by
+   *  `mutates:['events']`. */
+  registerEventRowResolver(resolve: (event: ElowenEvent) => EventPersistenceRow | null | undefined): void;
   /** Subscribe to the daemon's event bus (usage recording, push dispatch — bus CONSUMERS that moved
    *  into a plugin). Gated by `mutates:['events']`. Returns the unsubscribe; the host also detaches
    *  every subscription of the OLD registry on a plugin reload, so a stale closure can never

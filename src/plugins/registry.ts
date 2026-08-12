@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginAgentCatalog, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -115,6 +115,8 @@ export class PluginRegistry {
   /** Plugin-contributed event→project resolvers (tenancy for core-shaped events whose data moved into a
    *  plugin). Consulted by eventProjectId after the core lookups; first non-null wins. */
   readonly eventProjectResolvers: { plugin: string; fn: (e: ElowenEvent) => number | null }[] = [];
+  /** Activity-log persistence resolvers (see PluginContext.registerEventRowResolver). */
+  readonly eventRowResolvers: { plugin: string; fn: (e: ElowenEvent) => EventPersistenceRow | null | undefined }[] = [];
   /** Live bus subscriptions this registry's plugins hold (ctx.subscribeEvents). Owned by the registry
    *  so a reload can detach the WHOLE old generation — a stale closure must never double-handle events
    *  beside its replacement. */
@@ -203,6 +205,7 @@ export class PluginRegistry {
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
+    this.eventRowResolvers.push(...other.eventRowResolvers);
     this.busSubscriptions.push(...other.busSubscriptions);
     for (const [k, v] of other.webUi) this.webUi.set(k, v);
     for (const p of other.promptEntries) {
@@ -567,6 +570,10 @@ export class PluginRegistry {
       registerEventProjectResolver: (fn) => {
         if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventProjectResolver refused: missing mutates:['events'] capability`); return; }
         this.eventProjectResolvers.push({ plugin: name, fn });
+      },
+      registerEventRowResolver: (fn) => {
+        if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventRowResolver refused: missing mutates:['events'] capability`); return; }
+        this.eventRowResolvers.push({ plugin: name, fn });
       },
       subscribeEvents: (fn) => {
         if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);

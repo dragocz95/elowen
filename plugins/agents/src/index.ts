@@ -15,6 +15,7 @@
 import type { AgentsControl, PluginContext } from '../../../src/plugins/api.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import { AGENTS_MIGRATIONS } from './store/migrations.js';
+import { agentsEventRow } from './events/rows.js';
 import { buildAgentsRuntime, AGENTS_INTERVAL_MS, type AgentsRuntime } from './runtime.js';
 import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
@@ -130,6 +131,11 @@ export function register(ctx: PluginContext): void {
     if (e.type === 'plan') return runtime?.planJobs.get(e.jobId)?.projectId ?? null;
     return null;
   });
+
+  // Persistence for the subsystem's own events (mission/review/decision/message/signal) — the pure
+  // mapping lives in events/rows.ts; with the plugin disabled these events are not persisted
+  // (matching the rest of the degradation).
+  ctx.registerEventRowResolver(agentsEventRow);
 
   // The grandfathered '/missions' + '/sessions' + '/notes' API surfaces (root-mounted; declared in
   // the manifest, so a disabled plugin answers the explicit 503 instead of a bare 404).

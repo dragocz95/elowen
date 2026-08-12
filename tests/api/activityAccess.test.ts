@@ -3,6 +3,7 @@ import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventStore } from '../../src/store/eventStore.js';
+import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -26,7 +27,7 @@ function setup() {
   const tasks = new TaskStore(db);
   tasks.create({ id: 't1', project_id: 1, title: 'home task' });
   tasks.create({ id: 't2', project_id: 2, title: 'foreign task' });
-  const events = new EventStore(db);
+  const events = new EventStore(db, () => [agentsEventRow]);
   // task events stamp their project internally; mission events get the project passed in (as the bus
   // subscriber does in bootstrap). A legacy event with no resolvable project stays null → admin-only.
   events.record({ type: 'task', taskId: 't1', status: 'open' });
@@ -68,7 +69,7 @@ describe('GET /activity?target — per-task conversation feed', () => {
     const tasks = new TaskStore(db);
     tasks.create({ id: 'tk', project_id: 1, title: 'Task' });
     tasks.create({ id: 'other', project_id: 1, title: 'Other' });
-    const events = new EventStore(db);
+    const events = new EventStore(db, () => [agentsEventRow]);
     events.record({ type: 'decision', taskId: 'tk', kind: 'prompt', question: 'run it?', outcome: 'approved', rationale: 'safe', confidence: 0.9 });
     events.record({ type: 'task', taskId: 'tk', status: 'in_progress' });
     events.record({ type: 'review', missionId: 'm-x', taskId: 'tk', approve: false, rationale: 'redo' });
@@ -96,7 +97,7 @@ describe('EventStore.record project stamping', () => {
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 't1', project_id: 1, title: 'x' });
-    const events = new EventStore(db);
+    const events = new EventStore(db, () => [agentsEventRow]);
     events.record({ type: 'mission', missionId: 'm-e1', state: 'active' }, 7); // explicit
     events.record({ type: 'task', taskId: 't1', status: 'open' });             // fallback → 1
     events.record({ type: 'mission', missionId: 'm-e2', state: 'active' });    // no arg, not a task → null

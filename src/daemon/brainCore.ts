@@ -221,7 +221,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // NOTE: the SpawnService (and the AgentStore it records into) is owned by the agents plugin now —
   // the daemon reaches it through the 'agents' control; nothing here launches agent sessions.
   const bus = new EventBus();
-  const events = new EventStore(db);
+  // The activity-log recorder resolves plugin-owned event shapes (mission/review/decision/message/
+  // signal → the agents plugin) through the LIVE registry — a reload swaps the resolver set, and with
+  // the owning plugin disabled those events are simply not persisted.
+  const events = new EventStore(db, () => (loadedPluginRegistry?.eventRowResolvers ?? []).map((r) => r.fn));
   // Activity trail: mirror every bus event into the log file as a readable one-liner, so the log on
   // its own tells the story of a run (spawns, advances, plans) without cross-referencing the DB.
   bus.subscribe((e) => log.info(describeEvent(e)));

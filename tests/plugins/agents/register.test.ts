@@ -77,6 +77,11 @@ describe('agents plugin register() (B2b activation)', () => {
     expect(services).toHaveLength(9);
     expect(registry.bootReconciles.filter((r) => r.plugin === 'agents')).toHaveLength(2);
     expect(registry.eventProjectResolvers.filter((r) => r.plugin === 'agents')).toHaveLength(1);
+    // The persistence side too: mission/review/decision/message/signal rows come from the plugin now.
+    const rowResolver = registry.eventRowResolvers.find((r) => r.plugin === 'agents')!.fn;
+    expect(rowResolver({ type: 'mission', missionId: 'm-e1', state: 'active' } as ElowenEvent))
+      .toEqual({ type: 'mission', target: 'm-e1', detail: 'active', labelTitleId: 'e1' });
+    expect(rowResolver({ type: 'task', taskId: 't1', status: 'open' } as ElowenEvent)).toBeUndefined(); // core's
   });
 
   it("control('agents') passes the registry's typed narrowing and exposes every accessor", async () => {

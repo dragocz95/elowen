@@ -2,10 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
 import { EventStore } from '../../src/store/eventStore.js';
+import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
 
+// The store is wired the way brainCore wires it with the agents plugin ENABLED: the plugin's REAL row
+// resolver maps mission/review/decision/message/signal, so these tests pin the exact legacy row format
+// (type strings, details, labels) across the extraction. The plugin-OFF degradation is covered below.
 let db: Db;
 let events: EventStore;
-beforeEach(() => { db = openDb(':memory:'); events = new EventStore(db); });
+beforeEach(() => { db = openDb(':memory:'); events = new EventStore(db, () => [agentsEventRow]); });
 
 describe('EventStore', () => {
   it('records each event kind to the right row', () => {
@@ -128,5 +132,23 @@ describe('EventStore', () => {
     const all = events.list();
     expect(all).toHaveLength(1);
     expect(all[0]!.target).toBe('fresh');
+  });
+});
+
+describe('EventStore without the agents plugin resolver (plugin disabled)', () => {
+  it('persists core-owned events but drops the agents-domain shapes', () => {
+    const bare = new EventStore(db); // no row resolvers wired — the agents plugin is off
+    bare.record({ type: 'task', taskId: 't1', status: 'open' });
+    bare.record({ type: 'plugin', plugin: 'demo', kind: 'tick', projectId: null, data: { n: 1 } });
+    bare.record({ type: 'mission', missionId: 'm1', state: 'active' });
+    bare.record({ type: 'signal', session: 's1', signal: { type: 'working' } });
+    bare.record({ type: 'review', missionId: 'm1', taskId: 't1', approve: true, rationale: 'ok' });
+    expect(bare.list().map((e) => e.type)).toEqual(['plugin:demo', 'task']); // newest first
+  });
+
+  it('skips a throwing resolver instead of crashing the recorder', () => {
+    const store = new EventStore(db, () => [() => { throw new Error('boom'); }, agentsEventRow]);
+    store.record({ type: 'mission', missionId: 'm1', state: 'active' });
+    expect(store.list().map((e) => [e.type, e.target, e.detail])).toEqual([['mission', 'm1', 'active']]);
   });
 });
