@@ -29,6 +29,12 @@ const DIVIDER = '┈┈┈┈┈┈┈┈┈┈'; // separates the tool trace fr
 /** Build the live-message classes for one surface. Returns the `LiveMessage` class the plugin re-exports;
  *  `EditableMessage`/`StreamingAnswer` stay internal. */
 export function createLiveMessage({ transport, style, CHUNK, splitContent, postWithImages, footerLine, editThrottleMs = DEFAULT_EDIT_THROTTLE_MS }) {
+  // What separates two lines of the TRACE (tool rows, card rows, the divider between sections) on this
+  // surface. Every surface so far treats a bare "\n" as a line break, but Microsoft Teams does not: it
+  // renders a bot's message as markdown where a single newline is a soft wrap, so a whole tool trace
+  // arrives as one run-on paragraph. Such a surface sets "\n\n" here. Trace lines only — the answer body
+  // is the model's own markdown and is never reflowed.
+  const NL = style.lineBreak ?? '\n';
   const { compactLine, safeTail } = makeTextHelpers(style);
   const outputSummary = makeOutputSummary({ compactLine, safeTail });
   const foldedCalls = makeFoldedCalls(compactLine);
@@ -217,9 +223,9 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         toolLines.push(`💭 ${style.italic(tail)}`);
       }
       // Each card becomes its own section; a subtext divider separates the tool trace from the checklist(s).
-      const cards = [...this.cards.values()].map((c) => cardLines(c).join('\n')).filter(Boolean);
+      const cards = [...this.cards.values()].map((c) => cardLines(c).join(NL)).filter(Boolean);
       const sections = [];
-      if (toolLines.length) sections.push(toolLines.join('\n'));
+      if (toolLines.length) sections.push(toolLines.join(NL));
       sections.push(...cards);
       if (!sections.length) return;
       if (!this.progress) {
@@ -228,7 +234,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // ABOVE the trace. Flag it so finalize re-anchors the answer below and keeps it the LAST message.
         if (this.answer) this.answerStranded = true;
       }
-      const rendered = sections.join(`\n${style.subtext(DIVIDER)}\n`);
+      const rendered = sections.join(`${NL}${style.subtext(DIVIDER)}${NL}`);
       // Preserve the newest/active tools and cards when a long turn exceeds the surface's message limit.
       const bounded = rendered.length > CHUNK ? `…\n${rendered.slice(-(CHUNK - 2))}` : rendered;
       this.progress.update(bounded);
@@ -236,7 +242,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
     renderTool(call) {
       if (this.display.toolMessageMode !== 'per_tool') return;
       const lines = toolLinesFor(call, this.display);
-      const content = lines.join('\n');
+      const content = lines.join(NL);
       let bubble = this.toolBubbles.get(call);
       if (!bubble) {
         bubble = new EditableMessage(this.a, this.channelId);
