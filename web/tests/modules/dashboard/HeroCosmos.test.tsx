@@ -14,6 +14,9 @@ const NOW = new Date('2026-06-30T12:00:00Z').getTime();
 const AGENTS_UI = [
   { name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: [] },
   { name: 'cronjob', title: 'Cron', nav: [], settings: [{ id: 'jobs', label: 'Cron' }] },
+  // The decisions pod counts escalations derived from tasks, and the cost pod links at the spend page:
+  // both belong to the work plugin, so the default instance here has it.
+  { name: 'work', title: 'Work', nav: [{ route: 'tasks', label: 'Tasks' }], settings: [] },
 ];
 
 function server(opts: { asks?: unknown[]; jobs?: unknown[]; pluginUi?: unknown[] } = {}) {
@@ -62,7 +65,7 @@ describe('HeroCosmos', () => {
     expect(within(nav).getByText('Next run')).toBeTruthy();
     expect(within(nav).getByText('This month')).toBeTruthy();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/p/cronjob/settings/jobs', '/stats']);
+    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/p/cronjob/settings/jobs', '/p/work/stats']);
   });
 
   it('tones the decisions pod as an alert while asks are pending', async () => {
@@ -85,7 +88,7 @@ describe('HeroCosmos', () => {
     expect(within(nav).queryByText('Decisions waiting')).toBeNull();
     expect(within(nav).queryByText('Agents active')).toBeNull();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/p/cronjob/settings/jobs', '/stats']);
+    expect(hrefs).toEqual(['/p/cronjob/settings/jobs', '/p/work/stats']);
   });
 
   it('drops the next-run pod without the cron plugin instead of reporting an empty schedule', async () => {
@@ -99,7 +102,7 @@ describe('HeroCosmos', () => {
     expect(within(nav).queryByText('Next run')).toBeNull();
     expect(within(nav).queryByText('No scheduled jobs')).toBeNull();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/stats']);
+    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/p/work/stats']);
   });
 
   it('reports the quiet state without alerts or scheduled jobs', async () => {

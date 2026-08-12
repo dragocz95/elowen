@@ -2,7 +2,7 @@
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef } from 'react';
 import { useSidebarState } from '../../lib/useSidebarState';
-import { useHealth, useTasks } from '../../lib/queries';
+import { useHealth, useTasks, useSessionInfos, useWorkPlugin } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { NavGroup } from './NavGroup';
@@ -34,13 +34,20 @@ export function Sidebar({
   const { collapsed, width, toggle, setWidth } = useSidebarState();
   const { data } = useHealth();
   const tasks = useTasks();
+  const sessions = useSessionInfos();
+  const work = useWorkPlugin();
   const { t } = useTranslation();
   const brand = useBrand();
   const { worlds, systemItems } = useShellNavigation();
   const dragging = useRef(false);
 
   const up = data?.ok === true;
-  const working = (tasks.data ?? []).some((task) => task.status === 'in_progress');
+  // "Busy" means work is genuinely under way. With the work plugin it is a task in progress; without it
+  // there is no register to ask, so fall back to a live agent session — reporting a permanent "ready"
+  // while agents are running would be the dot lying about the very thing it exists to show.
+  const working = work
+    ? (tasks.data ?? []).some((task) => task.status === 'in_progress')
+    : (sessions.data ?? []).some((session) => session.role === 'agent');
   const status: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
   const drawer = mode === 'drawer';
   const expanded = drawer ? true : mode === 'rail' ? false : !collapsed;

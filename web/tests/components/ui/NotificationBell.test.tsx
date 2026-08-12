@@ -17,7 +17,11 @@ const pendingAsk = {
 };
 
 const server = setupServer(
-  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [] }])),
+  http.get('*/api/plugins/ui', () => HttpResponse.json([
+    { name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [] },
+    // The inbox row counts escalations derived from task data — the work plugin's domain.
+    { name: 'work', url: '/plugins/work/web/index.js', apiVersion: 1, nav: [], settings: [] },
+  ])),
   http.get('*/api/sessions', () => HttpResponse.json([])),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/tasks/deps', () => HttpResponse.json([])),

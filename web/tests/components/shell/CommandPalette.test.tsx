@@ -11,6 +11,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push, replace: () => {} 
 // hooks directly.
 vi.mock('../../../lib/queries', () => ({
   useAgentsPlugin: () => true,
+  useWorkPlugin: () => true,
   usePluginUi: () => ({ data: [{
     name: 'work',
     nav: [

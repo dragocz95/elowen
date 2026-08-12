@@ -17,10 +17,12 @@ const EVENTS = [
 function server(opts: { sessions?: unknown[]; tasks?: unknown[]; jobs?: unknown[] } = {}) {
   return setupServer(
     // Each hero pod renders only once /plugins/ui confirms the plugin behind it: agents for the
-    // decisions/agents pods, cronjob for the next-run pod.
+    // decisions/agents pods, cronjob for the next-run pod, work for the decisions count and today's
+    // tasks (both read task data this instance only has with the plugin).
     http.get('*/api/plugins/ui', () => HttpResponse.json([
       { name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: [] },
       { name: 'cronjob', title: 'Cron', nav: [], settings: [{ id: 'jobs', label: 'Cron' }] },
+      { name: 'work', title: 'Work', nav: [{ route: 'tasks', label: 'Tasks' }], settings: [] },
     ])),
     http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })),
     http.get('*/api/tasks', () => HttpResponse.json(opts.tasks ?? [{ id: 't1', title: 'Alpha', status: 'in_progress', labels: ['agent:Iris'] }])),

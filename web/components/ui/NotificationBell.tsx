@@ -5,7 +5,7 @@ import { uiZoom } from '../../lib/uiZoom';
 import Link from 'next/link';
 import { Bell, ShieldAlert } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useSessions, useSessionSignals, useTasks, useEscalations, usePendingAsks, useAgentsPlugin } from '../../lib/queries';
+import { useSessions, useSessionSignals, useTasks, useEscalations, usePendingAsks, useAgentsPlugin, useWorkPlugin } from '../../lib/queries';
 import { needsInputSessions, taskSessionName } from '../../lib/agentUtils';
 import { taskExec } from '../../lib/agentUtils';
 import { NeedsInputRow } from './NeedsInputRow';
@@ -27,7 +27,11 @@ export function NotificationBell() {
   // targets /p/agents/escalations and the underlying counts are derived from mission events. With
   // the plugin off the bell must not glow over a link that would land on a plugin-404 page.
   const agentsUi = useAgentsPlugin();
-  const inboxCount = agentsUi ? escalations.length + pendingAsks.length : 0;
+  // Escalations are derived from tasks and their deps, which the work plugin owns. Without it they
+  // cannot be counted, so the row goes away entirely — exactly as it does without the agents plugin —
+  // instead of the bell quietly claiming an empty inbox.
+  const workUi = useWorkPlugin();
+  const inboxCount = agentsUi && workUi ? escalations.length + pendingAsks.length : 0;
   const count = waiting.length + inboxCount;
   const inboxPreview = pendingAsks[0]?.title?.trim()
     || pendingAsks[0]?.question?.trim()

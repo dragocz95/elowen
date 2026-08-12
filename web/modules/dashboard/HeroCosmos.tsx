@@ -8,7 +8,7 @@ import { nextCronRun } from '../../lib/cron';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
-import { usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, useAgentsPlugin, useCronjobPlugin } from '../../lib/queries';
+import { usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, useAgentsPlugin, useCronjobPlugin, useWorkPlugin } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 import { ElowenPresence } from './ElowenPresence';
 import type { AgentPresenceState } from './useAgentPresence';
@@ -48,7 +48,7 @@ interface HeroPod {
   label: string;
   value: string;
   detail: string;
-  href: string;
+  href?: string;
   alert?: boolean;
 }
 
@@ -70,6 +70,9 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   // (4xx is never retried — see the QueryClient defaults in app/providers.tsx).
   const agentsUi = useAgentsPlugin();
 
+  // The decisions count is derived from tasks and their deps, which the work plugin owns: without it
+  // the pod would settle on "0 · all clear" — a claim about an inbox that cannot be computed here.
+  const work = useWorkPlugin();
   const asks = usePendingAsks();
   const escalations = useEscalations();
   const decisions = (asks.data?.length ?? 0) + escalations.length;
@@ -106,7 +109,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const todayLabel = today.cost != null ? formatCost(today.cost) : '—';
 
   const pods: HeroPod[] = [
-    ...(agentsUi ? [
+    ...(agentsUi && work ? [
       {
         id: 'decisions' as const,
         icon: ShieldQuestion,
@@ -116,6 +119,8 @@ export function HeroCosmos({ now, state, presenceLabel }: {
         href: '/p/agents/escalations',
         alert: decisions > 0,
       },
+    ] : []),
+    ...(agentsUi ? [
       {
         id: 'agents' as const,
         icon: Radio,
@@ -141,7 +146,8 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       label: t.dashboard.signalMonthCost,
       value: summary.totalCostLabel,
       detail: `${t.dashboard.last7d} · ${t.dashboard.today.replace('{cost}', todayLabel)}`,
-      href: '/stats',
+      // The value is core usage and stays either way; only the link belongs to the plugin's page.
+      href: work ? '/p/work/stats' : undefined,
     },
   ];
 
@@ -211,10 +217,10 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       podsLayer.removeEventListener('pointerover', onOver);
       podsLayer.removeEventListener('pointerleave', onOut);
     };
-    // Re-run when the pod SET changes (the agents pair appears once /plugins/ui confirms the plugin):
+    // Re-run when the pod SET changes (a pod appears once /plugins/ui confirms its plugin):
     // the ResizeObserver only fires on size changes, so a DOM-only pod addition would otherwise keep
     // stale orbit positions.
-  }, [agentsUi]);
+  }, [agentsUi, cron, work]);
 
   // The waiting state re-tones the decisions filament amber to match the presence aura. The layout
   // pass re-applies it via alertRef because a redraw recreates the paths.
@@ -234,22 +240,25 @@ export function HeroCosmos({ now, state, presenceLabel }: {
         <ElowenPresence state={state} label={presenceLabel} />
       </div>
       <nav ref={podsRef} className="hero-cosmos__pods" aria-label={t.dashboard.attention}>
-        {pods.map((pod) => (
-          <Link
-            key={pod.id}
-            href={pod.href}
-            data-pod={pod.id}
-            className={`hero-cosmos__pod${pod.alert ? ' hero-cosmos__pod--alert' : ''}`}
-          >
-            <span className="hero-cosmos__orb"><pod.icon size={14} aria-hidden /></span>
-            <span className="hero-cosmos__body">
-              <span className="hero-cosmos__label">{pod.label}</span>
-              <span className="hero-cosmos__value">{pod.value}</span>
-              <span className="hero-cosmos__detail">{pod.detail}</span>
-              {pod.id === 'cost' ? <Sparkline days={days} /> : null}
-            </span>
-          </Link>
-        ))}
+        {pods.map((pod) => {
+          // A pod whose destination belongs to a disabled plugin keeps its reading and loses only the
+          // link: the same orb in the same orbit, not a hole in the layout and not a dead click.
+          const className = `hero-cosmos__pod${pod.alert ? ' hero-cosmos__pod--alert' : ''}`;
+          const body = (
+            <>
+              <span className="hero-cosmos__orb"><pod.icon size={14} aria-hidden /></span>
+              <span className="hero-cosmos__body">
+                <span className="hero-cosmos__label">{pod.label}</span>
+                <span className="hero-cosmos__value">{pod.value}</span>
+                <span className="hero-cosmos__detail">{pod.detail}</span>
+                {pod.id === 'cost' ? <Sparkline days={days} /> : null}
+              </span>
+            </>
+          );
+          return pod.href
+            ? <Link key={pod.id} href={pod.href} data-pod={pod.id} className={className}>{body}</Link>
+            : <span key={pod.id} data-pod={pod.id} className={className}>{body}</span>;
+        })}
       </nav>
     </div>
   );

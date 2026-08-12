@@ -10,6 +10,7 @@ import { HeroNowTile } from './HeroNowTile';
 import { JournalTrunk } from './JournalTrunk';
 import { ActivityTile } from './ActivityTile';
 import { TodayTasksTile } from './TodayTasksTile';
+import { useWorkPlugin } from '../../lib/queries';
 import { WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 /** A clock that re-renders every 30s (enough for an HH:MM display, keeps the month window + elapsed live). */
@@ -27,6 +28,9 @@ function useNow(): Date {
 export function DashboardView() {
   const now = useNow();
   const nowMs = now.getTime();
+  // Today's work is the work plugin's data. Without it the tile's own empty state ("nothing scheduled
+  // for today") would be a statement about a register this instance does not have.
+  const work = useWorkPlugin();
   const { resolvedMode } = useEffects();
   const fieldRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +62,7 @@ export function DashboardView() {
         <MotionReveal delay={0.06} className="relative z-[1] @container">
           <div className="flex max-w-[46rem] flex-col gap-2">
             <ActivityTile />
-            <TodayTasksTile now={nowMs} />
+            {work ? <TodayTasksTile now={nowMs} /> : null}
           </div>
         </MotionReveal>
       </div>

@@ -78,14 +78,18 @@ export const useSessionSignals = (): Record<string, DerivedSignal> => {
 
 export const useSessionSignal = (name: string): DerivedSignal | undefined => useSessionSignals()[name];
 
-export const useTasks = (projectId?: number) =>
+export const useTasks = (projectId?: number) => {
+  // Gated on the work plugin: it owns `/tasks`, so once we know it is gone the request is a guaranteed
+  // 503 that every consumer would have to tell apart from an empty register. Undelivered beats wrong.
+  const work = useTaskDomainReachable();
   // A bare `useTasks()` keeps the shared `['tasks']` cache key (Kanban/Timeline/Sidebar/… all share
   // one "all tasks" fetch). A scoped `useTasks(projectId)` gets its own entry so a project-filtered
   // Tasks view doesn't replace the global cache. Prefix invalidations still hit both.
   // No refetchInterval: the SSE bus invalidates ['tasks'] on every task/plan/review event (see
   // useElowenEvents), so the list stays live without a 5s poll. The EventSource self-reconnects with
   // backoff, so a dropped stream still recovers — no silent staleness.
-  useQuery({ queryKey: projectId == null ? QUERY_KEYS.tasks : ['tasks', projectId], queryFn: () => elowenClient.tasks(projectId) });
+  return useQuery({ queryKey: projectId == null ? QUERY_KEYS.tasks : ['tasks', projectId], queryFn: () => elowenClient.tasks(projectId), enabled: work });
+};
 
 /** Live session names — the stable handles used for liveness checks, signal keys and ops.
  *  Backed by the same query as useSessionInfos (one fetch); selects just the names. */
@@ -97,8 +101,10 @@ export const useSessions = () =>
 export const useSessionInfos = () =>
   useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions });
 
-export const useAllDeps = () =>
-  useQuery({ queryKey: ['tasks', 'deps'], queryFn: elowenClient.allDeps });
+export const useAllDeps = () => {
+  const work = useTaskDomainReachable(); // same domain, same gate as useTasks
+  return useQuery({ queryKey: ['tasks', 'deps'], queryFn: elowenClient.allDeps, enabled: work });
+};
 
 /** Token/cost usage for a task's agent run. Polls while the agent is live; for a finished task
  *  it's fetched once and cached (the numbers no longer change). */
@@ -170,6 +176,9 @@ export const useActivity = (type?: string, limit?: number) =>
 /** Pending overseer escalations — phases a post-done review rejected that still need a human, derived
  *  from the persisted review feed joined to live task/dep state. Shared by the Escalations page, the
  *  sidebar alert and the notification bell so the count is one source of truth. */
+/** Overseer escalations, derived in the browser from activity + tasks + deps. Without the work plugin
+ *  the two task inputs never arrive and this is empty — which is why both consumers (the bell's inbox
+ *  row and the dashboard's decisions pod) hide the affordance entirely rather than render a zero. */
 export const useEscalations = (): Escalation[] => {
   const reviews = useActivity('review');
   const tasks = useTasks();
@@ -288,6 +297,22 @@ export const useEditorPlugin = (): boolean => usePluginPresent('editor');
 /** The cron scheduler. The dashboard's "next run" pod reads its jobs, so without the plugin the pod
  *  would report an empty schedule — indistinguishable from a schedule with nothing in it. */
 export const useCronjobPlugin = (): boolean => usePluginPresent('cronjob');
+
+/** The work domain — the task register, the board, the timeline and the spend stats, together with the
+ *  tables and routes behind them. Every core surface that reads a task hangs off this gate: without the
+ *  plugin `/tasks` answers 503, and a surface rendering the empty list would say "nothing to do" where
+ *  the truth is "this instance does not track work at all". Affordances hide; they never report zero. */
+export const useWorkPlugin = (): boolean => usePluginPresent('work');
+
+/** Whether asking for task data can possibly be answered. Deliberately NOT `useWorkPlugin()`: an
+ *  affordance hides until the plugin listing confirms it (never flash a dead link), but a READ must not
+ *  be suppressed on a state we do not know yet — that would blank every task surface for the length of
+ *  the /plugins/ui round-trip. So: fetch until the listing says the domain has no owner. */
+const useTaskDomainReachable = (): boolean => {
+  const { locale } = useTranslation();
+  const pluginUi = usePluginUi(locale);
+  return pluginUi.data === undefined || pluginUi.data.some((p) => p.name === 'work');
+};
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */
