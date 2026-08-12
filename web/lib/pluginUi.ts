@@ -67,6 +67,7 @@ import { useAutoSaveStatus } from './useAutoSaveStatus';
 import { useMobile } from './useMobile';
 import { baseName } from './filePath';
 import { copyText } from './clipboard';
+import { defineEditorThemes } from './monaco/oledTheme';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import {
@@ -171,6 +172,9 @@ export function ensurePluginUiRuntime(): void {
       execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
       allModels, cliProviders: PROVIDERS,
       compactElapsed, parseTs, isValidSchedule, baseName, copyText,
+      // The Monaco theme is shared, not copied: the host embeds editors of its own (logs, personality,
+      // plugin config) and a plugin bundle carrying its own colour table would drift from the UI.
+      defineEditorThemes,
     },
     api,
     navigate: (href) => navigateImpl(href),

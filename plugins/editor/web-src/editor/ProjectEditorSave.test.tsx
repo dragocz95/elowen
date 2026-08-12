@@ -11,13 +11,17 @@ import { ensurePluginUiRuntime } from '../../../../web/lib/pluginUi';
 // Monaco is browser-only — stub it with a textarea and capture the Cmd+S command the editor
 // registers via `onMount`, so a test can save exactly the way a keyboard user does (the toolbar
 // Save button is disabled while a write is pending; Cmd+S is not).
-const monaco = vi.hoisted(() => ({ save: (() => {}) as () => void }));
+const monaco = vi.hoisted(() => ({ save: (() => {}) as () => void, themes: [] as string[] }));
 vi.mock('./monacoLoader', () => ({
-  MonacoEditor: ({ value, onChange, onMount }: {
+  MonacoEditor: ({ value, onChange, onMount, beforeMount }: {
     value: string;
     onChange: (v: string | undefined) => void;
     onMount: (editor: { addCommand: (key: number, cb: () => void) => void }, m: { KeyMod: { CtrlCmd: number }; KeyCode: { KeyS: number } }) => void;
+    beforeMount?: (m: { editor: { defineTheme: (name: string, theme: unknown) => void } }) => void;
   }) => {
+    // The colour table comes from the host runtime, not from the bundle — record what it registers so
+    // a runtime that stopped exposing it fails loudly instead of silently rendering Monaco's default.
+    beforeMount?.({ editor: { defineTheme: (name) => { monaco.themes.push(name); } } });
     onMount({ addCommand: (_key, cb) => { monaco.save = cb; } }, { KeyMod: { CtrlCmd: 1 }, KeyCode: { KeyS: 2 } });
     return <textarea aria-label="editor" value={value} onChange={(e) => onChange(e.target.value)} />;
   },
@@ -89,6 +93,11 @@ async function renderEditor() {
 const saveNow = async (path: string) => { act(() => monaco.save()); await waitFor(() => expect(gates.has(path)).toBe(true)); };
 
 describe('ProjectEditor save', () => {
+  it('themes Monaco from the host runtime rather than a colour table of its own', async () => {
+    await renderEditor();
+    expect(monaco.themes).toContain('elowen-oled');
+  });
+
   it('keeps edits typed while the save is in flight', async () => {
     const client = await renderEditor();
 

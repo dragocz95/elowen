@@ -1,7 +1,7 @@
 'use client';
 import { MonacoDiffEditor } from './monacoLoader';
-import { defineEditorThemes } from './oledTheme';
 import { langOf } from './helpers';
+import { runtime } from '../runtime';
 
 /** Native Monaco side-by-side diff: original (file at HEAD) vs modified (working content). Read-only. */
 export function DiffEditorPane({ path, original, modified }: { path: string; original: string; modified: string }) {
@@ -10,7 +10,7 @@ export function DiffEditorPane({ path, original, modified }: { path: string; ori
       key={path}
       height="100%"
       theme="elowen-oled"
-      beforeMount={defineEditorThemes}
+      beforeMount={runtime().utils.defineEditorThemes}
       language={langOf(path)}
       original={original}
       modified={modified}

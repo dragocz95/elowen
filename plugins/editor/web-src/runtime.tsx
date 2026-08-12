@@ -34,7 +34,12 @@ interface EditorRuntime {
     useDeleteProjectEntry(): MutationResult<{ id: number; path: string }>;
     useMobile(): boolean;
   };
-  utils: { baseName(path: string): string; copyText(text: string): Promise<boolean> };
+  utils: {
+    baseName(path: string): string;
+    copyText(text: string): Promise<boolean>;
+    /** The host's single Monaco colour table — see the note on the host side for why it is shared. */
+    defineEditorThemes(monaco: { editor: { defineTheme(name: string, theme: unknown): void } }): void;
+  };
   navigate(href: string): void;
 }
 

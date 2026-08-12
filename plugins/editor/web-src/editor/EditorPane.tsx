@@ -1,8 +1,8 @@
 'use client';
 import { useRef } from 'react';
 import { MonacoEditor } from './monacoLoader';
-import { defineEditorThemes } from './oledTheme';
 import { langOf } from './helpers';
+import { runtime } from '../runtime';
 
 /** Monaco editor for one file. Cmd/Ctrl+S saves (always the latest handler via a ref, so the
  *  keybinding never goes stale). */
@@ -16,7 +16,7 @@ export function EditorPane({ path, value, onChange, onSave, wordWrap }: {
       key={path}
       height="100%"
       theme="elowen-oled"
-      beforeMount={defineEditorThemes}
+      beforeMount={runtime().utils.defineEditorThemes}
       onMount={(editor, monaco) => { editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current()); }}
       language={langOf(path)}
       value={value}
