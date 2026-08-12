@@ -47,7 +47,8 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
   const { MsTeamsAdapter } = await import(join(repoRoot, 'plugins/msteams/lib/adapter.mjs')) as AdapterModule;
   const state = new MemoryState();
   const errors: string[] = [];
-  const logger = { ...log, error: (m: string) => { errors.push(m); } };
+  const warnings: string[] = [];
+  const logger = { ...log, error: (m: string) => { errors.push(m); }, warn: (m: string) => { warnings.push(m); } };
   const adapter = new MsTeamsAdapter(
     { ...CREDS, ...cfg }, logger, state, async () => opts.models ?? [], [], () => null,
     (id, answers) => { (opts.answers ??= []).push({ id, answers }); return true; },
@@ -66,7 +67,7 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
     download: async () => Buffer.from('img'),
     token: async () => 'tok',
   });
-  return { adapter, state, calls, errors };
+  return { adapter, state, calls, errors, warnings };
 }
 
 const activity = (over: Record<string, unknown> = {}) => ({
@@ -550,6 +551,16 @@ describe('msteams per-chat overrides', () => {
     await adapter.onCardAction(activity({ value: { ep: 'model', v: 'anthropic claude-opus-4-8' } }));
     // Fast is a provider capability, not a portable preference: it must not survive the move.
     expect(state.get('a:conv1')).toMatchObject({ model: { provider: 'anthropic', model: 'claude-opus-4-8' }, fast: false });
+  });
+
+  it('says so when a proactive push has nowhere to go', async () => {
+    // A cron job that names no channel delivers through notify(). With no notifyConversationId either,
+    // the push was dropped in silence — a result the scheduler already paid a real turn for, gone every
+    // run with nothing anywhere to show for it.
+    const { adapter, calls, warnings } = await makeAdapter({ rolePolicies: [] });
+    await adapter.notify('08:04:01', '', undefined);
+    expect(calls.filter((c) => c.kind === 'reply')).toHaveLength(0);
+    expect(warnings.some((w) => w.includes('notifyConversationId'))).toBe(true);
   });
 
   it('logs a failed turn as well as replying with it', async () => {

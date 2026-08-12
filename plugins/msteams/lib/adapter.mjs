@@ -582,7 +582,13 @@ export class MsTeamsAdapter {
   async notify(text, channelId, notice) {
     const target = (typeof channelId === 'string' && channelId.trim().replace(/#\d+$/, ''))
       || (typeof this.cfg.notifyConversationId === 'string' ? this.cfg.notifyConversationId.trim() : '');
-    if (!target) return;
+    // Nowhere to send is a CONFIGURATION gap, not a normal no-op: a cron job that names no channel
+    // delivers here, and returning in silence means its result — already paid for with a real turn — is
+    // dropped every single run with nothing anywhere to say so.
+    if (!target) {
+      this.log.warn('msteams notify: no target — set the plugin\'s notifyConversationId, or give the job a notifyChannelId; the push was dropped');
+      return;
+    }
     const serviceUrl = this.serviceUrlFor(target);
     if (!serviceUrl) { this.log.warn('msteams notify: no serviceUrl known yet — send the bot one message first'); return; }
     let conversationId = target;
