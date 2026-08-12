@@ -173,7 +173,7 @@ function binExists(path: string): boolean { try { accessSync(path, constants.X_O
  *  config read/write (admin-gated write), the System panel (version/update-available) and the live
  *  SSE event stream (per-subscriber tenancy gate). */
 export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d, accessibleProjects, eventDeps, skillService, notAdminUnlessSetup, notAdmin } = ctx;
+  const { d, accessibleProjects, eventDeps, notAdminUnlessSetup, notAdmin } = ctx;
   // MCP endpoint: the advisor agent connects here to control Elowen with native tools. Each request is
   // handled statelessly with the toolset bound to the caller's token, and every tool delegates to the
   // same `callElowenApi` core as the `elowen api` CLI verb — so a new REST endpoint needs zero edits here.
@@ -396,18 +396,6 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     checks.push({ id: 'plugins', label: 'Plugins', ok: true, detail: cfg.plugins.enabled.length ? cfg.plugins.enabled.join(', ') : 'none' });
 
     return c.json({ checks });
-  });
-
-  // Agent-workflow skill status + manual (re)install across the installed providers. Admin-only (mirrors
-  // /system/update); the daemon also self-installs on startup, so this is the on-demand re-apply + verify.
-  // No mission gate — writing a skill file doesn't disturb running agents (they read it at their next start).
-  app.get('/system/skills', (c) => {
-    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json({ skills: skillService.status() });
-  });
-  app.post('/system/skills/install', (c) => {
-    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json({ results: skillService.installAll() });
   });
 
   // Trigger a manual in-place update. Admin-only (mirrors /config) and refused while a mission is live

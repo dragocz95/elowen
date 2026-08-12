@@ -21,6 +21,7 @@ import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
 import { registerNotesApi } from './api/notes.js';
+import { registerSkillsApi } from './api/skills.js';
 import { registerAdvisorApi } from './api/advisor.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
@@ -159,6 +160,7 @@ export function register(ctx: PluginContext): void {
   registerAsksApi(ctx, rt);
   registerNotesApi(ctx, rt);
   registerAdvisorApi(ctx, rt);
+  registerSkillsApi(ctx);
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);

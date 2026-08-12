@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSkillService } from '../../src/api/services/skillService.js';
+import { createSkillService } from '../../../plugins/agents/src/services/skillService.js';
 
 const MASTER_V2 = `---\nname: elowen-workflow\ndescription: test\nmetadata:\n  version: 2\n---\n\nbody\n`;
 const target = (home: string, root: string) => join(home, root, 'skills', 'elowen-workflow', 'SKILL.md');

@@ -1,7 +1,6 @@
 import { eventProjectId, type EventProjectDeps } from '../api/eventProject.js';
 import { createServer } from '../api/server.js';
 import { ELOWEN_VERSION } from '../api/version.js';
-import { createSkillService } from '../api/services/skillService.js';
 import { createTicketStore } from '../terminal/ticketStore.js';
 import { RealTmuxDriver } from '../tmux/driver.js';
 import { SystemClock } from '../shared/clock.js';
@@ -540,14 +539,6 @@ export async function buildApp(opts: BuildOpts) {
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.
     if (opts.dbPath !== ':memory:') installGracefulShutdown(brain, log);
-    // Self-heal the agent-workflow skill: (re)install the bundled `elowen-workflow` SKILL.md into every
-    // present provider on boot. Best-effort — installAll catches its own per-provider errors and never
-    // throws, so this can't block or crash startup. Covers `elowen install` (first boot) and `elowen update`
-    // (restart) with one code path, always as the spawning user. Skipped under the in-memory test DB.
-    if (opts.dbPath !== ':memory:') {
-      const done = createSkillService().installAll().filter((r) => r.installed).map((r) => r.provider);
-      if (done.length) log.info(`installed elowen-workflow skill for: ${done.join(', ')}`);
-    }
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
     purgeTokens();

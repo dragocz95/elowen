@@ -1,7 +1,6 @@
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
 import { createReviewService, type ReviewService } from './services/reviewService.js';
-import { createSkillService, type SkillService } from './services/skillService.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
@@ -87,8 +86,6 @@ export interface RouteContext {
   /** Manual session launch (atomic checkout claim + snapshot baseline + spawn) for POST /sessions. */
   /** The free-text worker↔autopilot exchange behind `elowen ask` (mission overseer → human window → sentinel). */
   /** Renders the context-aware control guide an agent fetches with `elowen help` (GET /tasks/:id/guide). */
-  /** Installs/verifies the `elowen-workflow` skill across the agent providers (System panel + startup). */
-  skillService: SkillService;
   /** Vector retrieval + anti-duplication over the memory store, for the retrieval-debugging route. Built
    *  only when the memory store AND the embedder are both wired (else /memory/retrieve degrades to 400).
    *  CRUD/audit routes talk to the user-scoped store directly and don't need this. */
@@ -268,10 +265,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   // The on-demand control guide an agent fetches with `elowen help` — rendered from the task's live state
   // (standalone vs mission phase), so the worker preamble can stay short and not duplicate the tutorial.
 
-  // Installs/verifies the `elowen-workflow` skill into the agent providers' skills dirs. Stateless (resolves
-  // the spawning user's HOME itself), so it needs no deps from `d`. Injectable for tests (no real FS writes).
-  const skillService = d.skillService ?? createSkillService();
-
   // The retrieval-debugging seam — built only when both the memory store and the embedder are wired, so
   // the /memory/retrieve route can rank the caller's memories. Reads the live embedding config each call
   // (a Settings change applies without a restart), mirroring the daemon's own MemoryService.
@@ -290,6 +283,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
     eventDeps, execAllowedForUser,
     pathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, skillService, memoryService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, memoryService,
   };
 }

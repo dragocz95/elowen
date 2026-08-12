@@ -75,7 +75,7 @@ describe('agents plugin register() (B2b activation)', () => {
       expect(services).toContain(name);
     }
     expect(services).toHaveLength(9);
-    expect(registry.bootReconciles.filter((r) => r.plugin === 'agents')).toHaveLength(2);
+    expect(registry.bootReconciles.filter((r) => r.plugin === 'agents')).toHaveLength(3); // zombies + overseers + skill self-heal
     expect(registry.eventProjectResolvers.filter((r) => r.plugin === 'agents')).toHaveLength(1);
     // The persistence side too: mission/review/decision/message/signal rows come from the plugin now.
     const rowResolver = registry.eventRowResolvers.find((r) => r.plugin === 'agents')!.fn;

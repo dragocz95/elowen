@@ -2,9 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { promptsPath } from '../../prompts/index.js';
-import { splitFrontmatter } from '../../shared/frontmatter.js';
-import { logger } from '../../shared/logger.js';
+import { AGENTS_PROMPTS_DIR } from '../promptCatalog.js';
+import { logger } from '../lib/logger.js';
 
 const log = logger('skills');
 
@@ -19,7 +18,12 @@ const PROVIDERS: ReadonlyArray<{ id: string; configDir: (home: string, env: Node
 ];
 
 const SKILL_NAME = 'elowen-workflow';
+// The bundled master ships with THIS plugin (plugins/agents/prompts/skills/…), beside its templates.
 const MASTER_REL = `skills/${SKILL_NAME}/SKILL.md`;
+
+// Leading `---` fenced frontmatter block (mirror of src/shared/frontmatter.ts — this plugin imports
+// no core VALUES): BOM/CRLF tolerant, the block ends at the FIRST `---` line.
+const FRONTMATTER_RE = /^\uFEFF?---[ \t]*(?:\r?\n)([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 interface SkillStatus {
   /** Provider id (claude-code | codex | opencode). */
@@ -67,7 +71,7 @@ interface SkillServiceOptions {
  *  when the file has no frontmatter. The master file is the single source of truth for the version;
  *  both the bundled master and an installed copy are parsed the same way. */
 function parseVersion(text: string): number | null {
-  const { frontmatter } = splitFrontmatter(text);
+  const frontmatter = FRONTMATTER_RE.exec(text)?.[1];
   if (!frontmatter) return null;
   const m = /version:\s*(\d+)/.exec(frontmatter);
   return m ? Number(m[1]) : null;
@@ -76,7 +80,7 @@ function parseVersion(text: string): number | null {
 export function createSkillService(opts: SkillServiceOptions = {}): SkillService {
   const home = opts.home ?? homedir();
   const env = opts.env ?? process.env;
-  const readMaster = opts.readMaster ?? (() => readFileSync(promptsPath(MASTER_REL), 'utf-8'));
+  const readMaster = opts.readMaster ?? (() => readFileSync(join(AGENTS_PROMPTS_DIR, MASTER_REL), 'utf-8'));
   const configDirOf = (p: (typeof PROVIDERS)[number]): string => p.configDir(home, env);
   const targetFor = (configDir: string): string => join(configDir, 'skills', SKILL_NAME, 'SKILL.md');
 

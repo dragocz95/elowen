@@ -16,7 +16,6 @@ import type { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import type { UserPromptStore } from '../store/userPromptStore.js';
 import type { UserSettingStore } from '../store/userSettingStore.js';
 import type { PromptService } from '../prompts/promptService.js';
-import type { SkillService } from './services/skillService.js';
 import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 import type { BrainOAuthManager } from '../brain/oauth.js';
@@ -147,9 +146,6 @@ export interface ServerDeps {
   startUpdate?: () => void;
   /** Restart one systemd unit (detached, `--no-block`). Injected in tests; defaults to sudo systemctl. */
   startRestart?: (target: 'daemon' | 'web') => void;
-  /** Agent-skill install/verify for the System panel. Injected in tests; defaults to a service that
-   *  writes into the spawning user's real provider skills dirs. */
-  skillService?: SkillService;
   /** White-label theme packages under `<dataDir>/themes/`. Absent → the public theme endpoint serves
    *  the built-in brand and the admin theme list is empty. */
   themes?: ThemeStore;

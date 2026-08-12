@@ -36,8 +36,7 @@ export function setPluginPromptSources(sources: ReadonlyMap<string, string>): vo
 }
 
 /** Absolute path to a file under the resolved prompts dir (works in dist + src). Single source for
- *  locating bundled prompt assets — e.g. the `skills/elowen-workflow/SKILL.md` master the skillService
- *  installs — so callers don't re-implement the dist/src probe. */
+ *  locating bundled prompt assets so callers don't re-implement the dist/src probe. */
 export function promptsPath(...segments: string[]): string {
   return join(promptsDir, ...segments);
 }
