@@ -63,14 +63,8 @@ export interface RouteContext {
   notAdminUnlessSetup(c: UserCtx): boolean;
   /** Set of project ids the caller may see, or null for unrestricted (open mode / admin). */
   accessibleProjects(c: AccessCtx): Set<number> | null;
-  /** A mission belongs to its epic's project — gate by that project's access. */
-  missionAccessible(c: AccessCtx, epicId: string): boolean;
-  /** Resolve a live session name to the task it runs (most-recent match wins). */
-  taskForSession(session: string): Task | null;
   /** Resolve any live event's owning project — the same logic the activity log stamps rows with. */
   eventDeps: EventProjectDeps;
-  /** Ownership guard for the session-control routes (kill / keys / resize / pane / stream). */
-  sessionAccessible(c: AccessCtx, name: string): boolean;
   /** Per-user model allow-list check (global config.allowedExecs is the outer bound, checked separately). */
   execAllowedForUser(c: UserCtx, exec: string): boolean;
   /** Filesystem path of a project (store-first, falls back to the home path). */
@@ -205,17 +199,10 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     return new Set(d.userProjects.forUser(u.id));
   };
 
-  // A mission belongs to its epic's project — gate by that project's access. Open/single-user mode
-  // has no tenancy boundary, so it always passes (even if the epic row is absent).
-  const missionAccessible = (c: AccessCtx, epicId: string): boolean => {
-    if (!d.userProjects || !d.users) return true;
-    const epic = d.tasks.get(epicId);
-    return !!epic && canAccessProject(c, epic.project_id);
-  };
-
   // Resolve a live session name (`elowen-<agentName>` / `elowen-overseer-<missionId>` / `elowen-pilot-…`)
-  // to the task it runs, mirroring the daemon's agent:<name> label convention (bootstrap.taskForSession).
-  // Agent names recur across missions, so the MOST RECENT match wins (list is created_at ASC).
+  // to the task it runs, mirroring the agents plugin's agent:<name> label convention. Local-only:
+  // it exists to back eventDeps.sessionProject for plugin-less wiring (tests, plugin disabled) —
+  // with the plugin loaded, its event resolver is the authoritative session→project lookup.
   const taskForSession = (session: string): Task | null => {
     const info = classifySession(session);
     if (info.role === 'overseer') {
@@ -232,34 +219,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     taskProject: (id) => d.tasks.get(id)?.project_id ?? null,
     sessionProject: (s) => taskForSession(s)?.project_id ?? null,
     jobProject: (id) => planJobs.get(id)?.projectId ?? null,
-  };
-
-  // Ownership guard for the session-control routes (kill / keys / resize / pane / stream). The caller
-  // must be able to access the project the session's task belongs to; admin / open-mode pass via
-  // canAccessProject. An unresolvable session (no matching task) is refused — a caller can't operate
-  // a session it can't be shown to own.
-  const sessionAccessible = (c: AccessCtx, name: string): boolean => {
-    if (!d.userProjects || !d.users) return true; // open / single-user mode — no tenancy boundary
-    const u = c.get('user');
-    // An advisor session belongs to exactly one user: only its owner (or an admin) may reach it, and
-    // never via an agent-scoped token. It has no task row, so the project check below can't apply.
-    const info = classifySession(name);
-    if (info.role === 'advisor') {
-      if (c.get('tokenScope') === 'agent') return false;
-      return !!u && (u.id === info.userId || d.userProjects.isAdmin(u.id));
-    }
-    // An admin's interactive chat terminal is OWNER-ONLY — deliberately BEFORE the admin bypass below, so a
-    // second admin is refused (invariant 4: the generic admin bypass does not apply to the `chat` role). An
-    // agent-scoped token never reaches it, and a malformed name (userId undefined) is inaccessible to all.
-    if (info.role === 'chat') {
-      if (c.get('tokenScope') === 'agent') return false;
-      return !!u && u.id === info.userId;
-    }
-    // Admin sees every session — but NOT via an agent-scoped token (it's owned by the admin user yet
-    // must stay confined to its working set; fall through to the project check below).
-    if (c.get('tokenScope') !== 'agent' && u && d.userProjects.isAdmin(u.id)) return true;
-    const task = taskForSession(name);
-    return !!task && canAccessProject(c, task.project_id);
   };
 
   // Per-user model allow-list: a non-admin whose allowed_execs is non-empty may only use those
@@ -346,8 +305,8 @@ export function createRouteContext(d: ServerDeps): RouteContext {
 
   return {
     d, log, planJobs, decisionQueue, gitLock,
-    agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects, missionAccessible,
-    taskForSession, eventDeps, sessionAccessible, execAllowedForUser,
+    agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
+    eventDeps, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
     persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, skillService, memoryService,
   };

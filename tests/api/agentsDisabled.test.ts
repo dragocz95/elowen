@@ -81,4 +81,15 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     expect((await app.request('/missions/m-e1/overseer/next?timeoutMs=20', auth(tok))).status).toBe(404);
     expect((await app.request('/plan/pj-nope', auth(tok))).status).toBe(404);
   });
+
+  it('an AGENT token is 403 on the overseer verbs without the plugin (no static allow-list hole)', async () => {
+    // The middleware's agent allow-list no longer names the overseer routes — they pass only through
+    // the rootApiRoute(access:'agent') carve-out, which needs the plugin loaded. Disabled plugin ⇒ a
+    // prompt-injected agent token must be REFUSED (403), not fall through to some core 404 surface.
+    // The enabled twin lives in serviceToken.test.ts ("plan submit + overseer poll/decide").
+    const { app, db } = setup();
+    const agentTok = new UserStore(db).ensureAgentToken(1);
+    expect((await app.request('/missions/m-x/overseer/next?timeoutMs=20', auth(agentTok))).status).toBe(403);
+    expect((await app.request('/missions/m-x/overseer/decide', post(agentTok, { id: 'n', approve: true }))).status).toBe(403);
+  });
 });

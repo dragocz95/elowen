@@ -16,7 +16,6 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
   // (users, /config, project register/delete). Allow ONLY the verbs its CLI actually drives:
   //   • close its task        → PATCH /tasks/:id
   //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
-  //   • overseer poll/decide  → GET /missions/:id/overseer/next, POST /missions/:id/overseer/decide
   //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (elowen ls|ready|sessions)
   //   • handoff notes         → GET /notes, POST /notes   (elowen note ls|add)
   //   • ask the autopilot     → POST /tasks/:id/ask, GET /tasks/:id/ask/:askId   (elowen ask)
@@ -30,7 +29,6 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
       if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
       if (path === '/notes') return true; // read a mission's handoff notes (elowen note ls)
       if (/^\/plan\/[^/]+$/.test(path)) return true;
-      if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
       if (/^\/tasks\/[^/]+\/ask\/[^/]+$/.test(path)) return true; // long-poll an ask's reply (elowen ask)
       if (/^\/tasks\/[^/]+\/guide$/.test(path)) return true; // fetch the agent control guide (elowen help)
     }
@@ -42,9 +40,11 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
     if (method === 'POST') {
       if (path === '/notes') return true; // leave a handoff note for later phases (elowen note add)
       if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
-      if (/^\/missions\/[^/]+\/overseer\/decide$/.test(path)) return true;
       if (/^\/tasks\/[^/]+\/ask$/.test(path)) return true; // post an open question to the autopilot (elowen ask)
     }
+    // The overseer poll/decide verbs (GET /missions/:id/overseer/next, POST …/decide) are NOT listed
+    // here: they are plugin root-mounted routes declared access:'agent', so they pass through the
+    // rootApiRoute carve-out below — and correctly 403 when the agents plugin is disabled.
     return false;
   };
   // Which task a `/tasks/...` request targets, or null when the route carries no task id. `/tasks/ready`
