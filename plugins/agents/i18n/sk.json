@@ -28,8 +28,8 @@
   },
   "web": {
     "nav": {
-      "sessions": "Sesie",
-      "escalations": "Eskalacie"
+      "sessions": "Relácie",
+      "escalations": "Eskalácie"
     },
     "settings": {
       "agents": "Agenti a autopilot"
