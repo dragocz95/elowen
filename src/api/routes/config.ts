@@ -359,12 +359,16 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     checks.push({ id: 'tasks', label: 'Tasks', ok: tasksOk, detail: exec || 'not set',
       ...(tasksOk ? {} : { hint: elowenSpec ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
 
-    // missions — the planner/overseer need either the OpenAI-compatible relay or a configured pilot CLI.
-    const relay = d.config.autopilotRelay();
-    const missionsOk = relay != null || cfg.autopilot.pilotExec.length > 0;
-    checks.push({ id: 'missions', label: 'Missions', ok: missionsOk,
-      detail: relay ? 'relay configured' : (cfg.autopilot.pilotExec || 'not set'),
-      ...(missionsOk ? {} : { hint: 'Missions need an OpenAI-compatible key or an installed agent CLI.' }) });
+    // Plugin-contributed rows slot in here (where the extracted 'missions' check used to sit): the
+    // agents plugin reports missions readiness while enabled; a disabled plugin's checks disappear
+    // with it — which is itself the honest first-run answer. A throwing check is dropped, never a 500.
+    const registry = await d.plugins?.get();
+    for (const { fn } of registry?.readinessChecks ?? []) {
+      try {
+        const check = await fn();
+        if (check) checks.push(check);
+      } catch { /* a broken plugin check must not take down the readiness report */ }
+    }
 
     // memory — optional; enabled when an embedding provider is referenced.
     const memoryConfigured = cfg.embedding.providerId.length > 0; // optional feature → always ok, like platforms
@@ -379,7 +383,6 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // webhooks — only when an enabled plugin exposes an inbound webhook (/hooks/*): a vhost provisioned
     // before the route existed never gets it from `elowen update` (the updater runs as the service user
     // and cannot touch /etc), so verify the managed proxy actually forwards /hooks/ and hand out the fix.
-    const registry = await d.plugins?.get();
     if (registry && registry.httpRoutes.size > 0) {
       const proxy = webhookProxyStatus();
       if (proxy) {

@@ -13,11 +13,12 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore, type ConfigPatch } from '../../src/store/configStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 
 interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
-function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch } = {}) {
+function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; agents?: boolean } = {}) {
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
@@ -27,11 +28,20 @@ function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: Con
   const userTok = users ? users.issueToken(users.create('amy', 'pw').id) : undefined;
   // Only resolvableModel() is exercised by the route — a minimal fake stands in for BrainService.
   const brain = { resolvableModel: () => (over.model === undefined ? null : over.model) };
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const projects = new ProjectStore(db);
+  // The 'missions' row is contributed by the agents plugin's registered readiness check now — load
+  // the REAL plugin by default so the report matches a stock install; `agents: false` covers the
+  // disabled degradation (the row disappears with the plugin).
+  const provider = over.agents === false ? undefined
+    : agentsPluginProvider({ db, tasks, readiness, config, projects, ...(users ? { users } : {}) });
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
+    tasks, readiness, missions: new MissionStore(db),
     bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, projects: new ProjectStore(db), users,
+    clock: new FakeClock(0), config, projects, users,
+    ...(provider ? { plugins: provider } : {}),
     brain: brain as never,
   });
   return { app, adminTok, userTok };
@@ -43,11 +53,17 @@ async function getChecks(app: ReturnType<typeof makeApp>['app'], tok?: string): 
 }
 
 describe('GET /system/readiness', () => {
-  it('returns the six checks in order', async () => {
+  it('returns the six checks in order (agents plugin enabled contributes missions)', async () => {
     const { app } = makeApp({ model: 'kimi' });
     const { status, body } = await getChecks(app);
     expect(status).toBe(200);
     expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'missions', 'memory', 'platforms', 'plugins']);
+  });
+
+  it('drops the missions row when the agents plugin is disabled — the rest keeps its order', async () => {
+    const { app } = makeApp({ model: 'kimi', agents: false });
+    const { body } = await getChecks(app);
+    expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'memory', 'platforms', 'plugins']);
   });
 
   it('chat: ok with the resolved model id as detail', async () => {

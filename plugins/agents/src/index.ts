@@ -137,6 +137,21 @@ export function register(ctx: PluginContext): void {
   // (matching the rest of the degradation).
   ctx.registerEventRowResolver(agentsEventRow);
 
+  // First-run readiness: the 'missions' row of GET /system/readiness (extracted with the subsystem —
+  // with the plugin disabled the row disappears, which is the honest onboarding answer). The
+  // planner/overseer need either the OpenAI-compatible relay or a configured pilot CLI.
+  ctx.registerReadinessCheck(() => {
+    const cfg = ctx.host.config();
+    const relay = cfg.autopilotRelay();
+    const pilotExec = cfg.get().autopilot.pilotExec;
+    const ok = relay != null || pilotExec.length > 0;
+    return {
+      id: 'missions', label: 'Missions', ok,
+      detail: relay ? 'relay configured' : (pilotExec || 'not set'),
+      ...(ok ? {} : { hint: 'Missions need an OpenAI-compatible key or an installed agent CLI.' }),
+    };
+  });
+
   // The grandfathered '/missions' + '/sessions' + '/notes' API surfaces (root-mounted; declared in
   // the manifest, so a disabled plugin answers the explicit 503 instead of a bare 404).
   registerMissionsApi(ctx, rt);

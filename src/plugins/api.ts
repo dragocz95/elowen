@@ -516,6 +516,15 @@ export interface PluginAgentCatalog {
   remove(name: string): AgentCatalogResult;
 }
 
+/** One row of the first-run readiness report (see PluginContext.registerReadinessCheck). */
+export interface PluginReadinessCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  hint?: string;
+}
+
 /** One persisted activity-log row (see PluginContext.registerEventRowResolver). `labelTitleId`
  *  optionally names the TASK whose title should be snapshotted as the row's human label (and used as
  *  the project fallback for a direct record() call) — events outlive tasks, so the label is copied at
@@ -1008,6 +1017,11 @@ export interface PluginContext {
    *  the emitted `type` strings stable: old rows are read back by the same names. Gated by
    *  `mutates:['events']`. */
   registerEventRowResolver(resolve: (event: ElowenEvent) => EventPersistenceRow | null | undefined): void;
+  /** Contribute a row to GET /system/readiness — the onboarding "does each subsystem actually work"
+   *  report. Runs on every readiness request while the plugin is enabled (a disabled plugin's checks
+   *  disappear with it, which is itself the honest answer); return null to skip, and a throwing check
+   *  is dropped for that request. Keep it cheap and synchronous-ish: this rides a UI read. */
+  registerReadinessCheck(check: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null>): void;
   /** Subscribe to the daemon's event bus (usage recording, push dispatch — bus CONSUMERS that moved
    *  into a plugin). Gated by `mutates:['events']`. Returns the unsubscribe; the host also detaches
    *  every subscription of the OLD registry on a plugin reload, so a stale closure can never
