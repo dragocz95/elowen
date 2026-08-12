@@ -13,7 +13,7 @@ import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
-import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
+import { useAgentsPlugin, useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
 import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { formatLogSize } from '../../modules/settings/logFilter';
@@ -102,6 +102,10 @@ export default function SettingsPage() {
   const me = useMe();
   const brand = useBrand();
   const brainModels = useBrainModels();
+  // CLI-agent models (Claude Code / OpenCode / Codex / Kilo presets + custom execs) only ever run
+  // through the agents plugin's spawner — without the plugin they are dead catalog entries, so the
+  // Models section shows just the embedded Elowen AI group.
+  const agentsUi = useAgentsPlugin();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   // Plugin-contributed Settings sections ride the same live listing as the sidebar's plugin worlds:
@@ -331,6 +335,7 @@ export default function SettingsPage() {
   // these use the shared footer save button.
 
   const models = allModels(customModels, hiddenPresets);
+  const visibleProviders = agentsUi ? PROVIDERS : PROVIDERS.filter((p) => p.embedded);
 
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
   // Providers the user has actually configured (non-empty binary; edited in the agents plugin's
@@ -395,7 +400,7 @@ export default function SettingsPage() {
             </SettingsToolbar>
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
-            {PROVIDERS.map((prov) => {
+            {visibleProviders.map((prov) => {
               const needle = modelQuery.trim().toLocaleLowerCase();
               const allCliItems = models.filter((m) => execProvider(m.exec) === prov.id);
               const allElowenItems = prov.id === 'elowen' ? (brainModels.data ?? []) : [];
@@ -500,17 +505,20 @@ export default function SettingsPage() {
             })}
 
             {modelQuery.trim() && ![
-              ...models.map((m) => `${PROVIDERS.find((provider) => provider.id === execProvider(m.exec))?.label ?? ''} ${m.label} ${m.exec} ${execModel(m.exec)} ${modelNotes[m.exec] ?? ''}`),
+              ...(agentsUi ? models.map((m) => `${PROVIDERS.find((provider) => provider.id === execProvider(m.exec))?.label ?? ''} ${m.label} ${m.exec} ${execModel(m.exec)} ${modelNotes[m.exec] ?? ''}`) : []),
               ...(brainModels.data ?? []).map((m) => `${PROVIDERS.find((provider) => provider.id === 'elowen')?.label ?? ''} ${m.model} ${m.exec} ${m.providerLabel}`),
             ].some((value) => value.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase())) ? (
               <SettingsState>{t.settings.modelNoMatches}</SettingsState>
             ) : null}
 
-            <div className="settings-document__footer">
-              <Button variant="ghost" icon={Plus} onClick={() => { setEditingExec(null); setShowAddForm(true); }}>
-                {t.settings.addModel}
-              </Button>
-            </div>
+            {/* Custom models are CLI-agent execs — adding one without the agents plugin is meaningless. */}
+            {agentsUi ? (
+              <div className="settings-document__footer">
+                <Button variant="ghost" icon={Plus} onClick={() => { setEditingExec(null); setShowAddForm(true); }}>
+                  {t.settings.addModel}
+                </Button>
+              </div>
+            ) : null}
           </>
         </SettingsPanel>
 

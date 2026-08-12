@@ -17,6 +17,10 @@ const server = setupServer(
     diagnostics: { cpuPercent: 12, memoryUsedBytes: 3_200_000_000, memoryTotalBytes: 16_000_000_000, uptimeSeconds: 1_098_000 },
   })),
   http.get('*/api/system/skills', () => HttpResponse.json({ skills: [] })),
+  // The agents plugin is present by default: the Models section shows the CLI provider groups only
+  // when it is (its spawner is what runs those execs). No `settings` entries — the plugin's own
+  // settings decks are exercised in tests/pluginUi, not here.
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/abc.js', apiVersion: 1, nav: [], settings: [] }])),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
@@ -102,6 +106,19 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
     expect(screen.getByRole('button', { name: 'Add model' })).toBeTruthy();
+  });
+
+  it('hides the CLI provider groups and Add model without the agents plugin (Elowen AI stays)', async () => {
+    // CLI-agent execs only run through the agents plugin's spawner — a plugin-less instance must not
+    // offer Claude Code / Codex / OpenCode catalog rows or the custom-model affordance.
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await screen.findByRole('heading', { level: 1, name: 'Models' });
+    await waitFor(() => expect(screen.queryByText('Claude Code')).toBeNull());
+    expect(screen.queryByText('Codex')).toBeNull();
+    expect(screen.queryByLabelText('Claude Sonnet 4.5')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add model' })).toBeNull();
   });
 
   it('filters model rows from the search above provider groups', async () => {
