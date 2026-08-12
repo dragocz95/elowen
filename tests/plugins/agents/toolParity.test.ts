@@ -27,16 +27,32 @@ const BASELINE = [
   },
 ];
 
-function capturedAgentsTools(): ToolDefinition[] {
+type FakeAccess = { owner: boolean; admin: boolean; projectIds: number[] };
+const CHANNEL_ADMIN: FakeAccess = { owner: false, admin: true, projectIds: [] };
+
+function capturedAgentsTools(access: FakeAccess = CHANNEL_ADMIN, rt?: () => unknown): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
   const ctx = {
     registerTool: (t: ToolDefinition) => { tools.push(t); },
-    isAdminSession: () => false,
+    // Present but deliberately UNUSED by the gate: admin scope is not owner truth (see below).
+    isAdminSession: () => access.admin,
+    currentAccess: () => ({ ...access, permissionBoundary: null }),
     currentIdentity: () => null,
-    host: { stores: () => ({ tasks: { get: () => null } }), tmux: () => ({ list: async () => [] }) },
+    host: { stores: () => ({ tasks: { get: () => ({ project_id: 1 }) } }), tmux: () => ({ list: async () => [] }) },
   } as unknown as PluginContext;
-  registerAgentsTools(ctx, () => { throw new Error('runtime must not be touched at registration'); });
+  registerAgentsTools(ctx, (rt ?? (() => { throw new Error('runtime must not be touched at registration'); })) as never);
   return tools;
+}
+
+/** Minimal runtime the mission listing reads: two missions in different projects, no PRs. */
+function fakeRuntime(): unknown {
+  return {
+    missions: {
+      live: () => [{ id: 'm-a', epic_id: 'a' }, { id: 'm-b', epic_id: 'b' }],
+      get: () => null,
+    },
+    missionGit: { pendingPrMissionIds: () => [], prInfo: () => null },
+  };
 }
 
 describe('agents plugin tool parity (prompt cache)', () => {
@@ -53,11 +69,31 @@ describe('agents plugin tool parity (prompt cache)', () => {
     }
   });
 
-  it('refuses outside an admin (owner-chat) session instead of serving control-plane data', async () => {
-    for (const t of capturedAgentsTools()) {
+  it('refuses a platform admin who is not the owner instead of serving control-plane data', async () => {
+    // The Discord-moderator case: admin project scope WITHOUT owner truth. Gating on isAdminSession()
+    // would serve them the operator's missions; the owner gate refuses.
+    for (const t of capturedAgentsTools(CHANNEL_ADMIN, fakeRuntime)) {
       const res = await t.execute('call-1', {}, undefined as never, undefined as never);
       expect(res.content[0]!.text).toContain("only available in the owner's own chat session");
     }
+  });
+
+  it("admits the owner's own sub-agent, which READ_ONLY_AGENT_TOOLS lists these tools for", async () => {
+    // A read-only child inherits owner but is not an admin chat session — the case the isAdminSession()
+    // gate advertised two permanently-refusing tools to.
+    const owned = { owner: true, admin: true, projectIds: [] };
+    const [missions] = capturedAgentsTools(owned, fakeRuntime);
+    const res = await missions!.execute('call-1', {}, undefined as never, undefined as never);
+    expect(res.content[0]!.text).not.toContain('only available');
+    expect(JSON.parse(res.content[0]!.text as string)).toHaveLength(2);
+  });
+
+  it('scopes the listing to a project-restricted owner child rather than the whole estate', async () => {
+    // tasks.get() answers project_id 1 for every epic, so a child scoped to project 2 must see none.
+    const scoped = { owner: true, admin: false, projectIds: [2] };
+    const [missions] = capturedAgentsTools(scoped, fakeRuntime);
+    const res = await missions!.execute('call-1', {}, undefined as never, undefined as never);
+    expect(JSON.parse(res.content[0]!.text as string)).toEqual([]);
   });
 
   it('locks the ordered advertised owner-chat tool set (core groups first, plugin tools after)', () => {

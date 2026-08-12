@@ -17,26 +17,40 @@ import type { AgentsRuntime } from './runtime.js';
  *    corresponding GET routes return.
  *  - As plugin tools they are COMPOSED into every session kind (the platform composes plugin tools
  *    everywhere and gates at execute time), where the core built-ins were owner-chat-only by
- *    construction. The execute-time isAdminSession() gate below restores the same boundary: a channel
- *    or task-worker turn gets a refusal, never the owner's control-plane data. */
+ *    construction. The execute-time gate below restores that boundary: a channel or task-worker turn
+ *    gets a refusal, never the owner's control-plane data.
+ *
+ *  The gate reads `currentAccess().owner`, NOT isAdminSession(). Owner truth is what the core
+ *  built-ins were scoped by, and it is independent from admin project scope: a platform admin (a
+ *  Discord moderator) is admin-but-not-owner and stays refused, while the owner's own sub-agents
+ *  inherit owner and are admitted — which READ_ONLY_AGENT_TOOLS (src/brain/agents/agentRegistry.ts)
+ *  explicitly intends by listing both tools as control-plane reads for explore/plan children. Gating
+ *  on isAdminSession() instead advertised two tools to every read-only sub-agent that could only ever
+ *  refuse. Tenancy follows the same descriptor, so a project-scoped child sees only its own projects
+ *  rather than the operator's whole estate. */
 export function registerAgentsTools(ctx: PluginContext, rt: () => AgentsRuntime): void {
-  // The all-access view the owner-chat REST calls carried (the owner's advisor token is an admin user
-  // token): unrestricted tenancy, keyed to the operator's account when the turn resolves one.
-  const auth = (): ApiAuth => ({
-    userId: ctx.currentIdentity()?.elowenUserId ?? null,
-    admin: true,
-    tokenScope: 'user',
-    agentTask: null,
-    accessibleProjects: null,
-  });
+  // The caller's own view, keyed to the operator's account when the turn resolves one. An admin turn
+  // (the owner's chat) reads unrestricted, exactly as the owner-chat REST calls did; a project-scoped
+  // owner child carries its own set, so the listing never widens what the turn may already see.
+  const auth = (): ApiAuth => {
+    const access = ctx.currentAccess();
+    return {
+      userId: ctx.currentIdentity()?.elowenUserId ?? null,
+      admin: access.admin,
+      tokenScope: 'user',
+      agentTask: null,
+      accessibleProjects: access.admin ? null : access.projectIds,
+    };
+  };
   const refusal = { content: [{ type: 'text' as const, text: 'This tool is only available in the owner\'s own chat session.' }], details: {} };
+  const denied = (): boolean => !ctx.currentAccess().owner;
 
   ctx.registerTool(defineTool({
     name: 'ElowenListMissions', label: 'List missions',
     description: 'List Elowen autopilot missions.',
     parameters: Type.Object({}),
     execute: async () => {
-      if (!ctx.isAdminSession()) return refusal;
+      if (denied()) return refusal;
       return { content: [{ type: 'text' as const, text: JSON.stringify(missionsListPayload(rt(), ctx.host.stores().tasks, auth())) }], details: {} };
     },
   }));
@@ -46,7 +60,7 @@ export function registerAgentsTools(ctx: PluginContext, rt: () => AgentsRuntime)
     description: 'List the running Elowen agent sessions — the background worker/pilot/overseer agents launched in tmux for your projects, each with its role and project. This is NOT the list of CLI chat clients or brain conversations: an empty result means no agent is currently running, not that nobody is connected. Use it to see what agent work is live before spawning more or stopping one.',
     parameters: Type.Object({}),
     execute: async () => {
-      if (!ctx.isAdminSession()) return refusal;
+      if (denied()) return refusal;
       return { content: [{ type: 'text' as const, text: JSON.stringify(await sessionsListPayload(ctx.host.tmux(), rt, auth())) }], details: {} };
     },
   }));
