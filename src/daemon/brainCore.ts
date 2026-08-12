@@ -3,7 +3,7 @@ import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
-import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals } from '../plugins/api.js';
+import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals, TasksDomainControl } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -223,6 +223,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // pilot (a plan job id) and the advisor have no task row and keep the unbound service token.
   const tokenForTask = (taskId: string): string | undefined =>
     serviceUserId !== null && tasks.get(taskId) ? users.ensureAgentTokenForTask(serviceUserId, taskId) : undefined;
+  // A credential that acts as ONE REAL USER, for a plugin that took over a core surface which always ran
+  // with the user's own rights (the Elowen* control-plane tools). Deliberately the SAME mint the core
+  // path uses (`ensureAdvisorToken`, DB scope 'advisor', reused within its TTL), so moving that surface
+  // into a plugin changes neither the tenancy it acts under nor the token rows the database accumulates.
+  // Only a REAL user binds — an unknown id gets nothing rather than a token attributed to a ghost row.
+  const tokenForUser = (userId: number): string | undefined =>
+    users.get(userId) ? users.ensureAdvisorToken(userId) : undefined;
   const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken, tokenForTask };
   // NOTE: the SpawnService (and the AgentStore it records into) is owned by the agents plugin now —
   // the daemon reaches it through the 'agents' control; nothing here launches agent sessions.
@@ -338,6 +345,23 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The provider's own memo is a Promise, which a synchronous status read cannot await; refreshed by the
   // same `.then` that refreshes the output-show snapshot, so it can never lag behind a reload.
   let loadedPluginRegistry: PluginRegistry | undefined;
+  // The task domain's CURRENT owner, or undefined when no loaded plugin claims it. Resolved through the
+  // live registry on every call — a plugin reload swaps the owner, so a captured control would keep a
+  // dead generation alive. Core never names the owning plugin: it asks for the domain.
+  const tasksDomain = (): TasksDomainControl | undefined => loadedPluginRegistry?.control('tasks');
+  // TRANSITIONAL: until the domain moves into its own plugin nobody registers that control, so the
+  // daemon's own stores answer for it and this wave changes the plumbing without changing one behaviour.
+  // Delete this constant when the domain moves — the seam below then reduces to "the control, or nothing"
+  // on its own, and the throw it already carries becomes the live fail-closed path.
+  const coreTasksDomain: TasksDomainControl | undefined = { store: () => tasks, readiness: () => readiness, usage: () => taskUsage };
+  const availableTasksDomain = (): TasksDomainControl | undefined => tasksDomain() ?? coreTasksDomain;
+  const tasksSeam = (): TasksDomainControl => {
+    const domain = availableTasksDomain();
+    // Fail closed and LOUD: a seam that answered an unowned domain with an empty store would let a caller
+    // which never asked `tasksAvailable()` report "no tasks" as fact.
+    if (!domain) throw new Error('the tasks domain is unavailable — no loaded plugin owns it');
+    return domain;
+  };
   // Late binding for ctx.host.brainWorker(): the BrainWorkerService is constructed in bootstrap AFTER
   // this factory returns (it needs the brain store + bus), mirroring SpawnService.attachBrainWorker.
   let hostBrainWorker: PluginBrainWorker | undefined;
@@ -483,9 +507,16 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       host: {
         tmux,
         brainWorker: () => hostBrainWorker,
-        elowenCli: { cli, cliArgv, url: elowenCli.url, token: elowenCli.token, tokenForTask },
+        elowenCli: { cli, cliArgv, url: elowenCli.url, token: elowenCli.token, tokenForTask, tokenForUser },
         stores: {
-          tasks, projects,
+          // The task domain resolves LIVE through its control on every read (see tasksSeam): the owner is
+          // whichever plugin registered `tasks`, and a getter — rather than the instance — is what keeps a
+          // held `stores()` object correct across a plugin reload that swapped that owner.
+          get tasks() { return tasksSeam().store(); },
+          get readiness() { return tasksSeam().readiness(); },
+          get taskUsage() { return tasksSeam().usage(); },
+          tasksAvailable: () => availableTasksDomain() !== undefined,
+          projects,
           // Live row read: `homeProject` may be the narrow bootstrap fallback {id,slug,path}, but the
           // row always exists (inserted at open), so the store yields the full Project shape.
           homeProject: () => projects.get(homeProject.id) ?? { id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', pr_enabled: null },
@@ -494,7 +525,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             isAdmin: (id) => users.isAdmin(id),
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
           },
-          readiness, taskUsage,
           ...(events ? { eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) } } : {}),
         },
         prompts: {

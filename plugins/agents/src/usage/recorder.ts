@@ -1,7 +1,7 @@
 import type { ElowenEvent } from '../../../../src/api/sse.js';
 import type { AgentsBus as EventBus } from '../lib/bus.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
-import type { TaskUsageStore } from '../../../../src/store/taskUsageStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
+import type { TaskUsageContract } from '../../../../src/store/taskStoreContract.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { Task } from '../../../../src/store/types.js';
 import { readTaskUsage } from './index.js';
@@ -16,8 +16,8 @@ type RecorderTask = Pick<Task, 'id' | 'labels' | 'created_at'>;
 type ReadUsage = (task: RecorderTask, siblings: RecorderTask[], projectPath: string, fallback: AgentSpec) => TokenUsage | null;
 
 export interface UsageRecorderDeps {
-  usage: TaskUsageStore;
-  tasks: Pick<TaskStore, 'get' | 'list' | 'setResumeLabel'>;
+  usage: TaskUsageContract;
+  tasks: Pick<TaskStoreContract, 'get' | 'list' | 'setResumeLabel'>;
   /** Where the task's CLI logged usage (the mission worktree under PR-native, else the project path). */
   pathFor: (task: { project_id: number; parent_id: string | null }) => string;
   fallback: AgentSpec;

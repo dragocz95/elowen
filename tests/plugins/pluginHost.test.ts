@@ -11,6 +11,7 @@ const fakeStores = {
   tasks: { get: () => null },
   projects: { list: () => [] },
   usersRead: { list: () => [{ id: 1, username: 'a', isAdmin: true }], isAdmin: () => true },
+  tasksAvailable: () => true,
 } as unknown as PluginHostStores;
 
 const wire = (caps?: PluginCapabilities, host?: PluginHostWiring) => {
@@ -26,7 +27,7 @@ describe('ctx.host capability gates', () => {
   const fullHost: PluginHostWiring = {
     tmux: fakeTmux,
     brainWorker: () => fakeWorker,
-    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:4400', token: 't', tokenForTask: () => 'tt' },
+    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:4400', token: 't', tokenForTask: () => 'tt', tokenForUser: (id) => (id === 1 ? 'user-1-token' : undefined) },
     stores: fakeStores,
     projectFiles: { safe: (root, path) => `${root}/${path}` },
   };
@@ -51,6 +52,36 @@ describe('ctx.host capability gates', () => {
     expect(ctx.host.elowenCli().tokenForTask('t1')).toBe('tt');
     expect(ctx.host.stores()).toBe(fakeStores);
     expect(ctx.host.projectFiles().safe('/project', 'file.ts')).toBe('/project/file.ts');
+  });
+
+  it('mints a token for ONE REAL USER, and nothing for an unknown id', () => {
+    // A plugin that took over a user-owned core surface must act as that user, not as the shared agent
+    // token: the two carry different tenancy, so falling back to the shared one would silently change
+    // whose data the call reaches.
+    const cli = wire({ reads: ['elowen-cli'] }, fullHost).host.elowenCli();
+    expect(cli.tokenForUser(1)).toBe('user-1-token');
+    expect(cli.tokenForUser(999)).toBeUndefined();
+    expect(cli.tokenForUser(1)).not.toBe(cli.token);
+  });
+
+  it('reads the task domain LIVE, so a reload that swaps its owner is visible to a held seam', () => {
+    // The domain's owner is a plugin now: a consumer that captured `stores()` once (agents does exactly
+    // that) must still be talking to the CURRENT owner after a reload, and must be able to ask whether
+    // the domain is reachable at all instead of reading an empty board as fact.
+    let owner: { get: () => string } | undefined;
+    const liveStores = {
+      get tasks() {
+        if (!owner) throw new Error('the tasks domain is unavailable — no loaded plugin owns it');
+        return owner;
+      },
+      tasksAvailable: () => owner !== undefined,
+    } as unknown as PluginHostStores;
+    const stores = wire({ reads: ['stores'] }, { stores: liveStores }).host.stores();
+    expect(stores.tasksAvailable()).toBe(false);
+    expect(() => stores.tasks.get('t1')).toThrow('tasks domain is unavailable');
+    owner = { get: () => 'from-owner' };
+    expect(stores.tasksAvailable()).toBe(true);
+    expect(stores.tasks.get('t1')).toBe('from-owner');
   });
 
   it('an unwired process refuses with a clear error even WITH the grant', () => {

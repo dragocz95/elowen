@@ -1,4 +1,4 @@
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { Task } from '../../../../src/store/types.js';
 import { parseDbTs } from '../lib/time.js';
@@ -24,7 +24,7 @@ export function deadAgentTasks(liveSessions: Set<string>, inProgress: Task[]): T
 
 export interface StuckDetectorDeps {
   tmux: { list(): Promise<string[]> };
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
   bus: EventBus;
   /** Current epoch ms (injected for testability). */
   now: number;

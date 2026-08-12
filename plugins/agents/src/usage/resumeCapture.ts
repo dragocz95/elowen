@@ -1,4 +1,4 @@
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { Task } from '../../../../src/store/types.js';
 import { detectSessionId, type DetectedSession } from './sessionId.js';
@@ -8,7 +8,7 @@ type CaptureTask = Pick<Task, 'id' | 'labels' | 'created_at' | 'project_id' | 'p
 type DetectSession = (task: UsageTask, siblings: UsageTask[], projectPath: string, fallback: AgentSpec) => DetectedSession | null;
 
 export interface ResumeCaptureDeps {
-  tasks: Pick<TaskStore, 'list' | 'setResumeLabel'>;
+  tasks: Pick<TaskStoreContract, 'list' | 'setResumeLabel'>;
   /** Where the task's CLI logged its session (mission worktree under PR-native, else project path). */
   pathFor: (task: { project_id: number; parent_id: string | null }) => string;
   fallback: AgentSpec;

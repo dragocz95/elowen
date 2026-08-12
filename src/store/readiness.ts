@@ -1,4 +1,5 @@
 import type { Db } from './db.js';
+import type { ReadinessContract } from './taskStoreContract.js';
 import type { Task } from './types.js';
 
 type Row = Omit<Task, 'labels'> & { labels: string };
@@ -20,7 +21,7 @@ const READY_DEPS_CLEAR = `NOT EXISTS (
     AND NOT EXISTS (SELECT 1 FROM tasks dt WHERE dt.id = d.depends_on_id AND dt.status IN ('closed', 'cancelled'))
 )`;
 
-export class Readiness {
+export class Readiness implements ReadinessContract {
   private readyStmt;
   private readyForEpicStmt;
 

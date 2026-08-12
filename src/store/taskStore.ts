@@ -1,5 +1,6 @@
 import { tolerateMissingAgentsTables } from './db.js';
 import type { Db } from './db.js';
+import type { TaskStoreContract } from './taskStoreContract.js';
 import type { Task, CreateTaskInput, TaskStatus } from './types.js';
 import type { CommitFileChange } from '../integrations/projectFiles.js';
 import { deleteTasksAndDeps } from './cascade.js';
@@ -23,7 +24,7 @@ function parseChangedFiles(raw: string | null): CommitFileChange[] {
 
 const toTask = (r: Row): Task => ({ ...r, labels: r.labels ? r.labels.split(',').filter(Boolean) : [], changed_files: parseChangedFiles(r.changed_files) });
 
-export class TaskStore {
+export class TaskStore implements TaskStoreContract {
   constructor(private db: Db) {}
   create(input: CreateTaskInput): Task {
     this.db.prepare(

@@ -4,7 +4,7 @@ import { snapshotTaskChanges } from './taskSnapshot.js';
 import { logger } from '../lib/logger.js';
 import type { AgentsPluginConfig } from '../config.js';
 import type { Task } from '../../../../src/store/types.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { MissionStore } from '../store/missionStore.js';
 import type { DecisionQueue } from './decisionQueue.js';
 import type { KeyedMutex } from '../lib/keyedMutex.js';
@@ -19,7 +19,7 @@ const log = logger('review');
 const REVIEW_FIX_BUDGET = 2;
 
 export interface ReviewServiceDeps {
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
   missions: MissionStore;
   /** The plugin's own effective config (reviewOnDone + overseerExec gate the review). */
   pluginConfig: () => AgentsPluginConfig;

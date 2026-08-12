@@ -1,5 +1,5 @@
 import type { Task } from '../../../../src/store/types.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { Mission } from '../../../../src/shared/agentEvents.js';
 import type { MissionStore } from '../store/missionStore.js';
 
@@ -18,7 +18,7 @@ export interface MissionDetail {
 }
 
 export function assembleMissionDetail(
-  stores: { missions: MissionStore; tasks: TaskStore },
+  stores: { missions: MissionStore; tasks: TaskStoreContract },
   missionId: string,
 ): MissionDetail | null {
   const mission = stores.missions.get(missionId);

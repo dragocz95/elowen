@@ -1,7 +1,7 @@
 import type { ElowenEvent } from '../../../../src/api/sse.js';
 import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { MissionStore } from '../store/missionStore.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import { recipientsForMission, type PushUsersView } from './recipients.js';
 import { buildReview, buildNeedsInput, buildStalled, buildBlocked, buildDone, type PushPayload } from './messages.js';
 import { logger } from '../lib/logger.js';
@@ -18,7 +18,7 @@ interface PushTransport { sendToUsers(userIds: number[], payload: PushPayload): 
 
 export interface PushDispatcherDeps {
   missions: MissionStore;
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
   /** Read-only admin-flag view (host usersRead) — deviation from core, which takes the full UserStore. */
   users: PushUsersView;
   sender: PushTransport;

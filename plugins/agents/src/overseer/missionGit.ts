@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { MissionPrStore } from '../store/missionPrStore.js';
 import type { AgentsPluginConfig } from '../config.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import { logger } from '../lib/logger.js';
 import { createMissionWorktree, removeWorktree, commitAll, pushBranch, detectBaseBranch } from '../integrations/worktree.js';
 import { createPR, readPRReviews, mergePR, type MergeResult } from '../integrations/pr.js';
@@ -27,7 +27,7 @@ export interface MissionGitDeps {
   /** The plugin's own effective config (plugins.config.agents with autopilot fallback), read live. */
   pluginConfig: () => AgentsPluginConfig;
   projects: { get(id: number): { id: number; slug: string; path: string; pr_enabled?: boolean | null } | null };
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
 }
 
 /** Outcome of polling a PR for new review feedback. ingestReviews only DETECTS — turning feedback into

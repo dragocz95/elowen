@@ -1,4 +1,4 @@
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import { resolveOwnerId } from '../lib/owner.js';
 import type { Task } from '../../../../src/store/types.js';
 import type { MissionStore, Mission } from '../store/missionStore.js';
@@ -20,7 +20,7 @@ import { logger } from '../lib/logger.js';
 const log = logger('overseer');
 
 export interface MissionEngineDeps {
-  tasks: TaskStore; missions: MissionStore;
+  tasks: TaskStoreContract; missions: MissionStore;
   /** Dependency-cleared open tasks (the host store seam's shape — reads only, no store class). */
   readiness: { readyForEpic(epicId: string): Task[] };
   spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;

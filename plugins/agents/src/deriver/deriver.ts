@@ -1,6 +1,6 @@
 import type { TmuxDriver } from '../../../../src/tmux/types.js';
 import type { AgentStore } from '../store/agentStore.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { Clock } from '../lib/clock.js';
 import { detectAgentPrompt } from './shellPatterns/index.js';
 import type { SignalSink, DerivedSignal } from './types.js';
@@ -13,7 +13,7 @@ const log = logger('deriver');
 const PANE_TAIL = 60;
 
 export interface DeriverDeps {
-  tmux: TmuxDriver; agents: AgentStore; tasks: TaskStore;
+  tmux: TmuxDriver; agents: AgentStore; tasks: TaskStoreContract;
   sink: SignalSink; clock?: Clock;
   /** Resolve the task a session is working (signal file / registry); injected for testability. */
   sessionTaskId: (session: string) => string | null;

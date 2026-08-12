@@ -200,7 +200,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // Reverse mutation belongs exclusively to the bundled workflow owner. Do not hand arbitrary enabled
           // plugins a client that can mutate daemon-owned DAGs from a runner turn.
           name === 'subagent' ? opts.workflowExpansionRpc : undefined,
-          opts.pluginDb, opts.publishEvent, opts.host, opts.subscribeEvents);
+          opts.pluginDb, opts.publishEvent, opts.host, opts.subscribeEvents,
+          // ctx.control(): resolve a SIBLING plugin's control. Closes over the MERGED registry for the
+          // same reason `toolNames` does, and here it is load-bearing rather than convenient: plugins are
+          // loaded name-sorted, so a consumer ('agents') can easily register BEFORE the owner ('work')
+          // exists. Resolving at call time — long after every plugin has merged — makes the dependency
+          // work in either order, and makes a reload swap the owner underneath the caller for free.
+          (name) => registry.control(name));
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest

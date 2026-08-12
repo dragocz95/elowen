@@ -60,6 +60,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
   agents: ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis', 'advisor', 'onTaskClosed'],
+  tasks: ['store', 'readiness', 'usage'],
 };
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
@@ -403,7 +404,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void, resolveControl?: <K extends keyof KnownControls>(name: K) => KnownControls[K] | undefined): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -471,6 +472,19 @@ export class PluginRegistry {
         // is just the plugin overriding its own control.
         this.controls.set(clean, control);
         this.controlOwner.set(clean, name);
+      },
+      // Cross-plugin capability resolution (see PluginContext.control). Deny-by-default behind
+      // `reads:['controls']`, and WARN-and-undefined rather than throw when refused — same shape as
+      // resolveProvider, because the caller already has to handle the "owner is disabled" undefined and
+      // a throw would only turn a mis-declared manifest into a crash on an unrelated code path.
+      // `resolveControl` closes over the MERGED registry (wired by the loader, like allToolNames), never
+      // over this staging one: the owner may register long after this plugin did.
+      control<K extends keyof KnownControls>(key: K): KnownControls[K] | undefined {
+        if (!capabilities.reads?.includes('controls')) {
+          scoped.warn(`control('${key}') denied: no 'controls' read capability declared`);
+          return undefined;
+        }
+        return resolveControl?.(key);
       },
       registerCommand: (command) => {
         const clean = command.name?.trim() ?? '';

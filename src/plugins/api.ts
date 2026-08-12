@@ -14,8 +14,7 @@ import type { Task } from '../store/types.js';
 import type { TokenUsage } from '../integrations/usage/types.js';
 import type { DecisionKind, DecisionResult, Mission, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
 import type { Project } from '../store/projectStore.js';
-import type { TaskStore } from '../store/taskStore.js';
-import type { TaskUsageStore } from '../store/taskUsageStore.js';
+import type { ReadinessContract, TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
 import type { ElowenConfig } from '../store/configStore.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { CommitFileChange } from '../integrations/projectFiles.js';
@@ -376,6 +375,15 @@ export interface PluginElowenCli {
   /** The agent token bound to a REAL task row, so the API can pin a worker to its own task.
    *  Undefined when the id is not a task. */
   tokenForTask(taskId: string): string | undefined;
+  /** A token that acts as ONE REAL USER — the same credential the core control-plane tools are handed
+   *  when they run in that user's own chat (`users.ensureAdvisorToken`), reused across restarts. It is
+   *  for a plugin that took over a core surface which was always the user's own: calling the API with
+   *  the shared agent token instead would run under a different tenancy and a different scope, which is
+   *  a silent privilege change in either direction. Undefined for an unknown user id.
+   *
+   *  Read it at EXECUTE time from the acting identity and never capture it: a token captured at
+   *  registration would let one user's turn act as whoever loaded the plugin. */
+  tokenForUser(userId: number): string | undefined;
 }
 
 /** Read-only user view handed through host stores — identity only, no secrets, no mutation. */
@@ -385,11 +393,11 @@ export interface PluginUserView { id: number; username: string; isAdmin: boolean
  *  core stores (one shared SQLite underneath — see PluginDb), NOT the store classes themselves: the
  *  seam is the documented contract, and users are read-only by design. */
 export interface PluginHostStores {
-  /** The FULL task store — typed as the core class (structural), not a hand-picked subset: the agents
-   *  extraction grandfathers the whole task workflow (stuck/nudge counters, resume notes, review-fix
-   *  budgets, agent/exec binding, change snapshots), and a re-spelled 30-method interface would only
-   *  drift from the class it mirrors. Type-only import; the instance is the daemon's own store. */
-  tasks: TaskStore;
+  /** The FULL task store, typed by its CONTRACT rather than by a class: the task domain is owned by
+   *  whichever plugin registers the `tasks` control, and this property resolves LIVE on every read, so a
+   *  consumer holding `stores()` never pins one owner's instance across a plugin reload. Absent owner =
+   *  the accessor throws (see `tasksAvailable`) — reading it must never quietly answer "no tasks". */
+  tasks: TaskStoreContract;
   projects: { get(id: number): Project | null; list(): Project[] };
   /** The daemon's home project row (its own checkout) — the spawn fallback cwd. */
   homeProject(): Project;
@@ -400,10 +408,16 @@ export interface PluginHostStores {
      *  unknown user. Read-only — the identity view stays immutable by construction. */
     allowedExecs(userId: number): readonly string[] | null;
   };
-  /** Dependency-cleared open tasks (the mission engine / scheduler working set). */
-  readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
-  /** Per-task token usage snapshots — the full core store (same structural-typing rationale as tasks). */
-  taskUsage: TaskUsageStore;
+  /** Dependency-cleared open tasks (the mission engine / scheduler working set). Same live resolution
+   *  and same absent-owner rule as `tasks`. */
+  readiness: ReadinessContract;
+  /** Per-task token usage snapshots. Same live resolution and absent-owner rule as `tasks`. */
+  taskUsage: TaskUsageContract;
+  /** Whether the task domain is reachable AT ALL right now (its owner is loaded). The ONE honest way to
+   *  ask before touching `tasks`/`readiness`/`taskUsage`: a consumer that must degrade (refuse a mission,
+   *  report a subsystem as unavailable) checks this instead of catching, and must re-check on every use —
+   *  a plugin reload can take the owner away between two calls. Never cache the answer. */
+  tasksAvailable(): boolean;
   /** Read-only activity-log view: the `message` turns of a task's `elowen ask` conversation (stamped by
    *  the daemon's bus recorder). Optional — absent in a process without an EventStore (:memory: tests),
    *  where the ask history degrades to empty exactly as the core service did. */
@@ -987,6 +1001,17 @@ export interface AgentsCliDetection {
   freshInstall: { noConfigPersisted: boolean; noApiKey: boolean; noCustomSetup: boolean };
 }
 
+/** The TASK DOMAIN, offered by whichever plugin owns it. Note the key this is registered under is the
+ *  DOMAIN (`tasks`), never a plugin's name: core and a sibling plugin ask for the domain, and the owner
+ *  can be replaced, renamed or switched off without a single consumer knowing who implements it. The
+ *  accessors are functions (not fields) so the owner can build its stores lazily and swap them on reload
+ *  without every holder of the control going stale. */
+export interface TasksDomainControl {
+  store(): TaskStoreContract;
+  readiness(): ReadinessContract;
+  usage(): TaskUsageContract;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -998,6 +1023,7 @@ export interface KnownControls {
   mcp: McpListControl;
   agents: AgentsControl;
   lsp: LspStateControl;
+  tasks: TasksDomainControl;
 }
 
 /** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
@@ -1043,6 +1069,16 @@ export interface PluginContext {
   /** Register an admin/runtime control surface for this plugin. Unlike tools, controls are called by
    *  daemon routes and operate on the LIVE loaded plugin instance. */
   registerControl(name: string, control: PluginControl): void;
+  /** Resolve ANOTHER plugin's registered control — the one supported way one plugin reaches a capability
+   *  a sibling owns (a domain that was extracted out of core, say). Gated by `reads:['controls']`.
+   *
+   *  Returns `undefined` — never throws — when nobody registered that control or the registration does
+   *  not carry the whole contract: "the owner is switched off" is a legitimate runtime state the caller
+   *  must degrade honestly for (refuse the operation, report the subsystem unavailable), not an error to
+   *  swallow. Resolution happens AT CALL TIME against the merged registry, so plugin load order does not
+   *  matter and a reload is picked up automatically. For exactly that reason the result must NEVER be
+   *  cached in a variable: call it again on every use, or you are holding a dead generation. */
+  control<K extends keyof KnownControls>(name: K): KnownControls[K] | undefined;
   /** Contribute a chat slash command (a prompt macro) that shows up in every surface's command menu.
    *  Refused (and warned) if the name is not kebab-case, shadows a built-in, or collides with another
    *  plugin's command. */

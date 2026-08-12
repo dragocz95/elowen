@@ -1,4 +1,4 @@
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { AgentsBus as EventBus } from '../lib/bus.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
@@ -15,7 +15,7 @@ import { logger } from '../lib/logger.js';
 const log = logger('scheduler');
 
 export interface SchedulerDeps {
-  tasks: TaskStore; spawn: SpawnService; bus: EventBus;
+  tasks: TaskStoreContract; spawn: SpawnService; bus: EventBus;
   /** Stores used only to attribute a spawned agent to its owner (for per-user prompt resolution).
    *  Optional: absent in minimal test wiring, where launches fall back to the file-default prompts. */
   missions?: { get(id: string): { created_by: number | null } | null };

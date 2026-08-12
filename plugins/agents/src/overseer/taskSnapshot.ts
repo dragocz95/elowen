@@ -1,4 +1,4 @@
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { GitReader } from '../lib/git.js';
 import { logger } from '../lib/logger.js';
 
@@ -10,7 +10,7 @@ const log = logger('snapshot');
  *  this runs). No baseline (a hand-closed task) or no commits → empty list, never the live working tree.
  *  Best-effort: a git failure logs and leaves the task without a snapshot rather than blocking the close.
  *  `git` is injected (host seam) — deviation from core, which imports projectHead/projectRangeDiff. */
-export async function snapshotTaskChanges(git: GitReader, tasks: TaskStore, taskId: string, cwd: string): Promise<void> {
+export async function snapshotTaskChanges(git: GitReader, tasks: TaskStoreContract, taskId: string, cwd: string): Promise<void> {
   const t = tasks.get(taskId);
   if (!t) return;
   const base = t.labels.find((l) => l.startsWith('base:'))?.slice('base:'.length);

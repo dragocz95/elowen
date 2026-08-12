@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { DecisionQueue } from '../overseer/decisionQueue.js';
 import type { MissionStore } from '../store/missionStore.js';
-import type { TaskStore } from '../../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { ElowenEvent } from '../../../../src/api/sse.js';
 
 /** One poll's max hold before returning a heartbeat so the worker's CLI re-polls (mirrors the overseer
@@ -43,7 +43,7 @@ interface PendingAsk {
 }
 
 export interface AskServiceDeps {
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
   missions: MissionStore;
   decisionQueue: DecisionQueue;
   publishEvent: (e: ElowenEvent) => void;

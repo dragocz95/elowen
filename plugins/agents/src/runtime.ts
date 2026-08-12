@@ -6,10 +6,10 @@ import type { TmuxDriver } from '../../../src/tmux/types.js';
 import type { PluginDbHandle, PluginHostPrompts, PluginHostConfig, PluginHostAdvisor, PluginElowenCli, PluginBrainWorker } from '../../../src/plugins/api.js';
 import type { InferenceClient, RelayConfig } from '../../../src/inference/types.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
-import type { TaskStore } from '../../../src/store/taskStore.js';
+import type { TaskStoreContract } from '../../../src/store/taskStoreContract.js';
 import type { Task } from '../../../src/store/types.js';
 import type { Project } from '../../../src/store/projectStore.js';
-import type { TaskUsageStore } from '../../../src/store/taskUsageStore.js';
+import type { TaskUsageContract } from '../../../src/store/taskStoreContract.js';
 import { AgentStore } from './store/agentStore.js';
 import { MissionStore } from './store/missionStore.js';
 import { MissionPrStore } from './store/missionPrStore.js';
@@ -59,12 +59,12 @@ export interface AgentsRuntimeDeps {
   /** The plugin's handle on the shared main DB — owns agents/missions/mission_pr (grandfathered). */
   db: PluginDbHandle;
   stores: {
-    tasks: TaskStore;
+    tasks: TaskStoreContract;
     /** The host store seam's shape (PluginHostStores.projects) — reads only, no store class. */
     projects: { get(id: number): Project | null; list(): Project[] };
     /** Dependency-cleared open tasks (PluginHostStores.readiness shape). */
     readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
-    taskUsage: TaskUsageStore;
+    taskUsage: TaskUsageContract;
     /** Read-only user view with the admin flag (host usersRead rows adapted to is_admin shape) plus
      *  the per-user exec allow-list (planFlow validates pilot/overseer overrides against it). */
     users: { list(): { id: number; is_admin: boolean }[]; allowedExecs(id: number): readonly string[] | null };
@@ -123,7 +123,7 @@ function missionSummaryPrompt(ctx: SummaryContext): string {
 // read live exactly as before.
 interface LivenessDeps {
   tmux: TmuxDriver;
-  tasks: TaskStore;
+  tasks: TaskStoreContract;
   missions: MissionStore;
   bus: AgentsBusWithSink;
   config: PluginHostConfig;
