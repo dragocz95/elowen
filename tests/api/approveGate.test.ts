@@ -69,6 +69,15 @@ describe('POST /tasks/:id/approve-gate (human approval of an escalated phase)', 
     expect(t.deps.tasks.get('elowen-D')!.status).toBe('in_progress');
   });
 
+  it('refuses an agent token (403) — approving a gate is a human act', async () => {
+    const t = await makeTestApp({});
+    gate(t, 'elowen-A', 'elowen-D');
+    const agentTok = t.deps.users.issueToken(t.deps.users.list()[0]!.id, 'agent');
+    const res = await t.app.request('/tasks/elowen-A/approve-gate', { method: 'POST', headers: { authorization: `Bearer ${agentTok}` } });
+    expect(res.status).toBe(403);
+    expect(t.deps.tasks.get('elowen-D')!.status).toBe('blocked'); // the gate held
+  });
+
   it('404s for an unknown task', async () => {
     const t = await makeTestApp({});
     const res = await approveGate(t, 'elowen-nope');

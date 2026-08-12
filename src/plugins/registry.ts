@@ -58,7 +58,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   cron: ['pendingWakeupOriginSessionIds'],
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession'],
   mcp: ['listServers', 'bridgeSnapshot'],
-  agents: ['engine', 'spawn', 'pilot', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis', 'advisor'],
+  agents: ['engine', 'spawn', 'pilot', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis', 'advisor', 'onTaskClosed'],
 };
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its

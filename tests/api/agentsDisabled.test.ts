@@ -12,6 +12,9 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { openDb } from '../../src/store/db.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { join } from 'node:path';
+import { loadPlugins } from '../../src/plugins/loader.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 
 /** With the agents plugin disabled (control absent), the server is built WITHOUT engine/spawn — the
  *  mission/session/plan write paths must answer an explicit 503, never crash on an undefined dep, and
@@ -118,6 +121,54 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     const wipe = await app.request('/admin/cleanup', post(tok, {}));
     expect(wipe.status).toBe(200);
     expect(tasks.list()).toEqual([]);
+  });
+
+  it('closing tasks works without the plugin — no review gate, dependents stay open', async () => {
+    const { app, tasks, tok } = setup();
+    // A standalone task closes normally (its snapshot path is core-owned and must not need the plugin).
+    tasks.create({ id: 't1', project_id: 1, title: 'T1' });
+    const closed = await app.request('/tasks/t1', { ...post(tok, { status: 'closed', outcome: 'ok', result_summary: 'done' }), method: 'PATCH' });
+    expect(closed.status).toBe(200);
+    expect(tasks.get('t1')!.status).toBe('closed');
+    // A mission phase closes too — but WITHOUT the plugin there is no post-done review gate, so its
+    // dependent is never blocked/gated (the documented degradation: no plugin = no gate).
+    tasks.create({ id: 'e2', project_id: 1, title: 'E2', type: 'epic' });
+    tasks.create({ id: 'p1', project_id: 1, title: 'P1', parent_id: 'e2' });
+    tasks.create({ id: 'p2', project_id: 1, title: 'P2', parent_id: 'e2' });
+    tasks.addDep('p2', 'p1');
+    tasks.setStatus('p1', 'in_progress');
+    const phaseClosed = await app.request('/tasks/p1', { ...post(tok, { status: 'closed', outcome: 'ok' }), method: 'PATCH' });
+    expect(phaseClosed.status).toBe(200);
+    expect(tasks.get('p1')!.status).toBe('closed');
+    expect(tasks.get('p2')!.status).toBe('open'); // un-gated — no review without the plugin
+    expect(tasks.get('p2')!.labels.some((l) => l.startsWith('gatedby:'))).toBe(false);
+  });
+
+  it('approve-gate answers 404 with no plugin discovery, 503 when declared-but-disabled', async () => {
+    // No plugins provider at all → the mount does not exist.
+    const bare = setup();
+    bare.tasks.create({ id: 'a1', project_id: 1, title: 'A1' });
+    expect((await bare.app.request('/tasks/a1/approve-gate', post(bare.tok, {}))).status).toBe(404);
+    // Discovered-but-disabled plugin → the manifest-declared mount degrades to the explicit 503.
+    const db = openAgentsDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const tasks = new TaskStore(db);
+    tasks.create({ id: 'a1', project_id: 1, title: 'A1' });
+    const app = createServer({
+      tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tmux: new FakeTmuxDriver() as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      plugins: new PluginRegistryProvider(() => loadPlugins({
+        dirs: [join(process.cwd(), 'plugins')], enabled: [], logger: { info() {}, warn() {}, error() {} },
+      })),
+      pluginDirs: [join(process.cwd(), 'plugins')],
+    });
+    const res = await app.request('/tasks/a1/approve-gate', post(users.issueToken(admin.id), {}));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'agents plugin is disabled' });
   });
 
   it('an AGENT token is 403 on the overseer verbs without the plugin (no static allow-list hole)', async () => {

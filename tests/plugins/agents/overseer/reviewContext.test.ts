@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReviewContext, REVIEW_DIFF_LIMIT } from '../../../../src/api/services/reviewContext.js';
+import { buildReviewContext, REVIEW_DIFF_LIMIT } from '../../../../plugins/agents/src/overseer/reviewContext.js';
 
 describe('buildReviewContext', () => {
   it('carries the agent self-report and the real evidence (changed files + diff)', () => {

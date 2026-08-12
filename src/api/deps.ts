@@ -1,6 +1,7 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
+import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
+import type { Task } from '../store/types.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { ElowenEvent, EventBus } from './sse.js';
@@ -97,8 +98,9 @@ export interface ServerDeps {
   makeInference?: (cfg: RelayConfig) => InferenceClient;
   /** Async planning job registry (relay or agent backend resolves into it). Defaulted when absent. */
   planJobs?: AgentsPlanJobs;
-  /** Per-mission decision queue consumed by the parked overseer agent (long-poll). Defaulted when absent. */
-  decisionQueue?: AgentsDecisionQueue;
+  /** The agents plugin's post-done review gate (AgentsControl.onTaskClosed): drives the mission-phase
+   *  review workflow after a close. Absent (plugin disabled) → no gate, the close is final. */
+  onTaskClosed?: (id: string, existing: Task, opts: { outcome?: string; summary?: string }) => Promise<void>;
   /** Spawn the Pilot agent for an agent-mode plan job (Task 9). Absent → relay-only planning. */
   pilot?: (job: PlanJob, projectPath: string) => Promise<void>;
   /** The agents plugin's advisor lifecycle hooks (login autostart, user-deletion teardown). The

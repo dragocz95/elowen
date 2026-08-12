@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { projectReviewDiff } from '../../src/integrations/projectFiles.js';
+import { projectReviewDiff } from '../../../../plugins/agents/src/overseer/reviewDiff.js';
 
 let root: string;
 const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });

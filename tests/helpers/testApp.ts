@@ -189,7 +189,9 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     tasks, readiness, missions, engine, tmux, bus,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
-    planJobs, decisionQueue, pilot,
+    planJobs, pilot,
+    // Mirror bootstrap: the close path drives the plugin's review gate through the control.
+    onTaskClosed: control.onTaskClosed,
     gitLock: control.gitLock(),
     missionGit: control.missionGit(),
     plugins: provider,

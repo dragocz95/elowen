@@ -30,15 +30,15 @@ describe('agents plugin lib copies stay in lockstep with core (extraction B1)', 
   }
 });
 
-// PlanJobStore and DecisionQueue exist TWICE by design: the plugin's overseer runtime owns the live
-// instances, while the core RouteContext keeps local fallbacks for plugin-less wiring. The two copies
-// legitimately differ in their import specifiers (different compile units) but must not drift in
-// LOGIC — a one-sided change to job settling or decision hand-off would make the fallback behave
-// differently from the real thing. Compared after normalizing module specifiers and the one
-// singular/plural comment word the copies differ in.
+// PlanJobStore exists TWICE by design: the plugin's overseer runtime owns the live instance, while
+// the core RouteContext keeps a local fallback for plugin-less wiring (the /tasks/plan skeleton works
+// without the plugin). The two copies legitimately differ in their import specifiers (different
+// compile units) but must not drift in LOGIC — a one-sided change to job settling would make the
+// fallback behave differently from the real thing. Compared after normalizing module specifiers and
+// the one singular/plural comment word the copies differ in. (The DecisionQueue pair is gone: the
+// review gate moved into the plugin and the core fallback queue was deleted with it.)
 const NORMALIZED: [core: string, copy: string][] = [
   ['src/api/planJobStore.ts', 'plugins/agents/src/overseer/planJob.ts'],
-  ['src/api/decisionQueue.ts', 'plugins/agents/src/overseer/decisionQueue.ts'],
 ];
 
 const normalize = (src: string): string => src

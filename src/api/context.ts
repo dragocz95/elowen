@@ -1,12 +1,10 @@
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
-import { createReviewService, type ReviewService } from './services/reviewService.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
 import { PlanJobStore } from './planJobStore.js';
-import { DecisionQueue } from './decisionQueue.js';
-import type { AgentsDecisionQueue, AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
+import type { AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
 import type { Phase, PlanJob } from '../shared/agentEvents.js';
 import type { EventProjectDeps } from './eventProject.js';
 import type { Task } from '../store/types.js';
@@ -37,14 +35,13 @@ type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): Toke
 type UserCtx = { get: (k: 'user') => User | undefined };
 
 /** Shared per-server state and helper predicates, built once from {@link ServerDeps} and threaded into
- *  every route module. This bundles the defaulted singletons (plan jobs, decision queue, tickets, git
- *  lock) and the access/path helpers that used to be closures inside `createServer`, so the route
+ *  every route module. This bundles the defaulted singletons (plan jobs, git lock) and the
+ *  access/path helpers that used to be closures inside `createServer`, so the route
  *  families can live in their own files while still sharing one source of truth for tenancy gating. */
 export interface RouteContext {
   d: ServerDeps;
   log: ReturnType<typeof logger>;
   planJobs: AgentsPlanJobs;
-  decisionQueue: AgentsDecisionQueue;
   gitLock: AgentsGitLock;
 
   /** Projects an AGENT-scoped token may currently touch (its live working set). */
@@ -79,10 +76,6 @@ export interface RouteContext {
   reapPilotSession(job: PlanJob): void;
   /** Finalize an async plan job: persist, optionally engage/tick a mission, announce over SSE. */
   finalizePlanJob(jobId: string, phases: Phase[]): Promise<void>;
-  /** Release the dependents a phase's review gate was holding; returns the ids actually re-opened. */
-  releaseGatedDependents(phaseId: string): string[];
-  /** The post-done review workflow (gate, verdict apply, commit/self-heal/escalate) for task close. */
-  reviewService: ReviewService;
   /** Manual session launch (atomic checkout claim + snapshot baseline + spawn) for POST /sessions. */
   /** The free-text worker↔autopilot exchange behind `elowen ask` (mission overseer → human window → sentinel). */
   /** Renders the context-aware control guide an agent fetches with `elowen help` (GET /tasks/:id/guide). */
@@ -98,11 +91,10 @@ export interface RouteContext {
  *  closure, so tenancy/path semantics are unchanged. */
 export function createRouteContext(d: ServerDeps): RouteContext {
   const log = logger('api');
-  // planJobs/decisionQueue/gitLock resolve LIVE through `d` on every call, behind stable facade
-  // objects: with the agents plugin the deps fields are getters over the loaded registry's control,
-  // which is undefined until the plugin loads and is REPLACED by a plugin reload — a value captured
-  // here would strand the routes on a dead generation's stores (the parked overseer would long-poll a
-  // queue the engine no longer enqueues into). The local fallbacks keep plugin-less wiring (tests,
+  // planJobs/gitLock resolve LIVE through `d` on every call, behind stable facade objects: with the
+  // agents plugin the deps fields are getters over the loaded registry's control, which is undefined
+  // until the plugin loads and is REPLACED by a plugin reload — a value captured here would strand
+  // the routes on a dead generation's stores. The local fallbacks keep plugin-less wiring (tests,
   // plugin disabled) working exactly as before.
   const localPlanJobs = new PlanJobStore();
   const livePlanJobs = (): AgentsPlanJobs => d.planJobs ?? localPlanJobs;
@@ -111,13 +103,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     get: (id) => livePlanJobs().get(id),
     setPhases: (id, phases) => livePlanJobs().setPhases(id, phases),
     fail: (id, error) => livePlanJobs().fail(id, error),
-  };
-  const localDecisionQueue = new DecisionQueue();
-  const liveDecisionQueue = (): AgentsDecisionQueue => d.decisionQueue ?? localDecisionQueue;
-  const decisionQueue: AgentsDecisionQueue = {
-    enqueue: (missionId, kind, context) => liveDecisionQueue().enqueue(missionId, kind, context),
-    next: (missionId, timeoutMs) => liveDecisionQueue().next(missionId, timeoutMs),
-    resolve: (missionId, id, result) => liveDecisionQueue().resolve(missionId, id, result),
   };
   const localGitLock = new KeyedMutex();
   const gitLock: AgentsGitLock = { run: (key, fn) => (d.gitLock ?? localGitLock).run(key, fn) };
@@ -251,11 +236,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   const planService = createPlanService(d, planJobs, pathFor);
   const { persistPlan, reapPilotSession, finalizePlanJob } = planService;
 
-  // The post-done review workflow (gate → verdict → commit/self-heal/escalate) lives in its own
-  // service; releaseGatedDependents is re-exported for the human approve-gate route.
-  const reviewService = createReviewService({ d, log, gitLock, decisionQueue, checkoutPathFor, pathFor });
-  const { releaseGatedDependents } = reviewService;
-
   // Manual session launch (the atomic single-writer claim + snapshot baseline + spawn) lives in its own
   // service so the check-and-claim sequence is testable without the HTTP surface.
 
@@ -279,10 +259,10 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     : undefined;
 
   return {
-    d, log, planJobs, decisionQueue, gitLock,
+    d, log, planJobs, gitLock,
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
     eventDeps, execAllowedForUser,
     pathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, memoryService,
+    persistPlan, reapPilotSession, finalizePlanJob, memoryService,
   };
 }

@@ -20,6 +20,7 @@ import { buildAgentsRuntime, AGENTS_INTERVAL_MS, type AgentsRuntime } from './ru
 import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
+import { registerApproveGateApi } from './api/approveGate.js';
 import { registerNotesApi } from './api/notes.js';
 import { registerSkillsApi } from './api/skills.js';
 import { registerAdvisorApi } from './api/advisor.js';
@@ -158,6 +159,7 @@ export function register(ctx: PluginContext): void {
   registerMissionsApi(ctx, rt);
   registerSessionsApi(ctx, rt);
   registerAsksApi(ctx, rt);
+  registerApproveGateApi(ctx, rt);
   registerNotesApi(ctx, rt);
   registerAdvisorApi(ctx, rt);
   registerSkillsApi(ctx);
@@ -179,6 +181,9 @@ export function register(ctx: PluginContext): void {
     gitLock: () => rt().gitLock,
     missions: () => rt().missions,
     liveTaskUsage: () => rt().liveTaskUsage,
+    // The post-done review gate the core close path awaits (gate → verdict → commit/release). A direct
+    // method, not an accessor: the call IS the operation, and core must await its gating writes.
+    onTaskClosed: (id, existing, opts) => rt().review.onTaskClosed(id, existing, opts),
     // Core still drives login autostart and user-deletion teardown; absent collaborators (runner,
     // minimal tests) degrade to no-ops so a login can never fail on the advisor.
     advisor: () => ({

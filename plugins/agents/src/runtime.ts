@@ -19,6 +19,7 @@ import { Deriver } from './deriver/deriver.js';
 import { detectAgentPrompt } from './deriver/shellPatterns/index.js';
 import { MissionEngine, type SummaryContext } from './overseer/missionEngine.js';
 import { MissionGit } from './overseer/missionGit.js';
+import { createReviewService } from './overseer/reviewService.js';
 import type { AgentsPluginConfig } from './config.js';
 import { Scheduler } from './overseer/scheduler.js';
 import { sweepFinishedSessions } from './overseer/janitor.js';
@@ -360,6 +361,15 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     },
   });
   const scheduler = new Scheduler({ tasks, spawn, bus, missions, users, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(), gitLock, git: deps.git, worktreeFor: (id) => missionGit.worktreeFor(id) });
+  // The post-done review gate (gate → verdict → commit/self-heal/escalate) the core close path drives
+  // through the 'agents' control (onTaskClosed), plus the human approve-gate release. Shares the
+  // per-checkout git lock with the scheduler/engine so a phase commit never interleaves with a
+  // baseline read on the same checkout.
+  const review = createReviewService({
+    tasks, missions, config: deps.config, decisionQueue, gitLock, git: deps.git, missionGit, engine,
+    publish: bus.publish,
+    pathFor: (pid) => projects.get(pid)?.path ?? deps.homeProjectPath,
+  });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
   // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
@@ -578,7 +588,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // stores (plugin-owned tables)
     agents, missions, missionPrs, notes,
     // services
-    spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver,
+    spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver, review,
     // resolution helpers (API routes and services build on these in later steps)
     taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock, liveTaskUsage, advisor,
     // boot reconciles (ctx.registerBootReconcile) + interval loops (ctx.registerInterval)

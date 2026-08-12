@@ -31,6 +31,7 @@
       "/advisor",
       "/tasks/:id/ask",
       "/tasks/:id/guide",
+      "/tasks/:id/approve-gate",
       "/asks/pending",
       "/system/skills",
       "/system/skills/install"

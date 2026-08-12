@@ -3,6 +3,7 @@ import { shapeBrainMessages } from '../../brain/messageView.js';
 import { taskSessionId } from '../../brain/sessionId.js';
 import { projectRangeFileDiff, projectRangeLog, projectCommitFileDiff } from '../../integrations/projectFiles.js';
 import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../services/planner.js';
+import { snapshotTaskChanges } from '../services/taskSnapshot.js';
 import { resolvePrEnabled } from '../../shared/prMode.js';
 import { RelayClient } from '../../inference/client.js';
 import { shortId } from '../../shared/id.js';
@@ -57,13 +58,14 @@ async function sessionLive(d: RouteContext['d'], session: string): Promise<boole
 }
 
 /** Tasks, usage, admin cleanup and the plan/replan endpoints. The post-done review workflow that the
- *  close path drives lives in {@link ReviewService}; planning lives in {@link PlanService}. */
+ *  close path drives lives in the agents plugin (reached through `d.onTaskClosed`); planning lives in
+ *  {@link PlanService}. */
 export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
   const {
-    d, log, planJobs,
+    d, log, planJobs, gitLock,
     canAccessProject, notAdmin, accessibleProjects, execAllowedForUser,
     pathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService,
+    persistPlan, reapPilotSession, finalizePlanJob,
   } = ctx;
   app.get('/tasks', c => {
     const allowed = accessibleProjects(c);
@@ -288,9 +290,22 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // mission tick) must never see a state the transaction could still roll back.
     if (b.status) {
       d.bus.publish({ type: 'task', taskId: id, status: b.status });
-      // Drive the post-done overseer review gate (mission phases) or snapshot a standalone task's
-      // change list. Only on close.
-      if (b.status === 'closed') await reviewService.onTaskClosed(id, existing, { outcome: b.outcome, summary: b.result_summary });
+      if (b.status === 'closed') {
+        // ORDER MATTERS: freeze a standalone task's change list FIRST — the snapshot is core-owned
+        // (it must exist even with the agents plugin disabled) — and only THEN hand the close to the
+        // plugin's review gate. A mission phase is the opposite: its commit + snapshot happen INSIDE
+        // the gate (after the verdict), so core must not snapshot it here — snapshotting before the
+        // phase commit would freeze a change list that misses the phase's own work. Under the shared
+        // checkout lock so the range can't straddle a concurrent agent's commit on the same path.
+        if (!existing.parent_id) {
+          const snapPath = pathFor(existing.project_id);
+          await gitLock.run(snapPath, () => snapshotTaskChanges(d.tasks, id, snapPath));
+        }
+        // The post-done overseer review gate (agents plugin). AWAITED: the gate blocks the phase's
+        // direct dependents synchronously, and the engine tick must never observe them un-gated.
+        // Absent plugin → no gate, the close is final.
+        await d.onTaskClosed?.(id, existing, { outcome: b.outcome, summary: b.result_summary });
+      }
     }
     // If the new parent's mission is already live, tick it so the new phase is picked up now instead
     // of waiting for the next scheduled tick — same pattern as insert-phases below.
@@ -347,23 +362,6 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json({ diff: '' });
     }
   });
-  // Human approval of an escalated phase: accept its result and release the review gate it holds,
-  // re-opening only the dependents no OTHER predecessor still gates (mirrors the agent-approved
-  // verdict). The escalations inbox calls this instead of blindly opening every blocked dependent.
-  app.post('/tasks/:id/approve-gate', c => {
-    const id = c.req.param('id');
-    const existing = d.tasks.get(id);
-    if (!existing) return c.json({ error: 'task not found' }, 404);
-    if (!canAccessProject(c, existing.project_id)) return c.json({ error: 'forbidden' }, 403);
-    const released = releaseGatedDependents(id);
-    // The escalation froze the whole mission (state 'stalled'); approving here is the human action that
-    // un-freezes it. Resume so the released dependents spawn now instead of the mission sitting idle —
-    // a stalled mission no longer ticks itself, so without this the approval would release the gate but
-    // nothing would ever pick the work up. The phase's parent IS the epic; mission id is `m-<epicId>`.
-    if (existing.parent_id) void d.engine?.resumeStalled(`m-${existing.parent_id}`).catch((e) => log.error('approve-gate resume failed', e));
-    return c.json({ released });
-  });
-
   app.get('/tasks/:id/deps', c => {
     const task = d.tasks.get(c.req.param('id'));
     if (!task) return c.json({ error: 'not found' }, 404);

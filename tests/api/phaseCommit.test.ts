@@ -11,6 +11,10 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { MissionPrStore } from '../../plugins/agents/src/store/missionPrStore.js';
 import { MissionGit } from '../../plugins/agents/src/overseer/missionGit.js';
+import { createReviewService } from '../../plugins/agents/src/overseer/reviewService.js';
+import { DecisionQueue } from '../../plugins/agents/src/overseer/decisionQueue.js';
+import { KeyedMutex } from '../../plugins/agents/src/lib/keyedMutex.js';
+import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
 import { createServer } from '../../src/api/server.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
@@ -34,9 +38,19 @@ function build(prEnabled: boolean) {
   config.update({ autopilot: { prEnabled } });
   const prs = new MissionPrStore(db);
   const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
+  const bus = new EventBus();
+  // The phase commit lives in the agents plugin's review service now — wire its onTaskClosed into the
+  // server exactly like bootstrap does through the 'agents' control.
+  const review = createReviewService({
+    tasks, missions, config: config as never, decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
+    git: { projectHead, projectRangeDiff }, missionGit,
+    engine: { resumeStalled: async () => {}, stopTask: async () => {}, tick: async () => {} },
+    publish: (e) => bus.publish(e), pathFor: (pid) => projects.get(pid)?.path ?? repo,
+  });
   const app = createServer({
     tasks, readiness: new Readiness(db), missions, engine: { tick: async () => {}, isActive: () => false } as never,
-    spawn: null as never, tmux: null as never, bus: new EventBus(), missionGit, projects,
+    spawn: null as never, tmux: null as never, bus, missionGit, projects,
+    onTaskClosed: review.onTaskClosed,
     project: { id: project.id, path: repo }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new SystemClock(), config,
   });

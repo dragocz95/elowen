@@ -887,6 +887,13 @@ export interface AgentsControl {
   /** The tmux advisor lifecycle hooks core still drives: login autostart (fire-and-forget) and the
    *  user-deletion teardown. The /advisor routes themselves are plugin root mounts. */
   advisor(): AgentsAdvisorHooks;
+  /** The post-done review gate for a MISSION PHASE's close: gate the dependents, hand the overseer the
+   *  real diff, apply the verdict (commit + release / self-heal / escalate). A direct method — not an
+   *  accessor — because the call IS the operation and the core close path must AWAIT its gating writes
+   *  (block-dependents must land before the route answers; a fail-open hook could not sequence that).
+   *  Called after the status flip + SSE publish, only on close; standalone tasks no-op (their snapshot
+   *  is core-owned). Without the plugin there is no gate — core simply skips the call. */
+  onTaskClosed(id: string, existing: Task, opts: { outcome?: string; summary?: string }): Promise<void>;
 }
 
 /** Core-facing slice of the plugin's advisor service (see AgentsControl.advisor). */
