@@ -483,6 +483,37 @@ export interface PluginHost {
    *  personality paragraph, brand). Gated by `reads:['terminals']` (same trust domain); wired late by
    *  bootstrap like the brain worker. */
   advisor(): PluginHostAdvisor;
+  /** The core-owned typed sub-agent catalog editor (the `.md` files agentRegistry loads for
+   *  delegation). The subagent plugin serves the '/plugins/agents/*' editor surface over it. Gated by
+   *  `reads:['agent-catalog']`. */
+  agentCatalog(): PluginAgentCatalog;
+}
+
+/** One row of the typed sub-agent catalog (see PluginHost.agentCatalog). */
+export interface AgentCatalogEntry {
+  name: string;
+  description: string;
+  /** The frontmatter tools spec: a preset keyword ('read-only' | 'all' | 'inherit') or a tool list. */
+  tools: string | string[];
+  source: 'builtin' | 'user';
+  canDelete: boolean;
+  /** User agents only — the body prompt, so an editor can prefill. */
+  body?: string;
+}
+
+/** Outcome of a catalog write: ok, or a refusal with the HTTP status the editor surface should map
+ *  it to (400 invalid, 404 unknown, 503 no writable dir). */
+export type AgentCatalogResult = { ok: true } | { error: string; status: 400 | 404 | 503 };
+
+/** Editor over the typed sub-agent catalog (see PluginHost.agentCatalog). Validation — name shape,
+ *  built-in shadowing, size bounds, tools-spec + frontmatter parse — lives core-side with the
+ *  registry parser that consumes these files. */
+export interface PluginAgentCatalog {
+  list(): AgentCatalogEntry[];
+  /** Create or overwrite a user agent. Async: an explicit tool list is validated against the live
+   *  merged registry. */
+  save(name: string, input: { description?: unknown; tools?: unknown; body?: unknown }): Promise<AgentCatalogResult>;
+  remove(name: string): AgentCatalogResult;
 }
 
 /** Send-only view of the core PushSender (see PluginHost.push). */

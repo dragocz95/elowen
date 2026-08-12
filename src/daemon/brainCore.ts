@@ -43,6 +43,7 @@ import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromElowen } from '../brain/config.js';
 import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
+import { makeAgentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
@@ -504,6 +505,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         push: () => hostPush,
         terminals: () => hostTerminals,
         advisor: () => hostAdvisor,
+        // The typed sub-agent catalog editor (the subagent plugin's '/plugins/agents/*' surface).
+        // Tool names resolve through the provider so a save validates against the LIVE merged
+        // registry — including the reload this very load is part of (get() memoizes per generation).
+        agentCatalog: makeAgentCatalog({
+          builtinDir: agentsBuiltinDir,
+          ...(agentsUserDir ? { userDir: agentsUserDir } : {}),
+          pluginToolNames: async (): Promise<string[]> => (await pluginProvider.get()).tools.map((t) => t.name),
+        }),
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,

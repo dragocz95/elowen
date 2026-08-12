@@ -17,5 +17,42 @@
       "label": "Časový limit zaseknutia (minúty)",
       "hint": "Ako dlho môže byť delegovaný subagent bez známky činnosti (žiadne spustenie nástroja, žiadne hranice krokov), než sa preruší ako zaseknutý. Verdikt je zotaviteľný nástrojom DelegateContinue, takže ide len o poistku proti naozaj zamrznutému subagentovi — pri hlbších analýzach, ktoré premýšľajú dlho, hodnotu zvýšte. Rozsah 5 minút až 4 hodiny, predvolené 1 hodina."
     }
+  },
+  "web": {
+    "settings": {
+      "subagents": "Sub-agenti"
+    },
+    "strings": {
+      "title": "Sub-agenti",
+      "sectionHint": "Typovaní sub-agenti, ktorým môže asistent delegovať prácu. Vstavané explore a plan sú len na čítanie; pridajte si vlastných.",
+      "empty": "Zatiaľ žiadni sub-agenti.",
+      "badgeBuiltin": "vstavaný",
+      "badgeUser": "vlastný",
+      "add": "Pridať sub-agenta",
+      "edit": "Upraviť sub-agenta",
+      "remove": "Vymazať sub-agenta",
+      "deleteTitle": "Vymazať sub-agenta",
+      "deleteDesc": "Sub-agent „{name}“ bude natrvalo odstránený.",
+      "name": "Názov",
+      "description": "Popis",
+      "tools": "Nástroje",
+      "toolsHint": "Čo smie sub-agent použiť. „Len na čítanie“ dá nástroje bez úprav a shell obmedzený na nedeštruktívne príkazy.",
+      "toolsReadOnly": "Len na čítanie (+ nedeštruktívny shell)",
+      "toolsAll": "Všetko (plná sada nástrojov)",
+      "toolsInherit": "Zdediť nástroje volajúceho",
+      "toolsCustom": "Vlastný zoznam…",
+      "customTools": "Zoznam nástrojov",
+      "customToolsHint": "Názvy nástrojov oddelené čiarkou, napr. Read, Search, Bash.",
+      "body": "Prompt",
+      "bodyPlaceholder": "Systémový prompt sub-agenta…",
+      "save": "Uložiť sub-agenta",
+      "cancel": "Zrušiť",
+      "created": "Sub-agent uložený",
+      "updated": "Sub-agent upravený",
+      "deleted": "Sub-agent vymazaný",
+      "helpName": "kebab-case: malé písmená, číslice a pomlčky (napr. „code-reviewer“).",
+      "helpDescription": "Jedna veta: kedy delegovať tomuto sub-agentovi (podľa nej volí asistent).",
+      "helpBody": "Systémový prompt sub-agenta — jeho rola, mantinely a ako má reportovať."
+    }
   }
 }

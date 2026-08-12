@@ -6,9 +6,7 @@ import { MarketplaceError } from '../../../plugins/marketplace.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Context } from 'hono';
 import type { ElowenApp, RouteContext } from '../../context.js';
-import { registerAgentRoutes } from './agents.js';
 import { registerBrainOAuthRoutes } from './oauth.js';
-import type { PluginRoutesShared } from './shared.js';
 
 /** Map a marketplace service error to its HTTP status; unknown errors become a 500. */
 function marketplaceFail(c: Context, e: unknown) {
@@ -31,8 +29,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   // The plugin config/enable routes must be reachable during first-run onboarding, so they use the
   // setup-tolerant admin gate (the shared `notAdminUnlessSetup`, previously a private copy of it here).
   const { d, notAdminUnlessSetup: notAdmin } = ctx;
-  // Built once and threaded into each sub-registrar so they all share the one setup-tolerant admin gate.
-  const shared: PluginRoutesShared = { notAdmin };
   const listing = () => {
     const cfg = d.config.get().plugins;
     const enabled = new Set(cfg.enabled);
@@ -335,7 +331,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(listing().find((p) => p.name === name) ?? { ok: true });
   });
 
-  registerAgentRoutes(app, ctx, shared);
 
   // ── Discord destinations (discord plugin): text channels + active threads of the configured guild,
   // for the cron-job channel picker. The bot token never leaves (or logs from) the daemon; a missing

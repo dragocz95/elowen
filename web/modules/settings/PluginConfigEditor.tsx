@@ -1,7 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, GitFork, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { SubagentsEditor } from './SubagentsEditor';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
@@ -578,12 +577,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         </>
       )}
 
-      {/* The subagent plugin's typed sub-agents are .md files too — built-in explore/plan plus the user's own. */}
-      {mode === 'behavior' && detail.name === 'subagent' ? (
-        <SettingsGroup className="plugin-card" icon={GitFork} title={t.subagents.title} description={t.subagents.sectionHint}>
-          <div className="settings-group__panel"><SubagentsEditor /></div>
-        </SettingsGroup>
-      ) : null}
     </div>
   );
 }

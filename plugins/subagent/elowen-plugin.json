@@ -22,22 +22,26 @@
     ],
     "platforms": [
       "subagent"
+    ],
+    "apiRoutes": [
+      "/plugins/agents/list",
+      "/plugins/agents/:name"
     ]
   },
   "icons": {
-    "Delegate": "\ud83e\udd1d",
-    "DelegateStatus": "\u23f3",
-    "DelegateResult": "\ud83d\udce5",
-    "DelegateModels": "\ud83e\udd1d",
-    "DelegateList": "\ud83d\udccb",
-    "DelegateRead": "\ud83d\udcd6",
-    "DelegateContinue": "\u2709\ufe0f",
-    "DelegateStop": "\ud83d\uded1",
-    "WorkflowStart": "\ud83d\udd00",
-    "WorkflowAddNodes": "\u2795",
-    "WorkflowStatus": "\ud83d\udcca",
-    "WorkflowResume": "\u25b6\ufe0f",
-    "WorkflowStop": "\ud83d\uded1"
+    "Delegate": "🤝",
+    "DelegateStatus": "⏳",
+    "DelegateResult": "📥",
+    "DelegateModels": "🤝",
+    "DelegateList": "📋",
+    "DelegateRead": "📖",
+    "DelegateContinue": "✉️",
+    "DelegateStop": "🛑",
+    "WorkflowStart": "🔀",
+    "WorkflowAddNodes": "➕",
+    "WorkflowStatus": "📊",
+    "WorkflowResume": "▶️",
+    "WorkflowStop": "🛑"
   },
   "planSafe": [
     "DelegateStatus",
@@ -82,5 +86,53 @@
       "default": 60,
       "hint": "How long a delegated sub-agent may go with no sign of life (no tool starts, no step boundaries) before it is aborted as stalled. The verdict is recoverable with DelegateContinue, so it is only a safety net for a genuinely wedged child — raise it for deep analyses that think for long stretches. Range 5 minutes to 4 hours, default 1 hour."
     }
-  ]
+  ],
+  "capabilities": {
+    "reads": [
+      "agent-catalog"
+    ]
+  },
+  "web": {
+    "entry": "web/index.js",
+    "requiresApiVersion": 1,
+    "settings": [
+      {
+        "id": "subagents",
+        "label": "Sub-agents",
+        "icon": "GitFork"
+      }
+    ],
+    "strings": {
+      "title": "Sub-agents",
+      "sectionHint": "Typed sub-agents the assistant can delegate to. Built-in explore and plan ship read-only; add your own.",
+      "empty": "No sub-agents yet.",
+      "badgeBuiltin": "built-in",
+      "badgeUser": "custom",
+      "add": "Add sub-agent",
+      "edit": "Edit sub-agent",
+      "remove": "Delete sub-agent",
+      "deleteTitle": "Delete sub-agent",
+      "deleteDesc": "The sub-agent “{name}” will be removed permanently.",
+      "name": "Name",
+      "description": "Description",
+      "tools": "Tools",
+      "toolsHint": "What the sub-agent may use. Read-only grants tools that cannot edit, plus a shell limited to non-destructive commands.",
+      "toolsReadOnly": "Read-only (+ non-destructive shell)",
+      "toolsAll": "All (full toolset)",
+      "toolsInherit": "Inherit the caller’s tools",
+      "toolsCustom": "Custom list…",
+      "customTools": "Tool list",
+      "customToolsHint": "Comma-separated tool names, e.g. Read, Search, Bash.",
+      "body": "Prompt",
+      "bodyPlaceholder": "The sub-agent’s system prompt…",
+      "save": "Save sub-agent",
+      "cancel": "Cancel",
+      "created": "Sub-agent saved",
+      "updated": "Sub-agent updated",
+      "deleted": "Sub-agent deleted",
+      "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “code-reviewer”).",
+      "helpDescription": "One line: when to delegate to this sub-agent (the assistant reads it to choose).",
+      "helpBody": "The sub-agent’s system prompt — its role, constraints and how to report back."
+    }
+  }
 }

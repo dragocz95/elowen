@@ -17,5 +17,42 @@
       "label": "Časový limit zaseknutí (minuty)",
       "hint": "Jak dlouho může delegovaný subagent být bez známky činnosti (žádné spuštění nástroje, žádné hranice kroků), než se přeruší jako zaseknutý. Verdikt je zotavitelný nástrojem DelegateContinue, takže jde jen o pojistku proti opravdu zamrzlému subagentovi — u hlubších analýz, které přemýšlejí dlouho, hodnotu zvyšte. Rozsah 5 minut až 4 hodiny, výchozí 1 hodina."
     }
+  },
+  "web": {
+    "settings": {
+      "subagents": "Sub-agenti"
+    },
+    "strings": {
+      "title": "Sub-agenti",
+      "sectionHint": "Typovaní sub-agenti, kterým může asistent delegovat práci. Vestavěné explore a plan jsou jen ke čtení; přidejte si vlastní.",
+      "empty": "Zatím žádní sub-agenti.",
+      "badgeBuiltin": "vestavěný",
+      "badgeUser": "vlastní",
+      "add": "Přidat sub-agenta",
+      "edit": "Upravit sub-agenta",
+      "remove": "Smazat sub-agenta",
+      "deleteTitle": "Smazat sub-agenta",
+      "deleteDesc": "Sub-agent „{name}“ bude trvale odstraněn.",
+      "name": "Název",
+      "description": "Popis",
+      "tools": "Nástroje",
+      "toolsHint": "Co smí sub-agent použít. „Jen pro čtení“ dá nástroje bez úprav a shell omezený na nedestruktivní příkazy.",
+      "toolsReadOnly": "Jen pro čtení (+ nedestruktivní shell)",
+      "toolsAll": "Vše (plná sada nástrojů)",
+      "toolsInherit": "Zdědit nástroje volajícího",
+      "toolsCustom": "Vlastní seznam…",
+      "customTools": "Seznam nástrojů",
+      "customToolsHint": "Názvy nástrojů oddělené čárkou, např. Read, Search, Bash.",
+      "body": "Prompt",
+      "bodyPlaceholder": "Systémový prompt sub-agenta…",
+      "save": "Uložit sub-agenta",
+      "cancel": "Zrušit",
+      "created": "Sub-agent uložen",
+      "updated": "Sub-agent upraven",
+      "deleted": "Sub-agent smazán",
+      "helpName": "kebab-case: malá písmena, číslice a pomlčky (např. „code-reviewer“).",
+      "helpDescription": "Jedna věta: kdy delegovat tomuto sub-agentovi (podle ní volí asistent).",
+      "helpBody": "Systémový prompt sub-agenta — jeho role, mantinely a jak má reportovat."
+    }
   }
 }

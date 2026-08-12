@@ -69,12 +69,13 @@ import { usePersistentState } from './usePersistentState';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
-  useCronJobs, useDiscordChannels, usePluginSkills,
+  useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
   useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
+  useSavePluginSubagent, useDeletePluginSubagent,
 } from './mutations';
 import { needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec } from './agentUtils';
 import { execModel } from './modelProvider';
@@ -150,6 +151,7 @@ export function ensurePluginUiRuntime(): void {
       // the cronjob plugin's settings editor reaches them here.
       useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
       usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
+      usePluginSubagents, useSavePluginSubagent, useDeletePluginSubagent,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {

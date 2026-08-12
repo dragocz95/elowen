@@ -986,5 +986,41 @@ export function register(ctx) {
   // the engine reads it through the getter at execute time.
   registerWorkflow(ctx, () => run, { resolveDelegateTools, principalOf, delegateContextChunks });
 
+  // ── Typed sub-agent editor API (root mounts, grandfathered core URLs): the catalog `.md` files are
+  // core-owned (agentRegistry parses them for delegation), reached through the host's agentCatalog
+  // seam; this plugin owns the HTTP surface. NOTE the URL family says "agents" for historic reasons —
+  // these are THIS plugin's typed sub-agents, not the agents plugin. A successful write requests a
+  // plugin reload (deferred + coalesced by the host) so the refreshed catalog reaches new
+  // conversations. ──
+  const catalog = () => ctx.host.agentCatalog();
+  const jsonRes = (body, status = 200) => ({ status, body });
+  const catalogRes = (result, okStatus = 200) => {
+    if (result.ok) { ctx.requestReload?.(); return jsonRes({ ok: true }, okStatus); }
+    return jsonRes({ error: result.error }, result.status);
+  };
+
+  ctx.registerApiRoute({
+    rootMount: '/plugins/agents/list', path: '', method: 'GET', access: 'admin',
+    handler: async (req) => (req.path === '' ? jsonRes(catalog().list()) : jsonRes({ error: 'not found' }, 404)),
+  });
+
+  ctx.registerApiRoute({
+    rootMount: '/plugins/agents/:name', path: '', method: 'PUT', access: 'admin',
+    handler: async (req) => {
+      if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
+      let b;
+      try { b = await req.json(); } catch { b = null; }
+      const result = await catalog().save(req.params.name ?? '', {
+        description: b?.description, tools: b?.tools, body: b?.body,
+      });
+      return catalogRes(result, 201); // 201 mirrors the pre-extraction route: PUT is create-or-overwrite
+    },
+  });
+
+  ctx.registerApiRoute({
+    rootMount: '/plugins/agents/:name', path: '', method: 'DELETE', access: 'admin',
+    handler: async (req) => (req.path === '' ? catalogRes(catalog().remove(req.params.name ?? '')) : jsonRes({ error: 'not found' }, 404)),
+  });
+
   ctx.logger.info('delegate tools registered (+background status/result)');
 }

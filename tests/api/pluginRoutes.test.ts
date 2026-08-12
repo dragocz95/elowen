@@ -19,6 +19,8 @@ import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { makeAgentCatalog } from '../../src/brain/agents/catalogService.js';
+import { promptsPath } from '../../src/prompts/index.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -292,26 +294,39 @@ describe('plugin contributions + logs + data routes', () => {
 });
 
 describe('sub-agent (typed .md) routes', () => {
-  // The routes derive the user-agents dir as dirname(pluginDataRoot)/agents, so nest pluginDataRoot one
-  // level down to keep each test's agents dir isolated (setup() puts it directly under tmpdir → shared).
-  function agentSetup() {
+  // The '/plugins/agents/*' editor surface is served by the REAL subagent plugin (root mounts) over the
+  // core agentCatalog host seam — wire the seam the way brainCore does, against an isolated user dir.
+  function agentSetup(opts: { enabled?: string[] } = {}) {
     const cfgDir = tmpDir('agentcfg');
     const pluginDataRoot = join(cfgDir, 'plugins-data');
     mkdirSync(pluginDataRoot, { recursive: true });
+    const userAgentsDir = join(cfgDir, 'agents');
     const db = openAgentsDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');
+    const pluginsDir = join(process.cwd(), 'plugins');
+    const provider = new PluginRegistryProvider(() => loadPlugins({
+      dirs: [pluginsDir], enabled: opts.enabled ?? ['subagent'], dataRoot: pluginDataRoot,
+      host: {
+        agentCatalog: makeAgentCatalog({
+          builtinDir: promptsPath('agents'), userDir: userAgentsDir,
+          pluginToolNames: async () => [],
+        }),
+      },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    }));
     const app = createServer({
       tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-      pluginDirs: [], pluginDataRoot,
+      pluginDirs: [pluginsDir], pluginDataRoot,
+      plugins: provider,
       brain: { reloadPlugins: vi.fn(async () => {}) } as never,
       brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     });
-    return { app, userAgentsDir: join(cfgDir, 'agents'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+    return { app, userAgentsDir, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
   }
   const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
@@ -368,6 +383,14 @@ describe('sub-agent (typed .md) routes', () => {
     const removed = await app.request('/plugins/agents/triage', del(adminTok));
     expect(removed.status).toBe(200);
     expect(existsSync(join(userAgentsDir, 'triage.md'))).toBe(false);
+  });
+
+  it('answers 503 "subagent plugin is disabled" when the plugin is off', async () => {
+    const { app, adminTok } = agentSetup({ enabled: [] });
+    const res = await app.request('/plugins/agents/list', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'subagent plugin is disabled' });
+    expect((await app.request('/plugins/agents/mine', put(adminTok, valid))).status).toBe(503);
   });
 });
 
