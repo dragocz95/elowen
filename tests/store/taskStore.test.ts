@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Db } from '../../src/store/db.js';
-import { TaskStore } from '../../src/store/taskStore.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
 let db: Db;

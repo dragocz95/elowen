@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Db } from '../../../../src/store/db.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { UserStore } from '../../../../src/store/userStore.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { PushDispatcher, type PrInfoReader } from '../../../../plugins/agents/src/push/pushDispatcher.js';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -28,7 +29,7 @@ function setup() {
   const tasks = new TaskStore(db);
   const missions = new MissionStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions, bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus: new EventBus(),
     tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -106,7 +107,7 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     const admin = users.create('admin', 'pw');
     const tasks = new TaskStore(db);
     const app = createServer({
-      tasks, readiness: new Readiness(db), missions: { get: () => null, active: () => [], live: () => [], activeForEpic: () => null }, bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: { get: () => null, active: () => [], live: () => [], activeForEpic: () => null }, bus: new EventBus(),
       tmux: new FakeTmuxDriver() as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -157,7 +158,7 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     const tasks = new TaskStore(db);
     tasks.create({ id: 'a1', project_id: 1, title: 'A1' });
     const app = createServer({
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
       tmux: new FakeTmuxDriver() as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

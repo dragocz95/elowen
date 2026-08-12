@@ -6,7 +6,7 @@ import { compactionReserveTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { TaskStore } from '../../src/store/taskStore.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { EventBus } from '../../src/api/sse.js';
 
 let sharedRuntime: ModelRuntime;
@@ -189,7 +189,7 @@ describe('auto-compact threshold on task workers', () => {
     const settingsReads: number[] = [];
     const session = fakeSession();
     const svc = new BrainWorkerService({
-      store: new BrainStore(db), tasks, bus: new EventBus(),
+      store: new BrainStore(db), tasks: () => tasks, bus: new EventBus(),
       runtime: sharedRuntime,
       config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] }),
       url: 'http://daemon', token: 'tok',

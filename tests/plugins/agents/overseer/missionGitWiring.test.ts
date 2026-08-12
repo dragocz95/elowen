@@ -9,8 +9,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { TaskStore } from '../../../../src/store/taskStore.js';
-import { Readiness } from '../../../../src/store/readiness.js';
+import { TaskRefs } from '../../../../src/store/taskRefs.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../../../src/store/projectStore.js';
 import { ConfigStore } from '../../../../src/store/configStore.js';
@@ -41,7 +42,7 @@ function setup(prEnabled: boolean) {
   const tmux = new FakeTmuxDriver();
   const launch = vi.fn().mockResolvedValue({ session: 'elowen-AgentX' });
   const engine = new MissionEngine({ git: gitSeam,
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
     spawn: { launch } as unknown as SpawnService, tmux, bus: new EventBus(),
     projects, fallback: { program: 'claude-code', model: 'sonnet' },
     nameAgent: () => 'AgentX', clock: new SystemClock(), missionGit,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventStore } from '../../src/store/eventStore.js';
 import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
@@ -36,7 +37,7 @@ function setup() {
   events.record({ type: 'mission', missionId: 'm-e2', state: 'active' }, 2);
   events.record({ type: 'task', taskId: 'gone', status: 'open' }); // unresolved → project_id null
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(), events,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(), events,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
@@ -75,7 +76,7 @@ describe('GET /activity?target — per-task conversation feed', () => {
     events.record({ type: 'review', missionId: 'm-x', taskId: 'tk', approve: false, rationale: 'redo' });
     events.record({ type: 'decision', taskId: 'other', kind: 'prompt', question: 'nope', outcome: 'approved', rationale: 'x', confidence: 0.5 });
     const app = createServer({
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(), events,
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(), events,
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db),

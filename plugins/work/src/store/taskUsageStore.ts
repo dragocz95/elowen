@@ -1,8 +1,6 @@
-import type { Db } from './db.js';
-import type { TaskUsageContract } from './taskStoreContract.js';
-import type { TokenUsage } from '../integrations/usage/types.js';
-
-import type { CostSource } from '../integrations/usage/types.js';
+import type { WorkDb } from './db.js';
+import type { TaskUsageContract } from '../../../../src/store/taskStoreContract.js';
+import type { TokenUsage, CostSource } from '../../../../src/integrations/usage/types.js';
 
 interface AggRow {
   exec: string;
@@ -34,7 +32,7 @@ function toUsage(r: AggRow & { raw_usage_metadata?: string | null }): TokenUsage
  *  stats page aggregates straight from here — no re-scanning the CLIs' (potentially gigabyte) session
  *  stores on every request. `record` is keyed on task_id, so a re-run/re-snapshot replaces in place. */
 export class TaskUsageStore implements TaskUsageContract {
-  constructor(private db: Db) {}
+  constructor(private db: WorkDb) {}
 
   /** Snapshot a settled task's usage (insert or replace its row). */
   record(taskId: string, projectId: number, exec: string, usage: TokenUsage): void {

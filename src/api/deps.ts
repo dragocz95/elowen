@@ -1,5 +1,5 @@
-import type { TaskStore } from '../store/taskStore.js';
-import type { Readiness } from '../store/readiness.js';
+import type { ReadinessContract, TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
+import type { TaskRefs } from '../store/taskRefs.js';
 import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanFlow, AgentsPlanJobs } from '../plugins/api.js';
 import type { Task } from '../store/types.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -16,7 +16,6 @@ import type { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import type { UserPromptStore } from '../store/userPromptStore.js';
 import type { UserSettingStore } from '../store/userSettingStore.js';
 import type { PromptService } from '../prompts/promptService.js';
-import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 import type { BrainOAuthManager } from '../brain/oauth.js';
 import type { BrainCredentialAccess } from '../brain/providerUsage.js';
@@ -31,10 +30,21 @@ export interface ServerDeps {
   /** The sub-agent pool's live state, for `/health`. Absent in a process with no pool (the in-memory test
    *  database, and the runner itself), which is reported as an absent block rather than a fake empty one. */
   subagentPool?: () => SubagentPoolStats;
+  /** The task domain, owned by whichever plugin registers the `tasks` control. A live getter in the
+   *  daemon (the owner can be swapped by a plugin reload) and the plugin's own store in tests. ABSENT
+   *  while no plugin owns it: every route that needs task rows must then answer 503 rather than serve
+   *  an empty list, which would read as "you have no tasks". */
+  tasks?: TaskStoreContract;
+  /** Dependency-cleared open tasks. Same owner, same absent-owner rule as `tasks`. */
+  readiness?: ReadinessContract;
+  /** The tenancy boundary's own read view of task rows — daemon-owned and tolerant of the table being
+   *  absent, so an agent token's working set can be resolved before any plugin loads. Absent (minimal
+   *  test wiring) → agent tokens resolve no projects at all, which is the fail-closed direction. */
+  taskRefs?: TaskRefs;
   /** Read view of the agents plugin's missions table (a live facade over the control in the daemon;
    *  the plugin's own store instance in tests). Reads degrade to empty while the plugin is disabled —
    *  every mission WRITE goes through `engine` and answers 503 without it. */
-  tasks: TaskStore; readiness: Readiness; missions: AgentsMissions;
+  missions: AgentsMissions;
   /** The agents plugin's mission engine (structural — see AgentsControl). Absent while the plugin is
    *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
   engine?: AgentsMissionEngine;
@@ -86,7 +96,7 @@ export interface ServerDeps {
   /** User-aware prompt renderer (resolves a user's override else the file default). Absent → callers
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;
-  taskUsage?: TaskUsageStore;
+  taskUsage?: TaskUsageContract;
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;

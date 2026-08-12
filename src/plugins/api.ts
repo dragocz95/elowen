@@ -359,6 +359,12 @@ export interface PluginDb extends PluginDbHandle {
   migrate(steps: PluginDbMigrationStep[]): void;
   /** Highest applied migration version for this plugin (0 = none). */
   appliedVersion(): number;
+  /** Run `fn` inside ONE transaction and return its value; nested calls nest as savepoints. A plugin
+   *  that owns rows with invariants across several statements (create a parent, its children and their
+   *  edges) needs this to make the sequence atomic — without it a partial write survives the failure of
+   *  a later statement. Unlike better-sqlite3's `db.transaction`, this RUNS the function rather than
+   *  returning a wrapped one, so a plugin cannot accidentally build a transaction and never call it. */
+  transaction<T>(fn: () => T): T;
 }
 
 /** How spawned agents invoke the elowen CLI and reach the daemon API — the agent-scoped credential

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '../../src/prompts/index.js';
 const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
 import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
@@ -30,7 +31,7 @@ function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     missionGit: extra.missionGit as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },

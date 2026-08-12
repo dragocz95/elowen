@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../../../src/store/db.js';
-import { TaskUsageStore } from '../../../../src/store/taskUsageStore.js';
+import { TaskUsageStore } from '../../../../plugins/work/src/store/taskUsageStore.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { UsageRecorder } from '../../../../plugins/agents/src/usage/recorder.js';
 import type { TokenUsage } from '../../../../src/integrations/usage/types.js';

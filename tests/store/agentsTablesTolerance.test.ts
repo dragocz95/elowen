@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
-import { TaskStore } from '../../src/store/taskStore.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { NoteStore } from '../../plugins/agents/src/store/noteStore.js';

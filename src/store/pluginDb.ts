@@ -33,6 +33,10 @@ export function makePluginDb(db: Db, plugin: string, opts: { canMigrate: boolean
   };
   return {
     ...handle,
+    // better-sqlite3 builds a wrapped function; the plugin-facing contract runs it, so "forgot to call
+    // the transaction" is not a shape a plugin can produce. Nested calls become savepoints, which is
+    // what lets a store method that transacts internally still compose inside a caller's transaction.
+    transaction: <T>(fn: () => T): T => db.transaction(fn)(),
     appliedVersion: () => {
       const row = db.prepare('SELECT MAX(version) AS v FROM plugin_migrations WHERE plugin = ?').get(plugin) as { v: number | null };
       return row.v ?? 0;

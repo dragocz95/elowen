@@ -6,9 +6,10 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
 import { render, setPluginPromptSources } from '../../src/prompts/index.js';
 import { setPluginPromptCatalog } from '../../src/prompts/catalog.js';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
-import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
+import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -191,7 +192,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   };
 
   const app = createServer({
-    tasks, readiness, missions, engine, tmux, bus,
+    tasks, taskRefs: new TaskRefs(db), readiness, missions, engine, tmux, bus,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
     planJobs, planFlow,

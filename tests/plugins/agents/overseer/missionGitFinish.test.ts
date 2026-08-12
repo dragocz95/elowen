@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { ProjectStore } from '../../../../src/store/projectStore.js';
 import { ConfigStore } from '../../../../src/store/configStore.js';
 import { MissionPrStore } from '../../../../plugins/agents/src/store/missionPrStore.js';

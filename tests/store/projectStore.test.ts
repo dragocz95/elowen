@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ProjectStore } from '../../src/store/projectStore.js';
-import { TaskStore } from '../../src/store/taskStore.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';

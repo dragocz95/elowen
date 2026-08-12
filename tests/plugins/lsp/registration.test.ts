@@ -6,11 +6,11 @@ import { PluginRegistryProvider } from '../../../src/plugins/pluginsProvider.js'
 import { createServer } from '../../../src/api/server.js';
 import { ConfigStore } from '../../../src/store/configStore.js';
 import { UserStore } from '../../../src/store/userStore.js';
-import { TaskStore } from '../../../src/store/taskStore.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { ProjectStore } from '../../../src/store/projectStore.js';
 import { UserProjectStore } from '../../../src/store/userProjectStore.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
-import { Readiness } from '../../../src/store/readiness.js';
+import { Readiness } from '../../../plugins/work/src/store/readiness.js';
 import { EventBus } from '../../../src/api/sse.js';
 import { FakeClock } from '../../../src/shared/clock.js';
 

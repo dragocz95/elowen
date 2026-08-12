@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Deriver } from '../../../../plugins/agents/src/deriver/deriver.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
 import { openAgentsDb } from '../../../helpers/agentsDb.js';
 

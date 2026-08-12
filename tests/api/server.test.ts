@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { SubagentRunnerPool } from '../../src/subagent/pool.js';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
@@ -140,7 +141,7 @@ it('POST /tasks with body {title} generates an id and sets status open', async (
   const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
@@ -377,7 +378,7 @@ it('POST /tasks honours an explicit project_id (multi-project)', async () => {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const tasks = new TaskStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
     config: new ConfigStore(db), projects: new ProjectStore(db),
@@ -413,7 +414,7 @@ it('POST /tasks/plan decomposes a goal into an epic with sequential phase subtas
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     makeInference: () => new FakeInference('[{"title":"Schema","type":"task"},{"title":"API","type":"feature"}]'),
@@ -438,7 +439,7 @@ it('POST /tasks/plan stores the model-assigned agent name as a label', async () 
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     planFlow: planFlowFor({ db, tasks, config }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
@@ -453,7 +454,7 @@ it('POST /tasks/plan with supplied phases skips the LLM and needs no key', async
   const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
     makeInference: () => { throw new Error('LLM must not be called in manual mode'); },
@@ -470,7 +471,7 @@ it('POST /tasks/plan dryRun returns phases without creating any tasks', async ()
   const tasks = new TaskStore(db);
   const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     makeInference: () => new FakeInference('[{"title":"A","type":"task"},{"title":"B"}]'),
@@ -491,7 +492,7 @@ it('POST /tasks/plan with engage=true engages a mission on the epic', async () =
   let engagedEpic = '';
   const engine = { engage: async (input: { epicId: string }) => { engagedEpic = input.epicId; return { id: 'm-x', epic_id: input.epicId, autonomy: 'L3', max_sessions: 1, state: 'active' }; } } as unknown as MissionEngine;
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine, spawn: null as any, tmux: null as any,
     planFlow: planFlowFor({ db, tasks, config, engine }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
@@ -508,7 +509,7 @@ it('POST /tasks/:epicId/phases inserts a phase chained after the epic\'s current
   const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db);
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
   });
@@ -529,7 +530,7 @@ it('POST /tasks/:epicId/phases replans a residual goal into chained phases', asy
   const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     makeInference: () => new FakeInference('[{"title":"R1"},{"title":"R2"}]'),
@@ -548,7 +549,7 @@ it('POST /tasks/:epicId/phases — a DAG replan does not overtake the epic\'s un
   const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db); const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     // Replan returns a DAG: R2 depends on R1 (resolved within the new batch), R1 is independent.
@@ -581,7 +582,7 @@ it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new ph
   let ticked = '';
   const engine = { isActive: (id: string) => id === 'm-E', tick: async (id: string) => { ticked = id; } } as unknown as MissionEngine;
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine, spawn: null as any, tmux: null as any,
     planFlow: planFlowFor({ db, tasks, config, engine }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,

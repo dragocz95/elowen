@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
 import { SpawnService } from '../../../../plugins/agents/src/spawn/spawn.js';
 import { ProjectStore } from '../../../../src/store/projectStore.js';

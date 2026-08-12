@@ -6,8 +6,9 @@ import { projectHead, projectRangeDiff } from '../../../../src/integrations/proj
 const gitSeam = { projectHead, projectRangeDiff };
 import { render } from '../../../../src/prompts/index.js';
 const promptSeam = { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' };
-import { TaskStore } from '../../../../src/store/taskStore.js';
-import { Readiness } from '../../../../src/store/readiness.js';
+import { TaskRefs } from '../../../../src/store/taskRefs.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../../../plugins/work/src/store/readiness.js';
 import { AgentStore } from '../../../../plugins/agents/src/store/agentStore.js';
 import { MissionStore } from '../../../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../../../src/store/projectStore.js';
@@ -31,7 +32,7 @@ function setup(opts?: { summarize?: MissionEngineDeps['summarize'] }) {
   const bus = new EventBus();
   const missions = new MissionStore(db);
   const engine = new MissionEngine({ git: gitSeam,
-    tasks, readiness: new Readiness(db), missions,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions,
     spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux, bus,
     projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
     nameAgent: () => 'AgentX', clock: new SystemClock(), summarize: opts?.summarize,
@@ -48,7 +49,7 @@ describe('MissionEngine', () => {
     const bus = new EventBus();
     const events: ElowenEvent[] = []; bus.subscribe((e) => events.push(e));
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: { launch: vi.fn().mockRejectedValue(new Error('tmux down')) } as unknown as SpawnService,
       tmux: new FakeTmuxDriver(), bus, projects: new ProjectStore(db),
       fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => 'AgentX', clock: new SystemClock(),
@@ -84,7 +85,7 @@ describe('MissionEngine', () => {
     tasks.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic', labels: ['exec:ollama-cloud/deepseek-v4-flash'] });
     let n = 0;
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: new SpawnService({ prompts: promptSeam, tmux: new FakeTmuxDriver(), agents: new AgentStore(db) }), tmux: new FakeTmuxDriver(),
       bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => `A${n++}`, clock: new SystemClock(),
@@ -102,7 +103,7 @@ describe('MissionEngine', () => {
     let ensureCalls = 0; // overseer.ensure runs once per tickOnce → a proxy for how many passes ran
     const overseer = { start: async () => {}, ensure: async () => { ensureCalls++; }, stop: async () => {} };
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: new SpawnService({ prompts: promptSeam, tmux: new FakeTmuxDriver(), agents: new AgentStore(db) }), tmux: new FakeTmuxDriver(),
       bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'A0', clock: new SystemClock(), overseer,
@@ -123,7 +124,7 @@ describe('MissionEngine', () => {
     tasks.bumpReviewFix('a'); tasks.bumpReviewFix('a');                                          // …that burned 2 retries
     const hasBudget = () => tasks.get('a')!.labels.some((l) => l.startsWith('reviewfix:'));
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: new SpawnService({ prompts: promptSeam, tmux: new FakeTmuxDriver(), agents: new AgentStore(db) }), tmux: new FakeTmuxDriver(),
       bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'A0', clock: new SystemClock(),
@@ -318,7 +319,7 @@ describe('MissionEngine', () => {
       kill: async (s: string) => { if (s === 'elowen-a') return killA(base); return base.kill(s); },
     } as never;
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux, bus: new EventBus(),
       projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'AgentX', clock: new SystemClock(),
@@ -379,7 +380,7 @@ describe('MissionEngine overseer lifecycle', () => {
     const tmux = new FakeTmuxDriver();
     const missions = new MissionStore(db);
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions,
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions,
       spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux, bus: new EventBus(),
       projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'AgentX', clock: new SystemClock(),
@@ -447,7 +448,7 @@ describe('MissionEngine multi-project', () => {
     tasks.create({ id: 'x1', project_id: 2, title: 'work', parent_id: 'epic2', labels: ['exec:ollama-cloud/deepseek-v4-flash'] });
     const tmux = new FakeTmuxDriver();
     const engine = new MissionEngine({ git: gitSeam,
-      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db),
       spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux, bus: new EventBus(),
       projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'AgentX', clock: new SystemClock(),

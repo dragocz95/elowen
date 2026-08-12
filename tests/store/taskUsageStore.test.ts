@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
-import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
+import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import type { TokenUsage } from '../../src/integrations/usage/types.js';
 
 const u = (input: number, output: number, cacheRead: number, cacheWrite: number, costUsd: number | null): TokenUsage =>

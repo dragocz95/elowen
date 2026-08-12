@@ -592,7 +592,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor',
+      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor', 'work',
     ],
     removed: [],
   },
@@ -644,6 +644,9 @@ interface Stored {
   lspPluginMigrated: boolean;
   /** One-shot upgrade marker for the extracted project editor plugin. */
   editorPluginMigrated: boolean;
+  /** One-shot upgrade marker: the `work` plugin (the extracted, previously-core task domain) has been
+   *  auto-enabled for this pre-existing install. See migrateWorkPlugin(). */
+  workPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -727,6 +730,8 @@ const defaultStored = (): Stored => ({
   // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
   lspPluginMigrated: true,
   editorPluginMigrated: true,
+  // A fresh row already enables `work` via the defaults above.
+  workPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -820,6 +825,7 @@ export class ConfigStore {
         agentsPluginConfigMigrated2: p.agentsPluginConfigMigrated2 === true,
         lspPluginMigrated: p.lspPluginMigrated === true,
         editorPluginMigrated: p.editorPluginMigrated === true,
+        workPluginMigrated: p.workPluginMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -1017,6 +1023,18 @@ export class ConfigStore {
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, editorPluginMigrated: true });
   }
 
+  /** Preserve task tracking on existing installs once. Same deliberate exception to "an upgrade never
+   *  silently enables a new plugin" as migrateAgentsEnabled: `work` is not a new capability but the
+   *  extracted, previously-CORE task domain, and skipping it would take an install's tasks, its Kanban
+   *  and its missions away on upgrade. The persisted marker means a later deliberate disable stands. */
+  migrateWorkPlugin(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.workPluginMigrated) return;
+    const enabled = cur.plugins.enabled.includes('work') ? cur.plugins.enabled : [...cur.plugins.enabled, 'work'];
+    this.write({ ...cur, plugins: { ...cur.plugins, enabled }, workPluginMigrated: true });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -1068,6 +1086,7 @@ export class ConfigStore {
       agentsPluginConfigMigrated2: cur.agentsPluginConfigMigrated2,
       lspPluginMigrated: cur.lspPluginMigrated,
       editorPluginMigrated: cur.editorPluginMigrated,
+      workPluginMigrated: cur.workPluginMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

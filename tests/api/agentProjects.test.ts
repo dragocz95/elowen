@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createRouteContext } from '../../src/api/context.js';
@@ -21,7 +22,7 @@ function setup() {
   const tasks = new TaskStore(db);
   const missions = new MissionStore(db);
   const ctx = createRouteContext({
-    tasks, readiness: new Readiness(db), missions, bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/p1' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),

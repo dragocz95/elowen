@@ -73,7 +73,7 @@ export function registerAuthGuards(app: ElowenApp, ctx: RouteContext): void {
     const bound = c.get('agentTask');
     if (bound) {
       const target = targetTask(c.req.path);
-      if (target !== null && target !== bound && target !== d.tasks.get(bound)?.parent_id) {
+      if (target !== null && target !== bound && target !== d.taskRefs?.get(bound)?.parent_id) {
         return c.json({ error: 'forbidden' }, 403);
       }
     }

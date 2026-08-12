@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 
 let db: Db; let store: TaskStore; let ready: Readiness;
 beforeEach(() => {

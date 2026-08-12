@@ -24,6 +24,10 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
   // on). For a fresh epic there are no descendants, so the first new phase simply starts the chain.
   // Single source of truth for both initial planning and replan (DRY with the old inline blocks).
   function persistPlan(job: PlanJob): { epic: Task; phases: Task[] } {
+    // The plan routes sit behind the task-domain availability gate, so this is an invariant, not a
+    // degradation path: without task rows there is no epic to persist a plan into.
+    const tasks = d.tasks;
+    if (!tasks) throw new Error('plan persistence reached without the task domain');
     const path = pathFor(job.projectId);
     const allowedExecs = d.config.get().allowedExecs;
     const newId = () => shortId(basename(path));
@@ -37,16 +41,16 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
     // Mission labels (the epic PR override, per-phase agent names) are agents vocabulary — the plugin
     // supplies them; without it a plan persists label-less (there is no mission to read them anyway).
     const labels = d.planFlow?.planLabels();
-    const { epic, created } = d.tasks.transaction(() => {
-      let epic = d.tasks.get(epicId);
+    const { epic, created } = tasks.transaction(() => {
+      let epic = tasks.get(epicId);
       if (!epic) {
         // Title = the short mission name when given (else the goal, so it's never blank); the full goal
         // always lands in the description. This is what lets the tasks UI show a tidy name + the full brief.
-        epic = d.tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: labels?.epic(job.prEnabled) ?? [], created_by: job.createdBy ?? null });
+        epic = tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: labels?.epic(job.prEnabled) ?? [], created_by: job.createdBy ?? null });
         toPublish.push({ taskId: epic.id, status: epic.status });
       }
-      const existing = d.tasks.descendants(epic.id);
-      const dependedOn = new Set(d.tasks.depsAmong(existing.map((t) => t.id)).map((e) => e.depends_on_id));
+      const existing = tasks.descendants(epic.id);
+      const dependedOn = new Set(tasks.depsAmong(existing.map((t) => t.id)).map((e) => e.depends_on_id));
       const leaves = existing.map((t) => t.id).filter((id) => !dependedOn.has(id));
       const overallGoal = epic.description?.trim() || epic.title;
       const phaseLabels = labels?.phaseLabeler(existing) ?? (() => []);
@@ -61,13 +65,13 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
         // The web detail pane strips this appended overgoal back off (web/lib/agentUtils phaseDetails),
         // which anchors on the exact `\n\nOverall goal:` separator — keep that wording/join in sync.
         const childDesc = ph.details ? `${ph.details}\n\nOverall goal: ${overallGoal}` : `Overall goal: ${overallGoal}`;
-        const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: phaseLabels(ph.agent), description: childDesc, created_by: job.createdBy ?? null });
+        const child = tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: phaseLabels(ph.agent), description: childDesc, created_by: job.createdBy ?? null });
         if (ph.id) idMap.set(ph.id, child.id);
         // exec: auto mode takes the planner's per-phase pick, manual mode the job-level choice. Either
         // way it must be allow-listed — a halucinated/disabled exec is dropped so the child runs with
         // the configured default (resolveExecutor fallback), never a bogus model.
         const pickedExec = job.autoModel ? ph.exec : job.exec;
-        if (pickedExec && allowedExecs.includes(pickedExec)) d.tasks.setExec(child.id, pickedExec);
+        if (pickedExec && allowedExecs.includes(pickedExec)) tasks.setExec(child.id, pickedExec);
         toPublish.push({ taskId: child.id, status: child.status });
         created.push(child);
       }
@@ -80,8 +84,8 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
       created.forEach((child, i) => {
         const ph = job.phases[i]!; // created is built 1:1 from job.phases above, so this is always defined
         if (linear) {
-          if (prevId) d.tasks.addDep(child.id, prevId); // chain within the new batch
-          else for (const leaf of leaves) d.tasks.addDep(child.id, leaf); // first new phase waits on the tail
+          if (prevId) tasks.addDep(child.id, prevId); // chain within the new batch
+          else for (const leaf of leaves) tasks.addDep(child.id, leaf); // first new phase waits on the tail
           prevId = child.id;
           return;
         }
@@ -100,7 +104,7 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
         // wait on the existing leaves so the "a replan never overtakes unfinished work" invariant holds.
         // A fresh epic has no leaves, so independent branches still start in parallel as intended.
         const withFrontier = deps.length && leaves.length ? [...new Set([...effective, ...leaves])] : effective;
-        d.tasks.setDeps(child.id, withFrontier);
+        tasks.setDeps(child.id, withFrontier);
       });
       return { epic, created };
     });

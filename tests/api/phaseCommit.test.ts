@@ -4,8 +4,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
@@ -42,13 +43,13 @@ function build(prEnabled: boolean) {
   // The phase commit lives in the agents plugin's review service now — wire its onTaskClosed into the
   // server exactly like bootstrap does through the 'agents' control.
   const review = createReviewService({
-    tasks, missions, pluginConfig: () => agentsPluginConfig({}, config as never), decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
+    tasks, taskRefs: new TaskRefs(db), missions, pluginConfig: () => agentsPluginConfig({}, config as never), decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
     git: { projectHead, projectRangeDiff }, missionGit,
     engine: { resumeStalled: async () => {}, stopTask: async () => {}, tick: async () => {} },
     publish: (e) => bus.publish(e), pathFor: (pid) => projects.get(pid)?.path ?? repo,
   });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions, engine: { tick: async () => {}, isActive: () => false } as never,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, engine: { tick: async () => {}, isActive: () => false } as never,
     spawn: null as never, tmux: null as never, bus, missionGit, projects,
     onTaskClosed: review.onTaskClosed,
     project: { id: project.id, path: repo }, fallback: { program: 'claude-code', model: 'sonnet' },

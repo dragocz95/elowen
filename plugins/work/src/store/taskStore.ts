@@ -1,10 +1,8 @@
-import { tolerateMissingPluginTables } from './db.js';
-import type { Db } from './db.js';
-import type { TaskStoreContract } from './taskStoreContract.js';
-import type { Task, CreateTaskInput, TaskStatus } from './types.js';
-import type { CommitFileChange } from '../integrations/projectFiles.js';
-import { deleteTasksAndDeps } from './cascade.js';
-import { isGitSha } from '../shared/gitSha.js';
+import { tolerateMissingPluginTables, deleteTaskSubtree, type WorkDb } from './db.js';
+import { isGitSha } from '../lib/gitSha.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
+import type { Task, CreateTaskInput, TaskStatus } from '../../../../src/store/types.js';
+import type { CommitFileChange } from '../../../../src/integrations/projectFiles.js';
 
 type Row = Omit<Task, 'labels' | 'changed_files'> & { labels: string; changed_files: string | null };
 
@@ -25,7 +23,7 @@ function parseChangedFiles(raw: string | null): CommitFileChange[] {
 const toTask = (r: Row): Task => ({ ...r, labels: r.labels ? r.labels.split(',').filter(Boolean) : [], changed_files: parseChangedFiles(r.changed_files) });
 
 export class TaskStore implements TaskStoreContract {
-  constructor(private db: Db) {}
+  constructor(private db: WorkDb) {}
   create(input: CreateTaskInput): Task {
     this.db.prepare(
       `INSERT INTO tasks (id, project_id, title, type, priority, parent_id, labels, description, scheduled_at, autostart, created_by)
@@ -95,7 +93,7 @@ export class TaskStore implements TaskStoreContract {
    *  dependency edges, and any mission those tasks drove. Used to remove a mission outright (not just
    *  disengage it). Returns how many task rows were removed. */
   deleteEpic(epicId: string): { tasks: number } {
-    return this.db.transaction(() => ({ tasks: deleteTasksAndDeps(this.db, 'epic', epicId) }))();
+    return this.db.transaction(() => ({ tasks: deleteTaskSubtree(this.db, epicId) }))();
   }
 
   /** Reparent an existing top-level task under another top-level task, promoting the target to

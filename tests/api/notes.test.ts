@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { TaskStore } from '../../src/store/taskStore.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { NoteStore } from '../../plugins/agents/src/store/noteStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -43,7 +44,7 @@ function setup(withPlugin = true) {
         dirs: [join(process.cwd(), 'plugins')], enabled: [], logger: { info() {}, warn() {}, error() {} },
       }));
   const app = createServer({
-    tasks, readiness, missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,

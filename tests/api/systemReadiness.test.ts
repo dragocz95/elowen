@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -37,7 +38,7 @@ function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: Con
   const provider = over.agents === false ? undefined
     : agentsPluginProvider({ db, tasks, readiness, config, projects, ...(users ? { users } : {}) });
   const app = createServer({
-    tasks, readiness, missions: new MissionStore(db),
+    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db),
     bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects, users,

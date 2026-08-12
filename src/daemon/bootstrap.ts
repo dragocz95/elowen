@@ -263,8 +263,8 @@ export async function buildApp(opts: BuildOpts) {
   // no server, no platform gateway, no scheduler and no loop, so a second process can build the identical
   // brain by calling the same factory instead of re-deriving the wiring.
   const {
-    tasks, readiness, config, users, homeProject, projects, userProjects,
-    pushSubscriptions, userPrompts, userSettings, prompts, taskUsage, git,
+    taskRefs, tasksDomain, config, users, homeProject, projects, userProjects,
+    pushSubscriptions, userPrompts, userSettings, prompts, git,
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
@@ -326,7 +326,7 @@ export async function buildApp(opts: BuildOpts) {
   // and the persisted activity rows scope events through the exact same resolvers.
   const pluginEventResolvers = () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn);
   const eventDeps: EventProjectDeps = {
-    taskProject: (id) => tasks.get(id)?.project_id ?? null,
+    taskProject: (id) => taskRefs.get(id)?.project_id ?? null,
     pluginResolvers: pluginEventResolvers,
   };
   bus.subscribe((e) => { try { events.record(e, eventProjectId(e, eventDeps)); } catch (err) { log.error('event record failed', err); } });
@@ -410,7 +410,10 @@ export async function buildApp(opts: BuildOpts) {
   // The elowen exec engine: tasks with an `elowen:` exec run on an embedded PI session instead of a
   // spawned CLI. Shares the brain's providers/auth/plugins; closes tasks through the same REST route.
   const brainWorkers = new BrainWorkerService({
-    store: brainStore, tasks, bus, taskUsage, chatImagesDir,
+    store: brainStore, bus, chatImagesDir,
+    // The task domain resolves per use: its owning plugin can be disabled or swapped by a reload while
+    // a worker runs, and a captured store would keep writing into a dead generation.
+    tasks: () => tasksDomain()?.store(), taskUsage: () => tasksDomain()?.usage(),
     config: brainConfig, runtime: brainRuntime, prompts,
     url: elowenCli.url, token: elowenCli.token,
     plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
@@ -500,7 +503,13 @@ export async function buildApp(opts: BuildOpts) {
   // captured instance would strand the routes on a dead generation. Absent control ⇒ undefined ⇒ the
   // routes answer 503 ("agents plugin is disabled").
   const app = createServer({
-    tasks, readiness, missions, tmux, bus, events,
+    // The task domain is plugin-owned: live getters, undefined while nothing owns it (the routes then
+    // answer 503 rather than an empty list). `taskRefs` is the daemon's own tenancy read view.
+    get tasks() { return tasksDomain()?.store(); },
+    get readiness() { return tasksDomain()?.readiness(); },
+    get taskUsage() { return tasksDomain()?.usage(); },
+    taskRefs,
+    missions, tmux, bus, events,
     eventProjectResolvers: pluginEventResolvers,
     get engine() { return agentsControl()?.engine(); },
     get missionGit() { return agentsControl()?.missionGit(); },
@@ -512,7 +521,7 @@ export async function buildApp(opts: BuildOpts) {
     get liveTaskUsage() { return agentsControl()?.liveTaskUsage(); },
     get detectClis() { return agentsControl()?.detectClis(); },
     get advisor() { return agentsControl()?.advisor(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = () => {

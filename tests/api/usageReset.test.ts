@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
 import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
@@ -12,7 +12,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
-import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
+import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
@@ -28,7 +29,7 @@ function setup(eventProjectResolvers?: () => readonly ((e: ElowenEvent) => numbe
   tasks.create({ id: 't2', project_id: 2, title: 'foreign task' });
   const bus = new EventBus();
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),

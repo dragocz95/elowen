@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "prebuild": "npm run languages-check --silent && node scripts/dist-integrity.mjs clean",
-    "build:ts": "tsc -b tsconfig.json tsconfig.plugins.agents.json tsconfig.plugins.lsp.json tsconfig.plugins.editor.json",
+    "build:ts": "tsc -b tsconfig.json tsconfig.plugins.agents.json tsconfig.plugins.lsp.json tsconfig.plugins.editor.json tsconfig.plugins.work.json",
     "build": "npm run build:ts --silent && npm run build:plugins-web --silent && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
     "build:plugins-web": "node scripts/build-plugins-web.mjs",
     "postbuild": "node scripts/dist-integrity.mjs chmod-bins && node scripts/dist-integrity.mjs verify",
@@ -77,7 +77,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "languages-check": "node --experimental-strip-types --no-warnings scripts/check-languages.mjs",
-    "depcruise": "depcruise src web plugins/agents plugins/lsp plugins/editor --config .dependency-cruiser.cjs",
+    "depcruise": "depcruise src web plugins/agents plugins/lsp plugins/editor plugins/work --config .dependency-cruiser.cjs",
     "depgraph": "depcruise src web plugins/agents plugins/lsp --config .dependency-cruiser.cjs --output-type dot | dot -T svg -o dependency-graph.svg",
     "deadcode": "knip",
     "check": "npm run lint && npm run deadcode && npm run depcruise && npm run typecheck && npm run languages-check",

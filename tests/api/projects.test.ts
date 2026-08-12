@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { FakeGitReader } from '../../src/git/gitReader.js';
@@ -21,7 +22,7 @@ function makeApp(extra: { engine?: unknown; missionGit?: unknown; tmux?: unknown
   const missions = new MissionStore(db);
   const git = new FakeGitReader({ isRepo: true, status: { branch: 'main', ahead: 0, behind: 0, dirty: 2, clean: false }, branches: [{ name: 'main', current: true }], commits: [{ hash: 'abc123', subject: 'init', author: 'me', relative: '1 hour ago' }] });
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions,
     bus: new EventBus(), engine: (extra.engine ?? null) as any, spawn: null as any, tmux: (extra.tmux ?? null) as any,
     missionGit: extra.missionGit as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },

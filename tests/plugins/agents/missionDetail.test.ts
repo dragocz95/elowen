@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { TaskStore } from '../../../src/store/taskStore.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
 import { assembleMissionDetail } from '../../../plugins/agents/src/api/missionDetail.js';
 import { openAgentsDb } from '../../helpers/agentsDb.js';

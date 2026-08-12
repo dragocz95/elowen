@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
+import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
@@ -45,7 +46,7 @@ function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver; tasks?: 
   bus.subscribe((e) => events.push(e));
   const tmux = opts.tmux ?? new FakeTmuxDriver();
   const app = createServer({
-    tasks, readiness: new Readiness(db), missions, bus,
+    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus,
     engine: opts.engine ?? (null as unknown as MissionEngine),
     spawn: null as unknown as ServerDeps['spawn'], tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },

@@ -2,8 +2,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, ModelRuntime, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { BrainStore } from '../../store/brainStore.js';
-import type { TaskStore } from '../../store/taskStore.js';
-import type { TaskUsageStore } from '../../store/taskUsageStore.js';
+import type { TaskStoreContract, TaskUsageContract } from '../../store/taskStoreContract.js';
 import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
@@ -33,9 +32,11 @@ const WATCHDOG_TICK_MS = 60_000;
 
 export interface BrainWorkerDeps {
   store: BrainStore;
-  tasks: TaskStore;
+  /** The task domain, resolved LIVE (its owning plugin can be disabled or reloaded under a running
+   *  worker). Undefined ⇒ no task tracking on this instance: a launch must refuse, not pretend. */
+  tasks: () => TaskStoreContract | undefined;
   bus: EventBus;
-  taskUsage?: TaskUsageStore;
+  taskUsage?: () => TaskUsageContract | undefined;
   /** Where a tool result's image bytes are externalized when a worker turn is persisted — a task worker
    *  reads screenshots too, and its rows must not carry base64 either. */
   chatImagesDir?: string;
@@ -159,6 +160,10 @@ export class BrainWorkerService {
   }
 
   private async launchExclusive(sessionName: string, input: BrainWorkerLaunchInput): Promise<{ session: string }> {
+    // No task domain, no embedded worker: the run's whole lifecycle (read the task, revert it when the
+    // agent stalls, snapshot its usage) is task rows. Refuse loudly rather than start something nothing
+    // can settle — the caller (the agents plugin's spawn) reverts the task on a failed launch.
+    if (!this.d.tasks()) throw new Error('elowen exec engine: task tracking is unavailable (its plugin is disabled)');
     // Idempotent ONLY for the same task. A different task under an already-live agent name gets no worker
     // of its own, so reporting success would leave it in_progress behind a session that belongs to another
     // task — which the stuck detector reads as alive, forever. The tmux path already fails here (`tmux
@@ -293,7 +298,7 @@ export class BrainWorkerService {
    *  task back to the scheduler (revert-to-open + resume note — the stuck-detector semantics). */
   private async onAgentEnd(worker: LiveWorker, policy: { allowedProjectIds: Set<number>; allowedPaths: () => string[] }): Promise<void> {
     if (worker.closed || !this.live.has(worker.sessionName)) { this.dispose(worker); return; }
-    const task = this.d.tasks.get(worker.taskId);
+    const task = this.d.tasks()?.get(worker.taskId);
     if (!task || task.status !== 'in_progress') { this.dispose(worker); return; }
     if (!worker.nudged) {
       worker.nudged = true;
@@ -349,10 +354,11 @@ export class BrainWorkerService {
   private teardown(worker: LiveWorker, reason: 'unclosed' | 'idle' | 'error'): void {
     if (!this.live.has(worker.sessionName)) return;
     this.dispose(worker);
-    const task = this.d.tasks.get(worker.taskId);
-    if (!task || task.status !== 'in_progress' || worker.closed) return;
-    this.d.tasks.setResumeNote(worker.taskId, 'Your previous run stalled and was relaunched — re-check the current state (git status, build/tests) and carry the task to completion.');
-    this.d.tasks.setStatus(worker.taskId, 'open');
+    const tasks = this.d.tasks();
+    const task = tasks?.get(worker.taskId);
+    if (!tasks || !task || task.status !== 'in_progress' || worker.closed) return;
+    tasks.setResumeNote(worker.taskId, 'Your previous run stalled and was relaunched — re-check the current state (git status, build/tests) and carry the task to completion.');
+    tasks.setStatus(worker.taskId, 'open');
     this.d.bus.publish({ type: 'task', taskId: worker.taskId, status: 'open' });
     log.info(`brain worker ${worker.sessionName} torn down (${reason}) — task ${worker.taskId} reverted to open`);
   }
@@ -365,7 +371,8 @@ export class BrainWorkerService {
   }
 
   private recordUsage(worker: LiveWorker): void {
-    if (!this.d.taskUsage) return;
+    const taskUsage = this.d.taskUsage?.();
+    if (!taskUsage) return;
     try {
       const usage = sessionUsage(worker.session);
       const meter = worker.meter;
@@ -382,7 +389,7 @@ export class BrainWorkerService {
       } else {
         usage.costSource = 'unavailable';
       }
-      if (usage.total > 0) this.d.taskUsage.record(worker.taskId, worker.projectId, `elowen:${worker.model}`, usage);
+      if (usage.total > 0) taskUsage.record(worker.taskId, worker.projectId, `elowen:${worker.model}`, usage);
     } catch { /* usage is best-effort */ }
   }
 }

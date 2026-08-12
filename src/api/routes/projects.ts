@@ -69,7 +69,9 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     // already shows as gone. A mission's worktree also leaks (missionGit resolves it via the epic TASK
     // row, which the cascade deletes), so every mission is freed here too, not just the running ones.
     // Mirrors the epic-delete teardown at DELETE /tasks/:id.
-    for (const t of d.tasks.list({ project_id: id })) {
+    // With no task domain there is no epic to tear down (and the cascade below purges any rows left
+    // behind by a previously-enabled owner), so the teardown loop simply has nothing to walk.
+    for (const t of d.tasks?.list({ project_id: id }) ?? []) {
       if (t.type === 'epic') {
         const missionId = `m-${t.id}`;
         const mission = d.missions.get(missionId);

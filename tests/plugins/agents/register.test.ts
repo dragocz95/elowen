@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { openDb } from '../../../src/store/db.js';
 import { makePluginDb } from '../../../src/store/pluginDb.js';
-import { TaskStore } from '../../../src/store/taskStore.js';
+import { TaskRefs } from '../../../src/store/taskRefs.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { ProjectStore } from '../../../src/store/projectStore.js';
-import { Readiness } from '../../../src/store/readiness.js';
-import { TaskUsageStore } from '../../../src/store/taskUsageStore.js';
+import { Readiness } from '../../../plugins/work/src/store/readiness.js';
+import { TaskUsageStore } from '../../../plugins/work/src/store/taskUsageStore.js';
 import { FakeTmuxDriver } from '../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../src/api/sse.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
@@ -44,7 +45,7 @@ async function loadAgentsPlugin(logger?: PluginLogger) {
       brainWorker: () => undefined,
       elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined },
       stores: {
-        tasks,
+        tasks, taskRefs: new TaskRefs(db),
         projects,
         homeProject: () => ({ id: 1, slug: 'elowen', path: '/o' }),
         usersRead: { list: () => [{ id: 1, username: 'admin', isAdmin: true }], isAdmin: () => true, allowedExecs: () => [] },

@@ -1,8 +1,7 @@
 import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
-import { TaskStore } from '../store/taskStore.js';
-import { Readiness } from '../store/readiness.js';
+import { TaskRefs } from '../store/taskRefs.js';
 import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals, TasksDomainControl } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
@@ -20,7 +19,6 @@ import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
 import { projectHead, projectRangeDiff, safeProjectPath } from '../integrations/projectFiles.js';
-import { TaskUsageStore } from '../store/taskUsageStore.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
@@ -154,8 +152,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const db: Db = openDb(opts.dbPath, opts.migrate === false ? { migrate: false } : {});
   db.prepare('INSERT OR IGNORE INTO projects (id,slug,path) VALUES (?,?,?)').run(opts.project.id, opts.project.slug, opts.project.path);
   const tmux = opts.tmux;
-  const tasks = new TaskStore(db);
-  const readiness = new Readiness(db);
+  // The task ROWS are owned by whichever plugin registers the `tasks` domain control (see tasksSeam
+  // below). What stays here is the tenancy boundary's own read view of them — it must answer before any
+  // plugin is loaded, and must never be served by a plugin whose callers it gates.
+  const taskRefs = new TaskRefs(db);
   const config = new ConfigStore(db);
   // One-shot upgrade: auto-enable the extracted `agents` plugin for pre-existing installs (it replaces
   // previously-core behaviour — see migrateAgentsEnabled). Daemon-only, like schema migrations: the
@@ -174,6 +174,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The project editor was previously core, so existing installs retain it once; later operator
   // disables remain authoritative through the persisted marker.
   if (opts.migrate !== false) config.migrateEditorPlugin();
+  // Task tracking was core until this wave; keep it on for installs that already had it (the marker
+  // makes it one-shot, so a deliberate disable is never undone).
+  if (opts.migrate !== false) config.migrateWorkPlugin();
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {
@@ -196,7 +199,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const userPrompts = new UserPromptStore(db);
   const userSettings = new UserSettingStore(db);
   const prompts = new PromptService(userPrompts);
-  const taskUsage = new TaskUsageStore(db);
   const git = new RealGitReader();
   // Give spawned agents a way to close their task: the elowen CLI path + daemon URL + a service token.
   // The token is AGENT-SCOPED (not the admin's full token): a prompt-injected agent can only drive
@@ -222,7 +224,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // the same project. Only ids that are REAL task rows bind; the overseer (`overseer-<mission>`), the
   // pilot (a plan job id) and the advisor have no task row and keep the unbound service token.
   const tokenForTask = (taskId: string): string | undefined =>
-    serviceUserId !== null && tasks.get(taskId) ? users.ensureAgentTokenForTask(serviceUserId, taskId) : undefined;
+    serviceUserId !== null && taskRefs.get(taskId) ? users.ensureAgentTokenForTask(serviceUserId, taskId) : undefined;
   // A credential that acts as ONE REAL USER, for a plugin that took over a core surface which always ran
   // with the user's own rights (the Elowen* control-plane tools). Deliberately the SAME mint the core
   // path uses (`ensureAdvisorToken`, DB scope 'advisor', reused within its TTL), so moving that surface
@@ -349,14 +351,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // live registry on every call — a plugin reload swaps the owner, so a captured control would keep a
   // dead generation alive. Core never names the owning plugin: it asks for the domain.
   const tasksDomain = (): TasksDomainControl | undefined => loadedPluginRegistry?.control('tasks');
-  // TRANSITIONAL: until the domain moves into its own plugin nobody registers that control, so the
-  // daemon's own stores answer for it and this wave changes the plumbing without changing one behaviour.
-  // Delete this constant when the domain moves — the seam below then reduces to "the control, or nothing"
-  // on its own, and the throw it already carries becomes the live fail-closed path.
-  const coreTasksDomain: TasksDomainControl | undefined = { store: () => tasks, readiness: () => readiness, usage: () => taskUsage };
-  const availableTasksDomain = (): TasksDomainControl | undefined => tasksDomain() ?? coreTasksDomain;
   const tasksSeam = (): TasksDomainControl => {
-    const domain = availableTasksDomain();
+    const domain = tasksDomain();
     // Fail closed and LOUD: a seam that answered an unowned domain with an empty store would let a caller
     // which never asked `tasksAvailable()` report "no tasks" as fact.
     if (!domain) throw new Error('the tasks domain is unavailable — no loaded plugin owns it');
@@ -515,7 +511,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           get tasks() { return tasksSeam().store(); },
           get readiness() { return tasksSeam().readiness(); },
           get taskUsage() { return tasksSeam().usage(); },
-          tasksAvailable: () => availableTasksDomain() !== undefined,
+          tasksAvailable: () => tasksDomain() !== undefined,
           projects,
           // Live row read: `homeProject` may be the narrow bootstrap fallback {id,slug,path}, but the
           // row always exists (inserted at open), so the store yields the full Project shape.
@@ -652,8 +648,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       })
     : undefined;
   return {
-    db, tasks, readiness, config, users, homeProject, projects, userProjects,
-    pushSubscriptions, userPrompts, userSettings, prompts, taskUsage, git,
+    db, taskRefs, config, users, homeProject, projects, userProjects,
+    pushSubscriptions, userPrompts, userSettings, prompts, git,
+    // The task domain's CURRENT owner, for the daemon layers that legitimately drive task rows (the
+    // embedded worker, the instance-cleanup route). Resolved per call — never captured — and undefined
+    // while no loaded plugin owns it, which is what those layers must degrade on.
+    tasksDomain,
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,

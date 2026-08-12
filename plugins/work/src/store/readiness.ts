@@ -1,6 +1,6 @@
-import type { Db } from './db.js';
-import type { ReadinessContract } from './taskStoreContract.js';
-import type { Task } from './types.js';
+import type { WorkDb } from './db.js';
+import type { ReadinessContract } from '../../../../src/store/taskStoreContract.js';
+import type { Task } from '../../../../src/store/types.js';
 
 type Row = Omit<Task, 'labels'> & { labels: string };
 
@@ -25,7 +25,7 @@ export class Readiness implements ReadinessContract {
   private readyStmt;
   private readyForEpicStmt;
 
-  constructor(private db: Db) {
+  constructor(private db: WorkDb) {
     // One SQL per call (no N+1): select the open, dependency-cleared tasks directly. Previously this
     // ran 1 + 2N queries per project (ids, then a blocked-count and a row fetch per id).
     this.readyStmt = this.db.prepare(

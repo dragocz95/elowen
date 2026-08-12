@@ -61,8 +61,8 @@ describe('buildBrainCore plugin-host wiring', () => {
     const stores = storesOf(captured);
     try {
       // A real row exists in the daemon's own table — so reading the owner's answer instead of this one
-      // is what proves the seam resolves through the control rather than through the captured store.
-      core.tasks.create({ id: 'elowen-1', project_id: 1, title: 'core row' });
+      // is what proves the seam resolves through the control rather than through the database.
+      core.db.prepare("INSERT INTO tasks (id, project_id, title) VALUES ('elowen-1', 1, 'core row')").run();
       expect(stores.tasksAvailable()).toBe(true);
       expect(stores.tasks.get('elowen-1') as unknown).toBe('from-the-owner');
       expect(stores.readiness.ready(1) as unknown).toEqual(['ready-from-the-owner']);
@@ -70,17 +70,20 @@ describe('buildBrainCore plugin-host wiring', () => {
     } finally { core.db.close(); }
   });
 
-  it('falls back to the daemon stores while no plugin owns the domain (transitional)', async () => {
-    // Until the domain actually moves out, nobody registers that control and the daemon must answer
-    // exactly as it always did — this wave changes the plumbing, not one behaviour.
+  it('refuses to answer the task domain at all while no plugin owns it', async () => {
+    // The daemon has NO task store of its own any more. With the domain unowned the seam must say so —
+    // loudly. Answering "no such task" from a table the daemon can still see would let a consumer that
+    // never asked `tasksAvailable()` report an empty working set as fact and, worse, act on it.
     const { core, captured } = await bootWith(`export function register(ctx){
       globalThis.__hostStores = ctx.host.stores();
     }`);
     const stores = storesOf(captured);
     try {
-      core.tasks.create({ id: 'elowen-2', project_id: 1, title: 'core row' });
-      expect(stores.tasksAvailable()).toBe(true);
-      expect(stores.tasks.get('elowen-2')?.title).toBe('core row');
+      core.db.prepare("INSERT INTO tasks (id, project_id, title) VALUES ('elowen-2', 1, 'core row')").run();
+      expect(stores.tasksAvailable()).toBe(false);
+      expect(() => stores.tasks.get('elowen-2')).toThrow(/tasks domain is unavailable/);
+      expect(() => stores.readiness.ready(1)).toThrow(/tasks domain is unavailable/);
+      expect(() => stores.taskUsage.deleteAll()).toThrow(/tasks domain is unavailable/);
     } finally { core.db.close(); }
   });
 

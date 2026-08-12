@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { openDb } from '../../../../src/store/db.js';
 import type { Db } from '../../../../src/store/db.js';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { snapshotTaskChanges } from '../../../../src/api/services/taskSnapshot.js';
 
 let db: Db;

@@ -7,7 +7,8 @@ let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 import { openDb } from '../../../src/store/db.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
-import { TaskStore } from '../../../src/store/taskStore.js';
+import { TaskRefs } from '../../../src/store/taskRefs.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { EventBus } from '../../../src/api/sse.js';
 import { currentWorkDir, currentSessionId } from '../../../src/plugins/policyContext.js';
 import { UserPromptStore } from '../../../src/store/userPromptStore.js';
@@ -55,8 +56,8 @@ function setup(opts: { idleMs?: number; prompts?: unknown } = {}) {
   const svc = new BrainWorkerService({
     store: new BrainStore(db),
     runtime: sharedRuntime,
-    tasks, bus,
-    taskUsage: { record: (...a: unknown[]) => { recorded.push(a); } } as never,
+    tasks: () => tasks, taskRefs: new TaskRefs(db), bus,
+    taskUsage: () => ({ record: (...a: unknown[]) => { recorded.push(a); } }) as never,
     config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] }),
     url: 'http://daemon', token: 'tok',
     now: () => now,
@@ -197,7 +198,7 @@ describe('BrainWorkerService', () => {
     const tasks2 = new TaskStore(first.db);
     const { session: s2 } = fakeSession();
     const svc2 = new BrainWorkerService({
-      store: new BrainStore(first.db), runtime: sharedRuntime, tasks: tasks2, bus: new EventBus(),
+      store: new BrainStore(first.db), runtime: sharedRuntime, tasks: () => tasks2, bus: new EventBus(),
       config: () => ({ providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] }),
       url: 'http://daemon', token: 'tok',
       createSession: vi.fn(async () => ({ session: s2 })) as never,

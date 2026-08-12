@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../../../src/store/db.js';
-import { TaskStore } from '../../../../src/store/taskStore.js';
+import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import type { ElowenEvent } from '../../../../src/api/sse.js';

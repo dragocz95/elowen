@@ -114,12 +114,16 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   //   • overseers → projects of every active mission's epic (the overseer polls even between phases)
   // A pilot only ever submits to the plan job it was handed (project checked on that job's route), so
   // it needs no extra entry here.
+  // Reads the daemon's own tolerant REF view, not the task store: this is the boundary that decides
+  // what an agent token may reach, so it must not be served by the plugin whose callers it gates, and it
+  // must answer before any plugin has loaded. No task rows (or no table at all) ⇒ an empty set ⇒ the
+  // token reaches nothing, which is the fail-closed direction.
   const agentProjects = (): Set<number> => {
     const ids = new Set<number>();
     // Single pass: one `list()` covers all three groups (in-progress agent tasks, active missions'
     // epics, still-open epics of agent-labelled children) via an in-memory id→task map, instead of a
     // `get()` per mission and per agent child — the query count no longer grows with historical tasks.
-    const all = d.tasks.list();
+    const all = (d.taskRefs?.all() ?? []);
     const byId = new Map(all.map((t) => [t.id, t]));
     for (const t of all) {
       if (t.status === 'in_progress' && t.labels.some((l) => l.startsWith('agent:'))) ids.add(t.project_id);
@@ -183,7 +187,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   // has NO core lookup: the agents plugin's registered event resolver is the sole source — with the
   // plugin disabled those events resolve null and gate admin-only (fail closed).
   const eventDeps: EventProjectDeps = {
-    taskProject: (id) => d.tasks.get(id)?.project_id ?? null,
+    taskProject: (id) => d.taskRefs?.get(id)?.project_id ?? null,
     pluginResolvers: d.eventProjectResolvers,
   };
 
