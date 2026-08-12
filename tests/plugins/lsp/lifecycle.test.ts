@@ -5,7 +5,7 @@ import { LspManager } from '../../../plugins/lsp/src/manager.js';
 import type { LspTransport, JsonRpcMessage } from '../../../plugins/lsp/src/client.js';
 import type { PluginApiRoute, PluginContext, PluginControl, PluginService } from '../../../src/plugins/api.js';
 import { runWithPolicy } from '../../../src/plugins/policyContext.js';
-import { allowedRoots, assertPathAllowed, defaultCwd } from '../../../src/plugins/pathGuard.js';
+import { allowedRoots, assertPathAllowed, defaultCwd, isAllAccess } from '../../../src/plugins/pathGuard.js';
 import { currentWorkDir } from '../../../src/plugins/policyContext.js';
 
 /** A language server that answers didOpen with a clean verdict, and records being disposed. This is
@@ -43,7 +43,7 @@ function registerPlugin(config: Record<string, unknown> = {}) {
   const ctx = {
     config,
     logger: { info() {}, warn() {}, error() {} },
-    assertPathAllowed, allowedRoots, defaultCwd, workDir: currentWorkDir,
+    assertPathAllowed, allowedRoots, defaultCwd, workDir: currentWorkDir, isAdminSession: isAllAccess,
     registerTool: (t: ToolDefinition) => { tools.push(t); },
     registerService: (s: PluginService) => { services.push(s); },
     registerControl: (name: string, c: PluginControl) => { controls.set(name, c); },
@@ -125,6 +125,36 @@ describe('lsp plugin lifecycle', () => {
 
     await service.stop();
     expect(spawned[1]!.disposed()).toBe(true);
+  });
+
+  it('a stopped generation stays stopped — a late call cannot resurrect its manager', async () => {
+    const { tools, services, controls, spawned, managers } = registerPlugin({ diagnosticsEnabled: false });
+    const service = services[0]!;
+    await service.start();
+    await service.stop();
+
+    // A reload runs stop() BEFORE the registry swap, so a request can still reach this generation. It
+    // must NOT build a manager nobody will ever stop again.
+    await check(tools, '/tmp');
+    expect(managers).toHaveLength(1); // only the one start() made
+    expect(spawned).toHaveLength(0);
+    // The control keeps answering — from the persisted slice, since there is no live manager to ask.
+    expect(controls.get('lsp')!.diagnosticsEnabled()).toBe(false);
+  });
+
+  it('disposes on process exit too, for a runner that never runs plugin services', async () => {
+    const before = process.listeners('exit').length;
+    const { tools, spawned } = registerPlugin();
+    const added = process.listeners('exit').slice(before);
+    expect(added).toHaveLength(1);
+
+    // A sub-agent runner loads the plugin and calls tools, but PluginServiceRunner never runs there —
+    // so this listener is the only thing between a spawned language server and an orphan.
+    await check(tools, '/tmp');
+    expect(spawned).toHaveLength(1);
+    (added[0] as () => void)();
+    expect(spawned[0]!.disposed()).toBe(true);
+    process.off('exit', added[0] as () => void);
   });
 
   it('with diagnostics off, no server is spawned at all and the tool says why', async () => {

@@ -13,7 +13,8 @@
  *  what lets the renderers collapse repeated same-tool rows into one `Read … ×N` line (there's no
  *  per-item output block to keep them apart).
  *
- *  Keys may be an exact tool name or a `prefix*` pattern (e.g. `Lsp*`); a match by either shows. */
+ *  Keys may be an exact tool name or a `prefix*` pattern (e.g. `Delegate*`); a match by either shows.
+ *  A plugin's manifest `showOutput` contributes the same two forms for the tools it owns. */
 
 /** Whether a tool's successful output is shown in the transcript. */
 export type ToolOutputPolicy = (name: string) => boolean;

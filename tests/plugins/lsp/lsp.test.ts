@@ -923,6 +923,18 @@ describe('lsp tools', () => {
     expect(res.content[0]!.text).toMatch(/not allowed/);
   });
 
+  it('LspWorkspaceSymbol refuses a scoped turn with no workspace instead of searching every tenant', async () => {
+    const tool = registeredLspTools().find((t) => t.name === 'LspWorkspaceSymbol')!;
+    // Empty allowedPaths is ambiguous: an all-access admin carries it, and so does a scoped turn whose
+    // project policy resolved to nothing. An unbounded search merges EVERY live client, i.e. other
+    // tenants' projects — and unlike the five path tools there is no path here for the guard to reject.
+    const res = await runWithPolicy(
+      { allowedProjectIds: new Set([1]), allowedPaths: () => [] },
+      () => tool.execute('c1', { query: 'Secret' }),
+    );
+    expect(res.content[0]!.text).toContain('no workspace in scope');
+  });
+
   it('LspWorkspaceSymbol searches the project the turn is bound to, not the longest allowed root', () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'elowen-wsb-')));
     try {

@@ -617,9 +617,10 @@ interface Stored {
   autoUpdate: boolean;
   /** FROZEN: the pre-extraction live-diagnostics toggle. The `lsp` plugin owns the live flag now
    *  (plugins.config.lsp.diagnosticsEnabled); this field is kept, and kept readable, ONLY as the source
-   *  migrateLspPlugin() copies from — a lossless rollback to a build that still reads it. Nothing writes
-   *  it any more: it is absent from the public view and from ConfigPatch, so a `PUT /config` cannot
-   *  pretend to change diagnostics. */
+   *  migrateLspPlugin() copies from — so a rollback to a build that still reads it finds the setting the
+   *  operator had AT MIGRATION TIME (later flips land in the plugin slice and do not travel back here).
+   *  Nothing writes it any more: it is absent from the public view, and `configPatchSchema` REJECTS it
+   *  rather than accepting a write it would silently drop. */
   lspEnabled: boolean;
   /** Persisted VAPID keypair; null until generated on first boot. Private key stays daemon-side. */
   webPush: { publicKey: string; privateKey: string } | null;
@@ -980,7 +981,7 @@ export class ConfigStore {
   }
 
   /** One-shot upgrade for the LSP extraction: enable the `lsp` plugin for EXISTING installs and COPY
-   *  (never move — `lspEnabled` keeps its value for a lossless rollback) the live-diagnostics toggle
+   *  (never move — `lspEnabled` keeps its value so a rollback finds this choice) the live-diagnostics toggle
    *  into plugins.config.lsp.diagnosticsEnabled, where the plugin reads it.
    *
    *  Same deliberate exception as migrateAgentsEnabled: `lsp` is not a new capability but the extracted,

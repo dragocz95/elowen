@@ -23,8 +23,8 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
 
 /** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
  *  manifest's `showOutput`). Output is HIDDEN by default; only the tools listed here surface their
- *  SUCCESSFUL output in the transcript. The control plane
- *  (`Elowen*`) and memory (`Memory*`) are deliberately ABSENT — they return structured data the model
+ *  SUCCESSFUL output in the transcript. The control plane (`Elowen*`) and memory (`Memory*`) are
+ *  deliberately ABSENT — they return structured data the model
  *  acts on, not something the reader needs echoed, so their success stays hidden and repeated calls
  *  collapse into one row (a failure or a hook note still surfaces; see `toolOutputView`). Keys are
  *  exact names or `prefix*` patterns. */

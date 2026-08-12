@@ -10,7 +10,7 @@ import { commandExists, listServers } from './servers.js';
  *   - POST /brain/lsp/uninstall  — remove one from that prefix
  *  With the plugin disabled the daemon answers 503 `{"error":"lsp plugin is disabled"}` on all three
  *  (declared-but-inactive root mounts), so a caller can tell "subsystem off" from "no such endpoint". */
-export function registerLspApi(ctx: PluginContext, manager: () => LspManager): void {
+export function registerLspApi(ctx: PluginContext, manager: () => LspManager | null): void {
   // Exact-mount only: the resolver hands longer paths here as `req.path`, and there is no sub-resource.
   const exact = (req: PluginApiRequest, run: () => Promise<PluginHttpResponse>): Promise<PluginHttpResponse> =>
     req.path === '' ? run() : Promise.resolve({ status: 404, body: { error: 'not found' } });
@@ -26,7 +26,11 @@ export function registerLspApi(ctx: PluginContext, manager: () => LspManager): v
   // CLI /lsp modal and any panel indicator.
   ctx.registerApiRoute({
     rootMount: '/brain/lsp', path: '', method: 'GET', access: 'user',
-    handler: (req) => exact(req, async () => ({ status: 200, body: manager().status() })),
+    handler: (req) => exact(req, async () => {
+      const m = manager();
+      // Stopped generation (a reload's stop window): say "unavailable", never invent a status.
+      return m ? { status: 200, body: m.status() } : { status: 503, body: { error: 'lsp plugin is reloading' } };
+    }),
   });
 
   // Admin-only — it installs software on the host. Only npm-canonical servers are self-installable; the
@@ -58,7 +62,7 @@ export function registerLspApi(ctx: PluginContext, manager: () => LspManager): v
       if (!spec) return { status: 404, body: { error: 'unknown language server' } };
       if (!spec.npmPackages?.length) return { status: 400, body: { error: `${spec.label} is not managed by Elowen — remove it with your toolchain (installed via: ${spec.installHint}).` } };
       if (!commandExists(spec.command)) return { status: 200, body: { ok: true, message: `${spec.label} is not installed.` } };
-      manager().disposeAll(); // free any live client before its binary disappears
+      manager()?.disposeAll(); // free any live client before its binary disappears
       const r = await npmUninstallGlobal(spec.npmPackages);
       if (!r.ok) return { status: 502, body: { error: `Uninstall failed: ${r.detail}` } };
       // Still resolvable afterwards = a system copy outside Elowen's prefix; say so instead of "removed".

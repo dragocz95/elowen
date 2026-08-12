@@ -96,6 +96,11 @@ export const memoryRetentionPatchSchema = z.object({
  *  same element-level sanitisers additionally run when reading stored JSON, since a database written by
  *  an older build can already hold a bad value. */
 export const configPatchSchema = z.object({
+  /** RETIRED, and present here only to REFUSE a legacy write. The field moved to the lsp plugin's own
+   *  config slice; dropping it from the schema would have made `PUT /config {"lspEnabled": false}` answer
+   *  200 while changing nothing, because unknown keys are stripped — a caller would have every reason to
+   *  believe it had turned diagnostics off. Fail with the new address instead. */
+  lspEnabled: z.undefined({ error: 'lspEnabled moved to the lsp plugin — use PATCH /plugins/lsp/config {"diagnosticsEnabled": <bool>}' }).optional(),
   allowedExecs: z.array(z.string()).optional(),
   customModels: z.array(z.object({ label: z.string(), exec: z.string() })).optional(),
   hiddenPresets: z.array(z.string()).optional(),

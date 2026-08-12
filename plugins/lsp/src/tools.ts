@@ -29,13 +29,29 @@ function lspBoundary(ctx: PluginContext, path: string): string | undefined {
  *  answered from whichever repo happened to have the longest path, so a user working in project A got
  *  project B's symbols. Falls back to the widest scope when the work dir names no allowed repo, and to
  *  the work dir itself for an all-access turn (which carries no allowed roots).
- *  Exported for the boundary unit test. */
+ *
+ *  `undefined` means UNBOUNDED — the manager then merges symbols from every live client, i.e. from every
+ *  tenant's project. That is only ever correct for an all-access turn, so the caller must pair this with
+ *  {@link unscopedSymbolSearch}. Exported for the boundary unit test. */
 export function workspaceBoundary(ctx: PluginContext): string | undefined {
   const roots = ctx.allowedRoots();
   const workDir = ctx.workDir();
   if (roots.length === 0) return workDir;
   const containing = workDir ? roots.filter((root) => containsPath(root, workDir)) : [];
   return (containing.length > 0 ? containing : roots.slice()).sort((a, b) => b.length - a.length)[0];
+}
+
+/** True when a symbol search would run with NO boundary for a turn that is not all-access — the one case
+ *  the workspace search must refuse instead of answer.
+ *
+ *  Empty `allowedRoots()` is ambiguous by construction: it is what an all-access admin carries AND what a
+ *  scoped session with no repo carries (a delegated turn whose project policy resolved to nothing). While
+ *  these tools were owner-chat built-ins the ambiguity was harmless — only the admin ever had them. As
+ *  plugin tools they compose into every session kind, so the ambiguity became a cross-tenant read: every
+ *  OTHER tool here is anchored by `assertPathAllowed`, but a symbol query carries no path to anchor on.
+ *  Fail closed on the admin bit, which is what actually distinguishes the two. */
+function unscopedSymbolSearch(ctx: PluginContext, boundary: string | undefined): boolean {
+  return boundary === undefined && !ctx.isAdminSession();
 }
 
 /** A tool-result text block (tools report, they never throw). */
@@ -69,9 +85,12 @@ function renderOp(out: { ok: true; result: unknown } | LspOpFailure, format: (r:
  *  tools like the ones the agents extraction had to re-gate.
  *
  *  `manager` is resolved per call (never captured): the plugin's service owns the instance, so a reload
- *  that replaced it can never leave a tool talking to language servers nobody will stop. */
-export function registerLspTools(ctx: PluginContext, manager: () => LspManager): void {
+ *  that replaced it can never leave a tool talking to language servers nobody will stop. It answers null
+ *  once that generation has been stopped — a call landing in a reload's stop window reports that instead
+ *  of spawning servers into an instance whose teardown has already run. */
+export function registerLspTools(ctx: PluginContext, manager: () => LspManager | null): void {
   const assertPathAllowed = (path: string): string => ctx.assertPathAllowed(path);
+  const STOPPED = 'LSP: the language-server plugin is reloading — retry in a moment.';
   for (const tool of [
     defineTool({
       name: 'LspDiagnostics', label: 'Check diagnostics',
@@ -84,7 +103,9 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return { content: [{ type: 'text' as const, text: `LSP: ${(e as Error).message}` }], details: {} }; }
-        const result = await manager().checkFile(path, lspBoundary(ctx, path));
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const result = await m.checkFile(path, lspBoundary(ctx, path));
         const text = formatCheckResult(result) || `LSP: nothing to check for ${p.path}.`;
         return { content: [{ type: 'text' as const, text }], details: {} };
       },
@@ -103,7 +124,9 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await manager().definition(path, p.line, p.character, lspBoundary(ctx, path));
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const out = await m.definition(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatLocations, 'No definition found.'));
       },
     }),
@@ -121,7 +144,9 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await manager().references(path, p.line, p.character, lspBoundary(ctx, path));
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const out = await m.references(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatLocations, 'No references found.'));
       },
     }),
@@ -139,7 +164,9 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await manager().hover(path, p.line, p.character, lspBoundary(ctx, path));
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const out = await m.hover(path, p.line, p.character, lspBoundary(ctx, path));
         return lspText(renderOp(out, formatHover, 'No hover information available.'));
       },
     }),
@@ -153,7 +180,9 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return lspText(`LSP: ${(e as Error).message}`); }
-        const out = await manager().documentSymbol(path, lspBoundary(ctx, path));
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const out = await m.documentSymbol(path, lspBoundary(ctx, path));
         return lspText(renderOp(out, (r) => formatDocumentSymbols(r), 'No symbols found.'));
       },
     }),
@@ -164,7 +193,13 @@ export function registerLspTools(ctx: PluginContext, manager: () => LspManager):
         query: Type.String({ description: 'Symbol name to search for (fuzzy match)' }),
       }),
       execute: async (_id: string, p: { query: string }) => {
-        const out = await manager().workspaceSymbol(p.query, workspaceBoundary(ctx));
+        const boundary = workspaceBoundary(ctx);
+        // Refuse rather than search everything: an unbounded merge would hand a scoped caller symbols
+        // (names AND file paths) out of other tenants' projects. See unscopedSymbolSearch.
+        if (unscopedSymbolSearch(ctx, boundary)) return lspText('LSP: this session has no workspace in scope to search.');
+        const m = manager();
+        if (!m) return lspText(STOPPED);
+        const out = await m.workspaceSymbol(p.query, boundary);
         return lspText(renderOp(out, formatWorkspaceSymbols, 'No symbols found.'));
       },
     }),

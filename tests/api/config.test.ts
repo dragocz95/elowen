@@ -37,6 +37,17 @@ describe('PUT /config validates the patch at the trust boundary', () => {
     expect(body.webPushContact).toBe('https://build.example.com');
   });
 
+  // The LSP extraction moved this flag into the lsp plugin's own slice. Dropping it from the schema
+  // would have made a legacy write answer 200 and change NOTHING (unknown keys are stripped, as the
+  // webPushContact case above documents) — the caller would believe diagnostics were off.
+  it('rejects the retired lspEnabled instead of silently dropping it, and names its new home', async () => {
+    const { app, token } = await makeTestApp({});
+    const res = await app.request('/config', put(token, { lspEnabled: false }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('/plugins/lsp/config');
+  });
+
   it('rejects a non-string allowedExecs element with a 400', async () => {
     const { app, token } = await makeTestApp({});
     const res = await app.request('/config', put(token, { allowedExecs: ['sonnet', 42] }));

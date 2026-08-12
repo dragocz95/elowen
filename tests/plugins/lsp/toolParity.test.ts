@@ -14,7 +14,7 @@ const BASELINE = [
     name: 'LspDiagnostics',
     label: 'Check diagnostics',
     description: 'Type-check a file with its language server (LSP) and return errors/warnings with exact line:column. Call this right after editing a code file to immediately confirm it still compiles. Returns "no problems" for a clean file, and a clear note when LSP is off (/lsp) or no server is installed for the language.',
-    parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file to check' } } },
+    parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file to check' } }, required: ['path'] },
   },
   {
     name: 'LspGoToDefinition',
@@ -27,6 +27,7 @@ const BASELINE = [
         line: { type: 'number', description: 'Line number (1-based) of the symbol' },
         character: { type: 'number', description: 'Character offset (1-based) of the symbol' },
       },
+      required: ['path', 'line', 'character'],
     },
   },
   {
@@ -40,6 +41,7 @@ const BASELINE = [
         line: { type: 'number', description: 'Line number (1-based) of the symbol' },
         character: { type: 'number', description: 'Character offset (1-based) of the symbol' },
       },
+      required: ['path', 'line', 'character'],
     },
   },
   {
@@ -53,19 +55,20 @@ const BASELINE = [
         line: { type: 'number', description: 'Line number (1-based) of the symbol' },
         character: { type: 'number', description: 'Character offset (1-based) of the symbol' },
       },
+      required: ['path', 'line', 'character'],
     },
   },
   {
     name: 'LspDocumentSymbol',
     label: 'Document symbols',
     description: 'List all symbols (functions, classes, variables, interfaces) in a file using the language server. Returns a hierarchical outline of the document. Requires LSP to be enabled and a server installed for the file\'s language.',
-    parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } } },
+    parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
   {
     name: 'LspWorkspaceSymbol',
     label: 'Workspace symbols',
     description: 'Search for symbols (functions, classes, variables) across the entire workspace by name using the language server. Returns matching symbols with their file locations. Requires LSP to be enabled and at least one server running.',
-    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Symbol name to search for (fuzzy match)' } } },
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Symbol name to search for (fuzzy match)' } }, required: ['query'] },
   },
 ];
 
@@ -77,9 +80,11 @@ describe('lsp plugin tool parity (prompt cache)', () => {
       const t = tools.find((x) => x.name === b.name)!;
       expect(t.label).toBe(b.label);
       expect(t.description).toBe(b.description);
-      // The parameter schema reaches the model as JSON — compare the serialized form, additional
-      // typebox symbols/metadata do not travel on the wire.
-      expect(JSON.parse(JSON.stringify(t.parameters))).toMatchObject(b.parameters);
+      // The parameter schema reaches the model as JSON — compare the serialized form EXACTLY (typebox
+      // symbols do not survive JSON, so this IS the wire shape). toEqual, never toMatchObject: a new
+      // property, or a `required` entry that quietly went missing, is drift the model sees and the
+      // prompt cache bills for, and toMatchObject would let both through.
+      expect(JSON.parse(JSON.stringify(t.parameters))).toEqual(b.parameters);
     }
   });
 
