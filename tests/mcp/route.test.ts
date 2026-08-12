@@ -58,8 +58,10 @@ describe('POST /mcp auth gating', () => {
     });
     expect(toolsRes.status).toBe(200);
     const toolsBody = await toolsRes.text();
+    // This app carries no plugin registry, so the listing is the core escape hatch alone — the task
+    // tools ride the work plugin (see tests/api/mcpSurface.test.ts for the composed surface).
     expect(toolsBody).toContain('elowen_request');
-    expect(toolsBody).toContain('elowen_tasks');
+    expect(toolsBody).not.toContain('elowen_tasks');
   });
 
   it('agent-scope service token gets 403 (not in agentAllowed)', async () => {

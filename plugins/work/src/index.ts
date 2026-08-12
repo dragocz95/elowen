@@ -17,6 +17,8 @@ import { TaskStore } from './store/taskStore.js';
 import { Readiness } from './store/readiness.js';
 import { TaskUsageStore } from './store/taskUsageStore.js';
 import type { WorkDb } from './store/db.js';
+import { registerWorkTools } from './tools.js';
+import { WORK_MCP_TOOLS } from './mcpTools.js';
 
 export function register(ctx: PluginContext): void {
   // Schema first: an ADOPTION of the grandfathered core tables — a no-op on every existing install,
@@ -45,5 +47,11 @@ export function register(ctx: PluginContext): void {
     usage: () => domain().usage,
   } satisfies TasksDomainControl);
 
-  ctx.logger.info('work plugin loaded (task domain: tables + stores)');
+  // The control-plane brain tools (owner-gated at execute time, on the acting user's own credential)
+  // and their MCP twins on the daemon's own /mcp server. Both are pure REST callers over the task
+  // routes, so registering them touches no store — safe in the sub-agent runner too.
+  registerWorkTools(ctx);
+  for (const tool of WORK_MCP_TOOLS) ctx.registerMcpTool(tool);
+
+  ctx.logger.info('work plugin loaded (task domain: tables, stores, Elowen* task tools)');
 }

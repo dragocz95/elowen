@@ -66,8 +66,6 @@ interface SessionToolDeferralSpec {
 
 export interface CapabilitySpec {
   kind: SessionKind;
-  /** Built lazily so the owner's API token is never even minted for sessions that must not have it. */
-  elowenTools?: () => ToolDefinition[];
   /** PRIVATE per-user long-term memory tools — composed for every interactive session (owner-chat + all
    *  channel kinds), NOT task-workers. Each memory tool re-checks the acting identity at execute time and
    *  keys on a resolved elowenUserId, so a caller only ever reaches their OWN memory and an unlinked/
@@ -282,9 +280,10 @@ function toolDeferralCandidates(tools: readonly ToolDefinition[], spec: SessionT
 }
 
 /** Compose the tool set for one session. THE security invariant lives here: `trusted-channel`,
- *  `foreign-channel` and `task-worker` sessions NEVER receive the owner's Elowen* control-plane tools —
- *  ONLY `owner-chat` does. A shared channel sender (even one holding the admin role) reaching the
- *  owner's full-scope API token would be a privilege escalation. Plugin tools are always composed but
+ *  The owner's Elowen* control-plane tools are PLUGIN tools now (work: tasks, agents: missions and
+ *  sessions), so the boundary this composition used to enforce structurally — a shared channel sender,
+ *  even one holding the admin role, must never reach the owner's full-scope API token — lives in those
+ *  plugins as an execute-time `currentAccess().owner` gate. Plugin tools are always composed but
  *  wrapped with the per-turn access gate (see gateToolAccess) — the effective allow/deny is decided at
  *  execute time from the acting identity's ToolPolicy, one shared mechanism for every session kind.
  *  The WHOLE composed set (built-ins included) then passes through the granular permission gate
@@ -292,7 +291,6 @@ function toolDeferralCandidates(tools: readonly ToolDefinition[], spec: SessionT
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
   const interactive = spec.kind !== 'task-worker';
-  const elowenTools = ownerChat ? (spec.elowenTools?.() ?? []) : [];
   // Memory tools ride every INTERACTIVE session (owner-chat + all channel kinds): memory is per-user, so
   // any linked sender reaches THEIR OWN memory from any surface (web/CLI chat or a Discord channel). The
   // tools re-check identity at execute time and key on the resolved elowenUserId, so an unlinked/anonymous
@@ -311,7 +309,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // Build every real group exactly once BEFORE policy evaluation. This is deliberately the same ordered
   // sequence as the legacy composition with ToolSearch removed: policy observes the full registered set,
   // while an empty deferred result leaves every existing definition and byte position untouched.
-  const withoutToolSearch = [...elowenTools, ...memoryTools, ...shareImageTools, ...pluginTools, ...planTools];
+  const withoutToolSearch = [...memoryTools, ...shareImageTools, ...pluginTools, ...planTools];
   const deferred = interactive && spec.toolDeferral
     ? computeDeferredToolNames(toolDeferralCandidates(withoutToolSearch, spec.toolDeferral), spec.toolDeferral.overrides, spec.toolDeferral.options)
     : new Set<string>();
@@ -320,7 +318,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // ToolSearch returns to its historical stable position between memory and ShareImage. Every composed tool
   // then gains an optional leading `_reason` (excluded ToolSearch/mcp__* pass through), takes the deny and
   // granular permission gates, and finally strips `_reason` before the inner handler sees the arguments.
-  return [...elowenTools, ...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
+  return [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
     .map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason);
 }
 

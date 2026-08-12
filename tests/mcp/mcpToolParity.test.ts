@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { CORE_MCP_TOOLS } from '../../src/mcp/tools.js';
 import { AGENTS_MCP_TOOLS } from '../../plugins/agents/src/mcpTools.js';
+import { WORK_MCP_TOOLS } from '../../plugins/work/src/mcpTools.js';
 import type { PluginMcpTool } from '../../src/plugins/api.js';
 
-/** Golden pin of the daemon /mcp tool surface (batch 3b split: core in src/mcp/tools.ts, the agents
- *  dozen in plugins/agents/src/mcpTools.ts). Spawned agents carry these tool names, descriptions and
+/** Golden pin of the daemon /mcp tool surface, now split three ways: the generic escape hatch in the
+ *  core (src/mcp/tools.ts), the task surface in plugins/work/src/mcpTools.ts, the agents dozen in
+ *  plugins/agents/src/mcpTools.ts. Spawned agents carry these tool names, descriptions and
  *  argument shapes in their prompts and habits, so ANY drift — a rename, a reworded description, a
  *  changed/removed argument, a reorder — must fail here and be a deliberate decision, never a side
  *  effect of a refactor. Each line is `name :: args (?, in declaration order) :: description`. */
@@ -13,10 +15,15 @@ const shape = (t: PluginMcpTool): string => {
   return `${t.name} :: ${args || '-'} :: ${t.description}`;
 };
 
-describe('daemon /mcp tool surface parity (core + agents plugin)', () => {
+describe('daemon /mcp tool surface parity (core + work + agents plugins)', () => {
   it('core tools match the pinned ordered surface', () => {
     expect(CORE_MCP_TOOLS.map(shape)).toEqual([
       'elowen_request :: method,path,body? :: Call any Elowen REST endpoint (full control). Generic escape hatch — every endpoint works without a dedicated tool.',
+    ]);
+  });
+
+  it('work plugin tools match the pinned ordered surface', () => {
+    expect(WORK_MCP_TOOLS.map(shape)).toEqual([
       'elowen_tasks :: - :: List all tasks.',
       'elowen_create_task :: title,project_id?,description? :: Create a task.',
       'elowen_plan :: goal,project_id?,name?,exec?,autoModel?,autonomy?,maxSessions?,engage?,dryRun?,prompt?,prEnabled? :: Plan a goal into an epic with phases (autopilot). Supports full planning options: set engage:true to immediately start a mission; autonomy (L0-L3) controls agent freedom; maxSessions controls parallelism; exec overrides the executor; autoModel lets the planner pick per-phase models; dryRun previews phases without persisting; prompt supplies a custom planner prompt; prEnabled (true/false/null) controls PR-native mode.',
@@ -44,13 +51,15 @@ describe('daemon /mcp tool surface parity (core + agents plugin)', () => {
   });
 
   it('the composed surface stays 19 unique names with no core/plugin collision', () => {
-    const names = [...CORE_MCP_TOOLS, ...AGENTS_MCP_TOOLS].map((t) => t.name);
+    const names = [...CORE_MCP_TOOLS, ...WORK_MCP_TOOLS, ...AGENTS_MCP_TOOLS].map((t) => t.name);
     expect(names).toHaveLength(19);
     expect(new Set(names).size).toBe(19);
   });
 
-  it('every agents MCP tool is declared in the manifest provides.mcpTools (deny-by-default)', async () => {
-    const manifest = (await import('../../plugins/agents/elowen-plugin.json', { with: { type: 'json' } })).default as { provides?: { mcpTools?: string[] } };
-    expect(manifest.provides?.mcpTools).toEqual(AGENTS_MCP_TOOLS.map((t) => t.name));
+  it('every plugin MCP tool is declared in its manifest provides.mcpTools (deny-by-default)', async () => {
+    const agents = (await import('../../plugins/agents/elowen-plugin.json', { with: { type: 'json' } })).default as { provides?: { mcpTools?: string[] } };
+    expect(agents.provides?.mcpTools).toEqual(AGENTS_MCP_TOOLS.map((t) => t.name));
+    const work = (await import('../../plugins/work/elowen-plugin.json', { with: { type: 'json' } })).default as { provides?: { mcpTools?: string[] } };
+    expect(work.provides?.mcpTools).toEqual(WORK_MCP_TOOLS.map((t) => t.name));
   });
 });

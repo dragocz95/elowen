@@ -739,7 +739,7 @@ export interface UserToolPill {
   label: string;
   icon: string | null;
   plugin: string | null;
-  group: 'elowen' | 'memory' | 'image' | 'plugin';
+  group: 'memory' | 'image' | 'plugin';
   state: UserToolState;
   toggleable: boolean;
 }

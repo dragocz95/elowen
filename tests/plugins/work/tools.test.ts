@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildElowenTools } from '../../src/brain/tools/index.js';
+import { buildWorkTools } from '../../../plugins/work/src/tools.js';
 
 function fakeFetch(status: number, body: unknown): typeof fetch {
   return vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
@@ -14,11 +14,11 @@ function routedFetch(routes: { suffix: string; status: number; body: unknown }[]
   }) as unknown as typeof fetch;
 }
 const toolNamed = (f: typeof fetch, name: string) =>
-  buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === name)!;
+  buildWorkTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === name)!;
 
-describe('buildElowenTools', () => {
+describe('the work plugin\'s task tools', () => {
   it('exposes the expected tool names (the elowen control plane, nothing else)', () => {
-    const names = buildElowenTools({ url: 'http://x', token: 't' }).map((t) => t.name).sort();
+    const names = buildWorkTools({ url: 'http://x', token: 't' }).map((t) => t.name).sort();
     // ElowenListMissions/ElowenListSessions moved to the agents plugin, the six Lsp* tools to the lsp
     // plugin — both registered via their manifests, so this group is the control plane alone.
     expect(names).toEqual([
@@ -29,7 +29,7 @@ describe('buildElowenTools', () => {
 
   it('ElowenCreateTask POSTs to /tasks and returns the created task text', async () => {
     const f = fakeFetch(200, { id: 'elowen-1', title: 'Fix build' });
-    const tool = buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenCreateTask')!;
+    const tool = buildWorkTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenCreateTask')!;
     const res = await tool.execute('call-1', { title: 'Fix build', project_id: 1 });
     expect(f).toHaveBeenCalledWith('http://x/tasks', expect.objectContaining({ method: 'POST' }));
     expect(res.content[0]!.text).toContain('elowen-1');
@@ -37,7 +37,7 @@ describe('buildElowenTools', () => {
 
   it('ElowenListTasks GETs /tasks', async () => {
     const f = fakeFetch(200, [{ id: 'elowen-1' }]);
-    const tool = buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListTasks')!;
+    const tool = buildWorkTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListTasks')!;
     await tool.execute('call-2', {});
     expect(f).toHaveBeenCalledWith('http://x/tasks', expect.objectContaining({ method: 'GET' }));
   });
@@ -45,7 +45,7 @@ describe('buildElowenTools', () => {
   // Without this tool the brain could open a task but never move it: create was write-only.
   describe('ElowenUpdateTask', () => {
     const updateTool = (f: typeof fetch) =>
-      buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenUpdateTask')!;
+      buildWorkTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenUpdateTask')!;
 
     it('PATCHes /tasks/:id with only the fields that were passed', async () => {
       const f = fakeFetch(200, { id: 'elowen-1', status: 'in_progress' });
@@ -149,7 +149,7 @@ describe('buildElowenTools', () => {
 
   it('surfaces API errors as text instead of throwing', async () => {
     const f = fakeFetch(500, { error: 'boom' });
-    const tool = buildElowenTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListTasks')!;
+    const tool = buildWorkTools({ url: 'http://x', token: 't', fetchImpl: f }).find((t) => t.name === 'ElowenListTasks')!;
     const res = await tool.execute('call-3', {});
     expect(res.content[0]!.text).toContain('HTTP 500');
   });

@@ -27,7 +27,6 @@ function composeFixture(policy: 'legacy' | 'disabled' | 'default' = 'legacy'): T
   const plugin = definition('PluginWrite');
   return composeSessionTools({
     kind: 'owner-chat',
-    elowenTools: () => [definition('ElowenBuiltin')],
     memoryTools: () => [definition('MemoryBuiltin')],
     shareImage: () => [definition('ShareImage')],
     pluginTools: [plugin],
@@ -67,9 +66,9 @@ describe('initialActiveToolNames (factory active/registry split)', () => {
 
     expect(configuredOff).toBe(legacy);
     expect(composeFixture('disabled').map((entry) => entry.name)).toEqual([
-      'ElowenBuiltin', 'MemoryBuiltin', 'ShareImage', 'PluginWrite', 'ExitPlanMode',
+      'MemoryBuiltin', 'ShareImage', 'PluginWrite', 'ExitPlanMode',
     ]);
-    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('e3e23f0a793befd14082f3f5110c274b64c135def1328a5c7c462aeda03dfdbc');
+    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('fc3b063fcdaa2e1f670c8b03a508c5a528ee123c1de0b6912824b83aca138adf');
   });
 
   it.each(['build', 'plan'] as const)('keeps every pre-existing immediate definition byte-identical in %s mode', (mode) => {
@@ -81,7 +80,7 @@ describe('initialActiveToolNames (factory active/registry split)', () => {
     const configuredImmediate = configuredActive.filter((entry) => entry.name !== 'ToolSearch');
 
     expect(configuredActive.map((entry) => entry.name)).toEqual([
-      'ElowenBuiltin', 'MemoryBuiltin', 'ToolSearch', 'ShareImage', 'ExitPlanMode',
+      'MemoryBuiltin', 'ToolSearch', 'ShareImage', 'ExitPlanMode',
     ]);
     expect(configuredImmediate.map((entry) => entry.name)).toEqual(legacyImmediate.map((entry) => entry.name));
     expect(definitionTranscript(configuredImmediate)).toBe(definitionTranscript(legacyImmediate));

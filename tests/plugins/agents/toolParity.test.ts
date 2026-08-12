@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { registerAgentsTools } from '../../../plugins/agents/src/tools.js';
-import { buildElowenTools } from '../../../src/brain/tools/index.js';
+import { registerWorkTools } from '../../../plugins/work/src/tools.js';
 import { composeSessionTools } from '../../../src/brain/session/capabilities.js';
 import type { PluginContext } from '../../../src/plugins/api.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -96,19 +96,27 @@ describe('agents plugin tool parity (prompt cache)', () => {
     expect(JSON.parse(res.content[0]!.text as string)).toEqual([]);
   });
 
-  it('locks the ordered advertised owner-chat tool set (core groups first, plugin tools after)', () => {
+  it('locks the ordered advertised owner-chat tool set (plugins load alphabetically: agents, then work)', () => {
+    // The whole Elowen* control plane is plugin-owned now, so this order is the LOAD order of the
+    // plugins rather than a core group boundary — pinned here because it is what a cached prompt
+    // prefix sees.
+    const workTools: ToolDefinition[] = [];
+    registerWorkTools({
+      registerTool: (t: ToolDefinition) => { workTools.push(t); },
+      currentAccess: () => ({ owner: true, admin: true, projectIds: [], permissionBoundary: null }),
+      currentIdentity: () => ({ elowenUserId: 1 }),
+      host: { elowenCli: () => ({ url: 'http://x', tokenForUser: () => 't' }) },
+    } as unknown as PluginContext);
     const composed = composeSessionTools({
       kind: 'owner-chat',
-      elowenTools: () => buildElowenTools({ url: 'http://x', token: 't' }),
-      pluginTools: capturedAgentsTools(),
+      pluginTools: [...capturedAgentsTools(), ...workTools],
     } as never);
     expect(composed.map((t) => t.name)).toEqual([
-      // Core Elowen control plane (owner-chat only). The Lsp* tools used to sit here too; they moved
-      // into the lsp plugin and now compose with the plugin tools below.
+      // The agents plugin's tools.
+      'ElowenListMissions', 'ElowenListSessions',
+      // The work plugin's task control plane.
       'ElowenListTasks', 'ElowenCreateTask', 'ElowenUpdateTask', 'ElowenPlan',
       'ElowenGetTask', 'ElowenStopTask', 'ElowenTaskOutput',
-      // Plugin tools compose after the core groups — the agents plugin's tools land HERE.
-      'ElowenListMissions', 'ElowenListSessions',
       // Owner-chat always carries the plan-mode exit tool last.
       'ExitPlanMode',
     ]);

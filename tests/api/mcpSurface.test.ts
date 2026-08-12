@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { makeTestApp } from '../helpers/testApp.js';
 import { AGENTS_MCP_TOOLS } from '../../plugins/agents/src/mcpTools.js';
+import { WORK_MCP_TOOLS } from '../../plugins/work/src/mcpTools.js';
 import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
@@ -18,6 +19,7 @@ import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
 const AGENTS_NAMES = AGENTS_MCP_TOOLS.map((t) => t.name);
+const WORK_NAMES = WORK_MCP_TOOLS.map((t) => t.name);
 
 const rpc = (token: string, method: string, params: unknown) => ({
   method: 'POST',
@@ -34,14 +36,14 @@ async function toolNames(res: Response): Promise<string[]> {
 }
 
 describe('/mcp surface composition (live plugin registry)', () => {
-  it('with the agents plugin enabled, tools/list serves core + the agents dozen (19)', async () => {
+  it('with the work + agents plugins enabled, tools/list serves the whole 19', async () => {
     const { app, token } = await makeTestApp({});
     const names = await toolNames(await app.request('/mcp', rpc(token, 'tools/list', {})));
     expect(names).toHaveLength(19);
-    for (const n of AGENTS_NAMES) expect(names).toContain(n);
+    for (const n of [...WORK_NAMES, ...AGENTS_NAMES]) expect(names).toContain(n);
   });
 
-  it('with the plugin discovered-but-DISABLED, the agents tools vanish and core stays', async () => {
+  it('with the plugins discovered-but-DISABLED, their tools vanish and the escape hatch stays', async () => {
     const db = openAgentsDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
@@ -58,10 +60,8 @@ describe('/mcp surface composition (live plugin registry)', () => {
     });
     const token = users.issueToken(admin.id);
     const names = await toolNames(await app.request('/mcp', rpc(token, 'tools/list', {})));
-    expect(names).toHaveLength(7);
-    for (const n of AGENTS_NAMES) expect(names).not.toContain(n);
-    expect(names).toContain('elowen_request');
-    expect(names).toContain('elowen_plan');
+    expect(names).toEqual(['elowen_request']);
+    for (const n of [...AGENTS_NAMES, ...WORK_NAMES]) expect(names).not.toContain(n);
 
     // Calling a vanished tool answers a clear isError result, not a crash or a bare 503.
     const res = await app.request('/mcp', rpc(token, 'tools/call', { name: 'elowen_missions', arguments: {} }));

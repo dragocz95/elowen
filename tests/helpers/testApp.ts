@@ -116,7 +116,7 @@ export function agentsPluginProvider(w: {
   const bus = w.bus ?? new EventBus();
   return new PluginRegistryProvider(() => loadPlugins({
     dirs: [join(process.cwd(), 'plugins')],
-    enabled: ['agents'],
+    enabled: ['agents', 'work'],
     delegatedTurnsOutOfProcess: () => false,
     pluginDb: (plugin) => makePluginDb(w.db, plugin, { canMigrate: true }),
     publishEvent: (e) => bus.publish(e),

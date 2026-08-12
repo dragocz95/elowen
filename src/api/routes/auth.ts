@@ -396,14 +396,15 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const iconMap = new Map(Object.entries(BUILTIN_TOOL_ICONS));
     for (const [k, v] of registry?.toolIcons ?? []) iconMap.set(k, v);
     const iconOf = makeToolIconResolver(iconMap);
-    const targetIsAdmin = users.isAdmin(id);
     // Per-user deny-list: a plugin tool the admin switched off for this user's own brain sessions.
     const disabled = new Set(users.get(id)?.disabled_tools ?? []);
     type ToolState = 'allowed' | 'inherited' | 'unavailable' | 'disabled';
-    const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'elowen' | 'memory' | 'image' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
+    const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'memory' | 'image' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
+    // What is left of the built-ins is memory and image: per-user, composed for every interactive
+    // session, and inherited rather than granted. The control plane that used to be listed here as an
+    // admin-only `elowen` group rides its plugins now and appears below with the other plugin tools.
     for (const m of builtinToolMetas()) {
-      const state: ToolState = m.group === 'elowen' ? (targetIsAdmin ? 'allowed' : 'unavailable') : 'inherited';
-      pills.push({ name: m.name, label: m.label, icon: iconOf(m.name) ?? null, plugin: null, group: m.group, state, toggleable: false });
+      pills.push({ name: m.name, label: m.label, icon: iconOf(m.name) ?? null, plugin: null, group: m.group, state: 'inherited', toggleable: false });
     }
     for (const t of registry?.tools ?? []) {
       // Plugin tools are toggleable per-user: allowed unless the admin disabled them for this user.

@@ -45,9 +45,9 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
     expect(res.content[0]!.text).toContain('ran Write');
   });
 
-  it('gates built-in (non-plugin) tools too — the Elowen*/Memory* set passes the same choke point', async () => {
+  it('gates every composed tool — the Elowen*/Memory* set passes the same choke point', async () => {
     const { tool, ran } = fakeTool('ElowenCreateTask');
-    const gated = composeSessionTools({ kind: 'owner-chat', elowenTools: () => [tool], pluginTools: [] })
+    const gated = composeSessionTools({ kind: 'owner-chat', pluginTools: [tool] })
       .find((t) => t.name === 'ElowenCreateTask');
     const p = perms({ user: { tools: { ElowenCreateTask: 'deny' } } });
     const res = await callTool(gated!, {}, p);

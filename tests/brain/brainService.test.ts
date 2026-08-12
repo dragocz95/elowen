@@ -24,6 +24,7 @@ import { HookAuditBuffer } from '../../src/shared/hookAudit.js';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { registerWorkTools } from '../../plugins/work/src/tools.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -545,6 +546,13 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-1').map((row) => row.role)).toEqual(['user', 'assistant']);
   });
 
+  /** The Elowen* task control plane is a PLUGIN surface now (work). Registering it into a test's own
+   *  registry is what a real daemon does at load, and keeps these assertions about the real tools. */
+  function withWorkTools(reg: PluginRegistry): void {
+    registerWorkTools(reg.contextFor('work', {}, { info() {}, warn() {}, error() {} }));
+    reg.setPlanSafe(['ElowenListTasks'], undefined);
+  }
+
   it('composes plugin tools and appends plugin fragments to the persona', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
@@ -554,6 +562,7 @@ describe('BrainService', () => {
       execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
     }));
     ctx.registerSystemPromptFragment('Follow house style.');
+    withWorkTools(reg);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
     let seenAppend: string[] | undefined;
@@ -2613,6 +2622,9 @@ describe('BrainService', () => {
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
     );
+    const reg = new PluginRegistry();
+    withWorkTools(reg);
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);
 
@@ -2733,6 +2745,7 @@ describe('BrainService', () => {
       }));
     }
     reg.setPlanSafe(['ShowStatus'], undefined); // the plugin vouches for exactly one of its tools
+    withWorkTools(reg); // …and the work plugin vouches for its own read-only ElowenListTasks
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -2742,7 +2755,7 @@ describe('BrainService', () => {
 
     const denied = d.session.__deniedInTurn;
     expect(denied?.has('ShowStatus')).toBe(false);
-    expect(denied?.has('ElowenListTasks')).toBe(false); // the core declares its own read-only built-ins
+    expect(denied?.has('ElowenListTasks')).toBe(false); // the work plugin declares this one read-only
     // Undeclared is DENIED no matter how the tool is named. `get_and_purge` is the point: the name
     // heuristic this replaced read `get_`/`read_` as a promise and let both of these straight through.
     // Note this is now enforcement rather than concealment — the model can see these and will be refused,
@@ -2752,7 +2765,7 @@ describe('BrainService', () => {
     expect(denied?.has('send_message')).toBe(true);
     expect(denied?.has('str_replace')).toBe(true);
     expect(denied?.has('mcp__github__create_issue')).toBe(true);
-    // A mutating built-in stays denied too — the core's list is not "all built-ins".
+    // A mutating tool of a plan-safe-declaring plugin stays denied — the declaration is per tool.
     expect(denied?.has('ElowenCreateTask')).toBe(true);
   });
 

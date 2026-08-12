@@ -1,6 +1,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { callElowenApi } from '../../shared/apiClient.js';
+import { callElowenApi } from './lib/apiClient.js';
+import type { PluginContext } from '../../../src/plugins/api.js';
 
 export interface ElowenToolCtx { url: string; token: string; fetchImpl?: typeof fetch }
 
@@ -18,7 +19,7 @@ async function call(ctx: ElowenToolCtx, method: string, path: string, body?: unk
 const TASK_STATUSES = ['open', 'in_progress', 'blocked', 'closed', 'cancelled'] as const;
 type TaskStatusArg = typeof TASK_STATUSES[number];
 
-export function elowenListTasks(ctx: ElowenToolCtx) {
+function elowenListTasks(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenListTasks', label: 'List tasks',
     description: [
@@ -32,7 +33,7 @@ export function elowenListTasks(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenCreateTask(ctx: ElowenToolCtx) {
+function elowenCreateTask(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenCreateTask', label: 'Create task',
     description: [
@@ -50,7 +51,7 @@ export function elowenCreateTask(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenUpdateTask(ctx: ElowenToolCtx) {
+function elowenUpdateTask(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenUpdateTask', label: 'Update task',
     description: [
@@ -80,7 +81,7 @@ export function elowenUpdateTask(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenPlan(ctx: ElowenToolCtx) {
+function elowenPlan(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenPlan', label: 'Plan a goal',
     description: 'Ask Elowen to break a goal into a task plan for a project.',
@@ -92,7 +93,7 @@ export function elowenPlan(ctx: ElowenToolCtx) {
 // ElowenListMissions + ElowenListSessions moved to the agents plugin (plugins/agents/src/tools.ts):
 // they read exclusively the subsystem's surface, so they ride the plugin and vanish with it.
 
-export function elowenGetTask(ctx: ElowenToolCtx) {
+function elowenGetTask(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenGetTask', label: 'Get task',
     description: 'Get a single task by its id, including its title, status, description, result summary, outcome, labels, dependencies and changed files. Use it to inspect a task\'s full state before updating or closing it.',
@@ -104,7 +105,7 @@ export function elowenGetTask(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenStopTask(ctx: ElowenToolCtx) {
+function elowenStopTask(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenStopTask', label: 'Stop task',
     description: 'Stop a running task: revert its status to open (so it can be re-spawned) or cancel it entirely. If the task has a live agent session, that session is stopped first so a second agent cannot spawn alongside it. Use this when a task is stuck, producing wrong results, or no longer needed.',
@@ -119,7 +120,7 @@ export function elowenStopTask(ctx: ElowenToolCtx) {
   });
 }
 
-export function elowenTaskOutput(ctx: ElowenToolCtx) {
+function elowenTaskOutput(ctx: ElowenToolCtx) {
   return defineTool({
     name: 'ElowenTaskOutput', label: 'Task output',
     description: 'Read a task\'s agent-reported result summary, outcome and token/cost usage. Returns the result_summary and outcome the agent recorded when it closed the task, plus usage statistics (or "no usage recorded" when none exists). Use it to review what a completed task actually did.',
@@ -145,5 +146,61 @@ export function elowenTaskOutput(ctx: ElowenToolCtx) {
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(composed, null, 2) }], details: {} };
     },
+  });
+}
+
+/** The task control plane's brain tools, moved out of the core (src/brain/tools/elowenTools.ts) with
+ *  byte-identical names, labels, descriptions and parameter schemas — only the advertised ORDER
+ *  changes, a one-time prompt-cache invalidation the extraction accepts.
+ *
+ *  Two things the core got structurally and this must reproduce at EXECUTE time:
+ *
+ *  - The credential. In the core these tools were handed the acting user's own advisor token, so they
+ *    ran under that user's tenancy and full scope. The host's shared `elowenCli().token` is
+ *    AGENT-scoped and owned by a different principal, so using it would silently change both — in
+ *    either direction. `tokenForUser` mints the same credential the core path did, read per call from
+ *    the acting identity and never captured: a token captured at registration would let one user's turn
+ *    act as whoever loaded the plugin.
+ *  - The boundary. Core composed these into `owner-chat` sessions ONLY; the platform composes plugin
+ *    tools into every session kind and expects an execute-time gate. That gate is
+ *    `currentAccess().owner`, NOT isAdminSession(): an admin on a shared channel (a Discord moderator)
+ *    is admin-but-not-owner, and these tools MUTATE — handing them to that turn would be exactly the
+ *    privilege escalation the core's composition prevented by construction. The owner's own sub-agents
+ *    inherit owner, which is what keeps the read-only agent allow-list (ElowenListTasks / ElowenGetTask
+ *    / ElowenTaskOutput) working for explore/plan children. */
+/** The task control plane's toolset, in its historical order. Exported so the plugin's tests exercise
+ *  the very definitions it registers (name, description, schema and HTTP behaviour) rather than a
+ *  parallel copy. */
+export function buildWorkTools(ctx: ElowenToolCtx) {
+  return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenGetTask(ctx), elowenStopTask(ctx), elowenTaskOutput(ctx)];
+}
+
+export function registerWorkTools(ctx: PluginContext): void {
+  const refusal = { content: [{ type: 'text' as const, text: 'This tool is only available in the owner\'s own chat session.' }], details: {} };
+  const unavailable = (why: string) => ({ content: [{ type: 'text' as const, text: `Error: ${why}` }], details: {} });
+
+  /** Resolve the acting user's own credential for THIS call, or explain why there is none. */
+  const toolCtx = (): ElowenToolCtx | string => {
+    const cli = ctx.host.elowenCli();
+    const userId = ctx.currentIdentity()?.elowenUserId;
+    if (userId == null) return 'this tool needs a linked Elowen account and this turn has none.';
+    const token = cli.tokenForUser(userId);
+    if (!token) return 'this tool could not resolve a credential for the acting user.';
+    return { url: cli.url, token };
+  };
+
+  // Built once WITHOUT a credential for its static shape (name/label/description/schema — what the
+  // model sees); each execute is wrapped so the gate and the acting user's token are resolved per call.
+  const inert = buildWorkTools({ url: '', token: '' });
+  inert.forEach((tool, i) => {
+    ctx.registerTool({
+      ...tool,
+      execute: async (...args: Parameters<typeof tool.execute>) => {
+        if (!ctx.currentAccess().owner) return refusal;
+        const resolved = toolCtx();
+        if (typeof resolved === 'string') return unavailable(resolved);
+        return buildWorkTools(resolved)[i]!.execute(...args);
+      },
+    } as typeof tool);
   });
 }

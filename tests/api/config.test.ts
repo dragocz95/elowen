@@ -158,7 +158,10 @@ describe('GET /config/tool-deferral', () => {
     }
 
     const builtin = groups.find((group) => group.sourceId === 'builtin')!;
-    const pinned = builtin.tools.find((tool) => tool.name === 'ElowenCreateTask')!;
+    // The control plane is plugin-owned now (work), but the never-defer lock is keyed on the tool NAME,
+    // so moving its owner must not make it deferrable.
+    const work = groups.find((group) => group.sourceId === 'plugin:work')!;
+    const pinned = work.tools.find((tool) => tool.name === 'ElowenCreateTask')!;
     expect(pinned).toMatchObject({ eligible: false, lockedReason: 'never-defer', effective: 'immediate', reason: 'never-defer' });
     expect(builtin.tools.find((tool) => tool.name === 'EditImage')).toMatchObject({ override: 'immediate', effective: 'immediate', reason: 'tool-override' });
     expect(builtin.tools.find((tool) => tool.name === 'GenerateImage')).toMatchObject({ defaultMode: 'deferred', effective: 'deferred', reason: 'source-override' });

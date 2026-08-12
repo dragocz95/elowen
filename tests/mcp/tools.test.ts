@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CORE_MCP_TOOLS, makeMcpRequest } from '../../src/mcp/tools.js';
+import { WORK_MCP_TOOLS } from '../../plugins/work/src/mcpTools.js';
 import type { CallResult } from '../../src/shared/apiClient.js';
 
 type Call = { m: string; p: string; b: unknown; url: string; token: string };
@@ -13,13 +14,15 @@ function spy(result: CallResult = { status: 200, ok: true, data: { ok: 1 }, text
   return { calls, call };
 }
 
+// The task tools moved to the work plugin; they are still exercised through the SAME shared request
+// core (makeMcpRequest), which is the point of the check.
 const tool = (name: string) => {
-  const t = CORE_MCP_TOOLS.find((x) => x.name === name);
-  if (!t) throw new Error(`missing core tool ${name}`);
+  const t = [...CORE_MCP_TOOLS, ...WORK_MCP_TOOLS].find((x) => x.name === name);
+  if (!t) throw new Error(`missing MCP tool ${name}`);
   return t;
 };
 
-describe('core MCP tools (REST proxies over makeMcpRequest)', () => {
+describe('daemon MCP tools (REST proxies over makeMcpRequest)', () => {
   it('elowen_request delegates to callElowenApi with the connection url+token', async () => {
     const { calls, call } = spy();
     const req = makeMcpRequest({ url: 'http://d:4400', token: 'usr', call: call as never });

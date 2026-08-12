@@ -119,7 +119,7 @@ describe('tool-search end to end (real composition path)', () => {
     let handle: ToolSearchHandle | undefined;
     const composed = composeSessionTools({
       kind: 'owner-chat',
-      elowenTools: () => [stub('GenerateImage')],
+      shareImage: () => [stub('GenerateImage')],
       pluginTools: [],
       toolDeferral: {
         toolOwner: new Map(),
@@ -134,14 +134,13 @@ describe('tool-search end to end (real composition path)', () => {
     });
 
     expect(handle?.deferred).toEqual(new Set(['GenerateImage']));
-    expect(composed.map((tool) => tool.name)).toEqual(['GenerateImage', 'ToolSearch', 'ExitPlanMode']);
+    expect(composed.map((tool) => tool.name)).toEqual(['ToolSearch', 'GenerateImage', 'ExitPlanMode']);
   });
 
   it('builds each definition group once while resolving deferral', () => {
-    const calls = { elowen: 0, memory: 0, search: 0, image: 0 };
+    const calls = { memory: 0, search: 0, image: 0 };
     const composed = composeSessionTools({
       kind: 'owner-chat',
-      elowenTools: () => { calls.elowen++; return [stub('ElowenBuiltin')]; },
       memoryTools: () => { calls.memory++; return [stub('MemoryBuiltin')]; },
       shareImage: () => { calls.image++; return [stub('ShareImage')]; },
       pluginTools: [stub('ScanCode')],
@@ -154,9 +153,9 @@ describe('tool-search end to end (real composition path)', () => {
       toolSearch: (deferred) => { calls.search++; return [toolSearchTool(createToolSearchHandle(deferred))]; },
     });
 
-    expect(calls).toEqual({ elowen: 1, memory: 1, search: 1, image: 1 });
+    expect(calls).toEqual({ memory: 1, search: 1, image: 1 });
     expect(composed.map((tool) => tool.name)).toEqual([
-      'ElowenBuiltin', 'MemoryBuiltin', 'ToolSearch', 'ShareImage', 'ScanCode', 'ExitPlanMode',
+      'MemoryBuiltin', 'ToolSearch', 'ShareImage', 'ScanCode', 'ExitPlanMode',
     ]);
   });
 

@@ -21,5 +21,26 @@
       "events"
     ]
   },
-  "provides": {}
+  "provides": {
+    "tools": [
+      "ElowenListTasks",
+      "ElowenCreateTask",
+      "ElowenUpdateTask",
+      "ElowenPlan",
+      "ElowenGetTask",
+      "ElowenStopTask",
+      "ElowenTaskOutput"
+    ],
+    "mcpTools": [
+      "elowen_tasks",
+      "elowen_create_task",
+      "elowen_plan",
+      "elowen_task_update",
+      "elowen_task_close",
+      "elowen_task_usage"
+    ]
+  },
+  "planSafe": [
+    "ElowenListTasks"
+  ]
 }
