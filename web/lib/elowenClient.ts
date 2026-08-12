@@ -160,7 +160,9 @@ export const elowenClient = {
   myPermissions: () => req<PermissionSettings>('/auth/me/permissions'),
   saveMyPermissions: (patch: Partial<PermissionSettings>) => req<PermissionSettings>('/auth/me/permissions', json(patch, 'PATCH')),
   plugins: () => req<PluginInfo[]>('/plugins'),
-  togglePlugin: (name: string, enabled: boolean) => req<PluginInfo>(`/plugins/${encodeURIComponent(name)}`, json({ enabled }, 'PATCH')),
+  /** `pending` comes back (with HTTP 202) when the toggle is saved but the live registry swap had to wait
+   *  for running work — the plugin set on disk already changed and the daemon applies it as work settles. */
+  togglePlugin: (name: string, enabled: boolean) => req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
   savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
   /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */

@@ -347,29 +347,44 @@ describe('BrainService', () => {
     (d as unknown as { subagentRunner: unknown }).subagentRunner = { reset };
     const svc = new BrainService(d as never);
 
-    await expect(svc.reloadPlugins()).resolves.toBeUndefined();
+    await expect(svc.reloadPlugins()).resolves.toBe(true);
     expect(reset).toHaveBeenCalledOnce();
   });
 
-  it('aborts a timed-out plugin reload without interrupting work or leaving admission closed', async () => {
+  it('defers a reload that outwaits its budget, without interrupting work or leaving admission closed', async () => {
     vi.useFakeTimers();
     try {
       const d = fakeDeps();
       const reset = vi.fn();
+      let runnerBusy = true;
       (d as unknown as { subagentRunner: unknown }).subagentRunner = {
         reset,
-        activeCount: vi.fn(async () => 1),
+        activeCount: vi.fn(async () => (runnerBusy ? 1 : 0)),
       };
+      const plugins = new PluginRegistryProvider(async () => new PluginRegistry());
+      const invalidate = vi.spyOn(plugins, 'invalidate');
+      (d as unknown as { plugins: unknown }).plugins = plugins;
       const svc = new BrainService(d as never);
       await svc.start(1);
 
+      // The wait gives up rather than throwing: the config write behind this call already landed, so a
+      // rejection would report failure for a change that is on disk.
       const reload = svc.reloadPlugins();
-      const rejected = expect(reload).rejects.toThrow(/reload timed out.*aborted without interrupting/i);
-      await vi.advanceTimersByTimeAsync(600_100);
-      await rejected;
+      await vi.advanceTimersByTimeAsync(20_100);
+      await expect(reload).resolves.toBe(false);
+      expect(invalidate).not.toHaveBeenCalled();
       expect(reset).not.toHaveBeenCalled();
+      // Admission reopened — a busy instance must not be left refusing turns over a pending toggle.
+      runnerBusy = false;
       await expect(svc.send({ userId: 1, text: 'work survived', mode: 'build', session: 'brain-1' }))
         .resolves.toBeUndefined();
+
+      // …and the deferred intent was re-armed, so that settled turn applies it: the runtime converges on
+      // the persisted plugin set without a daemon restart.
+      await vi.waitFor(() => {
+        expect(invalidate).toHaveBeenCalledOnce();
+        expect(reset).toHaveBeenCalledOnce();
+      });
     } finally {
       vi.useRealTimers();
     }

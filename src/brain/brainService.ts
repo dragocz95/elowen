@@ -54,8 +54,11 @@ import { collapseWhitespace } from '../shared/text.js';
 
 export type { BrainDeps } from './brainDeps.js';
 
-/** Match graceful shutdown's work budget, but fail by ABORTING the reload rather than killing the work. */
-const PLUGIN_RELOAD_DRAIN_MS = 600_000;
+/** How long a reload attempt waits for running work to drain before giving up on THIS attempt. Waiting
+ *  closes admission (that is what lets the work drain at all), so the budget is the length of a request
+ *  the whole instance would spend refusing new turns — it is deliberately short. Giving up does not lose
+ *  the change: the caller re-arms the deferred flag and the next settled turn applies it. */
+const PLUGIN_RELOAD_DRAIN_MS = 20_000;
 const PLUGIN_RELOAD_POLL_MS = 100;
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
@@ -141,9 +144,11 @@ export class BrainService {
   private processSvc: SessionProcessService;
   /** The mid-turn message backlog (list/remove/recall) — see SessionQueueService. */
   private queue: SessionQueueService;
-  /** A plugin (e.g. the skills plugin's CreateSkill) asked for a plugin reload from INSIDE a running
-   *  turn. Reloading there would dispose the very session executing the tool, so the request is coalesced
-   *  onto this flag and drained once the turn settles (see drainDeferredPluginReload). */
+  /** A plugin reload is owed but could not be applied yet: a plugin (e.g. the skills plugin's
+   *  CreateSkill) asked for one from INSIDE a running turn — reloading there would dispose the very
+   *  session executing the tool — or an attempt gave up waiting for work to drain. Either way the intent
+   *  is coalesced onto this flag and drained once a turn settles (see drainDeferredPluginReload), so the
+   *  runtime converges on the persisted plugin set without a daemon restart. */
   private pendingPluginReload = false;
   constructor(private d: BrainDeps) {
     // One identity per daemon boot, stamped onto every running sub-agent row. A LATER boot uses it to tell
@@ -1184,7 +1189,10 @@ export class BrainService {
   /** Wait until replacing the current plugin registry cannot cut through work owned by its closures. The
    *  core busy counters cover active turns/children; plugin controls cover delegates waiting between child
    *  turns and workflows between nodes — gaps where the live registry legitimately reads idle. */
-  private async waitForPluginReloadQuiescence(registry: PluginRegistry | undefined): Promise<void> {
+  /** Wait for every kind of in-flight work to reach zero. Resolves true when the caller may swap the
+   *  registry, false when the budget ran out — never throws, because the caller has to decide what an
+   *  unreached quiet point means (defer, in practice) and an exception here read as "the reload broke". */
+  private async waitForPluginReloadQuiescence(registry: PluginRegistry | undefined): Promise<boolean> {
     let announced = false;
     const deadline = Date.now() + PLUGIN_RELOAD_DRAIN_MS;
     while (true) {
@@ -1200,7 +1208,7 @@ export class BrainService {
       // intentionally closed here. It survives the registry swap and is delivered by the normal core path.
       if (busy.turns === 0 && busy.children === 0 && delegates === 0 && workflows === 0 && runnerWork === 0) {
         if (announced) logger('brain').info('plugin reload drain complete');
-        return;
+        return true;
       }
       const detail = `${busy.turns} turn(s), ${busy.children} child turn(s), ${delegates} delegation(s), ${workflows} workflow(s), ${runnerWork} runner task(s)`;
       if (!announced) {
@@ -1208,7 +1216,8 @@ export class BrainService {
         logger('brain').info(`plugin reload waiting for work — ${detail}`);
       }
       if (Date.now() >= deadline) {
-        throw new Error(`plugin reload timed out waiting for work; reload aborted without interrupting it — ${detail}`);
+        logger('brain').info(`plugin reload gave up waiting for work without interrupting it — ${detail}`);
+        return false;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, PLUGIN_RELOAD_POLL_MS));
     }
@@ -1217,8 +1226,14 @@ export class BrainService {
   /** Invalidate the shared plugin registry and restart every live session — called when the admin flips
    *  a plugin on/off so the change applies without a daemon restart. New top-level work is paused first;
    *  existing turns, delegates, workflows and result delivery drain to completion before any closure or
-   *  runner is replaced. Queued reload callers keep admission closed across the whole serialized batch. */
-  async reloadPlugins(): Promise<void> {
+   *  runner is replaced. Queued reload callers keep admission closed across the whole serialized batch.
+   *
+   *  Resolves `true` when the swap happened and `false` when the wait for running work ran out — the
+   *  change is NOT lost then: the deferred flag is re-armed and the next settled turn applies it. It
+   *  matters that this is a return value rather than a throw, because the config write has ALREADY
+   *  landed by the time a route calls this; a throw made the caller report failure for a change that
+   *  was on disk, leaving the runtime and the config silently disagreeing until a daemon restart. */
+  async reloadPlugins(): Promise<boolean> {
     this.pluginReloadWaiters += 1;
     this.reloadingPlugins = true;
     try {
@@ -1227,7 +1242,13 @@ export class BrainService {
       // deliberately OUTSIDE the plugins-reload lock because busy().turns counts every held serial key.
       this.elicitation.cancelAll('plugins reloaded');
       const drainRegistry = await this.d.plugins?.get();
-      await this.waitForPluginReloadQuiescence(drainRegistry);
+      if (!await this.waitForPluginReloadQuiescence(drainRegistry)) {
+        // Work outlasted the budget. Re-arm instead of aborting for good, and reopen admission on the way
+        // out (the finally below) so a busy instance is not left refusing turns over a pending toggle.
+        this.pendingPluginReload = true;
+        logger('brain').info('plugin reload deferred — work still running; it will apply when a turn settles');
+        return false;
+      }
       // Serialized: two rapid plugin toggles must not interleave stopAll()/startAll() and leave duplicate
       // connected adapters. The waiter counter above prevents a fresh turn slipping between queued reloads.
       await this.serial('plugins-reload', async () => {
@@ -1261,6 +1282,7 @@ export class BrainService {
         const after = await this.d.plugins?.get();
         if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
       });
+      return true;
     } finally {
       this.pluginReloadWaiters -= 1;
       if (this.pluginReloadWaiters === 0) this.reloadingPlugins = false;

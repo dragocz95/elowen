@@ -14,6 +14,16 @@ function marketplaceFail(c: Context, e: unknown) {
   return c.json({ error: e instanceof Error ? e.message : 'marketplace operation failed' }, status);
 }
 
+/** Answer a plugin write whose config change is already persisted, distinguishing whether the live
+ *  registry swap happened. `swapped === false` means work was still running, so the runtime is briefly
+ *  one generation behind the config and converges when a turn settles — a 202 with `pending: true`, so
+ *  the UI reports "saved, applies shortly" rather than an error for a change that DID land. `undefined`
+ *  means no brain was wired (a setup-time write), which needs no swap. */
+function applied(c: Context, body: Record<string, unknown>, swapped: boolean | undefined) {
+  if (swapped === false) return c.json({ ...body, pending: true }, 202);
+  return c.json(body);
+}
+
 /** One text-capable Discord destination for the cron-job channel picker. */
 type DiscordChannelOption = { id: string; name: string; type: 'channel' | 'thread'; parentName?: string };
 type McpControl = {
@@ -274,8 +284,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       stored[f.key] = v;
     }
     d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
-    await d.brain?.reloadPlugins();
-    return c.json({ ok: true });
+    return applied(c, { ok: true }, await d.brain?.reloadPlugins());
   });
 
   app.patch('/plugins/:name', async (c) => {
@@ -288,8 +297,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (b.enabled) cur.add(name); else cur.delete(name);
     d.config.update({ plugins: { enabled: [...cur] } });
     // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
-    await d.brain?.reloadPlugins();
-    return c.json(listing().find((p) => p.name === name));
+    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
   });
 
   // Remove a plugin. A user-source (marketplace) plugin is uninstalled outright — folder AND data
@@ -313,8 +321,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const cfg = d.config.get().plugins;
     const removed = cfg.removed.includes(name) ? cfg.removed : [...cfg.removed, name];
     d.config.update({ plugins: { enabled: cfg.enabled.filter((n) => n !== name), removed } });
-    await d.brain?.reloadPlugins();
-    return c.json({ ok: true, removed: true });
+    return applied(c, { ok: true, removed: true }, await d.brain?.reloadPlugins());
   });
 
   // Restore a soft-removed bundled plugin: drop it from `plugins.removed` so it reappears in the
@@ -324,11 +331,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     if (!manifestOf(name)) return c.json({ error: 'unknown plugin' }, 404);
     const cfg = d.config.get().plugins;
+    let swapped: boolean | undefined;
     if (cfg.removed.includes(name)) {
       d.config.update({ plugins: { removed: cfg.removed.filter((n) => n !== name) } });
-      await d.brain?.reloadPlugins();
+      swapped = await d.brain?.reloadPlugins();
     }
-    return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, swapped);
   });
 
 

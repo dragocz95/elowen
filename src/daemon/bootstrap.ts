@@ -455,7 +455,9 @@ export async function buildApp(opts: BuildOpts) {
     discovered: () => discoverPlugins(pluginDirs),
     getEnabled: () => config.get().plugins.enabled,
     setEnabled: (names) => { config.update({ plugins: { enabled: names } }); },
-    reload: () => brain?.reloadPlugins() ?? Promise.resolve(),
+    // The marketplace only needs the reload attempted; whether the registry swapped now or is deferred
+    // to the next settled turn does not change what an install/uninstall reports.
+    reload: async () => { await brain?.reloadPlugins(); },
   });
   marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
   // The admin-only `/restart` slash command: announce it on the platforms (Discord main channel), drop a

@@ -59,7 +59,9 @@ function setup() {
   const admin = users.create('admin', 'pw');
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
-  const reloadPlugins = vi.fn(async () => {});
+  // The brain reports whether the live registry swap happened; `false` means the change is persisted but
+  // deferred until running work settles (see the 202 case below).
+  const reloadPlugins = vi.fn(async () => true);
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
@@ -143,6 +145,31 @@ describe('plugin routes', () => {
     const off = await app.request('/plugins/skills', patch(adminTok, { enabled: false }));
     expect((await off.json() as { enabled: boolean }).enabled).toBe(false);
     expect(config.get().plugins.enabled).toEqual([]);
+  });
+
+  it('answers 202 pending — not an error — when the live swap has to wait for running work', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    config.update({ plugins: { enabled: [], removed: [] } });
+    reloadPlugins.mockResolvedValueOnce(false);
+
+    const res = await app.request('/plugins/skills', patch(adminTok, { enabled: true }));
+
+    // The config write happens BEFORE the swap attempt, so reporting failure here would tell the operator
+    // nothing changed while the toggle was already on disk — and the runtime converges on it anyway.
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ enabled: true, pending: true });
+    expect(config.get().plugins.enabled).toEqual(['skills']);
+  });
+
+  it('reports a deferred config save the same way', async () => {
+    const { app, config, reloadPlugins, adminTok } = setup();
+    reloadPlugins.mockResolvedValueOnce(false);
+
+    const res = await app.request('/plugins/discord/config', patch(adminTok, { values: { botToken: 'tok-9' } }));
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ ok: true, pending: true });
+    expect(config.pluginConfig('discord').botToken).toBe('tok-9');
   });
 
   it('rejects a non-admin (403) and an unknown plugin (404)', async () => {

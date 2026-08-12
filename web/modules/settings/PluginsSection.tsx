@@ -260,7 +260,12 @@ export function PluginsSection() {
 
   const flip = (p: PluginInfo, enabled: boolean) => toggle.mutate(
     { name: p.name, enabled },
-    { onSuccess: () => toast(enabled ? t.plugins.enabledToast : t.plugins.disabledToast), onError: () => toast(t.plugins.toggleError, 'error') },
+    {
+      // A 202 means the change is on disk but the live swap waits for running work — say so instead of
+      // claiming it already took effect.
+      onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
+      onError: () => toast(t.plugins.toggleError, 'error'),
+    },
   );
   const doInstall = (name: string) => {
     setPending(name);
