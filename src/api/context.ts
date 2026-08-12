@@ -1,4 +1,3 @@
-import { classifySession } from '../shared/sessionInfo.js';
 import { usagePath } from '../integrations/usage/usagePath.js';
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
@@ -199,26 +198,14 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     return new Set(d.userProjects.forUser(u.id));
   };
 
-  // Resolve a live session name (`elowen-<agentName>` / `elowen-overseer-<missionId>` / `elowen-pilot-…`)
-  // to the task it runs, mirroring the agents plugin's agent:<name> label convention. Local-only:
-  // it exists to back eventDeps.sessionProject for plugin-less wiring (tests, plugin disabled) —
-  // with the plugin loaded, its event resolver is the authoritative session→project lookup.
-  const taskForSession = (session: string): Task | null => {
-    const info = classifySession(session);
-    if (info.role === 'overseer') {
-      const mission = d.missions.get(info.missionId ?? '');
-      return mission ? d.tasks.get(mission.epic_id) : null;
-    }
-    const matches = d.tasks.list().filter((t) => t.labels.includes(`agent:${info.agent}`));
-    return matches[matches.length - 1] ?? null;
-  };
-
   // Resolve any live event's owning project — the same single-source logic the activity log stamps
   // rows with — so the SSE stream can gate each event per subscriber instead of broadcasting globally.
+  // `signal`/`plan` tenancy (session→task via the agent:<name> label, plan job → its runtime record)
+  // has NO core lookup: the agents plugin's registered event resolver is the sole source — with the
+  // plugin disabled those events resolve null and gate admin-only (fail closed).
   const eventDeps: EventProjectDeps = {
     taskProject: (id) => d.tasks.get(id)?.project_id ?? null,
-    sessionProject: (s) => taskForSession(s)?.project_id ?? null,
-    jobProject: (id) => planJobs.get(id)?.projectId ?? null,
+    pluginResolvers: d.eventProjectResolvers,
   };
 
   // Per-user model allow-list: a non-admin whose allowed_execs is non-empty may only use those

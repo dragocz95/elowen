@@ -5,15 +5,10 @@ import type { ElowenEvent } from './sse.js';
 export interface EventProjectDeps {
   /** project_id of a task/epic by its id */
   taskProject(taskId: string): number | null;
-  /** project of the task a live session runs (agent:<name> label / mission epic). OPTIONAL: the
-   *  daemon's bus recorder omits it — the agents plugin's event resolver owns the session→project
-   *  lookup (sole source). The RouteContext still provides it for plugin-less wiring (tests). */
-  sessionProject?(session: string): number | null;
-  /** project of a planning job by its id. Optional for the same reason: plan jobs live in the agents
-   *  plugin's runtime, so its resolver is the authoritative lookup. */
-  jobProject?(jobId: string): number | null;
   /** Plugin-contributed resolvers (read from the live registry, so a reload swaps them), consulted only
-   *  when the core lookups above yielded nothing. First non-null wins. */
+   *  when the core lookups above yielded nothing. First non-null wins. The agents plugin's resolver is
+   *  the SOLE source for `signal`/`plan` tenancy — absent (plugin disabled) those events resolve null,
+   *  which every caller treats as admin-only (fail closed). */
   pluginResolvers?(): readonly ((e: ElowenEvent) => number | null)[];
 }
 
@@ -52,10 +47,12 @@ function coreEventProjectId(e: Exclude<ElowenEvent, { type: 'plugin' }>, d: Even
       return d.taskProject(epicId);
     }
     case 'signal':
-      return d.sessionProject?.(e.session) ?? null;
+      // Session→project lives in the agents plugin's resolver (agent:<name> label / mission epic).
+      return null;
     case 'plan':
       // A plan job knows its target project up front; once the epic exists, resolve via it directly.
-      return e.epicId ? d.taskProject(e.epicId) : d.jobProject?.(e.jobId) ?? null;
+      // Before that, the job record lives in the agents plugin's runtime — its resolver answers.
+      return e.epicId ? d.taskProject(e.epicId) : null;
     case 'memory':
       // Memories are scoped by owner, not by project. The SSE gate handles this event by user id before
       // reaching here; null keeps it out of the project-scoped activity log.

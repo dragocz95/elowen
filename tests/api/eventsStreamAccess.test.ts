@@ -14,7 +14,7 @@ import { openAgentsDb } from '../helpers/agentsDb.js';
 
 // The live SSE channel broadcasts every bus event; without per-subscriber scoping a tenant would see
 // cross-project task statuses in real time. Each subscriber must receive only its projects' events.
-function setup() {
+function setup(eventProjectResolvers?: () => readonly ((e: ElowenEvent) => number | null)[]) {
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
@@ -33,6 +33,7 @@ function setup() {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
+    ...(eventProjectResolvers ? { eventProjectResolvers } : {}),
   });
   return {
     app, bus, admin, bob,
@@ -78,6 +79,36 @@ describe('GET /events tenancy filtering', () => {
     const out = await streamAfter(app, adminTok, () => { bus.publish(foreign); bus.publish(home); });
     expect(out).toContain('"taskId":"t1"');
     expect(out).toContain('"taskId":"t2"');
+  });
+
+  // `signal`/`plan` tenancy has NO core lookup — the agents plugin's registered event resolver is the
+  // sole source. The SSE gate consults the resolvers through RouteContext.eventDeps (the same deps the
+  // activity recorder uses), so the two surfaces can never scope differently.
+  describe('plugin-resolved events (signal/plan)', () => {
+    const signal: ElowenEvent = { type: 'signal', session: 'elowen-Nova', kind: 'waiting_input' } as ElowenEvent;
+
+    it('reach a tenant when the plugin resolver places them in their project', async () => {
+      const resolver = (e: ElowenEvent) => (e.type === 'signal' ? 1 : null);
+      const { app, bus, bobTok } = setup(() => [resolver]);
+      const out = await streamAfter(app, bobTok, () => { bus.publish(signal); });
+      expect(out).toContain('"type":"signal"');
+    });
+
+    it('are withheld from the tenant when the resolver scopes them elsewhere', async () => {
+      const resolver = (e: ElowenEvent) => (e.type === 'signal' ? 2 : null);
+      const { app, bus, bobTok } = setup(() => [resolver]);
+      const out = await streamAfter(app, bobTok, () => { bus.publish(signal); });
+      expect(out).not.toContain('"type":"signal"');
+    });
+
+    it('fail CLOSED without the plugin: unresolved signal/plan events are admin-only', async () => {
+      const { app, bus, bobTok, adminTok } = setup();
+      const forBob = await streamAfter(app, bobTok, () => { bus.publish(signal); bus.publish({ type: 'plan', jobId: 'pj-1', status: 'planning' } as ElowenEvent); });
+      expect(forBob).not.toContain('"type":"signal"');
+      expect(forBob).not.toContain('"type":"plan"');
+      const forAdmin = await streamAfter(app, adminTok, () => { bus.publish(signal); });
+      expect(forAdmin).toContain('"type":"signal"');
+    });
   });
 
   // A memory nudge is scoped by OWNER, not by project — memories are private per user, and the project

@@ -3,7 +3,7 @@ import type { Readiness } from '../store/readiness.js';
 import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
-import type { EventBus } from './sse.js';
+import type { ElowenEvent, EventBus } from './sse.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -64,6 +64,10 @@ export interface ServerDeps {
   userSettings?: UserSettingStore;
   /** Plugin scan roots (bundled first, then user) for the admin /plugins listing. Absent → empty list. */
   pluginDirs?: string[];
+  /** Plugin-contributed event→project resolvers (live registry read, so a reload swaps them). The SSE
+   *  per-subscriber gate and the activity recorder consult them for events whose tenancy lookup lives
+   *  in a plugin (agents: signal/plan). Absent → those events resolve null = admin-only (fail closed). */
+  eventProjectResolvers?: () => readonly ((e: ElowenEvent) => number | null)[];
   /** Root of per-plugin writable data dirs (serves generated images from plugins-data/image-gen). */
   pluginDataRoot?: string;
   /** Where a chat turn's own attachments are kept, so a bubble still shows them after a reload. Absent

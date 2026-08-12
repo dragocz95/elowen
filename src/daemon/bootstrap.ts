@@ -323,10 +323,13 @@ export async function buildApp(opts: BuildOpts) {
   // deliberately has NO core lookup here: the agents plugin's registered event resolver is the sole
   // source — with the plugin disabled those events resolve null and the rows record admin-only,
   // matching the rest of the disabled-plugin degradation.
+  // Live registry read (not a snapshot): a plugin reload swaps the resolver set with it. Shared by
+  // the recorder below AND the server deps (eventProjectResolvers), so the SSE per-subscriber gate
+  // and the persisted activity rows scope events through the exact same resolvers.
+  const pluginEventResolvers = () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn);
   const eventDeps: EventProjectDeps = {
     taskProject: (id) => tasks.get(id)?.project_id ?? null,
-    // Live registry read (not a snapshot): a plugin reload swaps the resolver set with it.
-    pluginResolvers: () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn),
+    pluginResolvers: pluginEventResolvers,
   };
   bus.subscribe((e) => { try { events.record(e, eventProjectId(e, eventDeps)); } catch (err) { log.error('event record failed', err); } });
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
@@ -493,6 +496,7 @@ export async function buildApp(opts: BuildOpts) {
   // routes answer 503 ("agents plugin is disabled").
   const app = createServer({
     tasks, readiness, missions, tmux, bus, events,
+    eventProjectResolvers: pluginEventResolvers,
     get engine() { return agentsControl()?.engine(); },
     get missionGit() { return agentsControl()?.missionGit(); },
     get gitLock() { return agentsControl()?.gitLock(); },

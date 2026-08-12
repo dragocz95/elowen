@@ -7,8 +7,6 @@ const noopLog = { info() {}, warn() {}, error() {} };
 
 const deps = (resolvers: ((e: ElowenEvent) => number | null)[] = []): EventProjectDeps => ({
   taskProject: () => null,
-  sessionProject: () => null,
-  jobProject: () => null,
   pluginResolvers: () => resolvers,
 });
 
@@ -60,10 +58,11 @@ describe('eventProjectId with plugin contributions', () => {
     const e = { type: 'signal', session: 'elowen-x', signal: { type: 'progress' } } as unknown as ElowenEvent;
     const second = vi.fn(() => 9);
     expect(eventProjectId(e, deps([() => null, second, () => 99]))).toBe(9);
-    // Core answered → resolvers are not consulted at all.
-    const coreDeps = { ...deps([second]), sessionProject: () => 5 };
+    // Core answered → resolvers are not consulted at all (task tenancy stays a core lookup).
+    const t = { type: 'task', taskId: 't1', status: 'open' } as ElowenEvent;
+    const coreDeps = { ...deps([second]), taskProject: () => 5 };
     second.mockClear();
-    expect(eventProjectId(e, coreDeps)).toBe(5);
+    expect(eventProjectId(t, coreDeps)).toBe(5);
     expect(second).not.toHaveBeenCalled();
   });
 

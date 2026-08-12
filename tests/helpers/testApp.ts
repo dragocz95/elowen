@@ -167,6 +167,8 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     gitLock: control.gitLock(),
     missionGit: control.missionGit(),
     plugins: provider,
+    // Mirror bootstrap: the SSE gate consults the plugin-registered event resolvers (signal/plan tenancy).
+    eventProjectResolvers: () => registry.eventProjectResolvers.map((r) => r.fn),
     ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
     makeInference: () => new FakeInference(opts.fakePlan ?? '[{"title":"Phase A","type":"task"}]'),
     ...(opts.extra ?? {}),
