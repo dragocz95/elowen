@@ -62,9 +62,13 @@ export const useBrainProcesses = () =>
     staleTime: 1000,
   });
 
-/** The current user's advisor session state, polled so the dock reflects start/stop/crash. */
-export const useAdvisorStatus = () =>
-  useQuery({ queryKey: QUERY_KEYS.advisorStatus, queryFn: elowenClient.advisorStatus, refetchInterval: 5000 });
+/** The current user's advisor session state, polled so the dock reflects start/stop/crash. The
+ *  /advisor routes are agents-plugin root mounts, so polling only runs when the plugin is present —
+ *  a plugin-less instance never spams 503s. */
+export const useAdvisorStatus = () => {
+  const agents = useAgentsPlugin();
+  return useQuery({ queryKey: QUERY_KEYS.advisorStatus, queryFn: elowenClient.advisorStatus, refetchInterval: 5000, enabled: agents });
+};
 
 /** Latest derived signal per session, populated by the SSE stream (see useElowenEvents). */
 export const useSessionSignals = (): Record<string, DerivedSignal> => {

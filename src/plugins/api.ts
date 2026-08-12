@@ -473,21 +473,48 @@ export interface PluginHost {
   /** The web-push transport (send only — recipients are the plugin's own concern via usersRead).
    *  Gated by `reads:['push']`; wired late by bootstrap like the brain worker. */
   push(): PluginHostPush;
-  /** Core-owned terminal/session machinery the '/sessions' surface needs beyond tmux: advisor and chat
-   *  terminal teardown (which also persist flags / revoke tokens — a bare tmux.kill would leak both),
-   *  the embedded brain-worker session controls, and the single-use terminal WebSocket tickets (the
-   *  SAME store the unauthenticated /ws/terminal upgrade redeems). Gated by `reads:['terminals']`;
+  /** Core-owned terminal/session machinery the '/sessions' surface needs beyond tmux: chat terminal
+   *  teardown (which also revokes tokens — a bare tmux.kill would leak them), the embedded
+   *  brain-worker session controls, and the single-use terminal WebSocket tickets (the SAME store the
+   *  unauthenticated /ws/terminal upgrade redeems). Gated by `reads:['terminals']`;
    *  wired late by bootstrap like the brain worker. */
   terminals(): PluginHostTerminals;
+  /** Core collaborators of the plugin-owned tmux advisor service (user prefs/token, working dir,
+   *  personality paragraph, brand). Gated by `reads:['terminals']` (same trust domain); wired late by
+   *  bootstrap like the brain worker. */
+  advisor(): PluginHostAdvisor;
 }
 
 /** Send-only view of the core PushSender (see PluginHost.push). */
 export interface PluginHostPush { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> }
 
+/** Core-owned per-user advisor collaborators (see PluginHost.advisor). The tmux advisor SERVICE lives
+ *  in the agents plugin; these are the core stores/policies it builds on — user advisor prefs + token,
+ *  the neutral per-user working dir, the resolved communication-style paragraph and the instance brand. */
+export interface PluginHostAdvisor {
+  users: {
+    /** Advisor-relevant view of a user row (null = no such user). */
+    get(userId: number): { name: string; username: string; isAdmin: boolean; allowedExecs: string[]; advisorExec: string; advisorAutostart: boolean } | null;
+    /** Persist the chosen exec (drives login autostart). */
+    setExec(userId: number, exec: string): void;
+    /** Persist the autostart flag (an explicit stop turns it off so login doesn't resurrect it). */
+    setAutostart(userId: number, on: boolean): void;
+    /** Full-scope advisor bearer token, minted once and reused across restarts. */
+    ensureToken(userId: number): string;
+  };
+  /** Neutral per-user working dir for the advisor session (created on demand; beside the DB, never a
+   *  project checkout — the per-program MCP config must not pollute a repo). */
+  dir(userId: number): string;
+  /** The user's advisor communication style, RESOLVED to the persona paragraph for `{{personality}}`
+   *  (the style catalog stays core — Account settings own it). */
+  personality(userId: number): string;
+  /** Resolved instance brand for `{{agentName}}`/`{{productName}}` — the same resolver the embedded
+   *  brain uses, so the tmux advisor and the brain never disagree on identity. */
+  brand(): { agentName: string; productName: string };
+}
+
 /** Core terminal/session controls (see PluginHost.terminals). */
 export interface PluginHostTerminals {
-  /** Stop a user's advisor session AND persist advisor_autostart=false (else it resurrects on login). */
-  advisorStop(userId: number): Promise<void>;
   /** Stop an admin's chat terminal via its service (revokes the per-terminal token + drops the durable
    *  binding). `userId` is the CALLER — the service re-checks the binding's owner defensively. */
   chatTerminalStop(userId: number, session: string): Promise<void>;
@@ -806,6 +833,17 @@ export interface AgentsControl {
   /** Agent-CLI availability probe (claude/codex/opencode + optional extras) behind
    *  /integrations/cli-status — detection of the CLIs this plugin spawns belongs to it. */
   detectClis(): (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
+  /** The tmux advisor lifecycle hooks core still drives: login autostart (fire-and-forget) and the
+   *  user-deletion teardown. The /advisor routes themselves are plugin root mounts. */
+  advisor(): AgentsAdvisorHooks;
+}
+
+/** Core-facing slice of the plugin's advisor service (see AgentsControl.advisor). */
+export interface AgentsAdvisorHooks {
+  /** Bring the user's advisor back up after login when autostart is armed. Never throws. */
+  ensureOnLogin(userId: number): Promise<void>;
+  /** Stop the user's advisor AND persist advisor_autostart=false. */
+  stop(userId: number): Promise<void>;
 }
 
 /** Setup-progress hints threaded into the CLI detection result (fresh-install signals). */

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, KnownControls, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -58,7 +58,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   cron: ['pendingWakeupOriginSessionIds'],
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession'],
   mcp: ['listServers', 'bridgeSnapshot'],
-  agents: ['engine', 'spawn', 'pilot', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis'],
+  agents: ['engine', 'spawn', 'pilot', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'detectClis', 'advisor'],
 };
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
@@ -76,8 +76,10 @@ export interface PluginHostWiring {
   git?: PluginHost['git'] extends () => infer G ? G : never;
   /** Live accessor — the PushSender is constructed after the plugin load (bootstrap late wiring). */
   push?: () => PluginHostPush | undefined;
-  /** Live accessor — advisor/chat-terminal/ticket services are constructed after the plugin load. */
+  /** Live accessor — chat-terminal/ticket services are constructed after the plugin load. */
   terminals?: () => PluginHostTerminals | undefined;
+  /** Live accessor — the advisor collaborators are constructed after the plugin load. */
+  advisor?: () => PluginHostAdvisor | undefined;
 }
 
 export class PluginRegistry {
@@ -655,6 +657,12 @@ export class PluginRegistry {
           const t = host?.terminals?.();
           if (!t) throw new Error('the terminal controls are not available in this process (daemon-only, wired after boot)');
           return t;
+        },
+        advisor: () => {
+          if (!capabilities.reads?.includes('terminals')) throw new Error(`plugin "${name}" did not declare the reads:['terminals'] capability`);
+          const a = host?.advisor?.();
+          if (!a) throw new Error('the advisor collaborators are not available in this process (daemon-only, wired after boot)');
+          return a;
         },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as

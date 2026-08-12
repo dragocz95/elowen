@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-export interface CliStatus {
+interface CliStatus {
   name: string;
   installed: boolean;
   functional: boolean;
@@ -11,7 +11,7 @@ export interface CliStatus {
   error: string | null;
 }
 
-export interface FreshInstallInfo {
+interface FreshInstallInfo {
   /** True when no settings have been persisted (DB row missing or all-default). */
   noConfigPersisted: boolean;
   /** True when no API key for the autopilot has been set. */

@@ -49,7 +49,6 @@ function setup() {
     brain: {} as never, brainTerminal, brainStore,
     // '/sessions' is plugin-served now — DELETE of a chat terminal routes to THIS service.
     plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux, terminals: {
-      advisorStop: async () => {},
       chatTerminalStop: (userId, session) => brainTerminal.stop(userId, session),
       brainWorkerLive: () => false, brainWorkerAbort: async () => {},
       ticketIssue: () => 'test-ticket',

@@ -20,6 +20,7 @@ import { registerMissionsApi } from './api/missions.js';
 import { registerSessionsApi } from './api/sessions.js';
 import { registerAsksApi } from './api/asks.js';
 import { registerNotesApi } from './api/notes.js';
+import { registerAdvisorApi } from './api/advisor.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
@@ -76,6 +77,9 @@ export function register(ctx: PluginContext): void {
         // Push transport resolves per send: bootstrap wires setPluginHostPush after the plugin loads.
         push: { sendToUsers: (userIds, payload) => ctx.host.push().sendToUsers(userIds, payload) },
         homeProjectPath: stores.homeProject().path,
+        homeProjectId: stores.homeProject().id,
+        // Wired by bootstrap AFTER load (like brainWorker/push) — resolve per use, absent in the runner.
+        advisorHost: () => { try { return ctx.host.advisor(); } catch { return undefined; } },
         log,
       });
     }
@@ -133,6 +137,7 @@ export function register(ctx: PluginContext): void {
   registerSessionsApi(ctx, rt);
   registerAsksApi(ctx, rt);
   registerNotesApi(ctx, rt);
+  registerAdvisorApi(ctx, rt);
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);
@@ -151,6 +156,12 @@ export function register(ctx: PluginContext): void {
     gitLock: () => rt().gitLock,
     missions: () => rt().missions,
     liveTaskUsage: () => rt().liveTaskUsage,
+    // Core still drives login autostart and user-deletion teardown; absent collaborators (runner,
+    // minimal tests) degrade to no-ops so a login can never fail on the advisor.
+    advisor: () => ({
+      ensureOnLogin: async (userId: number) => { await rt().advisor()?.ensureOnLogin(userId); },
+      stop: async (userId: number) => { await rt().advisor()?.stop(userId); },
+    }),
     // Static — probing the agent CLIs' presence must not construct the runtime.
     detectClis: () => detectClis,
   } satisfies AgentsControl);

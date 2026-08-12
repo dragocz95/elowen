@@ -1,11 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Env var the spawned advisor CLI reads its bearer token from. The spawn layer exports it
- *  (`export ELOWEN_TOKEN=…`) before launching the CLI, so codex can reference it by name instead of
- *  baking the secret onto the command line. */
-const TOKEN_ENV = 'ELOWEN_TOKEN';
-
 /** Write the per-program MCP config into the advisor session's cwd so the spawned CLI auto-connects
  *  to Elowen's MCP server. Each CLI has its own mechanism — claude reads `.mcp.json`, opencode reads
  *  `opencode.json` (both auto-loaded from cwd, verified against claude-code and opencode 1.17). Codex
@@ -27,19 +22,6 @@ export function writeMcpConfig(program: string, cwd: string, token: string, mcpU
       mcp: { elowen: { type: 'remote', url: mcpUrl, headers: { Authorization: auth }, enabled: true } },
     }, null, 2), opts);
   }
-  // codex: no file — it ignores project-local config, so its elowen server is injected via codexMcpArgs.
-}
-
-/** Extra launch args that wire the elowen MCP server into a `codex` invocation. Codex reads MCP servers
- *  only from `$CODEX_HOME/config.toml`, so the server is injected via `-c` config overrides (the value
- *  is parsed as TOML, hence the inner quoting). The bearer token is read at runtime from the
- *  `ELOWEN_TOKEN` env var via `bearer_token_env_var`, so no secret lands on the command line. Verified
- *  against codex-cli 0.98 (`codex -c 'mcp_servers.elowen.url=…' mcp list` → elowen enabled,
- *  transport streamable_http). Returns `[]` for non-codex programs, which use a config file instead. */
-export function codexMcpArgs(program: string, mcpUrl: string): string[] {
-  if (!program.startsWith('codex')) return [];
-  return [
-    '-c', `mcp_servers.elowen.url="${mcpUrl}"`,
-    '-c', `mcp_servers.elowen.bearer_token_env_var="${TOKEN_ENV}"`,
-  ];
+  // codex: no file — it ignores project-local config, so its elowen server is injected at launch by
+  // the spawn layer's `codexMcpArgs` (lib/mcpArgs.ts), the single owner of that wiring.
 }

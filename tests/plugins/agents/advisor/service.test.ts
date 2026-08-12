@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
-import { UserStore } from '../../src/store/userStore.js';
-import { ConfigStore } from '../../src/store/configStore.js';
-import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { AdvisorService } from '../../src/advisor/service.js';
+import { openDb } from '../../../../src/store/db.js';
+import { UserStore } from '../../../../src/store/userStore.js';
+import { ConfigStore } from '../../../../src/store/configStore.js';
+import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
+import { render } from '../../../../src/prompts/index.js';
+import { resolveBrand } from '../../../../src/shared/brand.js';
+import { personalityText } from '../../../../src/brain/personality.js';
+import { AdvisorService } from '../../../../plugins/agents/src/advisor/service.js';
+import type { PluginHostConfig } from '../../../../src/plugins/api.js';
 
-function makeAdvisor(opts: { allowed: string[] }) {
+// The plugin-owned advisor service over a REAL host-collaborator seam (the same shape bootstrap
+// wires): user prefs/token from the UserStore, personality/brand resolved the core way.
+function makeAdvisor(opts: { allowed: string[]; spawnFails?: boolean }) {
   const db = openDb(':memory:');
   const users = new UserStore(db);
   const u = users.create('amy', 'pw'); // first user → admin (fine; exec gate still bounded by config)
@@ -15,22 +21,39 @@ function makeAdvisor(opts: { allowed: string[] }) {
   const spawnCalls: { agentName: string; extraEnv?: Record<string, string>; rawPrompt?: string; mcpUrl?: string }[] = [];
   const spawn = {
     launch: async (input: { agentName: string; projectPath: string; extraEnv?: Record<string, string>; rawPrompt?: string; mcpUrl?: string }) => {
+      if (opts.spawnFails) throw new Error('tmux: failed to create session');
       spawnCalls.push({ agentName: input.agentName, extraEnv: input.extraEnv, rawPrompt: input.rawPrompt, mcpUrl: input.mcpUrl });
       await tmux.spawn(`elowen-${input.agentName}`, { cwd: input.projectPath, command: '' });
       return { session: `elowen-${input.agentName}` };
     },
   };
   const svc = new AdvisorService({
-    spawn: () => spawn as never, tmux, users, config,
+    spawn: () => spawn as never, tmux,
+    host: {
+      users: {
+        get: (id) => {
+          const row = users.get(id);
+          return row ? { name: row.name, username: row.username, isAdmin: row.is_admin, allowedExecs: row.allowed_execs, advisorExec: row.advisor_exec ?? '', advisorAutostart: row.advisor_autostart ?? false } : null;
+        },
+        setExec: (id, exec) => { users.setAdvisorExec(id, exec); },
+        setAutostart: (id, on) => { users.setAdvisorAutostart(id, on); },
+        ensureToken: (id) => users.ensureAdvisorToken(id),
+      },
+      dir: () => '/tmp/advisor',
+      personality: () => personalityText(''),
+      brand: () => resolveBrand(config.get(), null, null),
+    },
+    config: config as unknown as PluginHostConfig,
+    prompts: { render: (n, v) => render(n, v ?? {}), rawTemplate: () => '' },
     fallback: { program: 'claude-code', model: 'sonnet' },
     url: 'http://localhost:4400',
     mcpUrl: 'http://localhost:4400/mcp',
-    advisorDir: () => '/tmp/advisor',
+    prepareMcp: () => {}, // no FS writes in the unit test
   });
   return { svc, spawnCalls, users, u, tmux, config };
 }
 
-describe('AdvisorService', () => {
+describe('AdvisorService (agents plugin)', () => {
   it('start spawns elowen-advisor-<id>, persists exec, is idempotent', async () => {
     const { svc, spawnCalls, users, u } = makeAdvisor({ allowed: ['sonnet'] });
     const r = await svc.start(u.id, 'sonnet');
@@ -56,6 +79,11 @@ describe('AdvisorService', () => {
   it('rejects an exec not in the allow-list', async () => {
     const { svc, u } = makeAdvisor({ allowed: ['sonnet'] });
     await expect(svc.start(u.id, 'opus')).rejects.toThrow(/not allowed/);
+  });
+
+  it('propagates a spawn/tmux failure (the route maps it to 500, not 403)', async () => {
+    const { svc, u } = makeAdvisor({ allowed: ['sonnet'], spawnFails: true });
+    await expect(svc.start(u.id, 'sonnet')).rejects.toThrow(/failed to create session/);
   });
 
   it('status reflects running state, remembered exec and autostart', async () => {

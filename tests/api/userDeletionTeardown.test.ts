@@ -10,8 +10,9 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { AdvisorService } from '../../src/advisor/service.js';
+import { AdvisorService } from '../../plugins/agents/src/advisor/service.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { advisorHostFor } from '../helpers/testApp.js';
 
 /** Server wired with a real AdvisorService (fake tmux) plus a brain stub that records how much of the
  *  user's durable state is still visible at the moment live teardown runs — that ordering is the whole
@@ -24,11 +25,14 @@ function setup() {
   const carol = users.create('carol', 'pw');
   const config = new ConfigStore(db);
   const tmux = new FakeTmuxDriver();
-  const advisor = new AdvisorService({
-    spawn: () => undefined, tmux, users, config,
+  // The plugin-owned advisor service (nothing spawns here — the delete route only needs stop()).
+  const svc = new AdvisorService({
+    spawn: () => undefined, tmux, host: advisorHostFor(users),
+    config: config as never, prompts: { render: () => '', rawTemplate: () => '' },
     fallback: { program: 'claude-code', model: 'sonnet' },
-    url: 'http://localhost:4400', mcpUrl: 'http://localhost:4400/mcp', advisorDir: () => '/tmp/advisor',
+    url: 'http://localhost:4400', mcpUrl: 'http://localhost:4400/mcp', prepareMcp: () => {},
   });
+  const advisor = { ensureOnLogin: (id: number) => svc.ensureOnLogin(id), stop: (id: number) => svc.stop(id) };
   /** Terminal bindings still resolvable when deleteAllManagedSessions was invoked (-1 = never invoked). */
   let bindingsAtTeardown = -1;
   const brain = {

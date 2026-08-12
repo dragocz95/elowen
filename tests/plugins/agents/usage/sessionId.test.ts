@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectSessionId } from '../../../../plugins/agents/src/usage/sessionId.js';
-import type { AgentSpec } from '../../../src/shared/execRouting.js';
+import type { AgentSpec } from '../../../../src/shared/execRouting.js';
 
 const fallback: AgentSpec = { program: 'claude-code', model: 'sonnet' };
 let home: string;

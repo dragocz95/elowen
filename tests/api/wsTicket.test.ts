@@ -33,7 +33,7 @@ function setup() {
     tickets,
     // '/sessions' is plugin-served now; the terminals seam hands the plugin THIS ticket store.
     plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, terminals: {
-      advisorStop: async () => {}, chatTerminalStop: async () => {},
+      chatTerminalStop: async () => {},
       brainWorkerLive: () => false, brainWorkerAbort: async () => {},
       ticketIssue: (session, userId) => tickets.issue({ session, userId }),
     } }),

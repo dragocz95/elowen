@@ -102,8 +102,9 @@ export interface ServerDeps {
   decisionQueue?: AgentsDecisionQueue;
   /** Spawn the Pilot agent for an agent-mode plan job (Task 9). Absent → relay-only planning. */
   pilot?: (job: PlanJob, projectPath: string) => Promise<void>;
-  /** Per-user advisor lifecycle. Absent → advisor feature disabled (routes degrade gracefully). */
-  advisor?: import('../advisor/service.js').AdvisorService;
+  /** The agents plugin's advisor lifecycle hooks (login autostart, user-deletion teardown). The
+   *  /advisor routes are plugin root mounts; absent (plugin disabled) → both hooks are skipped. */
+  advisor?: import('../plugins/api.js').AgentsAdvisorHooks;
   /** Per-user embedded brain (PI agent) — the new advisor engine. Absent → brain routes degrade to 503. */
   brain?: import('../brain/brainService.js').BrainService;
   /** Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Absent →

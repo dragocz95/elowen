@@ -3,7 +3,7 @@ import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
-import type { PluginBrainWorker, PluginHostPush, PluginHostTerminals } from '../plugins/api.js';
+import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -335,6 +335,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // subscriptions store + web-push keys wired there).
   let hostPush: PluginHostPush | undefined;
   let hostTerminals: PluginHostTerminals | undefined;
+  let hostAdvisor: PluginHostAdvisor | undefined;
   // Status reads verify a `running` workflow row against the ENGINE (the subagent plugin's `workflow`
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
@@ -502,6 +503,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         git: { projectHead, projectRangeDiff },
         push: () => hostPush,
         terminals: () => hostTerminals,
+        advisor: () => hostAdvisor,
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
@@ -613,5 +615,6 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     setPluginHostBrainWorker: (worker: PluginBrainWorker) => { hostBrainWorker = worker; },
     setPluginHostPush: (sender: PluginHostPush) => { hostPush = sender; },
     setPluginHostTerminals: (terminals: PluginHostTerminals) => { hostTerminals = terminals; },
+    setPluginHostAdvisor: (advisor: PluginHostAdvisor) => { hostAdvisor = advisor; },
   };
 }

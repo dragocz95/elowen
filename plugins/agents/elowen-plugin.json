@@ -28,6 +28,7 @@
       "/missions",
       "/sessions",
       "/notes",
+      "/advisor",
       "/tasks/:id/ask",
       "/tasks/:id/guide",
       "/asks/pending"

@@ -3,7 +3,7 @@
  *  index.ts adapts ctx.* onto AgentsRuntimeDeps and registers services/intervals/boot-reconciles —
  *  registration is deliberately NOT done here. */
 import type { TmuxDriver } from '../../../src/tmux/types.js';
-import type { PluginDbHandle, PluginHostPrompts, PluginHostConfig, PluginElowenCli, PluginBrainWorker } from '../../../src/plugins/api.js';
+import type { PluginDbHandle, PluginHostPrompts, PluginHostConfig, PluginHostAdvisor, PluginElowenCli, PluginBrainWorker } from '../../../src/plugins/api.js';
 import type { InferenceClient, RelayConfig } from '../../../src/inference/types.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import type { TaskStore } from '../../../src/store/taskStore.js';
@@ -34,6 +34,7 @@ import { makeOverseer } from './overseer/overseerAgent.js';
 import { UsageRecorder } from './usage/recorder.js';
 import { captureResumeLabel } from './usage/resumeCapture.js';
 import { readTaskUsage } from './usage/index.js';
+import { AdvisorService } from './advisor/service.js';
 import { usagePath } from './usage/usagePath.js';
 import type { TokenUsage } from './usage/types.js';
 import { PushDispatcher } from './push/pushDispatcher.js';
@@ -84,6 +85,12 @@ export interface AgentsRuntimeDeps {
   push: { sendToUsers(userIds: number[], payload: PushPayload): Promise<unknown> };
   /** Fallback checkout path when a project row is missing (bootstrap used homeProject.path). */
   homeProjectPath: string;
+  /** The daemon's home project id, recorded on the advisor's spawn (the agent store needs one). */
+  homeProjectId: number;
+  /** Core advisor collaborators (user prefs/token, working dir, personality, brand) — resolved live
+   *  because bootstrap wires them AFTER the plugin loads. Undefined ⇒ no tmux advisor in this process
+   *  (sub-agent runner, minimal tests): the /advisor routes then degrade to "advisor unavailable". */
+  advisorHost: () => PluginHostAdvisor | undefined;
   log: Logger;
 }
 
@@ -316,6 +323,24 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     const task = tasks.get(taskId);
     if (!task) return null;
     return readTaskUsage(task, tasks.list({ project_id: task.project_id }), usagePathFor(task), resumeFallback);
+  };
+
+  // The per-user tmux advisor. LAZY: its core collaborators (user prefs/token, dir, personality,
+  // brand) are wired by bootstrap AFTER the plugin loads, so resolve them on first use; a process
+  // without them (sub-agent runner, minimal tests) simply has no tmux advisor and the /advisor
+  // routes degrade to "advisor unavailable".
+  let advisorService: AdvisorService | null = null;
+  const advisor = (): AdvisorService | undefined => {
+    if (!advisorService) {
+      const host = deps.advisorHost();
+      if (!host) return undefined;
+      advisorService = new AdvisorService({
+        spawn: () => spawn, tmux: deps.tmux, host, config: deps.config, prompts: deps.prompts,
+        fallback: resumeFallback, projectId: deps.homeProjectId,
+        url: deps.elowenCli.url, mcpUrl: `${deps.elowenCli.url}/mcp`,
+      });
+    }
+    return advisorService;
   };
 
   // One shared per-checkout git lock across the scheduler, mission engine and API server, so a phase's
@@ -555,7 +580,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // services
     spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver,
     // resolution helpers (API routes and services build on these in later steps)
-    taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock, liveTaskUsage,
+    taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock, liveTaskUsage, advisor,
     // boot reconciles (ctx.registerBootReconcile) + interval loops (ctx.registerInterval)
     reconcileZombies, reconcileOverseers, intervals,
     /** Tear down the bus subscriptions (push dispatch + usage recorder). The registry also disposes

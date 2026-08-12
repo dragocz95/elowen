@@ -170,13 +170,16 @@ export function registerSessionsApi(ctx: PluginContext, rt: () => AgentsRuntime)
   const kill = async (auth: ApiAuth, name: string): Promise<PluginHttpResponse> => {
     if (!sessionAccessible(auth, name)) return json({ error: 'forbidden' }, 403);
     // Killing a user's advisor from the sessions list is an explicit "turn it off" — route it through
-    // the advisor service so it also persists advisor_autostart=false (else ensureOnLogin resurrects
-    // it on the next login). Same for an admin's chat terminal: the service stop also revokes the
-    // per-terminal token and drops the durable binding. Plain agent/overseer sessions just get killed.
+    // the (plugin-owned) advisor service so it also persists advisor_autostart=false (else
+    // ensureOnLogin resurrects it on the next login). An admin's chat terminal goes through its core
+    // service: the stop also revokes the per-terminal token and drops the durable binding. Plain
+    // agent/overseer sessions just get killed.
     const info = classifySession(name);
     const terminals = ctx.host.terminals();
     if (info.role === 'advisor' && info.userId !== undefined) {
-      await terminals.advisorStop(info.userId);
+      const advisor = rt().advisor();
+      if (advisor) await advisor.stop(info.userId);
+      else await tmux.kill(name); // no collaborators in this process — at least kill the pane
       return json({ ok: true });
     }
     if (info.role === 'chat' && info.userId !== undefined && auth.userId !== null) {

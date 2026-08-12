@@ -6,7 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useAdvisorStatus, useConfig, useMe, useSessionInfos, useTasks } from '../../lib/queries';
+import { useAdvisorStatus, useAgentsPlugin, useConfig, useMe, useSessionInfos, useTasks } from '../../lib/queries';
 import { useAdvisorStart, useAdvisorStop, useKillSession } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { apiErrorMessage } from '../../lib/elowenClient';
@@ -90,6 +90,7 @@ function SessionPane({ name, onRemove }: { name: string; onRemove?: () => void }
 function AdvisorLifecyclePane({ onRemove }: { onRemove?: () => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const agents = useAgentsPlugin();
   const status = useAdvisorStatus();
   const config = useConfig();
   const me = useMe();
@@ -126,6 +127,10 @@ function AdvisorLifecyclePane({ onRemove }: { onRemove?: () => void }) {
     onSuccess: () => { setPicking(false); toast(t.advisor.stopped); },
     onError: (e) => toast(apiErrorMessage(e), 'error'),
   });
+
+  // The tmux advisor lives in the agents plugin (its /advisor routes are plugin root mounts) — without
+  // it the lifecycle pane has nothing to control, so it collapses instead of offering a dead Start.
+  if (!agents) return null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">

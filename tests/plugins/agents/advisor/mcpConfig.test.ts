@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeMcpConfig, codexMcpArgs } from '../../src/advisor/mcpConfig.js';
+import { writeMcpConfig } from '../../../../plugins/agents/src/advisor/mcpConfig.js';
+import { codexMcpArgs } from '../../../../plugins/agents/src/lib/mcpArgs.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'elowen-mcp-')); });

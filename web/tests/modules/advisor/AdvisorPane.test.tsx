@@ -20,6 +20,8 @@ afterAll(() => server.close());
 const meUser = { id: 1, username: 'admin', name: '', email: '', avatar: '', default_exec: '', is_admin: true, allowed_execs: [], created_at: '2026-01-01' };
 const baseHandlers = [
   http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser })),
+  // The lifecycle pane is agents-only now (its /advisor routes are plugin root mounts).
+  http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/p/agents', apiVersion: 1, nav: [], settings: [], strings: {} }])),
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
 ];
 

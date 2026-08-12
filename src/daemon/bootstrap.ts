@@ -12,8 +12,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { lifecycleNotice } from './lifecycleNotices.js';
 import { logger, setLogSink } from '../shared/logger.js';
 import { PluginLogBuffer } from '../shared/logBuffer.js';
-import { AdvisorService } from '../advisor/service.js';
-import { writeMcpConfig } from '../advisor/mcpConfig.js';
+import { personalityText } from '../brain/personality.js';
 import type { BrainService } from '../brain/brainService.js';
 import { BrainTerminalService } from '../brain/terminalService.js';
 import { processRegistry } from '../brain/processRegistry.js';
@@ -271,7 +270,7 @@ export async function buildApp(opts: BuildOpts) {
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
     brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
-    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals,
+    pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals, setPluginHostAdvisor,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
     project: opts.project,
@@ -340,21 +339,27 @@ export async function buildApp(opts: BuildOpts) {
   // Per-process secret for short-lived signed avatar URLs (finding W2) — keeps the long-lived session
   // token out of <img> src query strings. Rotates on restart; links live ~5 min, so that's harmless.
   const avatarSecret = randomBytes(32).toString('hex');
-  // Per-user advisor: a persistent assistant session controlling Elowen on the user's behalf. Its cwd
-  // is a neutral per-user dir (alongside the DB, NOT a project checkout) so the per-program MCP config
-  // never pollutes a repo. Disabled for the in-memory DB (tests build their own AdvisorService).
-  const mcpUrl = `${elowenCli.url}/mcp`; // the daemon hosts the MCP server on its own /mcp route
-  const advisor = opts.dbPath === ':memory:' ? undefined : new AdvisorService({
-    // The launcher lives in the agents plugin — resolved per start(), so a disabled plugin yields a
-    // clear "agents plugin is disabled" error while the embedded-brain advisor keeps working.
-    spawn: () => agentsControl()?.spawn(), tmux, users, config, fallback: { program: 'claude-code', model: 'sonnet' },
-    projectId: homeProject.id, url: elowenCli.url, mcpUrl,
-    advisorDir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
-    prepareMcp: (program, cwd, token) => writeMcpConfig(program, cwd, token, mcpUrl),
-    prompts,
-    advisorStyle: (id) => userSettings.cliSettings(id).advisorStyle,
-    brand,
-  });
+  // Per-user tmux advisor: the SERVICE lives in the agents plugin now; core hands it its collaborators
+  // through the host advisor seam — user prefs/token, the neutral per-user working dir (alongside the
+  // DB, NOT a project checkout, so the per-program MCP config never pollutes a repo), the resolved
+  // communication-style paragraph and the instance brand. Disabled for the in-memory DB (tests wire
+  // their own seam through agentsTestHost).
+  if (opts.dbPath !== ':memory:') {
+    setPluginHostAdvisor({
+      users: {
+        get: (id) => {
+          const u = users.get(id);
+          return u ? { name: u.name, username: u.username, isAdmin: u.is_admin, allowedExecs: u.allowed_execs, advisorExec: u.advisor_exec ?? '', advisorAutostart: u.advisor_autostart ?? false } : null;
+        },
+        setExec: (id, exec) => users.setAdvisorExec(id, exec),
+        setAutostart: (id, on) => users.setAdvisorAutostart(id, on),
+        ensureToken: (id) => users.ensureAdvisorToken(id),
+      },
+      dir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
+      personality: (id) => personalityText(userSettings.cliSettings(id).advisorStyle),
+      brand: () => { const b = brand(); return { agentName: b.agentName, productName: b.productName }; },
+    });
+  }
   // Admin-only interactive `elowen chat` terminals bound to existing brain conversations. Its cwd is a
   // neutral per-admin scratch dir alongside the DB (never a project checkout), mirroring the advisor dir.
   // Constructed after `brain` (it needs store+users+url); the delete-conversation teardown is attached back
@@ -420,10 +425,9 @@ export async function buildApp(opts: BuildOpts) {
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
   // Terminal/session controls for the agents plugin's '/sessions' surface: teardown that must run
-  // through the owning service (advisor autostart flag, chat-terminal token revocation), the embedded
-  // brain-worker session controls, and the SAME ticket store /ws/terminal redeems.
+  // through the owning service (chat-terminal token revocation), the embedded brain-worker session
+  // controls, and the SAME ticket store /ws/terminal redeems.
   setPluginHostTerminals({
-    advisorStop: async (userId) => { await advisor?.stop(userId); },
     chatTerminalStop: async (userId, session) => { await brainTerminal?.stop(userId, session); },
     brainWorkerLive: (session) => brainWorkers.isLive(session),
     brainWorkerAbort: async (session) => { await brainWorkers.abort(session); },
@@ -505,7 +509,8 @@ export async function buildApp(opts: BuildOpts) {
     get pilot() { return agentsControl()?.pilot(); },
     get liveTaskUsage() { return agentsControl()?.liveTaskUsage(); },
     get detectClis() { return agentsControl()?.detectClis(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    get advisor() { return agentsControl()?.advisor(); },
+    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = () => {

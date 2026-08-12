@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
@@ -20,7 +22,7 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import type { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import type { PlanJob } from '../../src/api/planJobStore.js';
-import type { PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
+import type { PluginHostAdvisor, PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
 
 /** The host seam wiring the agents plugin needs to load in tests — brainCore's shape with fakes for
  *  tmux/inference/push. Shared by agentsPluginProvider below and by tests that load EVERY bundled
@@ -34,6 +36,8 @@ export function agentsTestHost(w: {
   users?: UserStore;
   tmux?: FakeTmuxDriver;
   terminals?: PluginHostTerminals;
+  /** Override the advisor collaborators seam (default: a real one over `users`, tmp working dirs). */
+  advisorHost?: PluginHostAdvisor;
   prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
 }) {
   return {
@@ -58,12 +62,32 @@ export function agentsTestHost(w: {
     git: { projectHead, projectRangeDiff } as never,
     push: () => ({ sendToUsers: async () => {} }),
     terminals: () => w.terminals ?? {
-      advisorStop: async () => {},
       chatTerminalStop: async () => {},
       brainWorkerLive: () => false,
       brainWorkerAbort: async () => {},
       ticketIssue: () => 'test-ticket',
     },
+    advisor: () => w.advisorHost ?? (w.users ? advisorHostFor(w.users) : undefined),
+  };
+}
+
+/** A real PluginHostAdvisor over a test UserStore — the same shape bootstrap wires in the daemon,
+ *  with a tmp working dir and fixed personality/brand. Shared by the plugin-served /advisor route
+ *  tests and the AdvisorService unit tests. */
+export function advisorHostFor(users: UserStore): PluginHostAdvisor {
+  return {
+    users: {
+      get: (id) => {
+        const u = users.get(id);
+        return u ? { name: u.name, username: u.username, isAdmin: u.is_admin, allowedExecs: u.allowed_execs, advisorExec: u.advisor_exec ?? '', advisorAutostart: u.advisor_autostart ?? false } : null;
+      },
+      setExec: (id, exec) => { users.setAdvisorExec(id, exec); },
+      setAutostart: (id, on) => { users.setAdvisorAutostart(id, on); },
+      ensureToken: (id) => users.ensureAdvisorToken(id),
+    },
+    dir: (id) => { const p = join(tmpdir(), 'elowen-test-advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
+    personality: () => 'Test personality paragraph.',
+    brand: () => ({ agentName: 'Elowen', productName: 'Elowen' }),
   };
 }
 
@@ -80,9 +104,11 @@ export function agentsPluginProvider(w: {
   users?: UserStore;
   bus?: EventBus;
   tmux?: FakeTmuxDriver;
-  /** Core terminal controls (advisor/chat teardown, brain workers, ws tickets). Tests exercising those
+  /** Core terminal controls (chat teardown, brain workers, ws tickets). Tests exercising those
    *  paths pass their real services here; the default is a no-op fake. */
   terminals?: PluginHostTerminals;
+  /** Override the advisor collaborators seam (default: a real one over `users`). */
+  advisorHost?: PluginHostAdvisor;
   /** Override the prompt seam (default: the core file renderer, no per-user overrides). */
   prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
 }): PluginRegistryProvider {
@@ -167,6 +193,8 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     gitLock: control.gitLock(),
     missionGit: control.missionGit(),
     plugins: provider,
+    // Mirror bootstrap: login autostart/user-deletion advisor hooks resolve through the control.
+    advisor: control.advisor(),
     // Mirror bootstrap: the SSE gate consults the plugin-registered event resolvers (signal/plan tenancy).
     eventProjectResolvers: () => registry.eventProjectResolvers.map((r) => r.fn),
     ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
