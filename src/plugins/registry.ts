@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -83,6 +83,8 @@ export interface PluginHostWiring {
   advisor?: () => PluginHostAdvisor | undefined;
   /** The typed sub-agent catalog editor (core-owned; the subagent plugin's editor surface). */
   agentCatalog?: PluginAgentCatalog;
+  /** The canonical lexical-and-symlink project path guard, kept in core for extracted file operations. */
+  projectFiles?: PluginProjectFiles;
 }
 
 export class PluginRegistry {
@@ -705,6 +707,11 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('agent-catalog')) throw new Error(`plugin "${name}" did not declare the reads:['agent-catalog'] capability`);
           if (!host?.agentCatalog) throw new Error('no agent catalog wired for plugins in this process');
           return host.agentCatalog;
+        },
+        projectFiles: () => {
+          if (!capabilities.reads?.includes('project-files')) throw new Error(`plugin "${name}" did not declare the reads:['project-files'] capability`);
+          if (!host?.projectFiles) throw new Error('no project file guard wired for plugins in this process');
+          return host.projectFiles;
         },
       },
       // The host owns a REAL timer: fake test timers do not reach plugin module scope (a plugin loads as

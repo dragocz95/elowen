@@ -592,7 +592,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp',
+      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor',
     ],
     removed: [],
   },
@@ -642,6 +642,8 @@ interface Stored {
    *  subsystem) has been auto-enabled AND the core `lspEnabled` toggle COPIED into
    *  plugins.config.lsp.diagnosticsEnabled for this pre-existing install. See migrateLspPlugin(). */
   lspPluginMigrated: boolean;
+  /** One-shot upgrade marker for the extracted project editor plugin. */
+  editorPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -724,6 +726,7 @@ const defaultStored = (): Stored => ({
   agentsPluginConfigMigrated2: true,
   // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
   lspPluginMigrated: true,
+  editorPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -816,6 +819,7 @@ export class ConfigStore {
         agentsPluginConfigMigrated: p.agentsPluginConfigMigrated === true,
         agentsPluginConfigMigrated2: p.agentsPluginConfigMigrated2 === true,
         lspPluginMigrated: p.lspPluginMigrated === true,
+        editorPluginMigrated: p.editorPluginMigrated === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -1004,6 +1008,15 @@ export class ConfigStore {
     });
   }
 
+  /** Preserve the previously-core editor on existing installs once, without undoing a later disable. */
+  migrateEditorPlugin(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.editorPluginMigrated) return;
+    const enabled = cur.plugins.enabled.includes('editor') ? cur.plugins.enabled : [...cur.plugins.enabled, 'editor'];
+    this.write({ ...cur, plugins: { ...cur.plugins, enabled }, editorPluginMigrated: true });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -1054,6 +1067,7 @@ export class ConfigStore {
       agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
       agentsPluginConfigMigrated2: cur.agentsPluginConfigMigrated2,
       lspPluginMigrated: cur.lspPluginMigrated,
+      editorPluginMigrated: cur.editorPluginMigrated,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

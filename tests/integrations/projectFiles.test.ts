@@ -3,7 +3,23 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectRangeLog, isProjectImage } from '../../src/integrations/projectFiles.js';
+import { listDirs, projectRangeLog, projectCommitFileDiff, isProjectImage, safeProjectPath } from '../../src/integrations/projectFiles.js';
+import {
+  listProjectFiles, readProjectFile as readFile, writeProjectFile as writeFile, readProjectBytes as readBytes,
+  createProjectFile as createFile, createProjectDir as createDir, deleteProjectEntry as deleteEntry,
+  renameProjectEntry as renameEntry, copyProjectEntry as copyEntry, projectCommitDiff, projectCommitFiles,
+  projectCommitFileDiff as commitFileDiff, projectCommitLog,
+} from '../../plugins/editor/src/files.js';
+
+const readProjectFile = (root: string, path: string) => readFile(safeProjectPath, root, path);
+const writeProjectFile = (root: string, path: string, content: string) => writeFile(safeProjectPath, root, path, content);
+const readProjectBytes = (root: string, path: string) => readBytes(safeProjectPath, root, path);
+const createProjectFile = (root: string, path: string) => createFile(safeProjectPath, root, path);
+const createProjectDir = (root: string, path: string) => createDir(safeProjectPath, root, path);
+const deleteProjectEntry = (root: string, path: string) => deleteEntry(safeProjectPath, root, path);
+const renameProjectEntry = (root: string, from: string, to: string) => renameEntry(safeProjectPath, root, from, to);
+const copyProjectEntry = (root: string, from: string, to: string) => copyEntry(safeProjectPath, root, from, to);
+const projectCommitFileDiff = (root: string, hash: string, path: string) => commitFileDiff(safeProjectPath, root, hash, path);
 
 let root: string;
 const w = (rel: string, body: string) => { const p = join(root, rel); mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, body); };

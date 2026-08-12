@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "outDir": "plugins/editor/dist",
+    "rootDir": "plugins/editor/src",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "tsBuildInfoFile": "plugins/editor/dist/.tsbuildinfo"
+  },
+  "references": [
+    { "path": "./tsconfig.json" }
+  ],
+  "include": ["plugins/editor/src/**/*"]
+}

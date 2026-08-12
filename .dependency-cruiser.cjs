@@ -68,6 +68,13 @@ module.exports = {
       to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
+      name: 'editor-plugin-runtime-not-to-core',
+      severity: 'error',
+      comment: 'The editor plugin may import src/ TYPE-ONLY for its host contract; runtime code must remain plugin-owned.',
+      from: { path: '^plugins/editor/' },
+      to: { path: '^src/', dependencyTypesNot: ['type-only'] },
+    },
+    {
       name: 'agents-plugin-runtime-not-to-core',
       severity: 'error',
       comment: 'The agents plugin may import src/ TYPE-ONLY (erased at compile time — PluginContext, '

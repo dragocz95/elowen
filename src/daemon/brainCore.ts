@@ -19,7 +19,7 @@ import { UserSettingStore } from '../store/userSettingStore.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
-import { projectHead, projectRangeDiff } from '../integrations/projectFiles.js';
+import { projectHead, projectRangeDiff, safeProjectPath } from '../integrations/projectFiles.js';
 import { TaskUsageStore } from '../store/taskUsageStore.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -171,6 +171,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // extracted `lsp` plugin for pre-existing installs (lossless — lspEnabled keeps its value for
   // rollback). The plugin's own service seeds its manager from that slice at start.
   if (opts.migrate !== false) config.migrateLspPlugin();
+  // The project editor was previously core, so existing installs retain it once; later operator
+  // disables remain authoritative through the persisted marker.
+  if (opts.migrate !== false) config.migrateEditorPlugin();
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {
@@ -519,6 +522,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           ...(agentsUserDir ? { userDir: agentsUserDir } : {}),
           pluginToolNames: async (): Promise<string[]> => (await pluginProvider.get()).tools.map((t) => t.name),
         }),
+        projectFiles: { safe: safeProjectPath },
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,

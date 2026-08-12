@@ -445,6 +445,12 @@ export interface PluginHostConfig {
   ghToken(): string | null;
 }
 
+/** The project-file trust boundary kept in core. Plugins may implement file operations, but every path
+ *  they receive must pass this exact lexical-and-symlink guard before touching disk. */
+export interface PluginProjectFiles {
+  safe(root: string, rel: string, forWrite?: boolean): string;
+}
+
 /** Host capabilities for extracting a core subsystem into a plugin (the agents extraction): the tmux
  *  driver, the embedded brain-worker executor, the agent CLI credential set and the typed store seams
  *  stay IN THE CORE and are handed through here. Every accessor is deny-by-default behind its own
@@ -488,6 +494,9 @@ export interface PluginHost {
    *  delegation). The subagent plugin serves the '/plugins/agents/*' editor surface over it. Gated by
    *  `reads:['agent-catalog']`. */
   agentCatalog(): PluginAgentCatalog;
+  /** The canonical project path guard. Gated by `reads:['project-files']`; editor operations must use
+   *  it instead of reproducing path traversal or symlink handling. */
+  projectFiles(): PluginProjectFiles;
 }
 
 /** One row of the typed sub-agent catalog (see PluginHost.agentCatalog). */
