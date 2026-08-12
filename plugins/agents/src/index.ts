@@ -25,6 +25,7 @@ import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
 import { registerAgentsTools } from './tools.js';
 import { agentsPluginConfig } from './config.js';
 import { logger, setBaseLogger } from './lib/logger.js';
+import { detectClis } from './lib/cliDetection.js';
 
 export function register(ctx: PluginContext): void {
   // Logging first: every subsystem module logs through lib/logger's scoped facade, which delegates to
@@ -149,6 +150,9 @@ export function register(ctx: PluginContext): void {
     agents: () => rt().agents,
     gitLock: () => rt().gitLock,
     missions: () => rt().missions,
+    liveTaskUsage: () => rt().liveTaskUsage,
+    // Static — probing the agent CLIs' presence must not construct the runtime.
+    detectClis: () => detectClis,
   } satisfies AgentsControl);
 
   ctx.logger.info('agents plugin loaded (runtime lazy; engine/scheduler/deriver via host services)');

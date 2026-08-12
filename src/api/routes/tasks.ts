@@ -1,7 +1,6 @@
 import { basename } from 'node:path';
 import { shapeBrainMessages } from '../../brain/messageView.js';
 import { taskSessionId } from '../../brain/sessionId.js';
-import { readTaskUsage } from '../../integrations/usage/index.js';
 import { projectRangeFileDiff, projectRangeLog, projectCommitFileDiff } from '../../integrations/projectFiles.js';
 import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../services/planner.js';
 import { resolvePrEnabled } from '../../shared/prMode.js';
@@ -63,7 +62,7 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
   const {
     d, log, planJobs,
     canAccessProject, notAdmin, accessibleProjects, execAllowedForUser,
-    pathFor, usagePathFor, checkoutPathFor, resolveTarget,
+    pathFor, checkoutPathFor, resolveTarget,
     persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService,
   } = ctx;
   app.get('/tasks', c => {
@@ -120,11 +119,10 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     const task = d.tasks.get(c.req.param('id'));
     if (!task) return c.json({ error: 'not found' }, 404);
     if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
-    // Pass the task's own project siblings so usage can disambiguate concurrent agents by start-order
-    // rank, and read sessions from that project's path (not the daemon home, under multi-project).
-    const live = readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), usagePathFor(task), d.fallback);
-    // Embedded-brain (elowen:) runs have no on-disk CLI transcript for the live reader — fall back to the
-    // snapshot the BrainWorkerService recorded at close (this is where provider-reported cost lives).
+    // The live reader lives in the agents plugin (it owns the CLI session-store parsers). Absent
+    // plugin, embedded-brain (elowen:) runs, or an empty read → the snapshot the recorder / the
+    // BrainWorkerService persisted at close (this is where provider-reported cost lives).
+    const live = d.liveTaskUsage?.(task.id) ?? null;
     return c.json(live ?? d.taskUsage?.get(task.id) ?? null);
   });
   // Total token/cost usage aggregated per model (exec spec). Read straight from the `task_usage`

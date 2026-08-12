@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeUsage } from '../../../src/integrations/usage/claude.js';
+import { claudeUsage } from '../../../../plugins/agents/src/usage/claude.js';
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'elowen-claude-usage-')); });

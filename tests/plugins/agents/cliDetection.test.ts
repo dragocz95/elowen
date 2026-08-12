@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { detectClis } from '../../src/integrations/cliDetection.js';
-import { createServer } from '../../src/api/server.js';
-import { TaskStore } from '../../src/store/taskStore.js';
-import { Readiness } from '../../src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import { EventBus } from '../../src/api/sse.js';
-import { FakeClock } from '../../src/shared/clock.js';
-import { ConfigStore } from '../../src/store/configStore.js';
-import { UserStore } from '../../src/store/userStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { detectClis } from '../../../plugins/agents/src/lib/cliDetection.js';
+import { createServer } from '../../../src/api/server.js';
+import { TaskStore } from '../../../src/store/taskStore.js';
+import { Readiness } from '../../../src/store/readiness.js';
+import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
+import { EventBus } from '../../../src/api/sse.js';
+import { FakeClock } from '../../../src/shared/clock.js';
+import { ConfigStore } from '../../../src/store/configStore.js';
+import { UserStore } from '../../../src/store/userStore.js';
+import { openAgentsDb } from '../../helpers/agentsDb.js';
 
 // Every detectClis() call spawns 9 real binaries with --version, and one of them (kilo) boots a
 // daemon to answer, so a single case costs ~2.5s idle. Vitest's 5s default left only 2x headroom,
@@ -24,6 +24,7 @@ function makeAuthedApp() {
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users,
+    detectClis, // the agents plugin's control hands core this exact function
   });
   return { app, users };
 }
@@ -84,6 +85,21 @@ describe('cli detection unit', () => {
 });
 
 describe('cli detection integration via API', () => {
+  it('answers 503 when the agents plugin (the detector owner) is absent', async () => {
+    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const users = new UserStore(db); users.create('admin', 'pass');
+    const app = createServer({
+      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
+      bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), users,
+    });
+    const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'pass' }) })).json() as { token: string };
+    const res = await app.request('/integrations/cli-status', { headers: { authorization: `Bearer ${login.token}` } });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'agents plugin is disabled' });
+  });
+
   it('GET /integrations/cli-status returns 200 with tools array', async () => {
     const { app } = makeAuthedApp();
     const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'pass' }) })).json() as { token: string };
@@ -133,6 +149,7 @@ describe('cli detection integration via API', () => {
       bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users,
+      detectClis,
     });
     const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'pass' }) })).json() as { token: string };
     const res = await app.request('/integrations/cli-status', { headers: { authorization: `Bearer ${login.token}` } });
@@ -151,6 +168,7 @@ describe('cli detection integration via API', () => {
       bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users,
+      detectClis,
     });
     const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'pass' }) })).json() as { token: string };
     const res = await app.request('/integrations/cli-status', { headers: { authorization: `Bearer ${login.token}` } });

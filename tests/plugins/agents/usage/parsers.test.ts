@@ -3,10 +3,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { opencodeUsage } from '../../src/integrations/usage/opencode.js';
-import { claudeUsage } from '../../src/integrations/usage/claude.js';
-import { codexUsage } from '../../src/integrations/usage/codex.js';
-import { readTaskUsage } from '../../src/integrations/usage/index.js';
+import { opencodeUsage } from '../../../../plugins/agents/src/usage/opencode.js';
+import { claudeUsage } from '../../../../plugins/agents/src/usage/claude.js';
+import { codexUsage } from '../../../../plugins/agents/src/usage/codex.js';
+import { readTaskUsage } from '../../../../plugins/agents/src/usage/index.js';
 
 const DIR = '/work/proj';
 const SINCE = Date.parse('2026-06-19T10:00:00Z');

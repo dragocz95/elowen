@@ -503,6 +503,8 @@ export async function buildApp(opts: BuildOpts) {
     get planJobs() { return agentsControl()?.planJobs(); },
     get decisionQueue() { return agentsControl()?.decisionQueue(); },
     get pilot() { return agentsControl()?.pilot(); },
+    get liveTaskUsage() { return agentsControl()?.liveTaskUsage(); },
+    get detectClis() { return agentsControl()?.detectClis(); },
     project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, taskUsage, git, avatarsDir, avatarSecret, chatImagesDir, advisor, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 

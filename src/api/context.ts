@@ -1,4 +1,3 @@
-import { usagePath } from '../integrations/usage/usagePath.js';
 import { logger } from '../shared/logger.js';
 import { createPlanService } from './services/planService.js';
 import { createReviewService, type ReviewService } from './services/reviewService.js';
@@ -68,8 +67,6 @@ export interface RouteContext {
   execAllowedForUser(c: UserCtx, exec: string): boolean;
   /** Filesystem path of a project (store-first, falls back to the home path). */
   pathFor(projectId: number): string;
-  /** Where a task's agent actually ran — the worktree for a PR-native mission, else the project path. */
-  usagePathFor(task: { project_id: number; parent_id: string | null }): string;
   /** The checkout a mission's work lands in: the isolated PR worktree while live, else the project checkout. */
   checkoutPathFor(missionId: string | null, projectId: number): string;
   /** Resolve the target project for a create/plan request (defaults to the daemon's home project). */
@@ -227,8 +224,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
 
   // Where a task's agent actually ran — the cwd its CLI logged token usage under. For a PR-native
   // mission that's the isolated worktree, not the project checkout; otherwise the project path.
-  const usagePathFor = (task: { project_id: number; parent_id: string | null }): string =>
-    usagePath(task, pathFor, (id) => d.missionGit?.worktreeFor(id));
 
   // The checkout a mission's work lands in: the isolated PR worktree while it's live, else the shared
   // project checkout. `missionId` null (or worktree gone) ⇒ the project path.
@@ -294,7 +289,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     d, log, planJobs, decisionQueue, gitLock,
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
     eventDeps, execAllowedForUser,
-    pathFor, usagePathFor, checkoutPathFor, resolveTarget,
+    pathFor, checkoutPathFor, resolveTarget,
     persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, skillService, memoryService,
   };
 }

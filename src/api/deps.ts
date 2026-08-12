@@ -1,9 +1,10 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
+import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsDecisionQueue, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
 import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { ElowenEvent, EventBus } from './sse.js';
+import type { TokenUsage } from '../integrations/usage/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -45,6 +46,11 @@ export interface ServerDeps {
    *  use, so a phase's commit+snapshot at close can't interleave with the baseline read at another
    *  agent's spawn on the same checkout. Absent → a private lock (fine for isolated tests). */
   gitLock?: AgentsGitLock;
+  /** LIVE token-usage reader (agents plugin control). Absent → /tasks/:id/usage serves the recorded
+   *  task_usage snapshot only, exactly what an embedded (elowen:) run already does. */
+  liveTaskUsage?: (taskId: string) => TokenUsage | null;
+  /** Agent-CLI availability probe (agents plugin control). Absent → /integrations/cli-status 503s. */
+  detectClis?: (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
   project: { id: number; path: string };
   fallback: AgentsExecSpec;
   /** How spawned agents invoke the elowen CLI (`elowen` globally, or `node <path>` in a checkout). Same

@@ -1,4 +1,3 @@
-import { detectClis } from '../../integrations/cliDetection.js';
 import { detectGithubAuth } from '../../integrations/github/auth.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
@@ -6,6 +5,8 @@ import type { ElowenApp, RouteContext } from '../context.js';
 export function registerIntegrationRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d } = ctx;
   app.get('/integrations/cli-status', async c => {
+    // The detector lives in the agents plugin (it owns the CLIs it spawns) — degrade explicitly.
+    if (!d.detectClis) return c.json({ error: 'agents plugin is disabled' }, 503);
     const cfg = d.config.get();
     const detectCtx = {
       configPersisted: d.config.hasSettings(),
@@ -14,7 +15,7 @@ export function registerIntegrationRoutes(app: ElowenApp, ctx: RouteContext): vo
       hasApiKey: d.config.autopilotRelay() !== null,
       hasCustomSetup: cfg.customModels.length > 0 || cfg.hiddenPresets.length > 0,
     };
-    return c.json(await detectClis(detectCtx));
+    return c.json(await d.detectClis(detectCtx));
   });
 
   // GitHub auth posture for the PR-native workflow — whether a push would succeed (via a stored token

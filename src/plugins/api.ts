@@ -10,6 +10,7 @@ import type { ElowenEvent } from '../api/sse.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentSpec } from '../shared/execRouting.js';
 import type { Task } from '../store/types.js';
+import type { TokenUsage } from '../integrations/usage/types.js';
 import type { DecisionKind, DecisionResult, Mission, PendingDecision, Phase, PlanJob } from '../shared/agentEvents.js';
 import type { Project } from '../store/projectStore.js';
 import type { TaskStore } from '../store/taskStore.js';
@@ -798,6 +799,22 @@ export interface AgentsControl {
   agents(): AgentsRegistryView;
   gitLock(): AgentsGitLock;
   missions(): AgentsMissions;
+  /** LIVE token-usage reader for one task (scans the CLI's on-disk session store at the mission
+   *  worktree / project checkout). Null when the task is unknown or nothing is attributable; the core
+   *  route then falls back to the recorded task_usage snapshot. */
+  liveTaskUsage(): (taskId: string) => TokenUsage | null;
+  /** Agent-CLI availability probe (claude/codex/opencode + optional extras) behind
+   *  /integrations/cli-status — detection of the CLIs this plugin spawns belongs to it. */
+  detectClis(): (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
+}
+
+/** Setup-progress hints threaded into the CLI detection result (fresh-install signals). */
+export interface AgentsCliDetectionContext { configPersisted: boolean; hasApiKey: boolean; hasCustomSetup: boolean }
+/** Shape of the /integrations/cli-status payload (owned by the agents plugin's detector). */
+export interface AgentsCliDetection {
+  tools: { name: string; installed: boolean; functional: boolean; version: string | null; error: string | null }[];
+  summary: { allInstalled: boolean; allFunctional: boolean };
+  freshInstall: { noConfigPersisted: boolean; noApiKey: boolean; noCustomSetup: boolean };
 }
 
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may

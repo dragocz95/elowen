@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectSessionId } from '../../../src/integrations/usage/sessionId.js';
+import { detectSessionId } from '../../../../plugins/agents/src/usage/sessionId.js';
 import type { AgentSpec } from '../../../src/shared/execRouting.js';
 
 const fallback: AgentSpec = { program: 'claude-code', model: 'sonnet' };

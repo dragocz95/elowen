@@ -33,7 +33,9 @@ import { makePilot } from './overseer/pilotAgent.js';
 import { makeOverseer } from './overseer/overseerAgent.js';
 import { UsageRecorder } from './usage/recorder.js';
 import { captureResumeLabel } from './usage/resumeCapture.js';
+import { readTaskUsage } from './usage/index.js';
 import { usagePath } from './usage/usagePath.js';
+import type { TokenUsage } from './usage/types.js';
 import { PushDispatcher } from './push/pushDispatcher.js';
 import type { PushPayload } from './push/messages.js';
 import { uniqueName } from './lib/uniqueName.js';
@@ -307,6 +309,14 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     usagePath(task, (pid) => projects.get(pid)?.path ?? deps.homeProjectPath, (id) => missionGit.worktreeFor(id));
   const resumeFallback = { program: 'claude-code', model: 'sonnet' };
   const stopUsageRecorder = new UsageRecorder({ usage: deps.stores.taskUsage, tasks, fallback: resumeFallback, pathFor: usagePathFor }).subscribe(bus);
+  // The LIVE usage reader the core /tasks/:id/usage endpoint serves through the control — scans the
+  // CLI's on-disk session store at the same path (mission worktree under PR-native, else the project
+  // checkout) with the same fallback spec the recorder snapshots with, so live and settled agree.
+  const liveTaskUsage = (taskId: string): TokenUsage | null => {
+    const task = tasks.get(taskId);
+    if (!task) return null;
+    return readTaskUsage(task, tasks.list({ project_id: task.project_id }), usagePathFor(task), resumeFallback);
+  };
 
   // One shared per-checkout git lock across the scheduler, mission engine and API server, so a phase's
   // commit+snapshot at close never interleaves with another agent's baseline read on the same checkout.
@@ -545,7 +555,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // services
     spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver,
     // resolution helpers (API routes and services build on these in later steps)
-    taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock,
+    taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock, liveTaskUsage,
     // boot reconciles (ctx.registerBootReconcile) + interval loops (ctx.registerInterval)
     reconcileZombies, reconcileOverseers, intervals,
     /** Tear down the bus subscriptions (push dispatch + usage recorder). The registry also disposes
