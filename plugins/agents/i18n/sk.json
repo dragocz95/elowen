@@ -24,6 +24,30 @@
     "prVerifyCommand": {
       "label": "Overovací príkaz PR",
       "hint": "Príkaz, ktorý musí vo worktree skončiť s kódom 0, kým sa PR otvorí; prázdne bránu vypne."
+    },
+    "pilotExec": {
+      "label": "Exec pilota",
+      "hint": "Exec CLI agenta, na ktorom beží plánovací Pilot; prázdne plánuje cez relay API."
+    },
+    "overseerExec": {
+      "label": "Exec dohľadu",
+      "hint": "Exec CLI agenta, na ktorom beží zaparkovaný dohľad misie; prázdne rozhoduje cez relay API."
+    },
+    "reviewOnDone": {
+      "label": "Review po dokončení fázy",
+      "hint": "Po uzavretí fázy dohľad posúdi výsledok; pri zamietnutí je ďalšia fáza zablokovaná."
+    },
+    "tddMode": {
+      "label": "TDD režim misií",
+      "hint": "Autopilotní workeri musia najprv napísať padajúci test, potom implementovať a overiť."
+    },
+    "prEnabled": {
+      "label": "PR workflow",
+      "hint": "Globálna predvolená hodnota PR-native (izolovaný worktree) režimu misií; projekty a epiky ju môžu prepísať."
+    },
+    "ghToken": {
+      "label": "GitHub token",
+      "hint": "Token na otváranie/merge PR a čítanie review; prázdne ponechá vlastnú autentizáciu gh CLI."
     }
   },
   "web": {

@@ -1,4 +1,5 @@
 import { resolvePrEnabled } from './prMode.js';
+import type { AgentsPluginConfig } from '../config.js';
 import type { AgentsPlanFlow, PluginHostConfig } from '../../../../src/plugins/api.js';
 import type { Mission, PlanJob } from '../../../../src/shared/agentEvents.js';
 import type { Task } from '../../../../src/store/types.js';
@@ -7,7 +8,10 @@ import type { MissionStore } from '../store/missionStore.js';
 export interface PlanFlowDeps {
   tasks: { get(id: string): Task | null };
   missions: MissionStore;
+  /** Host config: the global exec allow-list the overrides validate against. */
   config: PluginHostConfig;
+  /** The plugin's own effective config (pilotExec backend choice, the global prEnabled default). */
+  pluginConfig: () => AgentsPluginConfig;
   projects: { get(id: number): { pr_enabled?: boolean | null } | null };
   users: { list(): { id: number; is_admin: boolean }[]; allowedExecs(id: number): readonly string[] | null };
   engine: {
@@ -48,12 +52,12 @@ export function createPlanFlow(d: PlanFlowDeps): AgentsPlanFlow {
       // so a >1 max_sessions mission would silently serialize to one agent. Opting into parallelism
       // therefore auto-enables PR-native mode, unless the user explicitly turned it off.
       if (maxSessions > 1 && prEnabled === null) prEnabled = true;
-      const isolated = resolvePrEnabled(prEnabled, d.projects.get(projectId)?.pr_enabled ?? null, d.config.get().autopilot.prEnabled);
+      const isolated = resolvePrEnabled(prEnabled, d.projects.get(projectId)?.pr_enabled ?? null, d.pluginConfig().prEnabled);
       return { prEnabled, isolated };
     },
 
     pilotBackend(pilotExec) {
-      return (pilotExec || d.config.get().autopilot.pilotExec) ? d.pilot : null;
+      return (pilotExec || d.pluginConfig().pilotExec) ? d.pilot : null;
     },
 
     planLabels() {
@@ -95,7 +99,7 @@ export function createPlanFlow(d: PlanFlowDeps): AgentsPlanFlow {
       // The PR mode is frozen in the epic's labels at plan time — a replan must never flip it.
       const prEnabled = epic?.labels.includes('pr:on') ? true : epic?.labels.includes('pr:off') ? false : null;
       const projectPr = epic ? d.projects.get(epic.project_id)?.pr_enabled ?? null : null;
-      const isolated = resolvePrEnabled(prEnabled, projectPr, d.config.get().autopilot.prEnabled);
+      const isolated = resolvePrEnabled(prEnabled, projectPr, d.pluginConfig().prEnabled);
       const mission = d.missions.get(`m-${epicId}`);
       return {
         prEnabled, isolated,

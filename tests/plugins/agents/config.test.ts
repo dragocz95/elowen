@@ -4,10 +4,15 @@ import { ConfigStore } from '../../../src/store/configStore.js';
 import { agentsPluginConfig } from '../../../plugins/agents/src/config.js';
 import type { PluginHostConfig } from '../../../src/plugins/api.js';
 
-const hostWith = (autopilot: Partial<{ overseerModel: string; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string }>): PluginHostConfig => ({
-  get: () => ({ autopilot: { overseerModel: '', prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ...autopilot } }) as never,
+const AUTOPILOT_DEFAULTS = {
+  overseerModel: '', prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '',
+  pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false,
+};
+
+const hostWith = (autopilot: Partial<typeof AUTOPILOT_DEFAULTS>, ghToken: string | null = null): PluginHostConfig => ({
+  get: () => ({ autopilot: { ...AUTOPILOT_DEFAULTS, ...autopilot } }) as never,
   autopilotRelay: () => null,
-  ghToken: () => null,
+  ghToken: () => ghToken,
 });
 
 describe('agentsPluginConfig resolution', () => {
@@ -25,7 +30,19 @@ describe('agentsPluginConfig resolution', () => {
 
   it('fresh install (empty slice) → the autopilot defaults', () => {
     const c = agentsPluginConfig({}, hostWith({}));
-    expect(c).toEqual({ overseerModel: '', prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '' });
+    expect(c).toEqual({ ...AUTOPILOT_DEFAULTS, ghToken: '' });
+  });
+
+  it('wave-2 keys resolve slice-first with the autopilot/ghToken fallback', () => {
+    const c = agentsPluginConfig(
+      { pilotExec: 'codex:gpt', tddMode: true },
+      hostWith({ pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', prEnabled: true }, 'legacy-token'),
+    );
+    expect(c.pilotExec).toBe('codex:gpt'); // slice wins
+    expect(c.tddMode).toBe(true);
+    expect(c.overseerExec).toBe('claude:sonnet'); // absent in slice → live autopilot value
+    expect(c.prEnabled).toBe(true);
+    expect(c.ghToken).toBe('legacy-token'); // absent/empty in slice → host ghToken()
   });
 
   it('a malformed slice degrades to the fallback instead of throwing', () => {
@@ -42,7 +59,8 @@ describe('agentsPluginConfig resolution', () => {
     }));
     const store = new ConfigStore(db);
     store.migrateAgentsPluginConfig();
+    store.migrateAgentsPluginConfigWave2();
     const c = agentsPluginConfig(store.pluginConfig('agents'), store as unknown as PluginHostConfig);
-    expect(c).toEqual({ overseerModel: 'ov', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test' });
+    expect(c).toEqual({ ...AUTOPILOT_DEFAULTS, overseerModel: 'ov', prBaseBranch: 'main', prAutoOpen: true, prVerifyCommand: 'npm test', ghToken: '' });
   });
 });

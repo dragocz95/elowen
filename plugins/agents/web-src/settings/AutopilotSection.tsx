@@ -5,12 +5,12 @@ import { runtime } from '../runtime';
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
 /** The moved core Settings → Autopilot section: how the planner/overseer reason (relay API key vs CLI
- *  agents), the autopilot notes, and the run defaults for new missions. Reads and writes the SAME main
- *  config keys as before (`autopilot.*`, `defaults.*` over GET/PUT /config) — only the component moved
- *  into the plugin bundle. Rendered flat (no constellation pods/drawer): a plugin settings panel is a
- *  plain document, so the free-text fields edit inline. */
+ *  agents), the autopilot notes, and the run defaults for new missions. The relay credentials, notes
+ *  and run defaults stay main-config keys (`autopilot.*`, `defaults.*` over GET/PUT /config); the
+ *  agents-only knobs (pilotExec, overseerExec, reviewOnDone, tddMode) live in the plugin's own config
+ *  slice since the wave-2 config split and save through PATCH /plugins/agents/config. */
 export function AutopilotSection() {
-  const { components: C, hooks, utils } = runtime();
+  const { components: C, hooks, utils, api } = runtime();
   const s = hooks.usePluginStrings('agents');
   const { toast } = hooks.useToast();
   const config = hooks.useConfig();
@@ -33,17 +33,29 @@ export function AutopilotSection() {
   const [defAutonomy, setDefAutonomy] = useState('');
   const [defMaxSessions, setDefMaxSessions] = useState(1);
 
-  // Seed ONCE from the config (stale-while-revalidate refetches must not clobber in-progress edits).
+  // The agents-only knobs come from the plugin's own config slice (GET /plugins/agents), not /config.
+  const [slice, setSlice] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api('/plugins/agents')
+      .then((d) => { if (alive) setSlice((d as { config?: Record<string, unknown> }).config ?? {}); })
+      .catch(() => { if (alive) setSlice({}); });
+    return () => { alive = false; };
+  }, [api]);
+
+  // Seed ONCE from both sources (stale-while-revalidate refetches must not clobber in-progress edits).
   const seeded = useRef(false);
   useEffect(() => {
-    if (config.data && !seeded.current) {
+    if (config.data && slice && !seeded.current) {
       seeded.current = true;
       setModel(config.data.autopilot.model);
-      setPilotExec(config.data.autopilot.pilotExec ?? '');
-      setOverseerExec(config.data.autopilot.overseerExec ?? '');
-      setReviewOnDone(config.data.autopilot.reviewOnDone ?? false);
-      setTddMode(config.data.autopilot.tddMode ?? false);
-      setReasoningMode((config.data.autopilot.pilotExec || config.data.autopilot.overseerExec) ? 'agents' : 'relay');
+      const slicePilot = typeof slice.pilotExec === 'string' ? slice.pilotExec : '';
+      const sliceOverseer = typeof slice.overseerExec === 'string' ? slice.overseerExec : '';
+      setPilotExec(slicePilot);
+      setOverseerExec(sliceOverseer);
+      setReviewOnDone(slice.reviewOnDone === true);
+      setTddMode(slice.tddMode === true);
+      setReasoningMode((slicePilot || sliceOverseer) ? 'agents' : 'relay');
       setApiUrl(config.data.autopilot.apiUrl);
       setApProviderId(config.data.autopilot.providerId ?? '');
       setNotes(config.data.autopilot.notes);
@@ -51,15 +63,20 @@ export function AutopilotSection() {
       setDefAutonomy(config.data.defaults.autonomy);
       setDefMaxSessions(config.data.defaults.maxSessions);
     }
-  }, [config.data]);
+  }, [config.data, slice]);
 
   // Persist only the active mode's fields, and explicitly clear the other backend so the two never
-  // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
+  // coexist (relay clears the execs; agents leave the relay model/key untouched but unused). The
+  // agents-only knobs PATCH the plugin slice; the relay credentials + notes keep the main config.
   const saveAutopilot = async () => {
     try {
+      const values = reasoningMode === 'agents'
+        ? { pilotExec, overseerExec, reviewOnDone, tddMode }
+        : { pilotExec: '', overseerExec: '', tddMode };
+      await api('/plugins/agents/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) });
       await update.mutateAsync({ autopilot: reasoningMode === 'agents'
-        ? { pilotExec, overseerExec, reviewOnDone, tddMode, notes }
-        : { model, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } });
+        ? { notes }
+        : { model, apiUrl, providerId: apProviderId, notes, ...(apiKey ? { apiKey } : {}) } });
       if (apiKey) setApiKey('');
     } catch (error) { toast(String(error), 'error'); throw error; }
   };
@@ -77,7 +94,7 @@ export function AutopilotSection() {
     : autopilotSave.status === 'saved' || defaultsSave.status === 'saved' ? 'saved' : 'idle';
   const retry = () => { if (autopilotSave.status === 'error') autopilotSave.retry(); if (defaultsSave.status === 'error') defaultsSave.retry(); };
 
-  if (config.isLoading) return <C.LoadingState variant="list" />;
+  if (config.isLoading || !slice) return <C.LoadingState variant="list" />;
   if (config.isError) return null; // the host settings page already surfaces an unreachable daemon
 
   const models = utils.allModels(config.data?.customModels ?? [], config.data?.hiddenPresets ?? []);

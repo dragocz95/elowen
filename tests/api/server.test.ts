@@ -18,6 +18,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { FakeInference } from '../../src/inference/client.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 import { createPlanFlow } from '../../plugins/agents/src/overseer/planFlow.js';
+import { agentsPluginConfig } from '../../plugins/agents/src/config.js';
 
 /** The REAL agents planFlow over a test's stubs — the seam the plan routes reach through the 'agents'
  *  control in the daemon. Tests exercising plugin-present plan behaviour (mission labels, engage, the
@@ -25,6 +26,7 @@ import { createPlanFlow } from '../../plugins/agents/src/overseer/planFlow.js';
 function planFlowFor(w: { db: ReturnType<typeof openAgentsDb>; tasks: TaskStore; config: ConfigStore; engine?: unknown }) {
   return createPlanFlow({
     tasks: w.tasks, missions: new MissionStore(w.db), config: w.config as never,
+    pluginConfig: () => agentsPluginConfig({}, w.config as never),
     projects: { get: () => null }, users: { list: () => [], allowedExecs: () => null },
     engine: (w.engine ?? { engage: async () => { throw new Error('engage not stubbed'); }, isActive: () => false, tick: async () => {} }) as never,
     pilot: async () => {},

@@ -127,6 +127,8 @@ interface LivenessDeps {
   missions: MissionStore;
   bus: AgentsBusWithSink;
   config: PluginHostConfig;
+  /** The plugin's own effective config (overseerExec drives the check/progress-review gating). */
+  pluginConfig: () => AgentsPluginConfig;
   agents: AgentStore;
   decisionQueue: DecisionQueue;
   taskForSession: (session: string) => Task | null;
@@ -176,7 +178,7 @@ async function checkWorker(session: string, taskId: string, snapshot: string, id
   const missionId = d.missionIdForSession(session);
   // No overseer to ask: a wedged worker escalates to a human; a routine progress glance just no-ops —
   // never block a healthy, working agent just because nobody happens to be watching.
-  if (!missionId || !(d.missions.get(missionId)?.overseer_exec || d.config.get().autopilot.overseerExec)) { if (reason === 'idle') escalateWorker(taskId, d); return; }
+  if (!missionId || !(d.missions.get(missionId)?.overseer_exec || d.pluginConfig().overseerExec)) { if (reason === 'idle') escalateWorker(taskId, d); return; }
   let verdict: DecisionResult;
   try { verdict = await d.decisionQueue.enqueue(missionId, 'check', { taskId, session, paneSnapshot: snapshot, idleMin, reason }); }
   catch (e) { d.log.error(`check enqueue failed for ${session}`, e); return; }
@@ -216,7 +218,7 @@ function runLivenessSweep(d: LivenessDeps): void {
     checkWorker: (session, taskId, snapshot, idleMin, reason) => checkWorker(session, taskId, snapshot, idleMin, reason, d),
     workerIdleMs: WORKER_IDLE_MS, overseerIdleMs: OVERSEER_IDLE_MS, graceMs: DECISION_GRACE_MS, hardMs: DECISION_HARD_MS,
     // Routine progress checks only make sense when there's an overseer to do them (0 disables).
-    progressReviewMs: (d.config.get().autopilot.overseerExec || d.missions.live().some((m) => m.overseer_exec)) ? PROGRESS_REVIEW_MS : 0,
+    progressReviewMs: (d.pluginConfig().overseerExec || d.missions.live().some((m) => m.overseer_exec)) ? PROGRESS_REVIEW_MS : 0,
   })
     .then(({ escalated, checked }) => {
       if (escalated.length) d.log.warn(`liveness sweep escalated ${escalated.length} unanswered decision(s) to a human: ${escalated.join(', ')}`);
@@ -271,7 +273,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     tmux, agents, elowen: deps.elowenCli,
     providers: (program) => deps.config.get().providers[program],
     prompts: deps.prompts,
-    tddMode: () => deps.config.get().autopilot.tddMode,
+    tddMode: () => deps.pluginConfig().tddMode,
   });
   // Late wiring, mirroring bootstrap's spawn.attachBrainWorker(brainWorkers): the BrainWorkerService is
   // constructed after the plugin loads, so the launcher resolves through the accessor per launch. The
@@ -301,7 +303,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
 
   // PR-native git lifecycle (no-op unless Settings → PR workflow is enabled): each mission runs in an
   // isolated worktree on its own branch, commits per approved phase, and (later stages) opens a PR.
-  const missionGit = new MissionGit({ prs: missionPrs, config: deps.config, pluginConfig: deps.pluginConfig, projects, tasks });
+  const missionGit = new MissionGit({ prs: missionPrs, pluginConfig: deps.pluginConfig, projects, tasks });
 
   // The overseer must be parked INSIDE the mission's worktree (via missionGit) so its read-only
   // `git diff` judges the agent's actual work, not the unchanged main checkout.
@@ -368,13 +370,13 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
   // per-checkout git lock with the scheduler/engine so a phase commit never interleaves with a
   // baseline read on the same checkout.
   const review = createReviewService({
-    tasks, missions, config: deps.config, decisionQueue, gitLock, git: deps.git, missionGit, engine,
+    tasks, missions, pluginConfig: deps.pluginConfig, decisionQueue, gitLock, git: deps.git, missionGit, engine,
     publish: bus.publish,
     pathFor: (pid) => projects.get(pid)?.path ?? deps.homeProjectPath,
   });
   // The agents half of the core plan/replan routes (exec-override validation, PR mode, backend
   // choice, mission labels, post-persist engage/tick) — reached through the 'agents' control.
-  const planFlow = createPlanFlow({ tasks, missions, config: deps.config, projects, users, engine, pilot });
+  const planFlow = createPlanFlow({ tasks, missions, config: deps.config, pluginConfig: deps.pluginConfig, projects, users, engine, pilot });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
   // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
@@ -419,7 +421,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
       // no-overseer fallback has no verdict/rationale to show.
       const recordPrompt = (gated: { approve: boolean }, rationale: string, confidence: number) =>
         bus.publish({ type: 'decision', taskId: input.taskId, kind: 'prompt', question: input.question, outcome: gated.approve ? 'approved' : 'escalated', rationale, confidence });
-      if (input.missionId && (missions.get(input.missionId)?.overseer_exec || deps.config.get().autopilot.overseerExec)) {
+      if (input.missionId && (missions.get(input.missionId)?.overseer_exec || deps.pluginConfig().overseerExec)) {
         const v = await decisionQueue.enqueue(input.missionId, 'prompt', { question: input.question, context: input.context, options: input.options });
         const gated = gateVerdict(v, { minConfidence });
         recordPrompt(gated, v.rationale, v.confidence);
@@ -450,7 +452,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
       // Persist the question verdict (chosen option or escalation) for the task's conversation feed.
       const recordChoice = (res: { choiceId: string | null }, rationale: string, confidence: number) =>
         bus.publish({ type: 'decision', taskId: input.taskId, kind: 'choice', question: input.question, outcome: res.choiceId ? 'chose' : 'escalated', rationale, confidence, optionLabel: res.choiceId ? input.options.find((o) => o.id === res.choiceId)?.label : undefined });
-      if (input.missionId && (missions.get(input.missionId)?.overseer_exec || deps.config.get().autopilot.overseerExec)) {
+      if (input.missionId && (missions.get(input.missionId)?.overseer_exec || deps.pluginConfig().overseerExec)) {
         const v = await decisionQueue.enqueue(input.missionId, 'question', { question: input.question, context: input.context, options: input.options });
         const res = gate(v.choice, v.confidence);
         recordChoice(res, v.rationale, v.confidence);
@@ -491,7 +493,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
       if (!activeIds.has(id)) await tmux.kill(s).catch(() => { /* already gone */ });
     }
     for (const m of missions.active()) {
-      if (!(m.overseer_exec || deps.config.get().autopilot.overseerExec)) continue;
+      if (!(m.overseer_exec || deps.pluginConfig().overseerExec)) continue;
       if (live.has(`elowen-overseer-${m.id}`)) continue;
       const epic = tasks.get(m.epic_id);
       const proj = epic ? projects.get(epic.project_id) : null;
@@ -512,7 +514,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
   const progressLastAt = new Map<string, number>();
   const paneTracker = new PaneActivityTracker();
   const livenessDeps: LivenessDeps = {
-    tmux, tasks, missions, bus, config: deps.config, agents, decisionQueue,
+    tmux, tasks, missions, bus, config: deps.config, pluginConfig: deps.pluginConfig, agents, decisionQueue,
     taskForSession, missionIdForSession, usagePathFor, resumeFallback,
     clock, paneTracker, decisionDeadSince, inflightChecks, progressLastAt, log,
   };
@@ -531,7 +533,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // PR-feedback CONTINUES a finished mission, so keep the existing review self-heal budgets rather
     // than resetting them on this re-engage. Flows through both the pilot and relay paths below.
     const engage = { autonomy: mission.autonomy, maxSessions: mission.max_sessions, preserveReviewBudget: true, pilotExec: mission.pilot_exec, overseerExec: mission.overseer_exec };
-    if (mission.pilot_exec || deps.config.get().autopilot.pilotExec) {
+    if (mission.pilot_exec || deps.pluginConfig().pilotExec) {
       const cwd = missionGit.worktreeFor(`m-${epicId}`) ?? project.path;
       // engage flag → finalizePlanJob re-engages the mission AFTER the pilot pins the phases, so a
       // completed mission doesn't disengage in the gap between engage and the phases existing.

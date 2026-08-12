@@ -2,7 +2,6 @@ import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { MissionPrStore } from '../store/missionPrStore.js';
-import type { PluginHostConfig as ConfigStore } from '../../../../src/plugins/api.js';
 import type { AgentsPluginConfig } from '../config.js';
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import { logger } from '../lib/logger.js';
@@ -25,7 +24,6 @@ export type FinishResult =
 
 export interface MissionGitDeps {
   prs: MissionPrStore;
-  config: ConfigStore;
   /** The plugin's own effective config (plugins.config.agents with autopilot fallback), read live. */
   pluginConfig: () => AgentsPluginConfig;
   projects: { get(id: number): { id: number; slug: string; path: string; pr_enabled?: boolean | null } | null };
@@ -58,7 +56,7 @@ export class MissionGit {
   private prEnabled(missionId: string): boolean {
     const epic = this.d.tasks.get(this.missionEpicId(missionId));
     const override = epic?.labels.includes('pr:on') ? true : epic?.labels.includes('pr:off') ? false : null;
-    return resolvePrEnabled(override, this.projectFor(missionId)?.pr_enabled ?? null, this.d.config.get().autopilot.prEnabled);
+    return resolvePrEnabled(override, this.projectFor(missionId)?.pr_enabled ?? null, this.d.pluginConfig().prEnabled);
   }
 
   /** The project a mission belongs to, resolved via its epic (mission id is `m-<epicId>`). */
@@ -144,7 +142,7 @@ export class MissionGit {
     if (!this.prEnabled(missionId)) return { ok: false, reason: 'PR workflow not enabled' };
     const rec = this.d.prs.get(missionId);
     if (!rec || rec.pr_number == null || rec.pr_state !== 'open') return { ok: false, reason: 'no open PR for this mission' };
-    const res = await mergePR({ dir: rec.worktree, number: rec.pr_number, token: this.d.config.ghToken() ?? '' });
+    const res = await mergePR({ dir: rec.worktree, number: rec.pr_number, token: this.d.pluginConfig().ghToken });
     if (res.ok) {
       this.d.prs.setPrState(missionId, 'merged');
       this.d.prs.resetFixRounds(missionId);
@@ -199,7 +197,7 @@ export class MissionGit {
   }
 
   private async pushAndOpen(missionId: string, worktree: string, branch: string, repoPath: string, configuredBase: string): Promise<FinishResult> {
-    const token = this.d.config.ghToken() ?? '';
+    const token = this.d.pluginConfig().ghToken;
     let pushed = false;
     try { pushed = await pushBranch(worktree, branch, token); }
     catch (e) { log.error(`PR mode: push failed for ${branch}`, e); return { state: 'no-remote' }; }
@@ -242,7 +240,7 @@ export class MissionGit {
     if (!rec || rec.pr_number == null || rec.pr_state !== 'open') return { action: 'none' };
     const project = this.projectFor(missionId);
     if (!project) return { action: 'none' };
-    const status = await readPRReviews({ dir: rec.worktree, number: rec.pr_number, token: this.d.config.ghToken() ?? '' });
+    const status = await readPRReviews({ dir: rec.worktree, number: rec.pr_number, token: this.d.pluginConfig().ghToken });
     if (!status) return { action: 'none' };
     if (status.state === 'MERGED' || status.state === 'CLOSED') {
       this.d.prs.setPrState(missionId, status.state.toLowerCase());

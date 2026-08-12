@@ -256,6 +256,18 @@ async function main() {
       eq(agentsSlice.prVerifyCommand, 'npm run verify', 'prVerifyCommand copied into plugins.config.agents');
       eq(migrated.autopilot.overseerModel, 'legacy-overseer-model', 'autopilot.overseerModel untouched (copy, not move)');
 
+      // Config wave 2 (batch 3a): the remaining agents-only keys + the top-level ghToken were COPIED
+      // into the slice by their own one-shot migration, with the originals kept for rollback.
+      eq(migrated.agentsPluginConfigMigrated2, true, 'agents wave-2 config-copy marker persisted (one-shot)');
+      eq(agentsSlice.pilotExec, 'claude:opus', 'pilotExec copied into plugins.config.agents');
+      eq(agentsSlice.overseerExec, 'claude:sonnet', 'overseerExec copied into plugins.config.agents');
+      eq(agentsSlice.reviewOnDone, true, 'reviewOnDone copied into plugins.config.agents');
+      eq(agentsSlice.tddMode, true, 'tddMode copied into plugins.config.agents');
+      eq(agentsSlice.prEnabled, true, 'prEnabled copied into plugins.config.agents');
+      eq(agentsSlice.ghToken, 'legacy-gh-token', 'ghToken copied into plugins.config.agents');
+      eq(migrated.autopilot.pilotExec, 'claude:opus', 'autopilot.pilotExec untouched (copy, not move)');
+      eq(migrated.ghToken, 'legacy-gh-token', 'top-level ghToken untouched (copy, not move)');
+
       // The grandfathered plugin schema adopted the OLD tables without touching the rows.
       const pm = db.prepare("SELECT COUNT(*) AS n FROM plugin_migrations WHERE plugin = 'agents'").get().n;
       assert(pm >= 1, 'agents plugin migrations are bookkept in plugin_migrations');

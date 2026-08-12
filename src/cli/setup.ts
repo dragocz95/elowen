@@ -30,21 +30,19 @@ export function defaultExecForCli(cli: string, agnosticModel = 'anthropic/claude
   }
 }
 
-/** Daemon autopilot config patch (subset of the daemon's ConfigPatch): the CLI engine
- *  (pilotExec/overseerExec) or the hosted-API engine (model/apiUrl/apiKey), plus the opt-in
- *  PR-native workflow toggle and its GitHub token. */
+/** Daemon autopilot config patch (subset of the daemon's ConfigPatch): the hosted-API engine's relay
+ *  credentials. The CLI-engine keys (pilotExec/overseerExec) are agents-plugin config since the
+ *  wave-2 config split and travel in SetupConfigPatch.agents instead. */
 interface AutopilotPatch {
   model?: string;
   apiUrl?: string;
   apiKey?: string;
-  pilotExec?: string;
-  overseerExec?: string;
-  prEnabled?: boolean;
-  ghToken?: string;
 }
 
 interface SetupConfigPatch {
-  autopilot: AutopilotPatch;
+  autopilot?: AutopilotPatch;
+  /** plugins.config.agents values (the CLI autopilot engine) — saved via PATCH /plugins/agents/config. */
+  agents?: Record<string, unknown>;
 }
 
 export interface SetupPlan {
@@ -61,13 +59,15 @@ export async function isFirstRun(fetchFn: typeof fetch, base: string): Promise<b
 }
 
 /** Pure mapper: wizard answers → the API payloads. With a pilotExec the autopilot runs through an
- *  agent CLI (same exec for pilot and overseer) and no API key is sent; otherwise a blank apiKey is
- *  omitted so we never overwrite an existing key with an empty string. */
+ *  agent CLI (same exec for pilot and overseer; saved into the agents plugin's config slice) and no
+ *  API key is sent; otherwise a blank apiKey is omitted so we never overwrite an existing key with
+ *  an empty string. */
 export function buildSetupPlan(a: SetupAnswers): SetupPlan {
-  const autopilot: AutopilotPatch = a.pilotExec
-    ? { pilotExec: a.pilotExec, overseerExec: a.pilotExec }
-    : { model: a.model, apiUrl: a.apiUrl };
-  if (!a.pilotExec && a.apiKey) autopilot.apiKey = a.apiKey;
+  if (a.pilotExec) {
+    return { user: { username: a.username, password: a.password }, config: { agents: { pilotExec: a.pilotExec, overseerExec: a.pilotExec } } };
+  }
+  const autopilot: AutopilotPatch = { model: a.model, apiUrl: a.apiUrl };
+  if (a.apiKey) autopilot.apiKey = a.apiKey;
   return { user: { username: a.username, password: a.password }, config: { autopilot } };
 }
 
@@ -93,12 +93,21 @@ export async function createAdmin(fetchFn: typeof fetch, base: string, user: { u
   return login(fetchFn, base, user);
 }
 
-/** Persist the config patch with an admin bearer token. */
+/** Persist the config patch with an admin bearer token: the relay credentials over PUT /config, the
+ *  agents-plugin values (CLI autopilot engine) over PATCH /plugins/agents/config. */
 async function saveConfig(fetchFn: typeof fetch, base: string, token: string, config: SetupConfigPatch): Promise<void> {
-  const r = await fetchFn(`${base}/config`, {
-    method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(config),
-  });
-  if (!r.ok) throw new Error(`setup: saving config failed (${r.status})`);
+  if (config.autopilot) {
+    const r = await fetchFn(`${base}/config`, {
+      method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ autopilot: config.autopilot }),
+    });
+    if (!r.ok) throw new Error(`setup: saving config failed (${r.status})`);
+  }
+  if (config.agents) {
+    const r = await fetchFn(`${base}/plugins/agents/config`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ values: config.agents }),
+    });
+    if (!r.ok) throw new Error(`setup: saving the agents plugin config failed (${r.status})`);
+  }
 }
 
 /** Create the admin, log in for a bearer token, then save the config. Kept for the non-interactive

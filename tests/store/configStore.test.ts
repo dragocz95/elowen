@@ -430,6 +430,39 @@ describe('ConfigStore agents plugin config (F2 step 7)', () => {
     expect(cs.pluginConfig('agents')).toEqual({});
   });
 
+  it('migrateAgentsPluginConfigWave2 copies the remaining agents keys + ghToken once (old DB)', () => {
+    const db2 = openDb(':memory:');
+    const row = JSON.parse(OLD_ROW());
+    row.autopilot = { ...row.autopilot, pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true };
+    row.ghToken = 'gh-secret';
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
+    const cs = new ConfigStore(db2);
+    cs.migrateAgentsPluginConfigWave2();
+    const slice = cs.pluginConfig('agents');
+    expect(slice).toMatchObject({ pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true, ghToken: 'gh-secret' });
+    // Lossless: the originals stay for rollback; the slice-aware ghToken() reads the slice first.
+    expect(cs.get().autopilot.pilotExec).toBe('claude:opus');
+    expect(cs.ghToken()).toBe('gh-secret');
+    // Idempotent: a second run (and one after a slice edit) changes nothing.
+    cs.update({ plugins: { config: { agents: { ...slice, pilotExec: 'codex:gpt' } } } });
+    cs.migrateAgentsPluginConfigWave2();
+    expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt');
+  });
+
+  it('wave 2 never overwrites an existing slice value; ghToken() prefers the slice', () => {
+    const db2 = openDb(':memory:');
+    const row = JSON.parse(OLD_ROW());
+    row.autopilot = { ...row.autopilot, pilotExec: 'claude:opus' };
+    row.ghToken = 'legacy-token';
+    row.plugins.config = { agents: { pilotExec: 'codex:gpt', ghToken: 'slice-token' } };
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify(row));
+    const cs = new ConfigStore(db2);
+    cs.migrateAgentsPluginConfigWave2();
+    expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt'); // admin's own value wins
+    expect(cs.pluginConfig('agents')['reviewOnDone']).toBe(false); // absent key copied (with its value)
+    expect(cs.ghToken()).toBe('slice-token'); // slice-first; legacy stays as fallback only
+  });
+
   it('an autopilot patch does NOT leak into plugins.config.agents (mirror removed)', () => {
     // The transitional mirror is gone: plugins.config.agents is the single writable home for the
     // plugin-owned keys (edited via the plugin settings deck), seeded once by the migration above.

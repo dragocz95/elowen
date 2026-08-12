@@ -10,6 +10,7 @@ import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
 
 let putBody: unknown = null;
+let pluginPatchBody: unknown = null;
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/system', () => HttpResponse.json({
@@ -21,6 +22,9 @@ const server = setupServer(
   // when it is (its spawner is what runs those execs). No `settings` entries — the plugin's own
   // settings decks are exercised in tests/pluginUi, not here.
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/abc.js', apiVersion: 1, nav: [], settings: [] }])),
+  // The GitHub section reads/writes the agents plugin's config slice (prEnabled + the ghToken secret).
+  http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: { prEnabled: false }, configSchema: [], secretsSet: [] })),
+  http.patch('*/api/plugins/agents/config', async ({ request }) => { pluginPatchBody = await request.json(); return HttpResponse.json({ ok: true }); }),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
@@ -176,7 +180,7 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('keeps only the shared GitHub keys in the core section (the PR knobs moved to the agents plugin)', async () => {
+  it('saves the GitHub section into the agents plugin config slice (config wave 2)', async () => {
     localStorage.setItem('elowen.settings.category', 'github');
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
@@ -187,15 +191,16 @@ describe('SettingsPage', () => {
     expect(screen.queryByText('Verify command')).toBeNull();
     expect(screen.queryByText('Base branch')).toBeNull();
 
-    putBody = null;
+    // prEnabled + ghToken are plugin-slice keys too: the toggle PATCHes /plugins/agents/config
+    // (the write-only token would ride the same payload) — never PUT /config autopilot.*.
+    putBody = null; pluginPatchBody = null;
     fireEvent.click(screen.getByRole('switch', { name: /PR workflow/ }));
     await waitFor(() => {
-      const ap = (putBody as { autopilot: Record<string, unknown> }).autopilot;
-      expect(ap.prEnabled).toBe(true);
-      expect('prVerifyCommand' in ap).toBe(false);
-      expect('prBaseBranch' in ap).toBe(false);
-      expect('prAutoOpen' in ap).toBe(false);
+      const body = pluginPatchBody as { values: Record<string, unknown> };
+      expect(body.values.prEnabled).toBe(true);
+      expect('ghToken' in body.values).toBe(false); // untouched secret is omitted, not cleared
     });
+    expect(putBody).toBeNull(); // nothing goes to the main config anymore
   });
 
 

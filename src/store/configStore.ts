@@ -631,6 +631,10 @@ interface Stored {
   /** One-shot upgrade marker: the autopilot keys consumed exclusively by the agents plugin runtime
    *  have been COPIED into plugins.config.agents. See migrateAgentsPluginConfig(). */
   agentsPluginConfigMigrated: boolean;
+  /** One-shot upgrade marker for config wave 2: the remaining agents-only keys (pilotExec,
+   *  overseerExec, reviewOnDone, tddMode, prEnabled + the top-level ghToken) have been COPIED into
+   *  plugins.config.agents. See migrateAgentsPluginConfigWave2(). */
+  agentsPluginConfigMigrated2: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
@@ -675,6 +679,12 @@ function mergeAutopilot(src: Partial<Stored['autopilot']> | undefined, fallback:
  *  plan/review paths read model/prompt/pilotExec/overseerExec/reviewOnDone/prEnabled/tddMode too. */
 const AGENTS_PLUGIN_CONFIG_KEYS = ['overseerModel', 'prBaseBranch', 'prAutoOpen', 'prVerifyCommand'] as const;
 
+/** Config wave 2 (batch 3a): the rest of the agents-only keys. The core plan/review paths stopped
+ *  reading these when the review gate and the plan flow moved into the plugin, so the plugin slice
+ *  became their single consumer — copied (never moved) by the one-shot migrateAgentsPluginConfigWave2().
+ *  ghToken rides along separately (it is a top-level Stored secret, not an autopilot field). */
+const AGENTS_PLUGIN_CONFIG_KEYS_WAVE2 = ['pilotExec', 'overseerExec', 'reviewOnDone', 'tddMode', 'prEnabled'] as const;
+
 /** The plugins block for a settings row that predates the plugin system (or whose plugins block is
  *  malformed): NO plugins enabled. This is a DELIBERATE asymmetry with `defaultStored()`, which enables
  *  `DEFAULT_CONFIG.plugins.enabled` for FRESH installs — an existing install must never have new default
@@ -704,6 +714,7 @@ const defaultStored = (): Stored => ({
   agentsConfigMigrated: true,
   // Fresh installs need no autopilot→plugin config copy: the plugin's own defaults apply.
   agentsPluginConfigMigrated: true,
+  agentsPluginConfigMigrated2: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
@@ -795,6 +806,7 @@ export class ConfigStore {
           : legacyEmptyPlugins(),
         agentsConfigMigrated: p.agentsConfigMigrated === true,
         agentsPluginConfigMigrated: p.agentsPluginConfigMigrated === true,
+        agentsPluginConfigMigrated2: p.agentsPluginConfigMigrated2 === true,
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
@@ -877,7 +889,14 @@ export class ConfigStore {
     return s.apiKey ? { baseUrl: s.autopilot.apiUrl, apiKey: s.apiKey } : null;
   }
 
-  ghToken(): string | null { return this.read().ghToken; }
+  /** The GitHub token for mission PR automation. The agents plugin's config slice is the writable home
+   *  since config wave 2 (GithubSection saves there); the legacy top-level secret remains the fallback
+   *  for a pre-migration row (read-only runner window) and for rollback. */
+  ghToken(): string | null {
+    const s = this.read();
+    const slice = s.plugins.config['agents']?.['ghToken'];
+    return (typeof slice === 'string' && slice !== '') ? slice : s.ghToken;
+  }
 
   /** The full VAPID keypair (private included) for the daemon-side push sender — never serialized to
    *  any API response. Null until generated on first boot. */
@@ -931,6 +950,28 @@ export class ConfigStore {
     });
   }
 
+  /** One-shot upgrade, config wave 2 (batch 3a): COPY (never move — the autopilot fields and the
+   *  top-level ghToken keep their values for a lossless rollback) the remaining agents-only keys into
+   *  plugins.config.agents. Same rules as migrateAgentsPluginConfig: existing slice values win, runs
+   *  once per install, daemon-only. Runs AFTER wave 1 in bootstrap, but the two are independent. */
+  migrateAgentsPluginConfigWave2(): void {
+    if (!this.hasSettings()) return;
+    const cur = this.read();
+    if (cur.agentsPluginConfigMigrated2) return;
+    const slice: Record<string, unknown> = { ...cur.plugins.config['agents'] };
+    for (const k of AGENTS_PLUGIN_CONFIG_KEYS_WAVE2) {
+      if (slice[k] === undefined) slice[k] = cur.autopilot[k];
+    }
+    // The GitHub token is a top-level Stored secret; empty string means "not set" in the slice, the
+    // same convention the plugin's own secret fields use.
+    if (slice['ghToken'] === undefined) slice['ghToken'] = cur.ghToken ?? '';
+    this.write({
+      ...cur,
+      plugins: { ...cur.plugins, config: { ...cur.plugins.config, agents: slice } },
+      agentsPluginConfigMigrated2: true,
+    });
+  }
+
   update(patch: ConfigPatch): ElowenConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
@@ -977,6 +1018,7 @@ export class ConfigStore {
       },
       agentsConfigMigrated: cur.agentsConfigMigrated,
       agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
+      agentsPluginConfigMigrated2: cur.agentsPluginConfigMigrated2,
       brain: {
         providers: patch.brain?.providers !== undefined
           ? sanitizeBrainProviders(patch.brain.providers).map((p) => ({

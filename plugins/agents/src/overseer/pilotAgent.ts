@@ -8,6 +8,7 @@ import { resolveExecutor } from './routing.js';
 import { modelsBlock, parallelismBlock } from './planner.js';
 import { resolvePrEnabled } from './prMode.js';
 import { freeAgentName } from '../lib/uniqueName.js';
+import { agentsPluginConfig, type AgentsPluginConfig } from '../config.js';
 
 /** The planning prompt: the Pilot reads the repo, then submits a structured plan via the elowen CLI.
  *  It must NOT implement anything and must NOT spawn agents — the engine owns orchestration.
@@ -27,16 +28,19 @@ export function pilotPrompt(goal: string, jobId: string, renderPrompt: RenderPro
 /** Build the Pilot spawner: launches a repo-aware planning agent for an agent-mode plan job. The
  *  agent submits its plan back through the elowen CLI (`elowen plan submit`); the daemon never reads its
  *  stdout. Returns a function matching the `pilot` ServerDep. */
-export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: { get(id: number): Project | null }; planJobs: PlanJobStore; tmux: TmuxDriver; nameAgent: () => string; cli?: string; prompts: PromptService }): (job: PlanJob, projectPath: string) => Promise<void> {
+export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; pluginConfig?: () => AgentsPluginConfig; projects: { get(id: number): Project | null }; planJobs: PlanJobStore; tmux: TmuxDriver; nameAgent: () => string; cli?: string; prompts: PromptService }): (job: PlanJob, projectPath: string) => Promise<void> {
+  // Optional so the many test constructions keep configuring via autopilot.*: the fallback IS the
+  // documented pre-migration shape (agentsPluginConfig falls back to the live autopilot values).
+  const pcfg = deps.pluginConfig ?? (() => agentsPluginConfig({}, deps.config));
   return async (job, projectPath) => {
     const cfg = deps.config.get();
-    const spec = resolveExecutor([`exec:${job.pilotExec || cfg.autopilot.pilotExec}`], { program: 'claude-code', model: 'sonnet' });
+    const spec = resolveExecutor([`exec:${job.pilotExec || pcfg().pilotExec}`], { program: 'claude-code', model: 'sonnet' });
     const project = deps.projects.get(job.projectId);
     const notes = project?.notes;
     const models = job.autoModel ? modelsBlock(cfg.allowedExecs, cfg.modelNotes) : undefined;
     // Tell the Pilot whether it may plan parallel (independent) phases: only when the mission both
     // allows >1 session AND will run in an isolated worktree (resolved the same way runtime does).
-    const isolated = resolvePrEnabled(job.prEnabled ?? null, project?.pr_enabled ?? null, cfg.autopilot.prEnabled);
+    const isolated = resolvePrEnabled(job.prEnabled ?? null, project?.pr_enabled ?? null, pcfg().prEnabled);
     // Read maxSessions from the job itself (set at plan time independent of engage), so "plan now,
     // engage later" still plans a parallel DAG. Fall back to engage's value for older callers.
     const parallelism = parallelismBlock(job.maxSessions ?? job.engage?.maxSessions ?? 1, isolated);

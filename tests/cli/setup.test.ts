@@ -18,9 +18,9 @@ describe('cli/setup.buildSetupPlan', () => {
   });
   it('builds a CLI-engine patch (pilot + overseer exec, no API key) when pilotExec is set', () => {
     const plan = buildSetupPlan({ ...answers, pilotExec: 'codex:gpt-5.5' });
-    expect(plan.config).toEqual({ autopilot: { pilotExec: 'codex:gpt-5.5', overseerExec: 'codex:gpt-5.5' } });
-    expect(plan.config.autopilot).not.toHaveProperty('apiKey');
-    expect(plan.config.autopilot).not.toHaveProperty('model');
+    // The CLI-engine execs are agents-plugin config since wave 2 — no autopilot patch at all.
+    expect(plan.config).toEqual({ agents: { pilotExec: 'codex:gpt-5.5', overseerExec: 'codex:gpt-5.5' } });
+    expect(plan.config).not.toHaveProperty('autopilot');
   });
 });
 

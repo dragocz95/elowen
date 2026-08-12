@@ -6,17 +6,22 @@ import { SettingsGroup, SettingsRow } from './SettingsSurface';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { useTranslation } from '../../lib/i18n';
-import { useConfig } from '../../lib/queries';
-import { useUpdateConfig } from '../../lib/mutations';
+import { usePluginDetail } from '../../lib/queries';
+import { useSavePluginConfig } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
-/** Settings → GitHub: the PR workflow defaults and the write-only token, auto-persisted per field. */
+/** Settings → GitHub: the PR workflow default and the write-only token, auto-persisted per field.
+ *  Both keys belong to the agents plugin's config slice since the wave-2 config split (the PR
+ *  workflow and the gh token are consumed only by mission PR automation), so this section reads
+ *  GET /plugins/agents and saves through PATCH /plugins/agents/config. Naming the plugin here is a
+ *  DOCUMENTED exception to the settings name-isolation rule (see pluginNameIsolation.test.ts);
+ *  the removal path is moving this section into the plugin's own settings deck. */
 export function GithubSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
-  const { data: config } = useConfig();
-  const update = useUpdateConfig();
+  const { data: detail } = usePluginDetail('agents');
+  const save = useSavePluginConfig();
   const { toast } = useToast();
   const { t } = useTranslation();
   const [ghToken, setGhToken] = useState('');
@@ -24,23 +29,22 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
   // The GitHub text fields edit in one side drawer opened via pod orbs.
   const [githubOpen, setGithubOpen] = useState(false);
 
-  // Seed once from the config. useConfig is stale-while-revalidate, so it refetches on window focus;
-  // re-seeding on every refetch would wipe a field the user just edited before the autosave fires.
+  // Seed once from the plugin detail. The query is stale-while-revalidate, so it refetches on window
+  // focus; re-seeding on every refetch would wipe a field the user just edited before autosave fires.
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
-    if (config && !seeded) {
+    if (detail && !seeded) {
       setSeeded(true);
-      setPrEnabled(config.autopilot.prEnabled ?? false);
+      setPrEnabled(detail.config?.prEnabled === true);
     }
-  }, [config, seeded]);
+  }, [detail, seeded]);
 
   // GitHub / PR-native settings live in their own section. The global prEnabled is the DEFAULT for new
-  // projects; each project can override it. The ghToken is write-only — sent only when freshly typed.
-  // The PR lifecycle knobs (base branch, auto-open, verify command) moved to the agents plugin's
-  // settings deck — they are plugin-owned config (plugins.config.agents) since the F2 config split.
+  // projects; each project can override it. The ghToken is write-only — sent only when freshly typed
+  // (a secret field arriving empty keeps the stored value, so it is simply omitted here).
   const saveGithub = async () => {
     try {
-      await update.mutateAsync({ autopilot: { prEnabled, ...(ghToken ? { ghToken } : {}) } });
+      await save.mutateAsync({ name: 'agents', values: { prEnabled, ...(ghToken ? { ghToken } : {}) } });
       if (ghToken) setGhToken('');
     } catch (error) { toast(String(error), 'error'); throw error; }
   };
@@ -50,7 +54,7 @@ export function GithubSection({ onSaveState }: { onSaveState?: (section: string,
     onSaveState?.('github', status, status === 'error' ? retry : undefined);
   }, [status, onSaveState, retry]);
 
-  const ghTokenSet = config?.autopilot.ghTokenSet ?? false;
+  const ghTokenSet = detail?.secretsSet?.includes('ghToken') ?? false;
 
   return (
     <>

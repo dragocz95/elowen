@@ -4,6 +4,7 @@ import type { PluginHostConfig as ConfigStore, PluginHostPrompts as PromptServic
 import type { DecisionQueue } from './decisionQueue.js';
 import type { RenderPrompt } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from './routing.js';
+import { agentsPluginConfig, type AgentsPluginConfig } from '../config.js';
 
 /** The parked overseer's loop prompt: poll for a decision, judge it, answer, repeat. It reasons but
  *  never edits the repo — its only side effects are the two elowen CLI verbs. */
@@ -28,7 +29,10 @@ export interface OverseerController {
 /** Lifecycle of the parked per-mission overseer agent. When `overseerExec` is empty the controller
  *  is inert (the relay fallback in bootstrap handles decisions inline). The agent is parked: it
  *  long-polls and sits idle (0 tokens) until the engine/deriver enqueue a decision. */
-export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; config: ConfigStore; queue: DecisionQueue; cli?: string; missionGit?: { worktreeFor(missionId: string): string | null }; missions?: { get(id: string): { created_by: number | null; overseer_exec?: string } | null }; prompts: PromptService }): OverseerController {
+export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; config: ConfigStore; pluginConfig?: () => AgentsPluginConfig; queue: DecisionQueue; cli?: string; missionGit?: { worktreeFor(missionId: string): string | null }; missions?: { get(id: string): { created_by: number | null; overseer_exec?: string } | null }; prompts: PromptService }): OverseerController {
+  // Optional so the test constructions keep configuring via autopilot.* — the fallback IS the
+  // documented pre-migration shape (agentsPluginConfig falls back to the live autopilot values).
+  const pcfg = deps.pluginConfig ?? (() => agentsPluginConfig({}, deps.config));
   // In-flight park per mission. The guard below is a check-then-act across an await, and engage, the
   // mission tick and the watchdog all call park concurrently — without serialization both callers observe
   // the session missing and launch, and the second `tmux new-session` throws "duplicate session".
@@ -37,7 +41,7 @@ export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; conf
   // the reconcile sweep) routes through here, so the idempotency guard lives here too.
   const parkOnce = async (missionId: string, projectId: number, projectPath: string): Promise<void> => {
     const mission = deps.missions?.get(missionId);
-    const exec = mission?.overseer_exec || deps.config.get().autopilot.overseerExec;
+    const exec = mission?.overseer_exec || pcfg().overseerExec;
     if (!exec) return; // relay fallback — no parked agent
     // Idempotent: a live overseer session IS the desired state. If one is already parked for this
     // mission, leave it — re-launching would make `tmux new-session` throw "duplicate session" and

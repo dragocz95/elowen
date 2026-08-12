@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createAskService } from './askService.js';
+import { agentsPluginConfig } from '../config.js';
 import { resolveOwnerId } from '../lib/owner.js';
 import { json, canProject, agentForbidden, type ApiAuth } from './http.js';
 import type { AskService } from './askService.js';
@@ -31,6 +32,7 @@ export function registerAsksApi(ctx: PluginContext, rt: () => AgentsRuntime): vo
       publishEvent: (e) => ctx.publishEvent(e),
       eventsRead: ctx.host.stores().eventsRead,
       config: ctx.host.config(),
+      pluginConfig: () => agentsPluginConfig(ctx.config, ctx.host.config()),
       now: () => Date.now(),
     });
     return askService;

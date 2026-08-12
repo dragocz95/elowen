@@ -197,7 +197,13 @@ export function buildOldFixture(dbPath) {
   // auto-enable migration must fix (an upgrade with running missions must not lose the subsystem).
   const settingsData = JSON.stringify({
     plugins: { config: { someplatform: { rolePolicies: [{ name: 'member', tools: ['read_file', 'list_dir', '*'] }] } } },
-    autopilot: { overseerModel: 'legacy-overseer-model', prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm run verify' },
+    // Wave 1 keys (overseerModel + the PR lifecycle) AND wave 2 keys (pilot/overseer execs,
+    // reviewOnDone, tddMode, prEnabled + the top-level ghToken) — both one-shot copies must run.
+    autopilot: {
+      overseerModel: 'legacy-overseer-model', prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm run verify',
+      pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true,
+    },
+    ghToken: 'legacy-gh-token',
   });
   db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(settingsData);
 

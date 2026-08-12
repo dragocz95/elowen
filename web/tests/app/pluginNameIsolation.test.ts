@@ -11,7 +11,10 @@ import { join } from 'node:path';
  *  - 'msteams' in PluginConfigEditor (TeamsAppPackageSection) — not yet extracted.
  *  - PluginLivePreview's per-platform config previews — decorative previews rendered inside the core
  *    schema editor; extraction candidate for a later batch.
- *  - AgentsPluginGate/useAgentsPlugin — the agents presence hook, scheduled for a later batch. */
+ *  - AgentsPluginGate/useAgentsPlugin — the agents presence hook, scheduled for a later batch.
+ *  - GithubSection reads/writes the agents plugin's config slice (usePluginDetail('agents') +
+ *    useSavePluginConfig) — prEnabled/ghToken are plugin-owned since config wave 2; the removal path
+ *    is moving the whole GitHub section into the plugin's settings deck. */
 const SETTINGS_DIR = join(process.cwd(), 'modules', 'settings');
 const EXCEPTIONS: Record<string, string[]> = {
   'PluginConfigEditor.tsx': ["'msteams'"],

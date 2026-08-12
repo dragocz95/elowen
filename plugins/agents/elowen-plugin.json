@@ -61,6 +61,36 @@
       "hint": "Relay model for overseer decisions; empty falls back to the planner model."
     },
     {
+      "key": "pilotExec",
+      "label": "Pilot exec",
+      "type": "string",
+      "placeholder": "(relay planning)",
+      "default": "",
+      "hint": "Agent CLI exec the planning Pilot runs on; empty plans over the relay API."
+    },
+    {
+      "key": "overseerExec",
+      "label": "Overseer exec",
+      "type": "string",
+      "placeholder": "(relay decisions)",
+      "default": "",
+      "hint": "Agent CLI exec the parked per-mission overseer runs on; empty decides over the relay API."
+    },
+    {
+      "key": "reviewOnDone",
+      "label": "Review on phase completion",
+      "type": "boolean",
+      "default": false,
+      "hint": "After a phase closes, the overseer judges the result; if it rejects, the next phase is blocked."
+    },
+    {
+      "key": "tddMode",
+      "label": "TDD mission mode",
+      "type": "boolean",
+      "default": false,
+      "hint": "Autopilot workers must write a failing test first, then implement, then verify."
+    },
+    {
       "key": "sec_pr",
       "label": "PR-native missions",
       "type": "section",
@@ -88,6 +118,19 @@
       "placeholder": "(none)",
       "default": "",
       "hint": "Command that must exit 0 in the worktree before any PR opens; empty disables the gate."
+    },
+    {
+      "key": "prEnabled",
+      "label": "PR workflow",
+      "type": "boolean",
+      "default": false,
+      "hint": "Global default for the PR-native (isolated worktree) mission workflow; projects and epics can override it."
+    },
+    {
+      "key": "ghToken",
+      "label": "GitHub token",
+      "type": "secret",
+      "hint": "Token for PR create/merge/review polling; empty keeps the gh CLI's own authentication."
     }
   ],
   "web": {

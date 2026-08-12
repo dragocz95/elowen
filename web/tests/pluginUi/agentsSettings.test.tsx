@@ -18,6 +18,7 @@ ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
 
 let putBody: unknown = null;
+let patchBody: unknown = null;
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/index.js', apiVersion: 1, nav: [], settings: [], strings }])),
   http.get('*/api/config', () => HttpResponse.json({
@@ -29,10 +30,13 @@ const server = setupServer(
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ ok: true }); }),
   http.get('*/api/brain/models', () => HttpResponse.json([])),
   http.get('*/api/system/skills', () => HttpResponse.json({ skills: [{ provider: 'claude-code', present: true, installed: true, upToDate: false }, { provider: 'codex', present: false, installed: false, upToDate: false }] })),
-  // The plugin-config sub-section (overseer model + PR keys) fetches the plugin detail.
-  http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: { overseerModel: '' }, configSchema: [{ key: 'overseerModel', type: 'string', label: 'Overseer model' }], i18n: {} })),
+  // The plugin-config sub-section (overseer model + PR keys) AND the AutopilotSection's agents-only
+  // knobs (pilot/overseer execs, review/TDD toggles — plugin slice since config wave 2) fetch the
+  // plugin detail; saves go through PATCH /plugins/agents/config.
+  http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: { overseerModel: '', pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false }, configSchema: [{ key: 'overseerModel', type: 'string', label: 'Overseer model' }], i18n: {} })),
+  http.patch('*/api/plugins/agents/config', async ({ request }) => { patchBody = await request.json(); return HttpResponse.json({ ok: true }); }),
 );
-beforeEach(() => { putBody = null; });
+beforeEach(() => { putBody = null; patchBody = null; });
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('agents plugin settings — Autopilot section', () => {
@@ -44,12 +48,14 @@ describe('agents plugin settings — Autopilot section', () => {
     expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy(); // notes edit inline (no drawer)
 
     // Auto-persist: nudging any autopilot field saves shortly after (no Save button for the section).
+    // The relay credentials PUT the main config; the agents-only knobs PATCH the plugin slice.
     fireEvent.change(screen.getByPlaceholderText('claude-opus-4-8'), { target: { value: 'relay-model-x' } });
     await waitFor(() => {
-      const ap = (putBody as { autopilot: { model: string; pilotExec: string; overseerExec: string } }).autopilot;
+      const ap = (putBody as { autopilot: { model: string } }).autopilot;
       expect(ap.model).toBe('relay-model-x');
-      expect(ap.pilotExec).toBe(''); // relay mode clears the agent execs
-      expect(ap.overseerExec).toBe('');
+      const values = (patchBody as { values: { pilotExec: string; overseerExec: string } }).values;
+      expect(values.pilotExec).toBe(''); // relay mode clears the agent execs (plugin slice)
+      expect(values.overseerExec).toBe('');
     });
   });
 
@@ -61,14 +67,14 @@ describe('agents plugin settings — Autopilot section', () => {
     fireEvent.click(screen.getByText('CLI Tools')); // mode toggle — auto-persists the agent execs
     expect(screen.getByText('Planner model')).toBeTruthy(); // unified label in both modes
     await waitFor(() => {
-      const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string; reviewOnDone: boolean } }).autopilot;
-      expect(ap.pilotExec).not.toBe(''); // seeded with a default model on switch
-      expect(ap.overseerExec).not.toBe('');
-      expect(ap.reviewOnDone).toBe(false);
+      const values = (patchBody as { values: { pilotExec: string; overseerExec: string; reviewOnDone: boolean } }).values;
+      expect(values.pilotExec).not.toBe(''); // seeded with a default model on switch (plugin slice)
+      expect(values.overseerExec).not.toBe('');
+      expect(values.reviewOnDone).toBe(false);
     });
   });
 
-  it('toggles TDD mission mode and persists autopilot.tddMode', async () => {
+  it('toggles TDD mission mode and persists the plugin-slice tddMode', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><AgentsSettings /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
@@ -76,7 +82,7 @@ describe('agents plugin settings — Autopilot section', () => {
     const toggle = screen.getByRole('switch', { name: 'TDD mission mode' });
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
-    await waitFor(() => expect((putBody as { autopilot: { tddMode: boolean } }).autopilot.tddMode).toBe(true));
+    await waitFor(() => expect((patchBody as { values: { tddMode: boolean } }).values.tddMode).toBe(true));
   });
 
   it('saves the run defaults (executor/autonomy/max sessions) as their own PUT', async () => {

@@ -37,7 +37,7 @@ function setup(prEnabled: boolean) {
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled } });
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
+  const missionGit = new MissionGit({ prs, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   const tmux = new FakeTmuxDriver();
   const launch = vi.fn().mockResolvedValue({ session: 'elowen-AgentX' });
   const engine = new MissionEngine({ git: gitSeam,

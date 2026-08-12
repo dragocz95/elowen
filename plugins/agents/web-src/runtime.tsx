@@ -36,7 +36,6 @@ interface MutationResult<TVars> {
 interface AutopilotConfig {
   model: string; apiUrl: string; notes: string;
   providerId?: string; apiKeySet?: boolean;
-  pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean;
 }
 export interface CliProviderConfig { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }
 interface AppConfig {

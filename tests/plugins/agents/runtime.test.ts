@@ -36,6 +36,7 @@ function fakeDeps() {
       autopilotRelay: () => null,
       ghToken: () => null,
     } as unknown as PluginHostConfig,
+    pluginConfig: () => ({ overseerModel: '', prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, ghToken: '' }),
     relayClient: () => ({ decide: async () => ({ text: '' }) }),
     git: { projectHead: async () => '', projectRangeDiff: async () => [] },
     elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined },

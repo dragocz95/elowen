@@ -554,25 +554,31 @@ describe('BrainClient', () => {
     }
   });
 
-  it('getTddMode reads autopilot.tddMode from the public config', async () => {
-    const f = vi.fn(async () => j(200, { autopilot: { tddMode: true } })) as unknown as typeof fetch;
+  it('getTddMode reads tddMode from the agents plugin detail (config wave 2)', async () => {
+    const f = vi.fn(async () => j(200, { config: { tddMode: true } })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
     expect(await c.getTddMode()).toBe(true);
-    expect(f).toHaveBeenCalledWith('http://x/config', expect.objectContaining({ headers: expect.anything() }));
+    expect(f).toHaveBeenCalledWith('http://x/plugins/agents', expect.objectContaining({ headers: expect.anything() }));
   });
 
   it('getTddMode defaults to false when the flag is absent', async () => {
-    const f = vi.fn(async () => j(200, { autopilot: {} })) as unknown as typeof fetch;
+    const f = vi.fn(async () => j(200, { config: {} })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
     expect(await c.getTddMode()).toBe(false);
   });
 
-  it('setTddMode PUTs the autopilot.tddMode patch', async () => {
-    const f = vi.fn(async () => j(200, { autopilot: { tddMode: true } })) as unknown as typeof fetch;
+  it('getTddMode maps a 404 (agents plugin disabled) to a clear error', async () => {
+    const f = vi.fn(async () => j(404, { error: 'unknown plugin' })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await expect(c.getTddMode()).rejects.toThrow(/agents plugin/i);
+  });
+
+  it('setTddMode PATCHes the agents plugin config (config wave 2)', async () => {
+    const f = vi.fn(async () => j(200, { ok: true })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
     await c.setTddMode(true);
-    expect(f).toHaveBeenCalledWith('http://x/config', expect.objectContaining({
-      method: 'PUT', body: JSON.stringify({ autopilot: { tddMode: true } }),
+    expect(f).toHaveBeenCalledWith('http://x/plugins/agents/config', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ values: { tddMode: true } }),
     }));
   });
 

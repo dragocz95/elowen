@@ -464,23 +464,28 @@ export class BrainClient {
     } catch { return DEFAULT_PUBLIC_BRAND; }
   }
 
-  /** Current global TDD mission mode flag from the public daemon config (the `/tdd` command). */
+  /** Current global TDD mission mode flag (the `/tdd` command). The flag is agents-plugin config
+   *  since the wave-2 config split, so it reads the plugin detail — the command is admin-only,
+   *  matching the endpoint's gate. */
   async getTddMode(): Promise<boolean> {
-    const res = await this.f(`${this.o.base}/config`, { headers: this.headers() });
+    const res = await this.f(`${this.o.base}/plugins/agents`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
-    if (!res.ok) throw new Error(`elowen ${res.status} on /config`);
-    const body = (await res.json()) as { autopilot?: { tddMode?: boolean } };
-    return body.autopilot?.tddMode ?? false;
+    if (res.status === 403) throw new Error('only an admin can read TDD mode');
+    if (res.status === 404) throw new Error('TDD mode needs the agents plugin');
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/agents`);
+    const body = (await res.json()) as { config?: { tddMode?: boolean } };
+    return body.config?.tddMode === true;
   }
 
   /** Flip the global TDD mission mode flag (admin-only; the `/tdd on|off` command). */
   async setTddMode(on: boolean): Promise<void> {
-    const res = await this.f(`${this.o.base}/config`, {
-      method: 'PUT', headers: this.headers(true), body: JSON.stringify({ autopilot: { tddMode: on } }),
+    const res = await this.f(`${this.o.base}/plugins/agents/config`, {
+      method: 'PATCH', headers: this.headers(true), body: JSON.stringify({ values: { tddMode: on } }),
     });
     if (res.status === 401) throw new Unauthorized();
     if (res.status === 403) throw new Error('only an admin can change TDD mode');
-    if (!res.ok) throw new Error(`elowen ${res.status} on /config`);
+    if (res.status === 404) throw new Error('TDD mode needs the agents plugin');
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/agents/config`);
   }
 
   /** Save the statusline display toggles (admin-only; the `/statusline` modal). Applies live via the

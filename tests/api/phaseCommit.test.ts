@@ -37,12 +37,12 @@ function build(prEnabled: boolean) {
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled } });
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, config, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
+  const missionGit = new MissionGit({ prs, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   const bus = new EventBus();
   // The phase commit lives in the agents plugin's review service now — wire its onTaskClosed into the
   // server exactly like bootstrap does through the 'agents' control.
   const review = createReviewService({
-    tasks, missions, config: config as never, decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
+    tasks, missions, pluginConfig: () => agentsPluginConfig({}, config as never), decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
     git: { projectHead, projectRangeDiff }, missionGit,
     engine: { resumeStalled: async () => {}, stopTask: async () => {}, tick: async () => {} },
     publish: (e) => bus.publish(e), pathFor: (pid) => projects.get(pid)?.path ?? repo,

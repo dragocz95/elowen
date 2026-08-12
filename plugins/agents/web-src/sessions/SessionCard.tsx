@@ -1,7 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TerminalSquare, SquareSlash, Power, SquareTerminal, Eye, Bot, MoreHorizontal } from 'lucide-react';
 import { runtime, Link, type SessionInfo, type ContextMenuState } from '../runtime';
+
+/** The pilot/overseer execs from the plugin's own config slice (config wave 2 — no longer on the
+ *  public /config autopilot view). Fetched once per bundle load and shared by every card; the detail
+ *  endpoint is admin-only, so a non-admin simply loses the model pill on the autopilot's own
+ *  reasoning agents (worker pills come from the task exec and are unaffected). */
+let execsPromise: Promise<{ pilotExec?: string; overseerExec?: string }> | null = null;
+function useAgentsExecs(): { pilotExec?: string; overseerExec?: string } {
+  const { api } = runtime();
+  const [v, setV] = useState<{ pilotExec?: string; overseerExec?: string }>({});
+  useEffect(() => {
+    execsPromise ??= api('/plugins/agents')
+      .then((d) => {
+        const cfg = (d as { config?: { pilotExec?: unknown; overseerExec?: unknown } }).config ?? {};
+        return {
+          pilotExec: typeof cfg.pilotExec === 'string' ? cfg.pilotExec : undefined,
+          overseerExec: typeof cfg.overseerExec === 'string' ? cfg.overseerExec : undefined,
+        };
+      })
+      .catch(() => ({}));
+    let alive = true;
+    void execsPromise.then((c) => { if (alive) setV(c); });
+    return () => { alive = false; };
+  }, [api]);
+  return v;
+}
 
 export function SessionCard({ info, onOpenTerminal, compact = false }: { info: SessionInfo; onOpenTerminal: () => void; compact?: boolean }) {
   const { components: C, hooks, utils } = runtime();
@@ -10,7 +35,7 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   const { toast } = hooks.useToast();
   const { t } = hooks.useTranslation();
   const tasks = hooks.useTasks();
-  const config = hooks.useConfig();
+  const agentsExecs = useAgentsExecs();
   const name = info.name;
   const signal = hooks.useSessionSignal(name);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
@@ -21,8 +46,8 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   const exec = utils.taskExec(task?.labels);
   // The model running in this session: the task's exec for a worker, else the configured
   // pilot/overseer backend for the autopilot's own reasoning agents.
-  const roleExec = info.role === 'overseer' ? config.data?.autopilot?.overseerExec
-    : info.role === 'pilot' ? config.data?.autopilot?.pilotExec : undefined;
+  const roleExec = info.role === 'overseer' ? agentsExecs.overseerExec
+    : info.role === 'pilot' ? agentsExecs.pilotExec : undefined;
   // `taskExec` returns '' (not undefined) when a session has no task — pilot/overseer agents. Use
   // `||` so that empty worker exec falls through to the configured pilot/overseer backend, otherwise
   // `?? ` keeps the '' and the model pill never renders for the autopilot's own reasoning agents.

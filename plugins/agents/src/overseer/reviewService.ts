@@ -2,7 +2,7 @@ import { projectReviewDiff } from './reviewDiff.js';
 import { buildReviewContext } from './reviewContext.js';
 import { snapshotTaskChanges } from './taskSnapshot.js';
 import { logger } from '../lib/logger.js';
-import type { PluginHostConfig } from '../../../../src/plugins/api.js';
+import type { AgentsPluginConfig } from '../config.js';
 import type { Task } from '../../../../src/store/types.js';
 import type { TaskStore } from '../../../../src/store/taskStore.js';
 import type { MissionStore } from '../store/missionStore.js';
@@ -21,7 +21,8 @@ const REVIEW_FIX_BUDGET = 2;
 export interface ReviewServiceDeps {
   tasks: TaskStore;
   missions: MissionStore;
-  config: PluginHostConfig;
+  /** The plugin's own effective config (reviewOnDone + overseerExec gate the review). */
+  pluginConfig: () => AgentsPluginConfig;
   decisionQueue: DecisionQueue;
   gitLock: KeyedMutex;
   git: GitReader;
@@ -83,13 +84,13 @@ export function createReviewService(d: ReviewServiceDeps): ReviewService {
     // and only an approving verdict releases them. A reject verdict leaves them blocked,
     // so a bad result halts the mission for a human instead of rolling on. Default off, and only
     // active with an agent overseer configured.
-    const cfg = d.config.get();
+    const cfg = d.pluginConfig();
     const mission = d.missions.activeForEpic(existing.parent_id) ?? undefined;
     // Tracks whether this close handed the phase to the overseer review gate. When it did, the
     // phase's worktree commit happens on the approving verdict (below); when it didn't, the close
     // is final and we commit right here — so a rejected phase never lands a commit.
     let reviewEnqueued = false;
-    if (mission && cfg.autopilot.reviewOnDone && (mission.overseer_exec || cfg.autopilot.overseerExec)) {
+    if (mission && cfg.reviewOnDone && (mission.overseer_exec || cfg.overseerExec)) {
       // Close the gate now: block every open direct dependent so no tick spawns it while the review
       // is pending. Track exactly which ones we gated — the verdict releases only these, never a
       // dependent left blocked by a different cause (e.g. an earlier review on another dep).

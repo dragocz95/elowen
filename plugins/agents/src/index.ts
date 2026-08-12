@@ -149,7 +149,7 @@ export function register(ctx: PluginContext): void {
   ctx.registerReadinessCheck(() => {
     const cfg = ctx.host.config();
     const relay = cfg.autopilotRelay();
-    const pilotExec = cfg.get().autopilot.pilotExec;
+    const pilotExec = agentsPluginConfig(ctx.config, cfg).pilotExec;
     const ok = relay != null || pilotExec.length > 0;
     return {
       id: 'missions', label: 'Missions', ok,

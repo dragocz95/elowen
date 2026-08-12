@@ -49,8 +49,10 @@ export interface AskServiceDeps {
   publishEvent: (e: ElowenEvent) => void;
   /** Read-only activity-log view (host eventsRead) — absent in a process without an EventStore. */
   eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
-  /** Live config reads: the overseer exec (parked-agent path) and the ask-history window. */
-  config: { get(): { autopilot: { overseerExec?: string }; brain: { limits: { askHistoryTurns: number } } } };
+  /** Live config read: the ask-history window. */
+  config: { get(): { brain: { limits: { askHistoryTurns: number } } } };
+  /** The plugin's own effective config: overseerExec gates the parked-agent path. */
+  pluginConfig: () => { overseerExec: string };
   now: () => number;
 }
 
@@ -129,7 +131,7 @@ export function createAskService(d: AskServiceDeps): AskService {
     // (waiting out the decision timeout for an overseer that will never poll is pointless).
     const task = d.tasks.get(taskId);
     const mission = task?.parent_id ? d.missions.activeForEpic(task.parent_id) ?? undefined : undefined;
-    const overseerParked = !!mission && !!(mission.overseer_exec || d.config.get().autopilot.overseerExec);
+    const overseerParked = !!mission && !!(mission.overseer_exec || d.pluginConfig().overseerExec);
     if (overseerParked) {
       // Hand the overseer the whole thread (the just-asked question is its last entry) so it can answer
       // a follow-up in context, not just the latest line in isolation.

@@ -165,6 +165,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // One-shot copy of the plugin-exclusive autopilot keys into plugins.config.agents (lossless —
   // autopilot.* keeps its values for rollback). Same daemon-only discipline as above.
   if (opts.migrate !== false) config.migrateAgentsPluginConfig();
+  // Config wave 2 (batch 3a): the remaining agents-only keys (pilot/overseer execs, reviewOnDone,
+  // tddMode, prEnabled, ghToken) follow the same one-shot lossless copy.
+  if (opts.migrate !== false) config.migrateAgentsPluginConfigWave2();
   // Seed the daemon-wide LSP manager from the persisted toggle — before this, /lsp silently reset to
   // "on" at every daemon restart. Runtime flips (the /lsp command, PUT /config) keep both in sync.
   lspManager().setEnabled(config.get().lspEnabled);

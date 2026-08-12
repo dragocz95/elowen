@@ -45,7 +45,11 @@ function PluginConfigSection() {
   if (failed) return <C.ErrorState message={t.common.daemonUnreachable} />;
   if (!detail) return <C.LoadingState variant="list" />;
 
-  const fields = detail.configSchema ?? [];
+  // Keys with a richer editor elsewhere: the AutopilotSection above (backend picker, review/TDD
+  // toggles) and the core GitHub section (prEnabled + the write-only token). Rendering them here too
+  // would give the same value two competing editors on one screen.
+  const CUSTOM_EDITED = new Set(['pilotExec', 'overseerExec', 'reviewOnDone', 'tddMode', 'prEnabled', 'ghToken']);
+  const fields = (detail.configSchema ?? []).filter((f) => !CUSTOM_EDITED.has(f.key));
   const tr = detail.i18n?.[locale]?.fields;
   const label = (f: SchemaField) => tr?.[f.key]?.label ?? f.label;
   const hint = (f: SchemaField) => tr?.[f.key]?.hint ?? f.hint;
@@ -58,7 +62,8 @@ function PluginConfigSection() {
       // hot-reloads the plugin, so the runtime picks the values up immediately.
       const payload: Record<string, unknown> = {};
       for (const f of fields) { if (f.type !== 'section' && values[f.key] !== undefined) payload[f.key] = values[f.key]; }
-      await api('/plugins/agents/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+      // The daemon expects `{ values }` — the bare payload used to 400 ("values must be an object").
+      await api('/plugins/agents/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values: payload }) });
       setDirty(false);
       toast(t.common.saved);
     } catch {
