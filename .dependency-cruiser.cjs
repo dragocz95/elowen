@@ -84,6 +84,17 @@ module.exports = {
       to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
+      name: 'plugin-bundle-not-to-web-app',
+      severity: 'error',
+      comment: 'A plugin browser bundle (plugins/*/web-src) is built standalone by @elowen/plugin-ui-kit '
+        + 'and must reach the app ONLY through window.ElowenUiRuntime, narrowed in its own runtime module. '
+        + 'Importing web/ would bundle a second copy of the app (a second react-query client, a second set '
+        + 'of components) into a file the daemon serves next to the real one. Its TESTS are exempt: they '
+        + 'run inside the web app and install the real runtime from web/lib/pluginUi.',
+      from: { path: '^plugins/[^/]+/web-src/', pathNot: '\\.(test|spec)\\.[tj]sx?$' },
+      to: { path: '^web/' },
+    },
+    {
       name: 'no-test-in-prod',
       severity: 'error',
       comment: 'Production code must not import test files.',
