@@ -8,7 +8,7 @@ import { nextCronRun } from '../../lib/cron';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
-import { usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, useAgentsPlugin } from '../../lib/queries';
+import { usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe, useAgentsPlugin, useCronjobPlugin } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 import { ElowenPresence } from './ElowenPresence';
 import type { AgentPresenceState } from './useAgentPresence';
@@ -78,7 +78,10 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   const agents = (infos.data ?? []).filter((session: SessionInfo) => session.role === 'agent').length;
 
   const me = useMe();
-  const jobs = useCronJobs(me.data?.user?.is_admin ?? false);
+  // Without the cron plugin there is no schedule to read: asking anyway earns a 503 and would render an
+  // empty pod that reads as "nothing scheduled" rather than "this instance has no scheduler".
+  const cron = useCronjobPlugin();
+  const jobs = useCronJobs(cron && (me.data?.user?.is_admin ?? false));
   const next = useMemo(() => {
     let best: { at: number; name: string } | null = null;
     for (const job of jobs.data ?? []) {
@@ -122,14 +125,16 @@ export function HeroCosmos({ now, state, presenceLabel }: {
         href: '/p/agents/sessions',
       },
     ] : []),
-    {
-      id: 'cron',
+    ...(cron ? [{
+      id: 'cron' as const,
       icon: AlarmClock,
       label: t.dashboard.nextRunLabel,
       value: next ? new Date(next.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '—',
       detail: next?.name ?? t.dashboard.noCron,
-      href: '/settings?section=cron',
-    },
+      // The plugin's own page. The previous target, `/settings?section=cron`, matched no parameter the
+      // Settings page reads (`?cat=`) and no section id it has, so the pod opened plain Settings.
+      href: '/p/cronjob/settings/jobs',
+    }] : []),
     {
       id: 'cost',
       icon: Coins,

@@ -9,7 +9,12 @@ import { EffectsProvider } from '../../../lib/useEffects';
 
 const NOW = new Date('2026-06-30T12:00:00Z').getTime();
 
-const AGENTS_UI = [{ name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: null }];
+// The instance these tests describe runs both plugins the cosmos reads: agents (decisions/agents pods)
+// and cronjob (the next-run pod). Each pod is asserted to disappear with its own plugin below.
+const AGENTS_UI = [
+  { name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: [] },
+  { name: 'cronjob', title: 'Cron', nav: [], settings: [{ id: 'jobs', label: 'Cron' }] },
+];
 
 function server(opts: { asks?: unknown[]; jobs?: unknown[]; pluginUi?: unknown[] } = {}) {
   return setupServer(
@@ -57,7 +62,7 @@ describe('HeroCosmos', () => {
     expect(within(nav).getByText('Next run')).toBeTruthy();
     expect(within(nav).getByText('This month')).toBeTruthy();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/settings?section=cron', '/stats']);
+    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/p/cronjob/settings/jobs', '/stats']);
   });
 
   it('tones the decisions pod as an alert while asks are pending', async () => {
@@ -70,7 +75,7 @@ describe('HeroCosmos', () => {
   });
 
   it('hides the decisions + agents pods when the agents plugin contributes no UI', async () => {
-    srv.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    srv.use(http.get('*/api/plugins/ui', () => HttpResponse.json(AGENTS_UI.filter((p) => p.name !== 'agents'))));
     renderCosmos();
 
     const nav = screen.getByRole('navigation', { name: 'Attention' });
@@ -80,7 +85,21 @@ describe('HeroCosmos', () => {
     expect(within(nav).queryByText('Decisions waiting')).toBeNull();
     expect(within(nav).queryByText('Agents active')).toBeNull();
     const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/settings?section=cron', '/stats']);
+    expect(hrefs).toEqual(['/p/cronjob/settings/jobs', '/stats']);
+  });
+
+  it('drops the next-run pod without the cron plugin instead of reporting an empty schedule', async () => {
+    // Left in, the pod would read "No scheduled jobs" — the same thing it says for an instance that HAS a
+    // scheduler and nothing in it — while its request 503s and its link led into a plugin that is gone.
+    srv.use(http.get('*/api/plugins/ui', () => HttpResponse.json(AGENTS_UI.filter((p) => p.name !== 'cronjob'))));
+    renderCosmos();
+
+    const nav = screen.getByRole('navigation', { name: 'Attention' });
+    expect(await within(nav).findByText('Agents active')).toBeTruthy();
+    expect(within(nav).queryByText('Next run')).toBeNull();
+    expect(within(nav).queryByText('No scheduled jobs')).toBeNull();
+    const hrefs = within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect(hrefs).toEqual(['/p/agents/escalations', '/p/agents/sessions', '/stats']);
   });
 
   it('reports the quiet state without alerts or scheduled jobs', async () => {

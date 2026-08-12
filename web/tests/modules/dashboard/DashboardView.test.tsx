@@ -16,8 +16,12 @@ const EVENTS = [
 /** Configurable per test: which sessions + tasks the daemon reports. */
 function server(opts: { sessions?: unknown[]; tasks?: unknown[]; jobs?: unknown[] } = {}) {
   return setupServer(
-    // The decisions/agents hero pods only render once /plugins/ui confirms the agents plugin has a UI.
-    http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: null }])),
+    // Each hero pod renders only once /plugins/ui confirms the plugin behind it: agents for the
+    // decisions/agents pods, cronjob for the next-run pod.
+    http.get('*/api/plugins/ui', () => HttpResponse.json([
+      { name: 'agents', title: 'Agents', nav: [{ route: 'sessions', label: 'Sessions' }], settings: [] },
+      { name: 'cronjob', title: 'Cron', nav: [], settings: [{ id: 'jobs', label: 'Cron' }] },
+    ])),
     http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })),
     http.get('*/api/tasks', () => HttpResponse.json(opts.tasks ?? [{ id: 't1', title: 'Alpha', status: 'in_progress', labels: ['agent:Iris'] }])),
     http.get('*/api/tasks/deps', () => HttpResponse.json([])),

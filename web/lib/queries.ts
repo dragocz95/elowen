@@ -267,24 +267,27 @@ export const useMe = () =>
 export const usePluginUi = (locale: string) =>
   useQuery({ queryKey: [...QUERY_KEYS.pluginUi, locale], queryFn: () => elowenClient.pluginUi(locale), staleTime: 60_000 });
 
-/** Whether the agents plugin contributes a browser UI on this instance — read from the SAME
- *  /plugins/ui listing the sidebar nav uses, so every agents-only affordance (dashboard pods, the
- *  escalations inbox, engage controls, agent status dots, /p/agents/* links) gates on one source.
- *  False while the listing loads: agents affordances appear only once the plugin is confirmed, so a
- *  plugin-less instance never flashes them. */
-export const useAgentsPlugin = (): boolean => {
+/** Whether a named plugin contributes a browser UI on this instance — read from the SAME /plugins/ui
+ *  listing the sidebar nav uses, so every affordance a plugin owns gates on one source. False while the
+ *  listing loads: a plugin's affordances appear only once it is confirmed, so a plugin-less instance
+ *  never flashes them. */
+const usePluginPresent = (name: string): boolean => {
   const { locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
-  return (pluginUi.data ?? []).some((p) => p.name === 'agents');
+  return (pluginUi.data ?? []).some((p) => p.name === name);
 };
 
-/** Whether the optional project editor is available. Core project screens use this gate before linking
- * to plugin-owned file routes, so a disabled editor cannot leave dead affordances or 503 requests. */
-export const useEditorPlugin = (): boolean => {
-  const { locale } = useTranslation();
-  const pluginUi = usePluginUi(locale);
-  return (pluginUi.data ?? []).some((p) => p.name === 'editor');
-};
+/** The agents plugin: dashboard pods, the escalations inbox, engage controls, agent status dots and
+ *  every /p/agents/* link hang off this one gate. */
+export const useAgentsPlugin = (): boolean => usePluginPresent('agents');
+
+/** The optional project editor. Core project screens check it before linking to plugin-owned file
+ *  routes, so a disabled editor cannot leave dead affordances or 503 requests. */
+export const useEditorPlugin = (): boolean => usePluginPresent('editor');
+
+/** The cron scheduler. The dashboard's "next run" pod reads its jobs, so without the plugin the pod
+ *  would report an empty schedule — indistinguishable from a schedule with nothing in it. */
+export const useCronjobPlugin = (): boolean => usePluginPresent('cronjob');
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */
