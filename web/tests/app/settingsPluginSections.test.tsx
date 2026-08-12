@@ -16,7 +16,7 @@ import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
 
-const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'CLI Agents', 'Plugins', 'GitHub', 'Autopilot', 'Memory', 'Data'];
+const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data'];
 
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: '', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),

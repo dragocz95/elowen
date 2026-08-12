@@ -36,7 +36,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'CLI Agents', 'Plugins', 'GitHub', 'Autopilot', 'Memory', 'Data',
+      'System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     expect(screen.getByText('12%')).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('SettingsPage', () => {
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
 
     await screen.findByRole('heading', { level: 1, name: 'System' });
-    for (const name of ['System', 'Elowen AI', 'Models', 'CLI Agents', 'Plugins', 'GitHub', 'Autopilot', 'Memory', 'Data']) {
+    for (const name of ['System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data']) {
       fireEvent.click(screen.getByRole('radio', { name }));
       await waitFor(() => {
         const activePanel = container.querySelector(`[data-settings-panel]:not([style*="display: none"])`);
@@ -128,7 +128,7 @@ describe('SettingsPage', () => {
     const search = await screen.findByRole('searchbox', { name: 'Search models…' });
     fireEvent.change(search, { target: { value: 'sonnet' } });
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'GitHub' }));
     await waitFor(() => expect(search).not.toBeVisible());
 
     fireEvent.click(screen.getByRole('radio', { name: 'Models' }));
@@ -157,80 +157,6 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       const body = putBody as { customModels: { label: string; exec: string }[] };
       expect(body.customModels).toContainEqual({ label: 'My Custom Model', exec: 'my/custom' });
-    });
-  });
-
-  it('renders the section selected by the persisted category key', async () => {
-    // The category picker now lives in the main sidebar; the page reads the active section from the
-    // persisted `elowen.settings.category` key (and the `?cat=` deep-link). Setting it selects the section.
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: Wrapper } = createWrapper();
-    const { unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
-    unmount();
-
-    // The default executor / autonomy / max-sessions cards moved under Autopilot (they are the
-    // pilot's run defaults), so the Executor card now renders in the autopilot section.
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: Wrapper2 } = createWrapper();
-    render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
-    await waitFor(() => expect(screen.getByText('Executor')).toBeTruthy());
-  });
-
-  it('defaults to Relay mode and saves relay fields (execs cleared)', async () => {
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
-    expect(screen.getByText('How autopilot reasons')).toBeTruthy();
-    expect(screen.getByText('Planner model')).toBeTruthy(); // same role labels in both modes
-
-    // Auto-persist: nudging any autopilot field saves shortly after (no Save button exists).
-    // The free-text planner model edits in the shared Autopilot drawer — open it via the pod first.
-    putBody = null;
-    fireEvent.click(screen.getAllByRole('button', { name: 'Planner model' })[0]);
-    fireEvent.change(await screen.findByPlaceholderText('claude-opus-4-8'), { target: { value: 'relay-model-x' } });
-    await waitFor(() => {
-      const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string } }).autopilot;
-      expect(ap.pilotExec).toBe(''); // relay mode clears the agent execs
-      expect(ap.overseerExec).toBe('');
-    });
-  });
-
-  it('switching to CLI Tools saves agent execs (same role labels in both modes)', async () => {
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
-
-    putBody = null;
-    fireEvent.click(screen.getByText('CLI Tools')); // mode toggle — auto-persists the agent execs
-    expect(screen.getByText('Planner model')).toBeTruthy(); // unified label, not a separate "Pilot backend"
-
-    await waitFor(() => {
-      const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string; reviewOnDone: boolean } }).autopilot;
-      expect(ap.pilotExec).not.toBe(''); // seeded with a default model on switch
-      expect(ap.overseerExec).not.toBe('');
-      expect(ap.reviewOnDone).toBe(false);
-    });
-  });
-
-  it('toggles TDD mission mode and persists autopilot.tddMode in both reasoning modes', async () => {
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
-
-    // The toggle lives with the run defaults (visible in the default relay mode) and starts off.
-    // The pod's orb shares the row's accessible name, so target the switch role explicitly.
-    const toggle = screen.getByRole('switch', { name: 'TDD mission mode' });
-    expect(toggle).not.toBeChecked();
-
-    putBody = null;
-    fireEvent.click(toggle);
-    await waitFor(() => {
-      const ap = (putBody as { autopilot: { tddMode: boolean } }).autopilot;
-      expect(ap.tddMode).toBe(true);
     });
   });
 
@@ -312,7 +238,7 @@ describe('SettingsPage', () => {
 const config = { allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: 'mind the guardrails' }, defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 }, security: { tokenTtlDays: 30 } };
 
 describe('Settings depth', () => {
-  it('renders model toggles and a defaults segmented control', async () => {
+  it('renders model toggles and falls back to System for a stale moved-section deep-link', async () => {
     server.use(http.get('*/api/config', () => HttpResponse.json(config)));
     const { wrapper: Wrapper } = createWrapper();
     const { unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
@@ -321,20 +247,13 @@ describe('Settings depth', () => {
     await waitFor(() => expect(screen.getAllByRole('switch').length).toBeGreaterThan(0)); // model toggle rows
     unmount();
 
-    // Autopilot section — the notes pod shows the saved text; the textarea edits in the drawer.
+    // The Autopilot and CLI Agents sections moved to the agents plugin's settings deck — a stale
+    // remembered/linked category id fails isSectionId validation and falls back to System.
     localStorage.setItem('elowen.settings.category', 'autopilot');
     const { wrapper: WrapperAp } = createWrapper();
-    const ap = render(<WrapperAp><ToastProvider><SettingsPage /></ToastProvider></WrapperAp>);
-    await waitFor(() => expect(screen.getAllByText('mind the guardrails').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByRole('button', { name: en.settings.notes })[0]);
-    await waitFor(() => expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy()); // notes textarea
-    ap.unmount();
-
-    // Autopilot section — the backend-mode + autonomy segmented controls (run defaults moved here).
-    localStorage.setItem('elowen.settings.category', 'autopilot');
-    const { wrapper: WrapperDef } = createWrapper();
-    render(<WrapperDef><ToastProvider><SettingsPage /></ToastProvider></WrapperDef>);
-    await waitFor(() => expect(screen.getAllByRole('radiogroup').length).toBeGreaterThan(0)); // autonomy/backend segmented
+    render(<WrapperAp><ToastProvider><SettingsPage /></ToastProvider></WrapperAp>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
+    expect(screen.queryByText('mind the guardrails')).toBeNull();
   });
 });
 

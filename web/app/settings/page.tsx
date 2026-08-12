@@ -1,12 +1,9 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { Activity, useCallback, useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
-import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search, Server, CalendarClock, ScrollText, BellRing } from 'lucide-react';
+import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
+import { SlidersHorizontal, Plus, X, Pencil, Gauge, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
-import { BackendPicker } from '../../components/ui/BackendPicker';
-import { ProviderPicker } from '../../components/ui/ProviderPicker';
-import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
@@ -14,16 +11,15 @@ import { GithubSection } from '../../modules/settings/GithubSection';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
-import { ChoiceField } from '../../components/ui/ChoiceField';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
-import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useSystemSkills, useLogFiles } from '../../lib/queries';
+import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
 import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { formatLogSize } from '../../modules/settings/logFilter';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
-import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart, useInstallSkills } from '../../lib/mutations';
+import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -35,10 +31,8 @@ import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
-import { Segmented } from '../../components/ui/Segmented';
 import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SettingsDocument, SettingsGroup, SettingsRow, SettingsToolbar, SettingsState } from '../../modules/settings/SettingsSurface';
 import { MotionReveal } from '../../components/ui/Motion';
@@ -65,19 +59,6 @@ function formatUptime(totalSeconds: number): string {
   return `${days}d ${hours}h ${minutes}m`;
 }
 
-/** Relay-mode model field: a free-text model name with a live brand badge, mirroring
- *  BackendPicker's icon affordance so both autopilot modes look consistent. */
-function ModelInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-bg" aria-hidden>
-        <ModelIcon name={value} size={16} />
-      </span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} placeholder={placeholder} />
-    </div>
-  );
-}
-
 const CATEGORY_VALUES = SETTINGS_CATEGORY_VALUES;
 type Category = SettingsCategory;
 
@@ -89,7 +70,7 @@ const isSectionId = (value: string): boolean =>
 
 /** Categories rendered as an orbital constellation (rows become pods, composites edit in drawers,
  *  the document card frame drops). The rest — catalogs, lists and data views — stay classic. */
-const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain', 'autopilot', 'github', 'memory']);
+const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain', 'github', 'memory']);
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
@@ -117,8 +98,6 @@ export default function SettingsPage() {
   const system = useSystem();
   const systemUpdate = useSystemUpdate();
   const systemRestart = useSystemRestart();
-  const systemSkills = useSystemSkills();
-  const installSkills = useInstallSkills();
   const cleanup = useCleanupAll();
   const me = useMe();
   const brand = useBrand();
@@ -196,32 +175,6 @@ export default function SettingsPage() {
   const [noteFor, setNoteFor] = useState<{ label: string; exec: string } | null>(null);
   // The Elowen AI model whose context-window override is being edited (null = editor closed).
   const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
-  const [model, setModel] = useState('');
-  const [pilotExec, setPilotExec] = useState('');
-  const [overseerExec, setOverseerExec] = useState('');
-  // Autopilot backend is an either/or: 'relay' (planner+overseer via API) or 'agents' (CLI agents
-  // that read the repo). Derived from whether an exec is set; the picker enforces the exclusivity.
-  const [reasoningMode, setReasoningMode] = useState<'relay' | 'agents'>('relay');
-  const [reviewOnDone, setReviewOnDone] = useState(false);
-  const [tddMode, setTddMode] = useState(false);
-  // Same pattern for the Autopilot free-text fields (models/endpoint/notes).
-  const [autopilotOpen, setAutopilotOpen] = useState(false);
-  const [apiUrl, setApiUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  // When set, the planner/overseer/curator reuse this brain provider's endpoint+key instead of a
-  // separately-entered relay key — so a key is never typed twice. Empty = the legacy manual apiUrl/apiKey.
-  const [apProviderId, setApProviderId] = useState('');
-  // Model catalog scoped to the picked autopilot provider — feeds the planner/overseer model pills (like
-  // Settings → Memory). Empty in Manual mode: no catalog for an arbitrary endpoint, so a free-text input runs.
-  const apCatalog = useMemo(
-    () => Array.from(new Set((brainModels.data ?? []).filter((m) => m.provider === apProviderId).map((m) => m.model))),
-    [brainModels.data, apProviderId],
-  );
-  const [notes, setNotes] = useState('');
-  const [providers, setProviders] = useState<Record<string, { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }>>({});
-  const [defExec, setDefExec] = useState('');
-  const [defAutonomy, setDefAutonomy] = useState('');
-  const [defMaxSessions, setDefMaxSessions] = useState(1);
   const [defTokenTtl, setDefTokenTtl] = useState(30);
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [pushContact, setPushContact] = useState('');
@@ -257,19 +210,6 @@ export default function SettingsPage() {
       setModelNotes(config.data.modelNotes ?? {});
       setModelWindows(config.data.brain?.modelContextWindows ?? {});
       setHiddenPresets(config.data.hiddenPresets ?? []);
-      setModel(config.data.autopilot.model);
-      setPilotExec(config.data.autopilot.pilotExec ?? '');
-      setOverseerExec(config.data.autopilot.overseerExec ?? '');
-      setReviewOnDone(config.data.autopilot.reviewOnDone ?? false);
-      setTddMode(config.data.autopilot.tddMode ?? false);
-      setReasoningMode((config.data.autopilot.pilotExec || config.data.autopilot.overseerExec) ? 'agents' : 'relay');
-      setApiUrl(config.data.autopilot.apiUrl);
-      setApProviderId(config.data.autopilot.providerId ?? '');
-      setNotes(config.data.autopilot.notes);
-      setProviders(config.data.providers ?? {});
-      setDefExec(config.data.defaults.exec);
-      setDefAutonomy(config.data.defaults.autonomy);
-      setDefMaxSessions(config.data.defaults.maxSessions);
       setDefTokenTtl(config.data.security?.tokenTtlDays ?? 30);
       setAutoUpdate(config.data.autoUpdate ?? false);
       setPushContact(config.data.webPushContact ?? '');
@@ -280,25 +220,11 @@ export default function SettingsPage() {
   // external change is reflected and an invalid draft can revert to the saved number.
   useEffect(() => { setRetentionDaysDraft(String(retention.days)); }, [retention.days]);
 
-  // Persist only the active mode's fields, and explicitly clear the other backend so the two never
-  // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
-  const saveAutopilot = async () => {
-    try {
-      await update.mutateAsync({ autopilot: reasoningMode === 'agents'
-        ? { pilotExec, overseerExec, reviewOnDone, tddMode, notes }
-        : { model, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } });
-      if (apiKey) setApiKey('');
-    } catch (error) { toast(String(error), 'error'); throw error; }
-  };
-
-  const saveProviders = async () => {
-    try { await update.mutateAsync({ providers }); }
-    catch (error) { toast(String(error), 'error'); throw error; }
-  };
-
-  // autoUpdate is NOT bundled here — the System toggle is its single writer (it persists inline).
+  // The run defaults (executor/autonomy/max sessions) moved to the agents plugin's settings deck;
+  // only the token TTL stays with the core System section. autoUpdate is NOT bundled here — the
+  // System toggle is its single writer (it persists inline).
   const saveDefaults = async () => {
-    try { await update.mutateAsync({ defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl } }); }
+    try { await update.mutateAsync({ security: { tokenTtlDays: defTokenTtl } }); }
     catch (error) { toast(String(error), 'error'); throw error; }
   };
 
@@ -317,9 +243,7 @@ export default function SettingsPage() {
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // The apiKey secret rides along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
-  const autopilotSave = useAutoSaveStatus([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
-  const providersSave = useAutoSaveStatus([providers], saveProviders, { ready });
-  const defaultsSave = useAutoSaveStatus([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
+  const defaultsSave = useAutoSaveStatus([defTokenTtl], saveDefaults, { ready });
   // Per-model context windows auto-persist like every other model setting (no Save button).
   const windowsSave = useAutoSaveStatus([modelWindows], async () => {
     try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows } }); }
@@ -350,8 +274,6 @@ export default function SettingsPage() {
   if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
   if (me.data?.user && !me.data.user.is_admin) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ModuleShell>;
-
-  const apiKeySet = config.data?.autopilot.apiKeySet;
 
   const resetForm = () => {
     setShowAddForm(false);
@@ -410,25 +332,14 @@ export default function SettingsPage() {
 
   const models = allModels(customModels, hiddenPresets);
 
-  // Switch the autopilot backend mode. Relay clears the agent execs; agents seed a default model so
-  // the mode can't silently collapse back to relay (an empty exec = relay).
-  const switchReasoning = (m: 'relay' | 'agents') => {
-    setReasoningMode(m);
-    if (m === 'relay') { setPilotExec(''); setOverseerExec(''); }
-    else {
-      const def = models[0]?.exec ?? '';
-      if (!pilotExec) setPilotExec(def);
-      if (!overseerExec) setOverseerExec(def);
-    }
-  };
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
-  // Providers the user has actually configured (non-empty binary) — the only ones offered when
-  // adding a model, and the source for the executor picker's grouping.
-  const activeProviders = PROVIDERS.filter((p) => (providers[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
+  // Providers the user has actually configured (non-empty binary; edited in the agents plugin's
+  // CLI Agents deck) — the only ones offered when adding a model, and the source for the executor
+  // picker's grouping.
+  const configProviders = config.data?.providers ?? {};
+  const activeProviders = PROVIDERS.filter((p) => (configProviders[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
     models: combineSaveFeedback(modelsSave, windowsSave),
-    providers: providersSave,
-    autopilot: combineSaveFeedback(autopilotSave, defaultsSave),
     github: sectionFeedback.github,
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave),
     brain: sectionFeedback.brain,
@@ -438,11 +349,9 @@ export default function SettingsPage() {
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
   const sectionHints: Record<Category, string> = {
     models: t.settings.modelsSectionHint,
-    providers: t.settings.providersSectionHint,
     brain: t.settings.brainSectionHint,
     memory: t.settings.memorySectionHint,
     plugins: t.settings.pluginsSectionHint,
-    autopilot: t.settings.autopilotSectionHint,
     github: t.settings.githubSectionHint,
     data: t.settings.dataSectionHint,
     system: t.settings.systemSectionHint,
@@ -635,165 +544,6 @@ export default function SettingsPage() {
           />
         )}
 
-        <SettingsPanel id="autopilot" active={category} visited={visitedCategories}>
-          <ConstellationScope core={t.settings.autopilot}>
-            {(() => {
-              // One merged orbit — the free-text fields become chips editing in one shared drawer.
-              const apProviders = (config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }));
-              const openDrawer = (label: string) => (
-                <button type="button" data-selection-manage className="hidden" aria-label={label} onClick={() => setAutopilotOpen(true)} />
-              );
-              const drawerField = (label: string, control: ReactNode) => (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{label}</span>
-                  {control}
-                </div>
-              );
-              // One clear choice: how the planner + overseer reason. Relay (API) OR CLI agents.
-              const rowMode = (
-                <SettingsRow label={t.settings.backendMode} description={t.help.backendMode} icon={Radio}>
-                  <div className="flex flex-col gap-2">
-                    <Segmented
-                      value={reasoningMode}
-                      onChange={(v) => switchReasoning(v as 'relay' | 'agents')}
-                      options={[
-                        { value: 'relay', label: t.settings.modeRelay, icon: Radio },
-                        { value: 'agents', label: t.settings.modeAgents, icon: Bot },
-                      ]}
-                    />
-                  </div>
-                </SettingsRow>
-              );
-              // In pods a many-provider Segmented strip grows too tall — pick as a chip + drawer.
-              const rowApProvider = (
-                <SettingsRow label={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound}>
-                  {apProviders.length > 0
-                    ? <ChoiceField title={t.settings.apProvider} options={apProviders.map((p) => ({ value: p.id, label: p.label }))} value={apProviderId} onChange={setApProviderId} picker="always" />
-                    : <ProviderPicker providers={apProviders} value={apProviderId} onChange={setApProviderId} label={t.settings.apProvider} emptyText={t.settings.apNoProviders} />}
-                </SettingsRow>
-              );
-              const relayHasCatalog = apProviderId !== '' && apCatalog.length > 0;
-              const relayModelChip = (value: string, label: string) => (
-                <>
-                  <span className="flex min-w-0 items-center gap-2 font-mono text-sm text-text-muted">
-                    <ModelIcon name={value} size={14} />
-                    <span className="truncate">{value || '—'}</span>
-                  </span>
-                  {openDrawer(label)}
-                </>
-              );
-              const rowPlannerRelay = (
-                <SettingsRow label={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
-                  {relayHasCatalog
-                    ? <ModelCatalogField value={model} onChange={setModel} catalog={apCatalog} title={t.settings.plannerModel} subtitle={t.help.plannerModel} />
-                    : relayModelChip(model, t.settings.plannerModel)}
-                </SettingsRow>
-              );
-              const apiUrlInput = <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} aria-label={t.settings.apiUrl} />;
-              const apiKeyInput = <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} aria-label={t.settings.apiKey} />;
-              // No provider picked → enter an endpoint + key directly. A chosen provider supplies both,
-              // so these fields simply don't render (no redundant "inherited" note).
-              const rowApiUrl = (
-                <SettingsRow label={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
-                  <span className="max-w-full truncate font-mono text-sm text-text-muted">{apiUrl || '—'}</span>{openDrawer(t.settings.apiUrl)}
-                </SettingsRow>
-              );
-              const rowApiKey = (
-                <SettingsRow label={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
-                  <span className="font-mono text-sm tracking-widest text-text-muted">{apiKeySet || apiKey ? '••••••••' : '—'}</span>{openDrawer(t.settings.apiKey)}
-                </SettingsRow>
-              );
-              const rowPlannerAgents = (
-                <SettingsRow label={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
-                  <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                </SettingsRow>
-              );
-              const rowOverseerAgents = (
-                <SettingsRow label={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
-                  <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                </SettingsRow>
-              );
-              const rowReviewOnDone = (
-                <SettingsRow label={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
-                  <Toggle checked={reviewOnDone} onChange={setReviewOnDone} label={t.settings.reviewOnDone} />
-                </SettingsRow>
-              );
-              const notesTextarea = <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} aria-label={t.settings.notes} />;
-              const rowNotes = (
-                <SettingsRow label={t.settings.notes} description={t.help.notes} icon={FileText}>
-                  <span className="block max-w-full truncate text-sm text-text-muted">{notes.trim() || '—'}</span>{openDrawer(t.settings.notes)}
-                </SettingsRow>
-              );
-              const rowExecutor = (
-                <SettingsRow label={t.settings.executor} description={t.help.executor} icon={Cpu}>
-                  {/* Same worker + Elowen AI split the task picker uses, in the unified manage-selection
-                      modal, so the default executor can also be a brain model. A saved value missing
-                      from the catalog stays selectable as a pinned row. */}
-                  <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                </SettingsRow>
-              );
-              const rowAutonomy = (
-                <SettingsRow label={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
-                  <div>
-                  <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
-                  </div>
-                </SettingsRow>
-              );
-              const rowMaxSessions = (
-                <SettingsRow label={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
-                  <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} aria-label={t.settings.maxSessions} />
-                </SettingsRow>
-              );
-              // TDD mission mode applies to every worker (standalone, mission phase, embedded) regardless
-              // of the relay/agents split, so it lives with the run defaults — persisted via saveAutopilot.
-              const rowTdd = (
-                <SettingsRow label={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
-                  <Toggle checked={tddMode} onChange={setTddMode} label={t.settings.tddMode} />
-                </SettingsRow>
-              );
-              const relayRows = (
-                <>
-                  {rowApProvider}
-                  {rowPlannerRelay}
-                  {apProviderId === '' ? <>{rowApiUrl}{rowApiKey}</> : null}
-                </>
-              );
-              const agentRows = <>{rowPlannerAgents}{rowOverseerAgents}{rowReviewOnDone}</>;
-              const drawer = autopilotOpen ? (
-                <WorkspaceDetailRail label={t.settings.autopilot} closeLabel={t.common.close} onClose={() => setAutopilotOpen(false)}>
-                  <div className="flex flex-col gap-5 py-2">
-                    {reasoningMode === 'relay' && !relayHasCatalog ? (
-                      <>
-                        {drawerField(t.settings.plannerModel, <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />)}
-                      </>
-                    ) : null}
-                    {reasoningMode === 'relay' && apProviderId === '' ? (
-                      <>
-                        {drawerField(t.settings.apiUrl, apiUrlInput)}
-                        {drawerField(t.settings.apiKey, apiKeyInput)}
-                      </>
-                    ) : null}
-                    {drawerField(t.settings.notes, notesTextarea)}
-                  </div>
-                </WorkspaceDetailRail>
-              ) : null;
-              return (
-                <>
-                  <SettingsGroup>
-                    {rowMode}
-                    {reasoningMode === 'relay' ? relayRows : agentRows}
-                    {rowNotes}
-                    {rowExecutor}
-                    {rowAutonomy}
-                    {rowMaxSessions}
-                    {rowTdd}
-                  </SettingsGroup>
-                  {drawer}
-                </>
-              );
-            })()}
-          </ConstellationScope>
-        </SettingsPanel>
 
         <SettingsPanel id="github" active={category} visited={visitedCategories}>
           <ConstellationScope core={t.settings.github}>
@@ -801,95 +551,6 @@ export default function SettingsPage() {
           </ConstellationScope>
         </SettingsPanel>
 
-        <SettingsPanel id="providers" active={category} visited={visitedCategories}>
-          <>
-            {/* Agent skills sit at the top of CLI Agents — they install/verify the `elowen-workflow`
-                skill into the very CLI agents this section configures. The daemon self-installs on
-                startup; this is the on-demand re-apply + per-provider status. */}
-            <SettingsGroup
-              title={t.settings.agentSkills}
-              description={t.help.agentSkills}
-              icon={Sparkles}
-              actions={<Button
-                  variant="accent"
-                  className="h-8 shrink-0"
-                  disabled={installSkills.isPending || !(systemSkills.data?.skills ?? []).some((s) => s.present && !s.upToDate)}
-                  onClick={() => installSkills.mutate(undefined, {
-                    onSuccess: () => toast(t.settings.skillsInstalled),
-                    onError: (e) => toast(String(e), 'error'),
-                  })}
-                >
-                  {installSkills.isPending ? t.settings.skillInstalling : t.settings.skillInstall}
-                </Button>}
-            >
-              {/* Per-provider status pills, laid out to wrap side by side so the block stays compact. */}
-              <div className="settings-skill-statuses">
-                {(systemSkills.data?.skills ?? []).map((s) => {
-                  const tone = !s.present ? 'muted' : s.upToDate ? 'success' : s.installed ? 'warning' : 'default';
-                  const label = !s.present ? t.settings.skillProviderAbsent : s.upToDate ? t.settings.skillUpToDate : s.installed ? t.settings.skillOutdated : t.settings.skillMissing;
-                  return (
-                    <div key={s.provider} className="flex items-center gap-2">
-                      <span className="font-mono text-sm text-text">{s.provider}</span>
-                      <Badge tone={tone}>{label}</Badge>
-                    </div>
-                  );
-                })}
-              </div>
-            </SettingsGroup>
-            <SettingsGroup title={t.settings.providers} density="compact">
-              {PROVIDERS.map((p) => {
-                const cur = providers[p.id] ?? { bin: p.binHint, args: '', skipPermissions: true, resume: true };
-                const set = (patch: Partial<{ bin: string; args: string; skipPermissions: boolean; resume: boolean }>) => setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
-                return (
-                  <div key={p.id} className="settings-agent-row @container">
-                  <div className="flex flex-col gap-3 @sm:flex-row @sm:items-start">
-                    <div className="flex items-center gap-3 @sm:w-44 @sm:shrink-0 @sm:pt-1">
-                      <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} size={56} />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-sm font-medium text-text">
-                          {t.providers[p.id as keyof typeof t.providers]}
-                          {p.embedded ? <HelpTip align="left">{t.help.embeddedProvider}</HelpTip> : null}
-                        </div>
-                        <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
-                      </div>
-                    </div>
-                    {p.embedded ? null : (
-                    <div className="flex flex-1 flex-col gap-3">
-                      <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-                        <Field label={t.settings.binary}>
-                          <Input value={cur.bin} placeholder={p.binHint} onChange={(e) => set({ bin: e.target.value })} className="font-mono text-xs" />
-                        </Field>
-                        <Field label={t.settings.extraArgs}>
-                          <Input value={cur.args} placeholder={p.argsHint} onChange={(e) => set({ args: e.target.value })} className="font-mono text-xs" />
-                        </Field>
-                      </div>
-                      {p.noBypassFlag ? (
-                        <p className="border-t border-border/70 pt-2 text-[11px] leading-relaxed text-text-muted">{t.settings.skipPermissionsNoop}</p>
-                      ) : (
-                        <label className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
-                          <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
-                            {t.settings.skipPermissions}
-                            <HelpTip align="left">{t.help.skipPermissions}</HelpTip>
-                          </span>
-                          <Toggle checked={cur.skipPermissions !== false} onChange={(v) => set({ skipPermissions: v })} label={t.settings.skipPermissions} />
-                        </label>
-                      )}
-                      <label className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
-                        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
-                          {t.settings.resumeSessions}
-                          <HelpTip align="left">{t.help.resumeSessions}</HelpTip>
-                        </span>
-                        <Toggle checked={cur.resume !== false} onChange={(v) => set({ resume: v })} label={t.settings.resumeSessions} />
-                      </label>
-                    </div>
-                    )}
-                  </div>
-                  </div>
-                );
-              })}
-            </SettingsGroup>
-          </>
-        </SettingsPanel>
 
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
