@@ -103,7 +103,9 @@ src/
 plugins/              Bundled plugin folders with `elowen-plugin.json`. Agent
                       spawning, missions and the overseer are in
                       `plugins/agents/`, language servers in `plugins/lsp/`,
-                      the project file editor in `plugins/editor/`
+                      the project file editor in `plugins/editor/`, and task
+                      tracking — tables, routes, tools and its four pages — in
+                      `plugins/work/`
 prompts/              Runtime prompt templates copied into `dist/`
 tests/                Daemon tests, broadly mirroring source areas
 web/                  Next.js App Router frontend
