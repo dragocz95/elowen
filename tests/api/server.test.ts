@@ -17,6 +17,19 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { FakeInference } from '../../src/inference/client.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
+import { createPlanFlow } from '../../plugins/agents/src/overseer/planFlow.js';
+
+/** The REAL agents planFlow over a test's stubs — the seam the plan routes reach through the 'agents'
+ *  control in the daemon. Tests exercising plugin-present plan behaviour (mission labels, engage, the
+ *  post-persist tick) pass this as ServerDeps.planFlow. */
+function planFlowFor(w: { db: ReturnType<typeof openAgentsDb>; tasks: TaskStore; config: ConfigStore; engine?: unknown }) {
+  return createPlanFlow({
+    tasks: w.tasks, missions: new MissionStore(w.db), config: w.config as never,
+    projects: { get: () => null }, users: { list: () => [], allowedExecs: () => null },
+    engine: (w.engine ?? { engage: async () => { throw new Error('engage not stubbed'); }, isActive: () => false, tick: async () => {} }) as never,
+    pilot: async () => {},
+  });
+}
 
 /** A body streamed in chunks with NO content-length header — the chunked shape a hard cap has to stop.
  *  `pulled()` reports how many bytes the daemon actually read, so a test can tell "rejected after
@@ -425,6 +438,7 @@ it('POST /tasks/plan stores the model-assigned agent name as a label', async () 
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
+    planFlow: planFlowFor({ db, tasks, config }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     makeInference: () => new FakeInference('[{"title":"Schema","type":"task","agent":"Nova"}]'),
   });
@@ -477,6 +491,7 @@ it('POST /tasks/plan with engage=true engages a mission on the epic', async () =
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine, spawn: null as any, tmux: null as any,
+    planFlow: planFlowFor({ db, tasks, config, engine }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
     makeInference: () => new FakeInference('[{"title":"Only phase"}]'),
   });
@@ -566,6 +581,7 @@ it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new ph
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine, spawn: null as any, tmux: null as any,
+    planFlow: planFlowFor({ db, tasks, config, engine }),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
   });
   tasks.create({ id: 'E', project_id: 1, title: 'Epic', type: 'epic', description: 'goal' });

@@ -504,7 +504,7 @@ export async function buildApp(opts: BuildOpts) {
     get missionGit() { return agentsControl()?.missionGit(); },
     get gitLock() { return agentsControl()?.gitLock(); },
     get planJobs() { return agentsControl()?.planJobs(); },
-    get pilot() { return agentsControl()?.pilot(); },
+    get planFlow() { return agentsControl()?.planFlow(); },
     // The post-done review gate — arrow-bound on the control, resolved live like the getters above.
     get onTaskClosed() { return agentsControl()?.onTaskClosed; },
     get liveTaskUsage() { return agentsControl()?.liveTaskUsage(); },

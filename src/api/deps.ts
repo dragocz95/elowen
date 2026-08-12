@@ -1,8 +1,7 @@
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
-import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanJobs } from '../plugins/api.js';
+import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanFlow, AgentsPlanJobs } from '../plugins/api.js';
 import type { Task } from '../store/types.js';
-import type { PlanJob } from '../shared/agentEvents.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { ElowenEvent, EventBus } from './sse.js';
 import type { TokenUsage } from '../integrations/usage/types.js';
@@ -101,8 +100,10 @@ export interface ServerDeps {
   /** The agents plugin's post-done review gate (AgentsControl.onTaskClosed): drives the mission-phase
    *  review workflow after a close. Absent (plugin disabled) → no gate, the close is final. */
   onTaskClosed?: (id: string, existing: Task, opts: { outcome?: string; summary?: string }) => Promise<void>;
-  /** Spawn the Pilot agent for an agent-mode plan job (Task 9). Absent → relay-only planning. */
-  pilot?: (job: PlanJob, projectPath: string) => Promise<void>;
+  /** The agents half of the plan/replan flow (exec-override validation, PR mode, backend choice,
+   *  mission labels, post-persist engage/tick). Absent (plugin disabled) → a pure plan still
+   *  persists via the relay with no mission labels, and an engage request answers 503. */
+  planFlow?: AgentsPlanFlow;
   /** The agents plugin's advisor lifecycle hooks (login autostart, user-deletion teardown). The
    *  /advisor routes are plugin root mounts; absent (plugin disabled) → both hooks are skipped. */
   advisor?: import('../plugins/api.js').AgentsAdvisorHooks;

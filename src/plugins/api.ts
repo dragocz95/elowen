@@ -812,6 +812,39 @@ export interface AgentsPlanJobs {
   fail(id: string, error: string): PlanJob | null;
 }
 
+/** The agents-side half of the plan/replan flow. The core /tasks/plan and /tasks/:epicId/phases
+ *  routes keep the skeleton (goal → epic + phases + deps, the relay decompose, the async job
+ *  lifecycle); every AGENTS-domain decision — pilot/overseer exec validation, the PR-native mode
+ *  resolution, the planning backend choice, the epic/phase mission labels, and driving the mission
+ *  after persist — is answered here so the core plan path carries no agents vocabulary of its own.
+ *  Absent (plugin disabled): a pure plan still persists (201) with no labels, the relay is the only
+ *  backend, and an engage request answers 503 up front. */
+export interface AgentsPlanFlow {
+  /** Validate pilot/overseer exec overrides against the global allow-list and the requesting user's
+   *  personal one. Null = every override is fine (or absent). */
+  execOverrideError(overrides: (string | undefined)[], userId: number | null | undefined): { error: string; status: 400 | 403 } | null;
+  /** Resolve a plan request's tri-state PR override (>1 sessions auto-opts into PR isolation unless
+   *  explicitly off) and whether the mission will run in an isolated worktree — the flag the planner's
+   *  parallelism guidance needs. */
+  planPrMode(requested: boolean | null | undefined, maxSessions: number, projectId: number): { prEnabled: boolean | null; isolated: boolean };
+  /** The Pilot launcher when the agent planning backend applies (request override or the configured
+   *  pilot exec), else null → the caller plans over the relay. */
+  pilotBackend(pilotExec: string | undefined): ((job: PlanJob, projectPath: string) => Promise<void>) | null;
+  /** The mission labels persistPlan stamps: the epic's `pr:on`/`pr:off` override and each phase's
+   *  `agent:<name>` (deduplicated across the epic — one agent name, one task). */
+  planLabels(): {
+    epic(prEnabled: boolean | null | undefined): string[];
+    /** A stateful per-persist labeler, seeded with the epic's existing tasks. */
+    phaseLabeler(existing: readonly Task[]): (agent: string | undefined) => string[];
+  };
+  /** Drive the mission after a plan/replan persisted: engage a fresh mission when the job asked for
+   *  it, else tick an already-active one so it picks up the new ready phase. */
+  planEngage(job: PlanJob, epicId: string): Promise<Mission | undefined>;
+  /** The agents context a REPLAN inherits from the epic's existing mission: the PR override frozen in
+   *  the epic labels, isolation, session width and the per-mission execs. */
+  replanContext(epicId: string): { prEnabled: boolean | null; isolated: boolean; maxSessions: number; pilotExec?: string; overseerExec?: string };
+}
+
 /** The per-mission decision queue surface: the ask/review services enqueue, the parked overseer's
  *  long-poll routes deliver (`next`) and answer (`resolve`). */
 export interface AgentsDecisionQueue {
@@ -869,8 +902,8 @@ export interface AgentsGitLock { run<T>(key: string, fn: () => Promise<T>): Prom
 export interface AgentsControl {
   engine(): AgentsMissionEngine;
   spawn(): AgentsSpawn;
-  /** Spawn the Pilot agent for an agent-mode plan job. */
-  pilot(): (job: PlanJob, projectPath: string) => Promise<void>;
+  /** The agents half of the plan/replan flow (validation, PR mode, backend, labels, engage). */
+  planFlow(): AgentsPlanFlow;
   planJobs(): AgentsPlanJobs;
   decisionQueue(): AgentsDecisionQueue;
   missionGit(): AgentsMissionGit;

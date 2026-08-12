@@ -4,7 +4,6 @@ import { taskSessionId } from '../../brain/sessionId.js';
 import { projectRangeFileDiff, projectRangeLog, projectCommitFileDiff } from '../../integrations/projectFiles.js';
 import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../services/planner.js';
 import { snapshotTaskChanges } from '../services/taskSnapshot.js';
-import { resolvePrEnabled } from '../../shared/prMode.js';
 import { RelayClient } from '../../inference/client.js';
 import { shortId } from '../../shared/id.js';
 import { parseBody, queryInt } from '../validation.js';
@@ -482,37 +481,33 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = await parseBody(c, planSchema);
     const goal = (b.goal ?? '').trim();
     const name = (b.name ?? '').trim(); // optional short mission name → epic title (goal stays the description)
-    // Tri-state PR override: true (force on) / false (force off) / null|undefined (inherit project+global).
-    let prEnabled = b.prEnabled === true ? true : b.prEnabled === false ? false : null;
-    // Parallel sessions only materialise in isolated worktrees — a shared checkout is single-writer, so
-    // a >1 max_sessions mission would silently serialize to one agent. Opting into parallelism therefore
-    // auto-enables PR-native mode, unless the user explicitly turned it off (then we honour their choice).
-    if ((b.maxSessions ?? 1) > 1 && prEnabled === null) prEnabled = true;
     if (!goal) return c.json({ error: 'goal required' }, 400);
-    // Engaging needs the mission engine (agents plugin); a pure plan (epic + phases) does not.
-    if (b.engage === true && !d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
+    // Engaging needs a mission (agents plugin); a pure plan (epic + phases) does not.
+    const planFlow = d.planFlow;
+    if (b.engage === true && !planFlow) return c.json({ error: 'agents plugin is disabled' }, 503);
     if (b.exec && !d.config.get().allowedExecs.includes(b.exec)) return c.json({ error: 'exec not allowed' }, 400);
     if (b.exec && !execAllowedForUser(c, b.exec)) return c.json({ error: 'exec not allowed for user' }, 403);
-    for (const override of [b.pilotExec, b.overseerExec]) {
-      if (override && !d.config.get().allowedExecs.includes(override)) return c.json({ error: 'exec not allowed' }, 400);
-      if (override && !execAllowedForUser(c, override)) return c.json({ error: 'exec not allowed for user' }, 403);
-    }
+    // Pilot/overseer overrides are agents vocabulary — the plugin validates them (global + per-user
+    // allow-lists). Without the plugin they are inert: no pilot or overseer will ever run them.
+    const overrideErr = planFlow?.execOverrideError([b.pilotExec, b.overseerExec], c.get('user')?.id ?? null);
+    if (overrideErr) return c.json({ error: overrideErr.error }, overrideErr.status);
     const target = resolveTarget(c, b.project_id);
     if ('error' in target) return c.json({ error: target.error }, target.status);
+    // PR mode (incl. the >1-sessions auto-opt-in) and worktree isolation are the plugin's call; a
+    // plugin-less plan is a plain epic with no PR override and no isolation guidance.
+    const { prEnabled, isolated } = planFlow?.planPrMode(b.prEnabled ?? null, b.maxSessions ?? 1, target.project.id) ?? { prEnabled: null, isolated: false };
 
     // Manual mode: explicit phases → synchronous create (no LLM, no key). Keeps the 201 contract.
     if (Array.isArray(b.phases) && b.phases.length > 0) {
       const phases: Phase[] = b.phases.map((p) => ({ title: (p.title ?? '').trim(), type: VALID_PHASE_TYPES.has(p.type ?? '') ? p.type! : 'task' })).filter((p) => p.title);
       if (phases.length === 0) return c.json({ error: 'phases required' }, 400);
       if (b.dryRun === true) return c.json({ phases }); // playground preview, nothing persisted
-      const job = planJobs.create({ goal, name, projectId: target.project.id, epicId: null, dryRun: false, exec: b.exec, pilotExec: b.pilotExec, overseerExec: b.overseerExec, prEnabled, createdBy: c.get('user')?.id ?? null });
+      const job = planJobs.create({ goal, name, projectId: target.project.id, epicId: null, dryRun: false, exec: b.exec, pilotExec: b.pilotExec, overseerExec: b.overseerExec, prEnabled, engage: b.engage === true ? { autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1 } : undefined, createdBy: c.get('user')?.id ?? null });
       job.phases = phases;
       const { epic, phases: created } = persistPlan(job);
       job.epicId = epic.id;
       planJobs.setPhases(job.id, phases);
-      let mission;
-      const engine = d.engine;
-      if (b.engage === true && engine) mission = await engine.engage({ epicId: epic.id, autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1, createdBy: c.get('user')?.id ?? null, pilotExec: b.pilotExec, overseerExec: b.overseerExec });
+      const mission = await planFlow?.planEngage(job, epic.id);
       return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)), mission }, 201);
     }
 
@@ -527,9 +522,10 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       prEnabled, maxSessions: b.maxSessions ?? 1, createdBy: c.get('user')?.id ?? null,
     });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
-    if ((b.pilotExec || cfg.autopilot.pilotExec) && d.pilot) {
+    const pilot = planFlow?.pilotBackend(b.pilotExec) ?? null;
+    if (pilot) {
       // Agent backend: spawn the Pilot in the repo; it submits via `elowen plan submit`.
-      void d.pilot(job, target.project.path).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); reapPilotSession(job); });
+      void pilot(job, target.project.path).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); reapPilotSession(job); });
       return c.json({ jobId: job.id }, 202);
     }
     // Relay backend: decompose inline and resolve the job before responding.
@@ -541,8 +537,7 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       const notes = d.projects?.get(target.project.id)?.notes;
       const models = job.autoModel ? modelsBlock(cfg.allowedExecs, cfg.modelNotes) : undefined;
       // Same parallelism guidance the agent-mode Pilot gets: parallel branches only when >1 session
-      // AND the mission will run PR-native (isolated worktrees), resolved exactly as runtime does.
-      const isolated = resolvePrEnabled(prEnabled, d.projects?.get(target.project.id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
+      // AND the mission will run PR-native (isolated worktrees) — `isolated` resolved by the plugin above.
       const parallelism = parallelismBlock(b.maxSessions ?? 1, isolated);
       // The triggering user's own `planner` override wins over the global admin template (an explicit
       // request-body prompt still takes precedence over both — playground/manual overrides).
@@ -604,9 +599,7 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
       const job = planJobs.create({ goal: epic.description?.trim() || epic.title, projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, createdBy: epic.created_by ?? c.get('user')?.id ?? null });
       job.phases = phases;
       const { phases: created } = persistPlan(job);
-      const missionId = `m-${epicId}`;
-      const engine = d.engine;
-      if (engine?.isActive(missionId)) await engine.tick(missionId); // pick up the new ready phase
+      await d.planFlow?.planEngage(job, epicId); // tick an active mission so it picks up the new ready phase
       return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)) }, 201);
     }
     if (!(b.goal ?? '').trim()) return c.json({ error: 'phases or goal required' }, 400);
@@ -614,18 +607,17 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Replan: decompose the residual goal — async via a plan job scoped to this epic (so an agent
     // Pilot can do it; finalizePlanJob appends + ticks an active mission). One path, relay or agent.
     const cfg = d.config.get();
-    // Carry the mission's intended concurrency into the replan so it keeps planning a wide DAG instead
-    // of collapsing back to a linear chain. Resolve isolation from the epic's PR label exactly as the
-    // runtime does, so the parallelism guidance matches how the replanned phases will actually run.
-    const replanOverride = epic.labels.includes('pr:on') ? true : epic.labels.includes('pr:off') ? false : null;
-    const replanIsolated = resolvePrEnabled(replanOverride, d.projects?.get(epic.project_id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
-    const replanMaxSessions = d.missions.get(`m-${epicId}`)?.max_sessions ?? 1;
-    const replanParallelism = parallelismBlock(replanMaxSessions, replanIsolated);
-    const existingMission = d.missions.get(`m-${epicId}`);
-    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, pilotExec: existingMission?.pilot_exec || undefined, overseerExec: existingMission?.overseer_exec || undefined, prEnabled: replanOverride, maxSessions: replanMaxSessions, createdBy: epic.created_by ?? c.get('user')?.id ?? null });
+    // The agents context a replan inherits (the epic's frozen PR override, isolation, the mission's
+    // session width and per-mission execs) is the plugin's call — carried into the job so the
+    // parallelism guidance matches how the replanned phases will actually run. Plugin-less default:
+    // a linear, non-isolated replan.
+    const rc = d.planFlow?.replanContext(epicId) ?? { prEnabled: null, isolated: false, maxSessions: 1 };
+    const replanParallelism = parallelismBlock(rc.maxSessions, rc.isolated);
+    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, pilotExec: rc.pilotExec, overseerExec: rc.overseerExec, prEnabled: rc.prEnabled, maxSessions: rc.maxSessions, createdBy: epic.created_by ?? c.get('user')?.id ?? null });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
-    if ((job.pilotExec || cfg.autopilot.pilotExec) && d.pilot) {
-      void d.pilot(job, pathFor(epic.project_id)).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
+    const replanPilot = d.planFlow?.pilotBackend(job.pilotExec) ?? null;
+    if (replanPilot) {
+      void replanPilot(job, pathFor(epic.project_id)).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
       return c.json({ jobId: job.id, epicId }, 202);
     }
     const relay = d.config.autopilotRelay();

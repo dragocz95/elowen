@@ -60,8 +60,12 @@ export function register(ctx: PluginContext): void {
           projects: stores.projects,
           readiness: stores.readiness,
           taskUsage: stores.taskUsage,
-          // Host usersRead rows adapted to the is_admin shape the push dispatcher/engine read.
-          users: { list: () => stores.usersRead.list().map((u) => ({ id: u.id, is_admin: u.isAdmin })) },
+          // Host usersRead rows adapted to the is_admin shape the push dispatcher/engine read; the
+          // per-user exec allow-list feeds planFlow's pilot/overseer override validation.
+          users: {
+            list: () => stores.usersRead.list().map((u) => ({ id: u.id, is_admin: u.isAdmin })),
+            allowedExecs: (id) => stores.usersRead.allowedExecs(id),
+          },
         },
         prompts: ctx.host.prompts(),
         config: ctx.host.config(),
@@ -173,7 +177,7 @@ export function register(ctx: PluginContext): void {
   ctx.registerControl('agents', {
     engine: () => rt().engine,
     spawn: () => rt().spawn,
-    pilot: () => rt().pilot,
+    planFlow: () => rt().planFlow,
     planJobs: () => rt().planJobs,
     decisionQueue: () => rt().decisionQueue,
     missionGit: () => rt().missionGit,

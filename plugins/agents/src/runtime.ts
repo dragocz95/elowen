@@ -20,6 +20,7 @@ import { detectAgentPrompt } from './deriver/shellPatterns/index.js';
 import { MissionEngine, type SummaryContext } from './overseer/missionEngine.js';
 import { MissionGit } from './overseer/missionGit.js';
 import { createReviewService } from './overseer/reviewService.js';
+import { createPlanFlow } from './overseer/planFlow.js';
 import type { AgentsPluginConfig } from './config.js';
 import { Scheduler } from './overseer/scheduler.js';
 import { sweepFinishedSessions } from './overseer/janitor.js';
@@ -64,8 +65,9 @@ export interface AgentsRuntimeDeps {
     /** Dependency-cleared open tasks (PluginHostStores.readiness shape). */
     readiness: { ready(projectId: number): Task[]; readyForEpic(epicId: string): Task[] };
     taskUsage: TaskUsageStore;
-    /** Read-only user view with the admin flag (host usersRead rows adapted to is_admin shape). */
-    users: { list(): { id: number; is_admin: boolean }[] };
+    /** Read-only user view with the admin flag (host usersRead rows adapted to is_admin shape) plus
+     *  the per-user exec allow-list (planFlow validates pilot/overseer overrides against it). */
+    users: { list(): { id: number; is_admin: boolean }[]; allowedExecs(id: number): readonly string[] | null };
   };
   prompts: PluginHostPrompts;
   config: PluginHostConfig;
@@ -370,6 +372,9 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     publish: bus.publish,
     pathFor: (pid) => projects.get(pid)?.path ?? deps.homeProjectPath,
   });
+  // The agents half of the core plan/replan routes (exec-override validation, PR mode, backend
+  // choice, mission labels, post-persist engage/tick) — reached through the 'agents' control.
+  const planFlow = createPlanFlow({ tasks, missions, config: deps.config, projects, users, engine, pilot });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
   // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
@@ -588,7 +593,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     // stores (plugin-owned tables)
     agents, missions, missionPrs, notes,
     // services
-    spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver, review,
+    spawn, overseerClient, planJobs, decisionQueue, pilot, missionGit, overseer, engine, scheduler, deriver, review, planFlow,
     // resolution helpers (API routes and services build on these in later steps)
     taskForSession, missionIdForSession, decisionRenderer, usagePathFor, resumeFallback, liveSessions, gitLock, liveTaskUsage, advisor,
     // boot reconciles (ctx.registerBootReconcile) + interval loops (ctx.registerInterval)

@@ -91,7 +91,7 @@ describe('agents plugin register() (B2b activation)', () => {
     // Accessors build the runtime lazily and return the live services.
     expect(typeof control!.engine().tick).toBe('function');
     expect(typeof control!.spawn().launch).toBe('function');
-    expect(typeof control!.pilot()).toBe('function');
+    expect(typeof control!.planFlow().planEngage).toBe('function');
     expect(typeof control!.planJobs().create).toBe('function');
     expect(typeof control!.decisionQueue().enqueue).toBe('function');
     expect(typeof control!.missionGit().worktreeFor).toBe('function');

@@ -182,14 +182,19 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   const spawn = control.spawn();
   const decisionQueue = control.decisionQueue();
   const planJobs = control.planJobs() as PlanJobStore;
-  // No-op pilot: in agent mode the job simply stays 'planning' until a test calls /plan/:id/submit.
-  const pilot = async (_job: PlanJob, _projectPath: string) => { /* parked */ };
+  // No-op pilot backend: whenever the REAL flow would pick the agent backend, park the job instead —
+  // it stays 'planning' until a test calls /plan/:id/submit. Every other planFlow decision is real.
+  const realPlanFlow = control.planFlow();
+  const planFlow: typeof realPlanFlow = {
+    ...realPlanFlow,
+    pilotBackend: (exec) => realPlanFlow.pilotBackend(exec) ? async (_job: PlanJob, _projectPath: string) => { /* parked */ } : null,
+  };
 
   const app = createServer({
     tasks, readiness, missions, engine, tmux, bus,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
-    planJobs, pilot,
+    planJobs, planFlow,
     // Mirror bootstrap: the close path drives the plugin's review gate through the control.
     onTaskClosed: control.onTaskClosed,
     gitLock: control.gitLock(),

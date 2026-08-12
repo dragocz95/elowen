@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePrEnabled } from '../../../../src/shared/prMode.js';
+import { resolvePrEnabled } from '../../../../plugins/agents/src/overseer/prMode.js';
 
 describe('prMode.resolvePrEnabled', () => {
   it('an explicit override wins over everything', () => {

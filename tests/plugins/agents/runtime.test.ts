@@ -28,7 +28,7 @@ function fakeDeps() {
       projects: { get: () => null, list: () => [] } as unknown as ProjectStore,
       readiness: { ready: () => [], readyForEpic: () => [] } as unknown as Readiness,
       taskUsage: { record: () => {}, get: () => null } as unknown as TaskUsageStore,
-      users: { list: () => [{ id: 1, is_admin: true }] },
+      users: { list: () => [{ id: 1, is_admin: true }], allowedExecs: () => null },
     },
     prompts: { render: (name) => `[${name}]`, rawTemplate: (name) => `[raw:${name}]` },
     config: {

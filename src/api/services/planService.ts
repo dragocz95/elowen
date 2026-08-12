@@ -34,26 +34,22 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
     // only AFTER the transaction below returns (i.e. after it commits), so a subscriber never sees an
     // event for a task a later step in the same plan failed to create.
     const toPublish: { taskId: string; status: Task['status'] }[] = [];
+    // Mission labels (the epic PR override, per-phase agent names) are agents vocabulary — the plugin
+    // supplies them; without it a plan persists label-less (there is no mission to read them anyway).
+    const labels = d.planFlow?.planLabels();
     const { epic, created } = d.tasks.transaction(() => {
       let epic = d.tasks.get(epicId);
       if (!epic) {
-        // A per-task PR override rides as a `pr:on`/`pr:off` epic label (missionGit reads it first, before
-        // the project/global default). Only stamped on a fresh epic — a replan must never flip the mode.
-        const prLabels = job.prEnabled === true ? ['pr:on'] : job.prEnabled === false ? ['pr:off'] : [];
         // Title = the short mission name when given (else the goal, so it's never blank); the full goal
         // always lands in the description. This is what lets the tasks UI show a tidy name + the full brief.
-        epic = d.tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: prLabels, created_by: job.createdBy ?? null });
+        epic = d.tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: labels?.epic(job.prEnabled) ?? [], created_by: job.createdBy ?? null });
         toPublish.push({ taskId: epic.id, status: epic.status });
       }
       const existing = d.tasks.descendants(epic.id);
       const dependedOn = new Set(d.tasks.depsAmong(existing.map((t) => t.id)).map((e) => e.depends_on_id));
       const leaves = existing.map((t) => t.id).filter((id) => !dependedOn.has(id));
       const overallGoal = epic.description?.trim() || epic.title;
-      // Agent names double as tmux session names AND as the janitor/deriver's session↔task key, so the
-      // "one agent name ↔ one task" invariant is load-bearing. The pilot (an LLM) can hand the same name
-      // to several phases; honour each only while it's still free (across the epic's existing tasks and
-      // this batch), else drop it so the engine assigns a fresh unique name via freeAgentName at spawn.
-      const usedAgents = new Set(existing.flatMap((t) => t.labels.filter((l) => l.startsWith('agent:')).map((l) => l.slice('agent:'.length))));
+      const phaseLabels = labels?.phaseLabeler(existing) ?? (() => []);
       const created: Task[] = [];
       // No phase carries an id → we can't build a real DAG, so reproduce the legacy prev→next chain
       // (back-compat: old relay prompts and manual UI phases never emit ids). Any id present → DAG mode.
@@ -65,9 +61,7 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
         // The web detail pane strips this appended overgoal back off (web/lib/agentUtils phaseDetails),
         // which anchors on the exact `\n\nOverall goal:` separator — keep that wording/join in sync.
         const childDesc = ph.details ? `${ph.details}\n\nOverall goal: ${overallGoal}` : `Overall goal: ${overallGoal}`;
-        const agentLabels = ph.agent && !usedAgents.has(ph.agent) ? [`agent:${ph.agent}`] : [];
-        if (agentLabels.length) usedAgents.add(ph.agent!);
-        const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: agentLabels, description: childDesc, created_by: job.createdBy ?? null });
+        const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: phaseLabels(ph.agent), description: childDesc, created_by: job.createdBy ?? null });
         if (ph.id) idMap.set(ph.id, child.id);
         // exec: auto mode takes the planner's per-phase pick, manual mode the job-level choice. Either
         // way it must be allow-listed — a halucinated/disabled exec is dropped so the child runs with
@@ -137,20 +131,11 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
     const { epic, phases: created } = persistPlan(job);
     job.epicId = epic.id;
     planJobs.setPhases(jobId, phases);
-    if (job.engage) {
-      // The plan routes refuse engage without the engine up front; this covers a plugin disabled (or
-      // reloading) in the async window — fail the engage loudly rather than silently skipping it.
-      if (!d.engine) throw new Error('agents plugin is disabled');
-      await d.engine.engage({
-        epicId: epic.id, autonomy: job.engage.autonomy, maxSessions: job.engage.maxSessions,
-        preserveReviewBudget: job.engage.preserveReviewBudget, createdBy: job.createdBy,
-        pilotExec: job.pilotExec, overseerExec: job.overseerExec,
-      });
-    } else {
-      const missionId = `m-${epic.id}`;
-      const engine = d.engine;
-      if (engine?.isActive(missionId)) await engine.tick(missionId); // replan into a live mission
-    }
+    // The plan routes refuse engage without the plugin up front; this covers a plugin disabled (or
+    // reloading) in the async window — fail the engage loudly rather than silently skipping it.
+    if (job.engage && !d.planFlow) throw new Error('agents plugin is disabled');
+    // Engage a fresh mission (job.engage) or tick a live one so a replan's phases are picked up now.
+    await d.planFlow?.planEngage(job, epic.id);
     d.bus.publish({ type: 'plan', jobId, status: 'done', epicId: epic.id, phases: created.map((t) => ({ title: t.title, type: t.type })) });
     reapPilotSession(job);
   }
