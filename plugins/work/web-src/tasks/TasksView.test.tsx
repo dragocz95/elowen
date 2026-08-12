@@ -6,7 +6,7 @@ import { ensurePluginUiRuntime } from '../../../../web/lib/pluginUi';
 // them, exactly as the host page does in the browser.
 ensurePluginUiRuntime();
 const { TasksView } = await import('./TasksView');
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../../../web/tests/msw';
@@ -72,6 +72,24 @@ describe('TasksView', () => {
     expect(localStorage.getItem('elowen.tasks.filter')).toBe('open');
     expect(screen.getByText('Plan')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Build')).toBeNull());
+  });
+
+  // The deep link the dashboard, the timeline and the legacy /tasks redirect all use. The bundle reads
+  // it through its own useSearchParams shim, and the effect that applies it depends on that value's
+  // IDENTITY: a shim returning a fresh object per render would re-apply the id after every state change,
+  // which reads as a detail pane that cannot be closed or switched away from.
+  it('opens the task named by ?select= and lets it be closed again', async () => {
+    window.history.replaceState(null, '', '/p/work/tasks?select=elowen-2');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><TasksView /></ToastProvider></Wrapper>);
+    const rail = await screen.findByRole('dialog', { name: 'Task detail' });
+    expect(await within(rail).findByText('Plan')).toBeInTheDocument();
+    fireEvent.click(within(rail).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Task detail' })).toBeNull());
+    // …and stays closed: the URL still carries ?select=, so a re-running effect would re-open it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole('dialog', { name: 'Task detail' })).toBeNull();
+    window.history.replaceState(null, '', '/p/work/tasks');
   });
 
   it('opens task context in the workspace detail rail', async () => {

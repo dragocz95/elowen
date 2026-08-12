@@ -10,6 +10,7 @@
  *  host's, so the pages and the core surfaces that still read tasks (dashboard tiles, the bell) share
  *  ONE react-query cache and ONE SSE invalidation path.
  */
+import { useMemo, useSyncExternalStore } from 'react';
 import type { ChangeEvent, ComponentType, ReactNode, MouseEvent } from 'react';
 import type {
   ActivityEvent, BrainMessage, CommitLogEntry, DateRange, DerivedSignal, ElowenConfig, LocaleDict,
@@ -245,17 +246,42 @@ export function Link({ href, className, title, children }: { href: string; class
   return <a href={href} className={className} title={title} onClick={onClick}>{children}</a>;
 }
 
-/** next/navigation's `useSearchParams`, for a page that owns its query string outside Next's router.
- *  Reads `window.location.search` — the host route is client-rendered, so it is always current. */
-export function useSearchParams(): URLSearchParams {
-  return new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+/** The current query string, published as an external store so `useSearchParams` can hand back a
+ *  REFERENTIALLY STABLE value. next/navigation's version only changes identity when the URL changes,
+ *  and the views depend on that: `useEffect(…, [params])` reading `?select=` must run when the link is
+ *  followed, not on every render — otherwise closing the detail rail immediately re-applies the id from
+ *  the URL and the pane cannot be closed or switched. */
+const searchListeners = new Set<() => void>();
+let popstateBound = false;
+
+/** Read live rather than from a cached copy: the host navigates with the app router (pushState), which
+ *  fires no popstate, so a value captured at module load would go stale on the first SPA navigation. */
+const readSearch = (): string => (typeof window === 'undefined' ? '' : window.location.search);
+
+function publishSearch(): void {
+  for (const listener of searchListeners) listener();
 }
 
-/** The slice of next/navigation's router the moved views use: `replace` drops the query string
- *  without a history entry (parity with the core page's `router.replace('/tasks')`). */
+function subscribeSearch(listener: () => void): () => void {
+  searchListeners.add(listener);
+  if (!popstateBound) { window.addEventListener('popstate', publishSearch); popstateBound = true; }
+  return () => { searchListeners.delete(listener); };
+}
+
+/** next/navigation's `useSearchParams`, for a page that owns its query string outside Next's router.
+ *  The host route is client-rendered, so `window.location` is always current. */
+export function useSearchParams(): URLSearchParams {
+  const search = useSyncExternalStore(subscribeSearch, readSearch, () => '');
+  return useMemo(() => new URLSearchParams(search), [search]);
+}
+
+/** The slice of next/navigation's router the moved views use: `replace` drops the query string without
+ *  a history entry (parity with the core page's `router.replace`). The existing history state is carried
+ *  over rather than replaced with null — it holds the host router's own record of this entry, and
+ *  dropping it degrades a later Back into a full page load. */
 export function useRouter(): { replace(href: string): void; push(href: string): void } {
   return {
-    replace: (href: string) => { window.history.replaceState(null, '', href); },
+    replace: (href: string) => { window.history.replaceState(window.history.state, '', href); publishSearch(); },
     push: (href: string) => { runtime().navigate(href); },
   };
 }

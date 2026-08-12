@@ -61,7 +61,7 @@ export function TasksView() {
   // Command palette: /tasks?new=1 opens the create modal; ?select=<id> opens its detail pane.
   const router = useRouter();
   const params = useSearchParams();
-  useEffect(() => { if (params.get('new') === '1') { setCreating(true); router.replace('/tasks'); } }, [params, router]);
+  useEffect(() => { if (params.get('new') === '1') { setCreating(true); router.replace('/p/work/tasks'); } }, [params, router]);
   useEffect(() => { const s = params.get('select'); if (s) setSelectedId(s); }, [params]);
   // Reveal a deep-linked phase by expanding its parent epic.
   useEffect(() => {

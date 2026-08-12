@@ -181,7 +181,7 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
             <div className="mt-1 text-sm font-medium text-text">{display.label}</div>
           </div>
           {taskId ? (
-            <Link href={`/tasks?select=${encodeURIComponent(taskId)}`} className="inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text transition-colors hover:text-accent @sm:w-auto @sm:justify-start">
+            <Link href={`/p/work/tasks?select=${encodeURIComponent(taskId)}`} className="inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text transition-colors hover:text-accent @sm:w-auto @sm:justify-start">
               <ArrowUpRight size={14} aria-hidden />{t.timeline.openTask}
             </Link>
           ) : null}
