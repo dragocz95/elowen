@@ -87,19 +87,23 @@ src/
 ├── cli/              CLI commands, setup/install flows, and interactive chat
 ├── daemon/           Bootstrap, dependency wiring, and recurring work
 ├── embeddings/       Shared embedding service and queue
+├── git/              Git command helpers shared with the plugins
 ├── inference/        Provider clients and relay integration
-├── integrations/     Git/project data, CLI detection, usage collection
+├── integrations/     Git/project data and the shared project path guard
 ├── mcp/              Stateless MCP endpoint
-├── overseer/         Missions, planning, scheduling, review, and decisions
 ├── plugins/          Manifest loader, registry, policy, hooks, marketplace
 ├── prompts/          Prompt composition helpers
+├── push/             Web push subscriptions and notification delivery
 ├── shared/           Cross-cutting utilities, executor metadata, and the
 │                     daemon↔web wire contract (`wireContract.ts`)
-├── spawn/            Agent launch and resume paths
 ├── store/            SQLite stores and schema
+├── subagent/         Sub-agent runner pool and dispatch
 ├── terminal/         PTY terminal transport
 └── tmux/             tmux driver abstraction and fakes
-plugins/              Bundled plugin folders with `elowen-plugin.json`
+plugins/              Bundled plugin folders with `elowen-plugin.json`. Agent
+                      spawning, missions and the overseer are in
+                      `plugins/agents/`, language servers in `plugins/lsp/`,
+                      the project file editor in `plugins/editor/`
 prompts/              Runtime prompt templates copied into `dist/`
 tests/                Daemon tests, broadly mirroring source areas
 web/                  Next.js App Router frontend
