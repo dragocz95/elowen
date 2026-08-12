@@ -1898,6 +1898,7 @@ export const cs = {
     unknown: 'pracuje',
   },
   pluginUi: {
+    eyebrow: 'Rozšíření',
     unavailable: 'Tento plugin není zapnutý, nebo nemá žádné rozhraní.',
     incompatible: 'Tento plugin vyžaduje novější verzi aplikace. Pro použití jeho rozhraní aktualizujte server.',
     loadFailed: 'Rozhraní pluginu se nepodařilo načíst. Zkontrolujte záznamy pluginu v Nastavení → Pluginy.',

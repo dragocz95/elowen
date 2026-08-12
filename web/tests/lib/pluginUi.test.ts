@@ -62,8 +62,19 @@ describe('pluginNavEntries', () => {
       { name: 'skills', url: '/plugins/skills/web/x.js', apiVersion: 1, nav: [], settings: [{ id: 'skills', label: 'Dovednosti', icon: 'Sparkles' }] },
     ]);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ id: 'plugin-skills', href: '/p/skills/settings/skills', label: 'Dovednosti' });
+    // One surface, so the address is the plugin itself — not `/p/skills/settings/skills`.
+    expect(entries[0]).toMatchObject({ id: 'plugin-skills', href: '/p/skills', label: 'Dovednosti' });
     expect(entries[0]!.subItems).toBeUndefined();
+  });
+
+  it('keeps the explicit settings address when a plugin has more than one section', () => {
+    const entries = pluginNavEntries([
+      {
+        name: 'agents', url: '/plugins/agents/web/x.js', apiVersion: 1, nav: [],
+        settings: [{ id: 'autopilot', label: 'Autopilot' }, { id: 'cli', label: 'CLI agenti' }],
+      },
+    ]);
+    expect(entries[0]!.subItems?.map((s) => s.href)).toEqual(['/p/agents/settings/autopilot', '/p/agents/settings/cli']);
   });
 
   it('lists nav pages before settings sections when a plugin has both', () => {

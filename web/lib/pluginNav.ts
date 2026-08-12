@@ -13,9 +13,13 @@ import type { NavEntry } from '../components/shell/NavItem';
 export function pluginNavEntries(listing: PluginUiListing[]): NavEntry[] {
   return listing.flatMap((p) => {
     const base = `/p/${p.name}`;
+    // A plugin whose whole UI is one settings section lives at `/p/<plugin>` — spelling the section out
+    // as `/p/skills/settings/skills` repeats the plugin's own name back at the reader. The host route
+    // still serves the explicit form, so existing links and multi-section plugins keep working.
+    const sole = p.nav.length === 0 && p.settings.length === 1;
     const pages = [
       ...p.nav.map((item) => ({ href: item.route ? `${base}/${item.route}` : base, label: item.label, icon: item.icon })),
-      ...p.settings.map((s) => ({ href: `${base}/settings/${s.id}`, label: s.label, icon: s.icon })),
+      ...p.settings.map((s) => ({ href: sole ? base : `${base}/settings/${s.id}`, label: s.label, icon: s.icon })),
     ];
     const first = pages[0];
     if (!first) return [];

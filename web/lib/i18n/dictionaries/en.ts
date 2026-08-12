@@ -1898,6 +1898,7 @@ export const en = {
     unknown: 'working',
   },
   pluginUi: {
+    eyebrow: 'Extension',
     unavailable: 'This plugin is not enabled, or it has no interface.',
     incompatible: 'This plugin needs a newer version of the application. Update the server to use its interface.',
     loadFailed: 'The plugin interface failed to load. Check the plugin logs in Settings → Plugins.',
