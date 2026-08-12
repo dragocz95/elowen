@@ -26,10 +26,12 @@ export function Providers({ children }: { children: ReactNode }) {
         refetchOnWindowFocus: false,
         // Don't retry client errors (4xx): a 401 has already cleared the token (req() in elowenClient),
         // and 400/403/404 won't change on a retry — retrying only delays the error UI and re-hammers
-        // the daemon. Transient faults (network drop / 5xx) still get a couple of attempts.
+        // the daemon. 503 is the daemon's DELIBERATE "plugin is disabled" degradation on declared
+        // plugin mounts — deterministic until an admin flips the plugin, so retrying is pure noise.
+        // Transient faults (network drop / other 5xx) still get a couple of attempts.
         retry: (failureCount, error) => {
           const status = error instanceof ElowenApiError ? error.status : undefined;
-          if (status != null && status >= 400 && status < 500) return false;
+          if (status != null && ((status >= 400 && status < 500) || status === 503)) return false;
           return failureCount < 2;
         },
       },

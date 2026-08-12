@@ -1,6 +1,7 @@
 import { streamSSE } from 'hono/streaming';
 import { ZodError } from 'zod';
 import { logger } from '../../shared/logger.js';
+import { discoverPlugins } from '../../plugins/loader.js';
 import { bodyLimitBytes, formatZodError } from '../validation.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
@@ -121,6 +122,12 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
   // a steady state costs one map lookup per request.
   let validatedFor: unknown;
   const skipped = new Set<string>();
+  // Root mounts DECLARED by a discovered plugin (manifest provides.apiRoutes) that are NOT live in
+  // this registry generation — i.e. the owning plugin is disabled (or failed to load). A request
+  // hitting one of these answers an explicit 503 instead of a bare 404, so a CLI or spawned agent
+  // can tell "subsystem off" from "no such endpoint". Recomputed per generation: enabling/disabling
+  // a plugin reloads the registry, so the disk scan runs once per toggle, not per request.
+  let declaredInactive: { plugin: string; segs: string[] }[] = [];
   const validate = (registry: { rootApiRoutes: Map<string, { plugin: string }> }) => {
     if (registry === validatedFor) return;
     validatedFor = registry;
@@ -131,6 +138,18 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
         log.warn(`root api mount '${mount}' (plugin ${entry.plugin}) skipped: a core route owns this path — core wins`);
       }
     }
+    declaredInactive = discoverPlugins(d.pluginDirs ?? [])
+      .flatMap((p) => (p.manifest.provides?.apiRoutes ?? []).map((mount) => ({ plugin: p.manifest.name, mount })))
+      .filter((m) => !registry.rootApiRoutes.has(m.mount))
+      .map((m) => ({ plugin: m.plugin, segs: m.mount.split('/').filter(Boolean) }));
+  };
+  // Does the request path fall under a declared-but-inactive mount? Same prefix semantics as the live
+  // resolver: every mount segment must match (':param' matches any one segment), extra trailing
+  // request segments are the handler's sub-path.
+  const inactiveOwner = (path: string): string | undefined => {
+    const segs = path.split('/').filter(Boolean);
+    return declaredInactive.find((m) =>
+      m.segs.length <= segs.length && m.segs.every((seg, i) => seg.startsWith(':') || seg === segs[i]))?.plugin;
   };
   // Middleware with fall-through, NOT a terminal `app.all('*')`: an unmatched path must continue to
   // whatever is registered AFTER this dispatcher (daemon/index.ts adds the /ws/terminal upgrade on the
@@ -141,7 +160,14 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
     if (!registry) return next();
     validate(registry);
     const match = registry.rootApiRoute(c.req.path, c.req.method);
-    if (!match || skipped.has(match.mount)) return next();
+    if (!match || skipped.has(match.mount)) {
+      // No live handler — but if a DISCOVERED plugin declares this mount, the subsystem exists and is
+      // merely off: answer an explicit 503 so callers (CLI, spawned agents, MCP tools) get a reason
+      // instead of a bare 404. An undeclared path still falls through to Hono's notFound.
+      const owner = inactiveOwner(c.req.path);
+      if (owner) return c.json({ error: `${owner} plugin is disabled` }, 503);
+      return next();
+    }
     return dispatchPluginApi(c, ctx, match);
   });
 }

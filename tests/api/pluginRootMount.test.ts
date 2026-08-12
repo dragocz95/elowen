@@ -116,6 +116,32 @@ describe('root-mounted plugin API routes', () => {
     expect(text).toContain('data: two');
   });
 
+  it('a DECLARED mount of a discovered-but-disabled plugin answers 503, not 404', async () => {
+    // The plugin sits on disk (manifest declares its root mounts) but is NOT enabled — the registry
+    // has no live handler. A caller must learn "subsystem off", not chase a phantom endpoint: the
+    // CLI and spawned agents surface this error text verbatim.
+    const root = mkdtempSync(join(tmpdir(), 'plugin-root-'));
+    pluginRoots.push(root);
+    const dir = join(root, 'rooty');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
+      name: 'rooty', version: '1.0.0', apiVersion: '1', description: 'disabled demo', entry: 'index.mjs',
+      provides: { apiRoutes: ['/rooty', '/tasks/:id/probe'] },
+    }));
+    writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
+    const provider = new PluginRegistryProvider(() => loadPlugins({
+      dirs: [root], enabled: [], logger: { info() {}, warn() {}, error() {} },
+    }));
+    const { app, token } = await makeTestApp({ extra: { plugins: provider, pluginDirs: [root] } });
+    const res = await app.request('/rooty', auth(token));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'rooty plugin is disabled' });
+    // Sub-paths and :param mounts resolve by the same prefix rules as the live dispatcher.
+    expect((await app.request('/rooty/deep/sub', auth(token))).status).toBe(503);
+    // An undeclared path is still a plain 404 — 503 never leaks beyond declared mounts.
+    expect((await app.request('/rooty-nope', auth(token))).status).toBe(404);
+  });
+
   it('unknown root path still 404s through the fallback', async () => {
     const { provider } = rootPluginProvider();
     const { app, token } = await makeTestApp({ extra: { plugins: provider } });
