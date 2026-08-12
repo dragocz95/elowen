@@ -43,7 +43,10 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     const epic = d.tasks.get(target);
     if (!epic) return c.json({ error: 'unknown target' }, 404);
     if (!canAccessProject(c, epic.project_id)) return c.json({ error: 'forbidden' }, 403);
-    return c.json(d.notes?.list(scope, target) ?? []);
+    // The notes store is plugin-owned. A 200-with-[] here would silently strip a worker of its
+    // handoff context — degrade EXPLICITLY, like the other agents write paths (tasks.ts).
+    if (!d.notes) return c.json({ error: 'agents plugin is disabled' }, 503);
+    return c.json(d.notes.list(scope, target));
   });
   app.post('/notes', async (c) => {
     const b = await parseBody(c, createNoteSchema);
@@ -57,7 +60,7 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     const epic = d.tasks.get(target);
     if (!epic) return c.json({ error: 'unknown target' }, 404);
     if (!canAccessProject(c, epic.project_id)) return c.json({ error: 'forbidden' }, 403);
-    if (!d.notes) return c.json({ error: 'notes unavailable' }, 400);
+    if (!d.notes) return c.json({ error: 'agents plugin is disabled' }, 503);
     if (d.notes.count(scope, target) >= MAX_NOTES_PER_TARGET) return c.json({ error: 'too many notes' }, 429);
     const author = typeof b.author === 'string' ? b.author : '';
     return c.json(d.notes.add({ scope, target, author, body }), 201);

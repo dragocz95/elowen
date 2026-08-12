@@ -4,7 +4,18 @@ export class ElowenClient {
     const headers = new Headers(init?.headers);
     if (this.token) headers.set('authorization', `Bearer ${this.token}`);
     const res = await fetch(`${this.base}${path}`, { ...init, headers });
-    if (!res.ok) throw new Error(`elowen API ${res.status} on ${path}`);
+    if (!res.ok) {
+      // Surface the server's own error message (routes answer {"error": …}) — a spawned agent reads
+      // this text, and "503 on /notes" says far less than "agents plugin is disabled".
+      const detail = await res.json().then((b) => (b as { error?: string })?.error, () => undefined);
+      // The mission/session surface is served by the agents plugin's root mounts: without the plugin
+      // the mounts do not exist at all, so a 404 here almost always means "subsystem off", not a typo'd
+      // id (an unknown id on a live mount answers 404 WITH an error body — kept via `detail` above).
+      if (res.status === 404 && !detail && /^\/(sessions|missions)(\/|$|\?)/.test(path)) {
+        throw new Error(`elowen API 404 on ${path} — agents subsystem is unavailable (the agents plugin is disabled on this daemon)`);
+      }
+      throw new Error(`elowen API ${res.status} on ${path}${detail ? ` — ${detail}` : ''}`);
+    }
     // A proxy or wrong endpoint can return 200 with a non-JSON body; surface a clear error rather
     // than crashing the CLI (and the spawned agent that drives it) on an opaque SyntaxError.
     try { return await res.json(); }

@@ -76,9 +76,16 @@ describe('handoff notes API', () => {
     expect((await app.request('/notes?scope=mission&target=e2', auth(adminTok))).status).toBe(200);
   });
 
-  it('degrades to [] when the notes store is absent', async () => {
+  it('answers an explicit 503 on BOTH verbs when the notes store is absent (plugin disabled)', async () => {
+    // A 200-with-[] would silently strip a worker of its handoff context; the CLI must be able to
+    // tell "plugin off" from "no notes yet". Same degradation contract as the tasks.ts write paths.
     const { app, adminTok } = setup(false);
-    expect(await (await app.request('/notes?scope=mission&target=e1', auth(adminTok))).json()).toEqual([]);
+    const got = await app.request('/notes?scope=mission&target=e1', auth(adminTok));
+    expect(got.status).toBe(503);
+    expect(await got.json()).toEqual({ error: 'agents plugin is disabled' });
+    const posted = await app.request('/notes', post(adminTok, { target: 'e1', body: 'x' }));
+    expect(posted.status).toBe(503);
+    expect(await posted.json()).toEqual({ error: 'agents plugin is disabled' });
   });
 
   it('GET fails closed on an unknown target (404) — never lists notes for an unresolved target', async () => {
