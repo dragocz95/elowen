@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { repairJson, parseLenient } from '../../../../src/api/services/jsonRepair.js';
-import { extractJson } from '../../../../src/api/services/llmParse.js';
-import { parseDecision } from '../../../../plugins/agents/src/overseer/decision.js';
-import { parsePhases } from '../../../../src/api/services/planner.js';
+import { repairJson, parseLenient } from '../../../plugins/work/src/lib/jsonRepair.js';
+import { extractJson } from '../../../plugins/work/src/lib/llmParse.js';
+import { parseDecision } from '../../../plugins/agents/src/overseer/decision.js';
+import { parsePhases } from '../../../plugins/work/src/api/planner.js';
 
 describe('repairJson + parseLenient', () => {
   it('removes trailing commas before } and ]', () => {

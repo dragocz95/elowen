@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PlanJobStore } from '../../src/api/planJobStore.js';
+import { PlanJobStore } from '../../../plugins/work/src/api/planJobStore.js';
 
 describe('PlanJobStore pruning (bounded memory)', () => {
   it('drops finished (done/failed) jobs older than the TTL, keeps in-flight ones', () => {

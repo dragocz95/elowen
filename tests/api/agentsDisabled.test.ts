@@ -16,6 +16,26 @@ import { openAgentsDb } from '../helpers/agentsDb.js';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { makePluginDb } from '../../src/store/pluginDb.js';
+import { agentsTestHost } from '../helpers/testApp.js';
+
+/** The task domain lives in the `work` plugin, so the /tasks surface only exists when THAT plugin is
+ *  loaded — this file keeps it enabled and switches only `agents` off. No `pluginDirs`: the agents
+ *  plugin is then not DISCOVERED either, so its declared mounts stay a bare 404 (the discovered-but-
+ *  disabled 503 degradation is asserted separately, by the approve-gate test below). */
+function workOnlyPlugins(w: {
+  db: ReturnType<typeof openDb>; tasks: TaskStore; readiness: Readiness;
+  config: ConfigStore; projects: ProjectStore; users: UserStore; bus: EventBus;
+}): PluginRegistryProvider {
+  return new PluginRegistryProvider(() => loadPlugins({
+    dirs: [join(process.cwd(), 'plugins')], enabled: ['work'], logger: { info() {}, warn() {}, error() {} },
+    delegatedTurnsOutOfProcess: () => false,
+    pluginDb: (plugin) => makePluginDb(w.db, plugin, { canMigrate: true }),
+    publishEvent: (e) => w.bus.publish(e),
+    subscribeEvents: (fn) => w.bus.subscribe(fn),
+    host: agentsTestHost(w),
+  }));
+}
 
 /** With the agents plugin disabled (control absent), the server is built WITHOUT engine/spawn — the
  *  mission/session/plan write paths must answer an explicit 503, never crash on an undefined dep, and
@@ -28,11 +48,15 @@ function setup() {
   const config = new ConfigStore(db);
   const tasks = new TaskStore(db);
   const missions = new MissionStore(db);
+  const readiness = new Readiness(db);
+  const projects = new ProjectStore(db);
+  const bus = new EventBus();
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), missions, bus,
     tmux: new FakeTmuxDriver() as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
+    plugins: workOnlyPlugins({ db, tasks, readiness, config, projects, users, bus }),
   });
   return { app, db, tasks, missions, tok: users.issueToken(admin.id) };
 }
@@ -106,11 +130,16 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const tasks = new TaskStore(db);
+    const readiness = new Readiness(db);
+    const config = new ConfigStore(db);
+    const projects = new ProjectStore(db);
+    const bus = new EventBus();
     const app = createServer({
-      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: { get: () => null, active: () => [], live: () => [], activeForEpic: () => null }, bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), missions: { get: () => null, active: () => [], live: () => [], activeForEpic: () => null }, bus,
       tmux: new FakeTmuxDriver() as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
+      plugins: workOnlyPlugins({ db, tasks, readiness, config, projects, users, bus }),
     });
     const tok = users.issueToken(admin.id);
     tasks.create({ id: 'e1', project_id: 1, title: 'E', type: 'epic' });
@@ -158,7 +187,7 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     const tasks = new TaskStore(db);
     tasks.create({ id: 'a1', project_id: 1, title: 'A1' });
     const app = createServer({
-      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
       tmux: new FakeTmuxDriver() as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

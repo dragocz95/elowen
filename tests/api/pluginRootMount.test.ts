@@ -32,7 +32,7 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'rooty', version: '1.0.0', apiVersion: '1', description: 'root mount demo', entry: 'index.mjs',
-    provides: { apiRoutes: ['/rooty', '/rooty/agent-poll', '/rooty/admin-knob', '/rooty/feed', '/tasks', '/plugins/rooty/:x', 'ns-ping'] },
+    provides: { apiRoutes: ['/rooty', '/rooty/agent-poll', '/rooty/admin-knob', '/rooty/feed', '/projects', '/plugins/rooty/:x', 'ns-ping'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
@@ -41,10 +41,10 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
       ctx.registerApiRoute({ rootMount: '/rooty/agent-poll', path: '', access: 'agent', handler: async (req) => ({ body: { scope: req.auth.tokenScope } }) });
       ctx.registerApiRoute({ rootMount: '/rooty/admin-knob', path: '', access: 'admin', handler: async () => ({ body: { secret: 7 } }) });
       ctx.registerApiRoute({ rootMount: '/rooty/feed', path: '', access: 'user', handler: async () => ({ sse: async (send) => { await send('one', 'tick'); await send('two', 'tick'); } }) });
-      // Collides with the core '/tasks' family — the dispatcher must skip it with a warning.
-      ctx.registerApiRoute({ rootMount: '/tasks', path: '', access: 'user', handler: async () => ({ body: { hijacked: true } }) });
-      // Same mount, but a METHOD core does not serve on /tasks — the skip is per method, so this lives.
-      ctx.registerApiRoute({ rootMount: '/tasks', path: '', method: 'PUT', access: 'user', handler: async () => ({ body: { methodScoped: true } }) });
+      // Collides with the core '/projects' family — the dispatcher must skip it with a warning.
+      ctx.registerApiRoute({ rootMount: '/projects', path: '', access: 'user', handler: async () => ({ body: { hijacked: true } }) });
+      // Same mount, but a METHOD core does not serve on /projects — the skip is per method, so this lives.
+      ctx.registerApiRoute({ rootMount: '/projects', path: '', method: 'PUT', access: 'user', handler: async () => ({ body: { methodScoped: true } }) });
       // A PATTERN mount partially overlapped by core literals (GET /plugins/:name/icon etc.) — core
       // wins those literal paths by matching first; the mount still serves everything else.
       ctx.registerApiRoute({ rootMount: '/plugins/rooty/:x', path: '', method: 'GET', access: 'user', handler: async (req) => ({ body: { param: req.params.x } }) });
@@ -96,22 +96,22 @@ describe('root-mounted plugin API routes', () => {
   it('skips a mount a core route owns, with a warning — core wins (mutation test)', async () => {
     const { provider, warnings } = rootPluginProvider();
     const { app, token } = await makeTestApp({ extra: { plugins: provider } });
-    // Touch a plugin-served path first: plugin loading is lazy, and a core-answered /tasks request
+    // Touch a plugin-served path first: plugin loading is lazy, and a core-answered /projects request
     // never reaches the fallback dispatcher (that ordering IS the "core wins" guarantee).
     expect((await app.request('/rooty', auth(token))).status).toBe(200);
-    const res = await app.request('/tasks', auth(token));
+    const res = await app.request('/projects', auth(token));
     expect(res.status).toBe(200);
     const body = await res.json() as unknown[];
-    expect(Array.isArray(body)).toBe(true); // the core task list answered, not the hijacker
+    expect(Array.isArray(body)).toBe(true); // the core project list answered, not the hijacker
     expect(warnings.some((w) => w.includes("registerApiRoute('/sneaky') refused"))).toBe(true); // undeclared mount refused
   });
 
   it('the core-conflict skip is per METHOD, and a partial pattern overlap is not a conflict', async () => {
     const { provider } = rootPluginProvider();
     const { app, token } = await makeTestApp({ extra: { plugins: provider } });
-    // GET /tasks is fully core-owned (skipped above); PUT /tasks is a method core never serves there,
-    // so the plugin's method-scoped route answers instead of being dropped alongside the GET.
-    const put = await app.request('/tasks', { method: 'PUT', ...auth(token) });
+    // GET /projects is fully core-owned (skipped above); PUT /projects is a method core never serves
+    // there, so the plugin's method-scoped route answers instead of being dropped alongside the GET.
+    const put = await app.request('/projects', { method: 'PUT', ...auth(token) });
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ methodScoped: true });
     // The pattern mount '/plugins/rooty/:x' overlaps core's '/plugins/:name/icon' only on the literal

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PlanJobStore } from '../../../../src/api/planJobStore.js';
+import { PlanJobStore } from '../../../../plugins/agents/src/overseer/planJob.js';
 
 describe('PlanJobStore', () => {
   it('creates a planning job and reads it back', () => {

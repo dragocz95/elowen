@@ -30,23 +30,20 @@ describe('agents plugin lib copies stay in lockstep with core (extraction B1)', 
   }
 });
 
-// PlanJobStore exists TWICE by design: the plugin's overseer runtime owns the live instance, while
-// the core RouteContext keeps a local fallback for plugin-less wiring (the /tasks/plan skeleton works
-// without the plugin). The two copies legitimately differ in their import specifiers (different
-// compile units) but must not drift in LOGIC — a one-sided change to job settling would make the
-// fallback behave differently from the real thing. Compared after normalizing module specifiers and
-// the one singular/plural comment word the copies differ in. (The DecisionQueue pair is gone: the
-// review gate moved into the plugin and the core fallback queue was deleted with it.)
+// PlanJobStore exists TWICE by design: the agents plugin's overseer runtime owns the live instance,
+// while the WORK plugin keeps its own for plugin-less wiring (the /tasks/plan surface still plans an
+// epic + phases with agents disabled). The two copies legitimately differ in their import specifiers
+// (different compile units) but must not drift in LOGIC — a one-sided change to job settling would
+// make the fallback behave differently from the real thing. Compared after normalizing module
+// specifiers, which are all the two compile units may legitimately differ in. (The DecisionQueue pair
+// is gone: the review gate moved into the plugin and the core fallback queue was deleted with it.)
 const NORMALIZED: [core: string, copy: string][] = [
-  ['src/api/planJobStore.ts', 'plugins/agents/src/overseer/planJob.ts'],
+  ['plugins/work/src/api/planJobStore.ts', 'plugins/agents/src/overseer/planJob.ts'],
 ];
 
-const normalize = (src: string): string => src
-  .replace(/from '[^']+'/g, "from 'X'")
-  .replace(/definitions live/g, 'definition lives')
-  .replace(/existing imports/g, 'plugin-internal imports');
+const normalize = (src: string): string => src.replace(/from '[^']+'/g, "from 'X'");
 
-describe('core fallback stores stay in logical lockstep with the plugin originals', () => {
+describe('the work plugin fallback stores stay in logical lockstep with the agents originals', () => {
   for (const [core, copy] of NORMALIZED) {
     it(`${core} matches ${copy} modulo import paths`, () => {
       expect(normalize(readFileSync(resolve(root, core), 'utf8'))).toBe(normalize(readFileSync(resolve(root, copy), 'utf8')));

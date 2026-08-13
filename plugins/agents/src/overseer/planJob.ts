@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Phase } from './planner.js';
-// Part of the core↔agents contract (rides the `plan` SSE event, mutated by the plan/replan routes) —
-// the definition lives in shared/; re-exported here so plugin-internal imports keep resolving.
+// Part of the cross-plugin contract (rides the `plan` SSE event, mutated by the plan/replan routes) —
+// the definition lives in core shared/; re-exported here so plugin-internal imports keep resolving.
 import type { PlanJob } from '../../../../src/shared/agentEvents.js';
 export type { PlanJob };
 

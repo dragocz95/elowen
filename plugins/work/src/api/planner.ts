@@ -1,9 +1,8 @@
-import type { InferenceClient } from '../../inference/types.js';
-import { defaultPromptTemplate } from '../../prompts/plannerDefault.js';
-import { extractJson } from './llmParse.js';
-// Phase is part of the CORE event contract (rides the `plan` SSE event) — defined in shared/, only
-// re-exported here so the planner's own callers keep their import path until the extraction moves them.
-import type { Phase } from '../../shared/agentEvents.js';
+import type { InferenceClient } from '../../../../src/inference/types.js';
+import { extractJson } from '../lib/llmParse.js';
+// Phase is part of the CORE event contract (it rides the `plan` SSE event) — defined in core shared/,
+// re-exported here so the planner's own callers keep one import path.
+import type { Phase } from '../../../../src/shared/agentEvents.js';
 
 export type { Phase };
 
@@ -68,9 +67,13 @@ export function parallelismBlock(maxSessions: number, isolated: boolean): string
  * Build the decomposition prompt: substitute the goal ({{goal}}) and the project's Pilot
  * notes ({{project}}) into the template. If the template has no {{project}} placeholder, the
  * context block is prepended so saved templates still pick up the notes.
+ *
+ * The template is REQUIRED: every caller resolves it through the same chain (request body → the
+ * user's saved override → the workspace autopilot template, which itself seeds from the shipped
+ * planner.md), so a silent fall back to the file default here could only ever disagree with it.
  */
-export function planPrompt(goal: string, template?: string, project?: PlanProjectContext, models?: string, parallelism?: string): string {
-  let tpl = (template ?? defaultPromptTemplate()).trim();
+export function planPrompt(goal: string, template: string, project?: PlanProjectContext, models?: string, parallelism?: string): string {
+  let tpl = template.trim();
   const ctx = projectContextBlock(project);
   if (tpl.includes('{{project}}')) tpl = tpl.replaceAll('{{project}}', ctx).trim();
   else if (ctx) tpl = `${ctx}\n\n${tpl}`;
@@ -107,7 +110,7 @@ export function parsePhases(text: string): Phase[] {
 }
 
 /** Run the LLM decomposition for a goal and return validated phases. */
-export async function decompose(inf: InferenceClient, goal: string, template?: string, project?: PlanProjectContext, models?: string, parallelism?: string): Promise<Phase[]> {
+export async function decompose(inf: InferenceClient, goal: string, template: string, project?: PlanProjectContext, models?: string, parallelism?: string): Promise<Phase[]> {
   const { text } = await inf.decide(planPrompt(goal, template, project, models, parallelism));
   return parsePhases(text);
 }

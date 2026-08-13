@@ -1,9 +1,28 @@
 import { basename } from 'node:path';
-import { shortId } from '../../shared/id.js';
-import type { AgentsPlanJobs } from '../../plugins/api.js';
-import type { Phase, PlanJob } from '../../shared/agentEvents.js';
-import type { Task } from '../../store/types.js';
-import type { ServerDeps } from '../deps.js';
+import { shortId } from '../lib/id.js';
+import type { AgentsPlanFlow, AgentsPlanJobs } from '../../../../src/plugins/api.js';
+import type { ElowenEvent } from '../../../../src/api/sse.js';
+import type { Phase, PlanJob } from '../../../../src/shared/agentEvents.js';
+import type { Task } from '../../../../src/store/types.js';
+import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
+
+/** What plan persistence reaches beyond its own store. Every one is resolved LIVE (the agents plugin
+ *  can be disabled or reloaded between two plans, and the workspace exec allow-list is edited in
+ *  Settings), so the service holds accessors rather than values. */
+export interface PlanServiceDeps {
+  tasks(): TaskStoreContract;
+  planJobs(): AgentsPlanJobs;
+  /** The agents half of the flow (mission labels, engage/tick). Absent while that plugin is disabled. */
+  planFlow(): AgentsPlanFlow | undefined;
+  /** The workspace exec allow-list — the outer bound on a planner-picked model. */
+  allowedExecs(): string[];
+  publishEvent(event: ElowenEvent): void;
+  /** Kill a settled Pilot's tmux pane (best-effort). */
+  killSession(name: string): Promise<void>;
+  /** Filesystem path of a project — shared with the routes so a re-homed project resolves identically
+   *  here and at spawn/snapshot time. */
+  pathFor(projectId: number): string;
+}
 
 export interface PlanService {
   /** Persist a plan job's phases as an epic + chained child tasks (single source for plan + replan). */
@@ -18,18 +37,17 @@ export interface PlanService {
  *  ticking the mission, and reaping the Pilot session. Extracted from the route layer so the planning
  *  path can be unit-tested without the HTTP surface. `pathFor` is shared with the route context so a
  *  re-homed project resolves identically here and at spawn/snapshot time. */
-export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathFor: (projectId: number) => string): PlanService {
+export function createPlanService(d: PlanServiceDeps): PlanService {
+  const { pathFor } = d;
+  const planJobs = (): AgentsPlanJobs => d.planJobs();
   // Persist a plan job's phases as an epic + chained child tasks. Creates the epic when the job has
   // no epicId yet; otherwise appends after the epic's current tail (leaves = phases nothing depends
   // on). For a fresh epic there are no descendants, so the first new phase simply starts the chain.
   // Single source of truth for both initial planning and replan (DRY with the old inline blocks).
   function persistPlan(job: PlanJob): { epic: Task; phases: Task[] } {
-    // The plan routes sit behind the task-domain availability gate, so this is an invariant, not a
-    // degradation path: without task rows there is no epic to persist a plan into.
-    const tasks = d.tasks;
-    if (!tasks) throw new Error('plan persistence reached without the task domain');
+    const tasks = d.tasks();
     const path = pathFor(job.projectId);
-    const allowedExecs = d.config.get().allowedExecs;
+    const allowedExecs = d.allowedExecs();
     const newId = () => shortId(basename(path));
     const epicId = job.epicId ?? newId();
     // The whole write — the epic (if new), every phase task, every dependency edge — runs as ONE
@@ -40,7 +58,7 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
     const toPublish: { taskId: string; status: Task['status'] }[] = [];
     // Mission labels (the epic PR override, per-phase agent names) are agents vocabulary — the plugin
     // supplies them; without it a plan persists label-less (there is no mission to read them anyway).
-    const labels = d.planFlow?.planLabels();
+    const labels = d.planFlow()?.planLabels();
     const { epic, created } = tasks.transaction(() => {
       let epic = tasks.get(epicId);
       if (!epic) {
@@ -108,7 +126,7 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
       });
       return { epic, created };
     });
-    for (const e of toPublish) d.bus.publish({ type: 'task', taskId: e.taskId, status: e.status });
+    for (const e of toPublish) d.publishEvent({ type: 'task', taskId: e.taskId, status: e.status });
     return { epic, phases: created };
   }
 
@@ -116,31 +134,31 @@ export function createPlanService(d: ServerDeps, planJobs: AgentsPlanJobs, pathF
   // pane is done; leaving it alive lets a finished planner linger and later collide with a fresh plan
   // job's session name. No-op for relay jobs (no session) and safe if the session is already gone.
   const reapPilotSession = (job: PlanJob): void => {
-    if (job.sessionName) void d.tmux.kill(job.sessionName).catch(() => { /* already gone — fine */ });
+    if (job.sessionName) void d.killSession(job.sessionName).catch(() => { /* already gone — fine */ });
   };
 
   // Finalize an async plan job: a dryRun job records phases without persisting; otherwise persist the
   // epic+children, optionally engage a mission, tick an already-active mission so it picks up the new
   // ready phase, and announce the result over SSE. Shared by the relay path and the agent submit path.
   async function finalizePlanJob(jobId: string, phases: Phase[]): Promise<void> {
-    const job = planJobs.get(jobId);
+    const job = planJobs().get(jobId);
     if (!job) return;
     if (job.dryRun) {
-      planJobs.setPhases(jobId, phases);
-      d.bus.publish({ type: 'plan', jobId, status: 'done', phases });
+      planJobs().setPhases(jobId, phases);
+      d.publishEvent({ type: 'plan', jobId, status: 'done', phases });
       reapPilotSession(job);
       return;
     }
     job.phases = phases;
     const { epic, phases: created } = persistPlan(job);
     job.epicId = epic.id;
-    planJobs.setPhases(jobId, phases);
+    planJobs().setPhases(jobId, phases);
     // The plan routes refuse engage without the plugin up front; this covers a plugin disabled (or
     // reloading) in the async window — fail the engage loudly rather than silently skipping it.
-    if (job.engage && !d.planFlow) throw new Error('agents plugin is disabled');
+    if (job.engage && !d.planFlow()) throw new Error('agents plugin is disabled');
     // Engage a fresh mission (job.engage) or tick a live one so a replan's phases are picked up now.
-    await d.planFlow?.planEngage(job, epic.id);
-    d.bus.publish({ type: 'plan', jobId, status: 'done', epicId: epic.id, phases: created.map((t) => ({ title: t.title, type: t.type })) });
+    await d.planFlow()?.planEngage(job, epic.id);
+    d.publishEvent({ type: 'plan', jobId, status: 'done', epicId: epic.id, phases: created.map((t) => ({ title: t.title, type: t.type })) });
     reapPilotSession(job);
   }
 

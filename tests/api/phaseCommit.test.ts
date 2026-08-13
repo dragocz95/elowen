@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { agentsPluginConfig } from '../../plugins/agents/src/config.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -11,12 +10,8 @@ import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { MissionPrStore } from '../../plugins/agents/src/store/missionPrStore.js';
-import { MissionGit } from '../../plugins/agents/src/overseer/missionGit.js';
-import { createReviewService } from '../../plugins/agents/src/overseer/reviewService.js';
-import { DecisionQueue } from '../../plugins/agents/src/overseer/decisionQueue.js';
-import { KeyedMutex } from '../../plugins/agents/src/lib/keyedMutex.js';
-import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
 import { createServer } from '../../src/api/server.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
@@ -26,7 +21,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, 
 const close = (app: ReturnType<typeof createServer>, id: string) =>
   app.request(`/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'closed', result_summary: 'done', outcome: 'ok' }) });
 
-function build(prEnabled: boolean) {
+async function build(prEnabled: boolean) {
   const db = openAgentsDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
@@ -37,23 +32,23 @@ function build(prEnabled: boolean) {
   missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
   const config = new ConfigStore(db);
   config.update({ autopilot: { prEnabled } });
+  const readiness = new Readiness(db);
   const prs = new MissionPrStore(db);
-  const missionGit = new MissionGit({ prs, pluginConfig: () => agentsPluginConfig({}, config as never), projects, tasks });
   const bus = new EventBus();
-  // The phase commit lives in the agents plugin's review service now — wire its onTaskClosed into the
-  // server exactly like bootstrap does through the 'agents' control.
-  const review = createReviewService({
-    tasks, taskRefs: new TaskRefs(db), missions, pluginConfig: () => agentsPluginConfig({}, config as never), decisionQueue: new DecisionQueue(), gitLock: new KeyedMutex(),
-    git: { projectHead, projectRangeDiff }, missionGit,
-    engine: { resumeStalled: async () => {}, stopTask: async () => {}, tick: async () => {} },
-    publish: (e) => bus.publish(e), pathFor: (pid) => projects.get(pid)?.path ?? repo,
-  });
+  // The close route is the work plugin's, and the phase commit hangs off the agents plugin's review
+  // service (ctx.control('agents').onTaskClosed) — so load BOTH for real over these stores, exactly
+  // like the daemon, and drive the mission worktree through the runtime's own MissionGit.
+  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, bus });
+  const registry = await provider.get();
+  const control = registry.control('agents');
+  if (!control) throw new Error('agents plugin failed to load in build');
+  const missionGit = control.missionGit();
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, engine: { tick: async () => {}, isActive: () => false } as never,
-    spawn: null as never, tmux: null as never, bus, missionGit, projects,
-    onTaskClosed: review.onTaskClosed,
+    tasks, taskRefs: new TaskRefs(db), missions,
+    tmux: null as never, bus, missionGit, projects,
     project: { id: project.id, path: repo }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new SystemClock(), config,
+    plugins: provider,
   });
   return { app, missionGit, prs, tasks };
 }
@@ -69,7 +64,7 @@ afterEach(() => { rmSync(base, { recursive: true, force: true }); });
 
 describe('phase commit on close (PR-native)', () => {
   it('commits the phase worktree work when the phase closes', async () => {
-    const { app, missionGit, prs } = build(true);
+    const { app, missionGit, prs } = await build(true);
     await missionGit.onEngage('m-epic', 'epic');
     const dir = prs.get('m-epic')!.worktree;
     writeFileSync(join(dir, 'feature.txt'), 'work\n');     // agent's uncommitted phase output
@@ -79,13 +74,13 @@ describe('phase commit on close (PR-native)', () => {
   });
 
   it('does not commit when PR mode is off (no worktree at all)', async () => {
-    const { app, prs } = build(false);
+    const { app, prs } = await build(false);
     expect(prs.get('m-epic')).toBeNull();              // no worktree provisioned
     expect((await close(app, 'p1')).status).toBe(200); // close still succeeds, just no commit side-effect
   });
 
   it('a failed phase commit does not freeze an empty change snapshot', async () => {
-    const { app, missionGit, prs, tasks } = build(true);
+    const { app, missionGit, prs, tasks } = await build(true);
     await missionGit.onEngage('m-epic', 'epic');
     const dir = prs.get('m-epic')!.worktree;
     tasks.markBase('p1', git(repo, 'rev-parse', 'HEAD').trim()); // spawn-time baseline, as the engine stamps it

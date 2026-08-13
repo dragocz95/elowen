@@ -34,7 +34,7 @@ function setup() {
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions, bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), missions, bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,
@@ -108,12 +108,17 @@ describe('per-resource task/mission access', () => {
     const userProjects = new UserProjectStore(db);
     userProjects.assign(carol.id, 2); // carol can reach project 2 — never the home project (1)
     const tasks = new TaskStore(db);
+    const readiness = new Readiness(db);
+    const config = new ConfigStore(db);
+    const projects = new ProjectStore(db);
     const app = createServer({
-      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config: new ConfigStore(db),
-      users, projects: new ProjectStore(db), userProjects,
+      clock: new FakeClock(0), config,
+      users, projects, userProjects,
+      // The /tasks surface is served by the work plugin's root-mounted routes now.
+      plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
     });
     const carolTok = users.issueToken(carol.id);
     // No project_id → defaults to the home project (1); carol has no access to it.
@@ -142,12 +147,17 @@ describe('per-resource task/mission access', () => {
     const admin = users.create('admin', 'pw');
     const userProjects = new UserProjectStore(db); // multi-tenant mode → agent tokens are gated by working set
     const tasks = new TaskStore(db);
+    const readiness = new Readiness(db);
+    const config = new ConfigStore(db);
+    const projects = new ProjectStore(db);
     const app = createServer({
-      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config: new ConfigStore(db),
-      users, projects: new ProjectStore(db), userProjects,
+      clock: new FakeClock(0), config,
+      users, projects, userProjects,
+      // The /tasks surface is served by the work plugin's root-mounted routes now.
+      plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
     });
     const agentTok = users.issueToken(admin.id, 'agent'); // nothing in_progress/active → empty working set
     const res = await app.request('/tasks', {
@@ -173,12 +183,17 @@ describe('per-resource task/mission access', () => {
     tasks.create({ id: 'p1', project_id: 1, title: 'P1', parent_id: 'epic1' });
     tasks.setAgent('p1', 'Nova');     // the phase was worked by an agent…
     tasks.setStatus('p1', 'closed');  // …which already closed its own leaf (and the mission disengaged)
+    const readiness = new Readiness(db);
+    const config = new ConfigStore(db);
+    const projects = new ProjectStore(db);
     const app = createServer({
-      tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config: new ConfigStore(db),
-      users, projects: new ProjectStore(db), userProjects,
+      clock: new FakeClock(0), config,
+      users, projects, userProjects,
+      // The /tasks surface is served by the work plugin's root-mounted routes now.
+      plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
     });
     const agentTok = users.issueToken(admin.id, 'agent');
     const res = await app.request('/tasks/epic1', patch(agentTok, { status: 'closed', outcome: 'ok', result_summary: 'all phases done' }));

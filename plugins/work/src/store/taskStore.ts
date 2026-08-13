@@ -1,4 +1,4 @@
-import { tolerateMissingPluginTables, deleteTaskSubtree, type WorkDb } from './db.js';
+import { tolerateMissingPluginTables, deleteTaskSubtree, missionState as readMissionState, type WorkDb } from './db.js';
 import { isGitSha } from '../lib/gitSha.js';
 import type { TaskStoreContract } from '../../../../src/store/taskStoreContract.js';
 import type { Task, CreateTaskInput, TaskStatus } from '../../../../src/store/types.js';
@@ -87,6 +87,13 @@ export class TaskStore implements TaskStoreContract {
     // removes its own row, its dep edges and any mission it drove. Single source of truth for
     // delete semantics, so a plain DELETE /tasks/:id can't strand rows.
     this.deleteEpic(id);
+  }
+
+  /** State of the mission an epic drives ('active' | 'paused' | 'stalled' | 'disengaged'), or null when
+   *  there is none. The delete path reads it to refuse tearing down an epic whose mission is still live
+   *  — including when the agents plugin is disabled and nothing could stop that mission's agents. */
+  missionState(missionId: string): string | null {
+    return readMissionState(this.db, missionId);
   }
 
   /** Delete an epic and its whole subtree in one go: the epic, every descendant task, all their

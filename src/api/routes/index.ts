@@ -7,7 +7,6 @@ import { registerBrainRoutes } from './brain.js';
 import { registerIntegrationRoutes } from './integrations.js';
 import { registerConfigRoutes } from './config.js';
 import { registerPluginRoutes } from './plugins/index.js';
-import { registerTaskRoutes } from './tasks.js';
 import { registerUsageRoutes } from './usage.js';
 import { registerAdminRoutes } from './admin.js';
 import { registerMemoryRoutes } from './memory.js';
@@ -21,7 +20,6 @@ import { registerPluginUiRoutes } from './pluginUi.js';
 export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerAuthGuards(app, ctx);
   registerAuthRoutes(app, ctx);
-  registerTaskRoutes(app, ctx);
   registerUsageRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
   registerProjectRoutes(app, ctx);

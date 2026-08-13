@@ -1,13 +1,7 @@
 import { logger } from '../shared/logger.js';
-import { createPlanService } from './services/planService.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
-import { KeyedMutex } from '../shared/keyedMutex.js';
-import { PlanJobStore } from './planJobStore.js';
-import type { AgentsGitLock, AgentsPlanJobs } from '../plugins/api.js';
-import type { Phase, PlanJob } from '../shared/agentEvents.js';
 import type { EventProjectDeps } from './eventProject.js';
-import type { Task } from '../store/types.js';
 import type { Context, Hono } from 'hono';
 import type { User, TokenScope } from '../store/userStore.js';
 import type { ServerDeps } from './deps.js';
@@ -35,14 +29,12 @@ type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): Toke
 type UserCtx = { get: (k: 'user') => User | undefined };
 
 /** Shared per-server state and helper predicates, built once from {@link ServerDeps} and threaded into
- *  every route module. This bundles the defaulted singletons (plan jobs, git lock) and the
- *  access/path helpers that used to be closures inside `createServer`, so the route
- *  families can live in their own files while still sharing one source of truth for tenancy gating. */
+ *  every route module. It bundles the access helpers that used to be closures inside `createServer`, so
+ *  the route families can live in their own files while still sharing one source of truth for tenancy
+ *  gating. */
 export interface RouteContext {
   d: ServerDeps;
   log: ReturnType<typeof logger>;
-  planJobs: AgentsPlanJobs;
-  gitLock: AgentsGitLock;
 
   /** Projects an AGENT-scoped token may currently touch (its live working set). */
   agentProjects(): Set<number>;
@@ -59,26 +51,6 @@ export interface RouteContext {
   accessibleProjects(c: AccessCtx): Set<number> | null;
   /** Resolve any live event's owning project — the same logic the activity log stamps rows with. */
   eventDeps: EventProjectDeps;
-  /** Per-user model allow-list check (global config.allowedExecs is the outer bound, checked separately). */
-  execAllowedForUser(c: UserCtx, exec: string): boolean;
-  /** Filesystem path of a project (store-first, falls back to the home path). */
-  pathFor(projectId: number): string;
-  /** The checkout a mission's work lands in: the isolated PR worktree while live, else the project checkout. */
-  checkoutPathFor(missionId: string | null, projectId: number): string;
-  /** Resolve the target project for a create/plan request (defaults to the daemon's home project). */
-  resolveTarget(c: AccessCtx, projectId?: number):
-    | { project: { id: number; path: string } }
-    | { error: string; status: 403 | 404 };
-
-  /** Persist a plan job's phases as an epic + chained child tasks (single source for plan + replan). */
-  persistPlan(job: PlanJob): { epic: Task; phases: Task[] };
-  /** Reap a settled plan job's Pilot tmux session (no-op for relay jobs / already-gone sessions). */
-  reapPilotSession(job: PlanJob): void;
-  /** Finalize an async plan job: persist, optionally engage/tick a mission, announce over SSE. */
-  finalizePlanJob(jobId: string, phases: Phase[]): Promise<void>;
-  /** Manual session launch (atomic checkout claim + snapshot baseline + spawn) for POST /sessions. */
-  /** The free-text worker↔autopilot exchange behind `elowen ask` (mission overseer → human window → sentinel). */
-  /** Renders the context-aware control guide an agent fetches with `elowen help` (GET /tasks/:id/guide). */
   /** Vector retrieval + anti-duplication over the memory store, for the retrieval-debugging route. Built
    *  only when the memory store AND the embedder are both wired (else /memory/retrieve degrades to 400).
    *  CRUD/audit routes talk to the user-scoped store directly and don't need this. */
@@ -91,22 +63,6 @@ export interface RouteContext {
  *  closure, so tenancy/path semantics are unchanged. */
 export function createRouteContext(d: ServerDeps): RouteContext {
   const log = logger('api');
-  // planJobs/gitLock resolve LIVE through `d` on every call, behind stable facade objects: with the
-  // agents plugin the deps fields are getters over the loaded registry's control, which is undefined
-  // until the plugin loads and is REPLACED by a plugin reload — a value captured here would strand
-  // the routes on a dead generation's stores. The local fallbacks keep plugin-less wiring (tests,
-  // plugin disabled) working exactly as before.
-  const localPlanJobs = new PlanJobStore();
-  const livePlanJobs = (): AgentsPlanJobs => d.planJobs ?? localPlanJobs;
-  const planJobs: AgentsPlanJobs = {
-    create: (input) => livePlanJobs().create(input),
-    get: (id) => livePlanJobs().get(id),
-    setPhases: (id, phases) => livePlanJobs().setPhases(id, phases),
-    fail: (id, error) => livePlanJobs().fail(id, error),
-  };
-  const localGitLock = new KeyedMutex();
-  const gitLock: AgentsGitLock = { run: (key, fn) => (d.gitLock ?? localGitLock).run(key, fn) };
-
   // The projects an AGENT-scoped token may touch. The shared service token is owned by the admin user,
   // so without this it would inherit admin's cross-project bypass and a prompt-injected agent could
   // read/close tasks in tenants it isn't working in (finding S51). Bind it to the daemon's live work:
@@ -191,64 +147,6 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     pluginResolvers: d.eventProjectResolvers,
   };
 
-  // Per-user model allow-list: a non-admin whose allowed_execs is non-empty may only use those
-  // execs. Open mode (no auth), admins, or an empty list → unrestricted. The global
-  // config.allowedExecs check still applies independently and is the outer bound.
-  const execAllowedForUser = (c: UserCtx, exec: string): boolean => {
-    if (!d.users) return true;
-    const u = c.get('user');
-    if (!u || u.is_admin) return true;
-    return u.allowed_execs.length === 0 || u.allowed_execs.includes(exec);
-  };
-
-  // Filesystem path of a project. Store-first for EVERY id (the home project included), so this agrees
-  // with the scheduler's baseline resolver and a re-homed project path resolves consistently across the
-  // spawn baseline and the close-time snapshot. Falls back to the home path when the store is absent
-  // (legacy single-project) or the id is unknown.
-  const pathFor = (projectId: number): string =>
-    d.projects?.get(projectId)?.path ?? d.project.path;
-
-  // Where a task's agent actually ran — the cwd its CLI logged token usage under. For a PR-native
-  // mission that's the isolated worktree, not the project checkout; otherwise the project path.
-
-  // The checkout a mission's work lands in: the isolated PR worktree while it's live, else the shared
-  // project checkout. `missionId` null (or worktree gone) ⇒ the project path.
-  const checkoutPathFor = (missionId: string | null, projectId: number): string =>
-    (missionId ? d.missionGit?.worktreeFor(missionId) : undefined) ?? pathFor(projectId);
-
-  // Resolve the target project for a create/plan request. Defaults to the daemon's home project;
-  // every id — the home project included — must be accessible to the caller. `d.project` is only ever
-  // a source of project DATA for the home id (it may have no row in a legacy single-project daemon);
-  // it must never be used as an authorisation shortcut, or a user/agent confined elsewhere could
-  // create tasks and plans in it.
-  const resolveTarget = (c: AccessCtx, projectId?: number):
-    | { project: { id: number; path: string } }
-    | { error: string; status: 403 | 404 } => {
-    const pid = projectId ?? d.project.id;
-    if (pid === d.project.id) {
-      if (!canAccessProject(c, pid)) return { error: 'forbidden', status: 403 };
-      return { project: d.project };
-    }
-    const p = d.projects?.get(pid);
-    if (!p) return { error: 'project not found', status: 404 };
-    if (!canAccessProject(c, p.id)) return { error: 'forbidden', status: 403 };
-    return { project: { id: p.id, path: p.path } };
-  };
-
-  // Plan persistence + lifecycle (epic/phase creation, engage/tick, Pilot reap) lives in its own
-  // service so the planning path is unit-testable without the HTTP surface.
-  const planService = createPlanService(d, planJobs, pathFor);
-  const { persistPlan, reapPilotSession, finalizePlanJob } = planService;
-
-  // Manual session launch (the atomic single-writer claim + snapshot baseline + spawn) lives in its own
-  // service so the check-and-claim sequence is testable without the HTTP surface.
-
-  // The free-text worker↔autopilot exchange (`elowen ask`) shares the overseer's decision queue, so a
-  // worker's question reaches the same parked overseer that answers prompts/reviews.
-
-  // The on-demand control guide an agent fetches with `elowen help` — rendered from the task's live state
-  // (standalone vs mission phase), so the worker preamble can stay short and not duplicate the tutorial.
-
   // The retrieval-debugging seam — built only when both the memory store and the embedder are wired, so
   // the /memory/retrieve route can rank the caller's memories. Reads the live embedding config each call
   // (a Settings change applies without a restart), mirroring the daemon's own MemoryService.
@@ -263,10 +161,8 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     : undefined;
 
   return {
-    d, log, planJobs, gitLock,
+    d, log,
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
-    eventDeps, execAllowedForUser,
-    pathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, memoryService,
+    eventDeps, memoryService,
   };
 }

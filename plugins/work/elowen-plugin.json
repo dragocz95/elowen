@@ -22,6 +22,22 @@
     ]
   },
   "provides": {
+    "apiRoutes": [
+      "/tasks",
+      "/tasks/ready",
+      "/tasks/deps",
+      "/tasks/plan",
+      "/tasks/:id",
+      "/tasks/:id/usage",
+      "/tasks/:id/conversation",
+      "/tasks/:id/deps",
+      "/tasks/:id/changed/diff",
+      "/tasks/:id/commits",
+      "/tasks/:id/commit/:hash/diff",
+      "/tasks/:epicId/phases",
+      "/plan/:jobId",
+      "/plan/:jobId/submit"
+    ],
     "tools": [
       "ElowenListTasks",
       "ElowenCreateTask",

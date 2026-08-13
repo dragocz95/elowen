@@ -1,25 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { ConfigStore } from '../../src/store/configStore.js';
-import { EventBus } from '../../src/api/sse.js';
-import type { ElowenEvent } from '../../src/api/sse.js';
-import { PlanJobStore } from '../../src/api/planJobStore.js';
-import { createPlanService } from '../../src/api/services/planService.js';
-import type { ServerDeps } from '../../src/api/deps.js';
-import type { CreateTaskInput } from '../../src/store/types.js';
+import { openDb } from '../../../src/store/db.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
+import { ConfigStore } from '../../../src/store/configStore.js';
+import type { ElowenEvent } from '../../../src/api/sse.js';
+import { PlanJobStore } from '../../../plugins/work/src/api/planJobStore.js';
+import { createPlanService } from '../../../plugins/work/src/api/planService.js';
+import type { CreateTaskInput } from '../../../src/store/types.js';
 
 function makeService() {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/proj')").run();
   const tasks = new TaskStore(db);
-  const bus = new EventBus();
   const events: ElowenEvent[] = [];
-  bus.subscribe((e) => events.push(e));
   const config = new ConfigStore(db);
   const planJobs = new PlanJobStore();
-  const d = { tasks, bus, config } as unknown as ServerDeps;
-  const svc = createPlanService(d, planJobs, () => '/proj');
+  const svc = createPlanService({
+    tasks: () => tasks,
+    planJobs: () => planJobs,
+    planFlow: () => undefined, // agents plugin disabled — a plan is still an epic + its phases
+    allowedExecs: () => config.get().allowedExecs,
+    publishEvent: (e) => events.push(e),
+    killSession: async () => {},
+    pathFor: () => '/proj',
+  });
   return { tasks, events, planJobs, svc };
 }
 

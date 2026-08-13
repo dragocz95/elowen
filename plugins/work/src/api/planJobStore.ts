@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import type { Phase } from '../shared/agentEvents.js';
-// Part of the core↔agents contract (rides the `plan` SSE event, mutated by the plan/replan routes) —
-// the definitions live in shared/; re-exported here so existing imports keep resolving.
-import type { PlanJob } from '../shared/agentEvents.js';
+import type { Phase } from '../../../../src/shared/agentEvents.js';
+// Part of the cross-plugin contract (rides the `plan` SSE event, mutated by the plan/replan routes) —
+// the definition lives in core shared/; re-exported here so plugin-internal imports keep resolving.
+import type { PlanJob } from '../../../../src/shared/agentEvents.js';
 export type { PlanJob };
 
 /** In-memory registry of async planning jobs. Ephemeral by design: a daemon restart drops jobs,

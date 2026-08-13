@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { openDb } from '../../../src/store/db.js';
 import { makePluginDb } from '../../../src/store/pluginDb.js';
 import { loadPlugins } from '../../../src/plugins/loader.js';
@@ -40,6 +41,28 @@ describe('work plugin registration', () => {
       // Its migrations ran under its own bookkeeping namespace, not core's.
       const applied = db.prepare("SELECT MAX(version) v FROM plugin_migrations WHERE plugin = 'work'").get() as { v: number };
       expect(applied.v).toBe(2);
+    } finally { db.close(); }
+  });
+
+  it('serves exactly the task API surface, on the grandfathered paths', async () => {
+    // The paths are a PRODUCT contract: four web pages, the CLI and every spawned agent call them, and
+    // both halves of the wiring fail silently — the registry REFUSES a mount missing from
+    // provides.apiRoutes (warn only), and the daemon answers 503 for a declared mount nothing
+    // registered. So neither list can check the other; both are pinned against this one.
+    const EXPECTED = [
+      '/tasks', '/tasks/ready', '/tasks/deps', '/tasks/plan',
+      '/tasks/:id', '/tasks/:id/usage', '/tasks/:id/conversation', '/tasks/:id/deps',
+      '/tasks/:id/changed/diff', '/tasks/:id/commits', '/tasks/:id/commit/:hash/diff',
+      '/tasks/:epicId/phases', '/plan/:jobId', '/plan/:jobId/submit',
+    ].sort();
+    const manifest = JSON.parse(readFileSync(join(process.cwd(), 'plugins/work/elowen-plugin.json'), 'utf8')) as { provides: { apiRoutes: string[] } };
+    expect([...manifest.provides.apiRoutes].sort()).toEqual(EXPECTED);
+    const { registry, db } = await loadWorkPlugin(['work']);
+    try {
+      const live = [...registry.rootApiRoutes.entries()].filter(([, e]) => e.plugin === 'work').map(([mount]) => mount);
+      expect(live.sort()).toEqual(EXPECTED);
+      // And each mount really carries handlers (a declared mount with an empty route list still 503s).
+      for (const mount of live) expect(registry.rootApiRoutes.get(mount)!.routes.length).toBeGreaterThan(0);
     } finally { db.close(); }
   });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parsePhases, decompose, planPrompt, modelsBlock, parallelismBlock } from '../../../../src/api/services/planner.js';
-import { defaultPromptTemplate, _resetDefaultCache } from '../../../../src/prompts/plannerDefault.js';
-import { FakeInference } from '../../../../src/inference/client.js';
+import { parsePhases, decompose, planPrompt, modelsBlock, parallelismBlock } from '../../../plugins/work/src/api/planner.js';
+import { defaultPromptTemplate, _resetDefaultCache } from '../../../src/prompts/plannerDefault.js';
+import { FakeInference } from '../../../src/inference/client.js';
 
 describe('planner.parsePhases', () => {
   it('parses a clean JSON array', () => {
@@ -191,7 +191,9 @@ describe('planner.parallelismBlock', () => {
 describe('planner.decompose', () => {
   it('runs the inference client and returns validated phases', async () => {
     const inf = new FakeInference('[{"title":"A","type":"feature"},{"title":"B"}]');
-    const phases = await decompose(inf, 'build a thing');
+    // The template is a REQUIRED argument in the plugin copy (every caller resolves the prompt body
+    // itself: request override → the user's own planner prompt → the workspace autopilot template).
+    const phases = await decompose(inf, 'build a thing', defaultPromptTemplate());
     expect(phases).toEqual([
       { title: 'A', type: 'feature' },
       { title: 'B', type: 'task' },

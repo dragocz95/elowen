@@ -506,19 +506,12 @@ export async function buildApp(opts: BuildOpts) {
     // The task domain is plugin-owned: live getters, undefined while nothing owns it (the routes then
     // answer 503 rather than an empty list). `taskRefs` is the daemon's own tenancy read view.
     get tasks() { return tasksDomain()?.store(); },
-    get readiness() { return tasksDomain()?.readiness(); },
     get taskUsage() { return tasksDomain()?.usage(); },
     taskRefs,
     missions, tmux, bus, events,
     eventProjectResolvers: pluginEventResolvers,
     get engine() { return agentsControl()?.engine(); },
     get missionGit() { return agentsControl()?.missionGit(); },
-    get gitLock() { return agentsControl()?.gitLock(); },
-    get planJobs() { return agentsControl()?.planJobs(); },
-    get planFlow() { return agentsControl()?.planFlow(); },
-    // The post-done review gate — arrow-bound on the control, resolved live like the getters above.
-    get onTaskClosed() { return agentsControl()?.onTaskClosed; },
-    get liveTaskUsage() { return agentsControl()?.liveTaskUsage(); },
     get detectClis() { return agentsControl()?.detectClis(); },
     get advisor() { return agentsControl()?.advisor(); },
     project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),

@@ -21,6 +21,7 @@ import { Readiness } from './store/readiness.js';
 import { TaskUsageStore } from './store/taskUsageStore.js';
 import type { WorkDb } from './store/db.js';
 import { registerWorkTools } from './tools.js';
+import { registerTaskApi } from './api/tasks.js';
 import { WORK_MCP_TOOLS } from './mcpTools.js';
 
 /** Absolute path of the plugin's own skills dir. The compiled entry lives at `plugins/work/dist/…`,
@@ -49,11 +50,19 @@ export function register(ctx: PluginContext): void {
 
   // The task domain itself. Registered under the DOMAIN key: whoever needs tasks (the daemon's tenancy
   // seam, the agents plugin's mission engine) asks for 'tasks' and gets whichever plugin owns it now.
-  ctx.registerControl('tasks', {
+  const control = {
     store: () => domain().tasks,
     readiness: () => domain().readiness,
     usage: () => domain().usage,
-  } satisfies TasksDomainControl);
+  } satisfies TasksDomainControl;
+  ctx.registerControl('tasks', control);
+
+  // The domain's HTTP surface, root-mounted at the paths it has always answered on (`/tasks*`,
+  // `/plan/*` — see provides.apiRoutes). Registration itself opens no store: the handlers resolve the
+  // domain per request, so a sub-agent runner that loads this plugin and serves nothing stays inert.
+  // With the plugin disabled these mounts are declared-but-inactive, which the daemon's root dispatcher
+  // answers with an explicit 503 — task tracking is off, not missing.
+  registerTaskApi(ctx, control, (missionId) => domain().tasks.missionState(missionId));
 
   // The control-plane brain tools (owner-gated at execute time, on the acting user's own credential)
   // and their MCP twins on the daemon's own /mcp server. Both are pure REST callers over the task

@@ -10,15 +10,16 @@ import { makeTestApp } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { ProjectStore } from '../../src/store/projectStore.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import type { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
-import type { ServerDeps } from '../../src/api/deps.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
-/** A store whose dependency write always fails — stands in for any error inside setDeps (locked DB,
+/** Make a store's dependency write always fail — stands in for any error inside setDeps (locked DB,
  *  constraint violation) so the create path's atomicity can be observed. */
-class DepFailingTaskStore extends TaskStore {
-  override setDeps(): void { throw new Error('deps write failed'); }
-}
+const failDepsWrite = (store: TaskStore): void => {
+  (store as { setDeps: () => void }).setDeps = () => { throw new Error('deps write failed'); };
+};
 
 /** tmux whose kill never succeeds AND leaves the session running: a worker that outlived its kill. */
 class StubbornTmux extends FakeTmuxDriver {
@@ -35,24 +36,40 @@ class GhostTmux extends FakeTmuxDriver {
 }
 
 /** An in-memory daemon app with no user store (open mode → no auth), so these tests exercise the route
- *  logic itself. `engine`/`tmux` are injectable to simulate a teardown that fails. */
-function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver; tasks?: TaskStore } = {}) {
+ *  logic itself. The task HTTP surface lives in the `work` plugin now, so the REAL plugins are loaded
+ *  over these stores — `tmux` is injectable (the routes kill through `ctx.host.tmux()`), and the loaded
+ *  'agents' control is returned so a test can make a teardown fail on the very instance the routes use. */
+async function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver } = {}) {
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = opts.tasks ?? new TaskStore(db);
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
   const missions = new MissionStore(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const bus = new EventBus();
   const events: ElowenEvent[] = [];
   bus.subscribe((e) => events.push(e));
   const tmux = opts.tmux ?? new FakeTmuxDriver();
+  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, bus, tmux });
+  // Awaited before the first request so a test's patch on a live control instance is already in place.
+  const registry = await provider.get();
+  const control = registry.control('agents');
+  if (!control) throw new Error('agents plugin failed to load in makeApp');
+  // The store the routes actually write through: the work plugin owns the domain and builds its OWN
+  // store over the same database, so a test that has to make a write FAIL patches this instance (reads
+  // and arrangements can go through the test's own store — same rows).
+  const domainTasks = registry.control('tasks')?.store();
+  if (!domainTasks) throw new Error('work plugin failed to load in makeApp');
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus,
+    tasks, taskRefs: new TaskRefs(db), missions, bus,
     engine: opts.engine ?? (null as unknown as MissionEngine),
-    spawn: null as unknown as ServerDeps['spawn'], tmux,
+    tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
+    clock: new FakeClock(0), config, projects,
+    plugins: provider,
   });
-  return { app, db, tasks, missions, tmux, events };
+  return { app, db, tasks, missions, tmux, events, control, domainTasks };
 }
 
 const patch = (body: unknown) => ({ method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -60,7 +77,7 @@ const post = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'a
 
 describe('PATCH /tasks/:id validates the whole command before it writes any of it', () => {
   it('a rejected exec alongside a close leaves the task open and publishes nothing', async () => {
-    const { app, tasks, events } = makeApp();
+    const { app, tasks, events } = await makeApp();
     tasks.create({ id: 't-close', project_id: 1, title: 'T' });
     const res = await app.request('/tasks/t-close', patch({ status: 'closed', outcome: 'ok', exec: 'evil; curl x|sh' }));
     expect(res.status).toBe(400);
@@ -69,7 +86,7 @@ describe('PATCH /tasks/:id validates the whole command before it writes any of i
   });
 
   it('rolls the accepted fields back when the store refuses a dependency edge', async () => {
-    const { app, tasks } = makeApp();
+    const { app, tasks } = await makeApp();
     tasks.create({ id: 't-dep', project_id: 1, title: 'T' });
     const res = await app.request('/tasks/t-dep', patch({ title: 'renamed', addDep: 'no-such-task' }));
     expect(res.status).toBe(400);
@@ -77,7 +94,7 @@ describe('PATCH /tasks/:id validates the whole command before it writes any of i
   });
 
   it('still applies a fully valid patch', async () => {
-    const { app, tasks, events } = makeApp();
+    const { app, tasks, events } = await makeApp();
     tasks.create({ id: 't-ok', project_id: 1, title: 'T' });
     tasks.create({ id: 't-dep-ok', project_id: 1, title: 'D' });
     const res = await app.request('/tasks/t-ok', patch({ title: 'renamed', status: 'blocked', addDep: 't-dep-ok' }));
@@ -91,11 +108,9 @@ describe('PATCH /tasks/:id validates the whole command before it writes any of i
 
 describe('POST /tasks creates the task and its dependencies atomically', () => {
   it('persists no task when wiring its dependencies fails', async () => {
-    const db = openAgentsDb(':memory:');
-    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-    const tasks = new DepFailingTaskStore(db);
+    const { app, tasks, domainTasks } = await makeApp();
     tasks.create({ id: 'dep-a', project_id: 1, title: 'A' });
-    const { app } = makeApp({ tasks });
+    failDepsWrite(domainTasks);
     const res = await app.request('/tasks', post({ id: 'dep-b', project_id: 1, title: 'B', deps: ['dep-a'] }));
     expect(res.status).toBe(500);
     expect(tasks.get('dep-b')).toBeNull(); // never left behind with an empty dependency set
@@ -104,8 +119,10 @@ describe('POST /tasks creates the task and its dependencies atomically', () => {
 
 describe('destructive task routes keep the row when teardown fails', () => {
   it('DELETE /tasks/:epicId does not delete the epic when its mission cannot be disengaged', async () => {
-    const engine = { disengage: async () => { throw new Error('tmux down'); }, isActive: () => false } as unknown as MissionEngine;
-    const { app, tasks, missions } = makeApp({ engine });
+    const { app, tasks, missions, control } = await makeApp();
+    // The delete route tears the mission down through the LIVE agents control, so the failure is wired
+    // onto that very engine instance (own property over the class method).
+    (control.engine() as { disengage: (id: string) => Promise<void> }).disengage = async () => { throw new Error('tmux down'); };
     tasks.create({ id: 'E', project_id: 1, title: 'Epic', type: 'epic' });
     missions.create({ id: 'm-E', epic_id: 'E', autonomy: 'L3', max_sessions: 1 });
     const res = await app.request('/tasks/E', { method: 'DELETE' });
@@ -115,7 +132,7 @@ describe('destructive task routes keep the row when teardown fails', () => {
 
   it('DELETE /tasks/:id does not delete a running task whose agent survived the kill', async () => {
     const tmux = new StubbornTmux();
-    const { app, tasks } = makeApp({ tmux });
+    const { app, tasks } = await makeApp({ tmux });
     tasks.create({ id: 't-live', project_id: 1, title: 'T' });
     tasks.setAgent('t-live', 'Nova');
     tasks.setStatus('t-live', 'in_progress');
@@ -128,7 +145,7 @@ describe('destructive task routes keep the row when teardown fails', () => {
 
   it('DELETE /tasks/:id still deletes when the kill failed on an already-gone session', async () => {
     const tmux = new GhostTmux();
-    const { app, tasks } = makeApp({ tmux });
+    const { app, tasks } = await makeApp({ tmux });
     tasks.create({ id: 't-ghost', project_id: 1, title: 'T' });
     tasks.setAgent('t-ghost', 'Iris');
     tasks.setStatus('t-ghost', 'in_progress');
@@ -140,7 +157,7 @@ describe('destructive task routes keep the row when teardown fails', () => {
 
   it('POST /admin/cleanup wipes nothing when a live mission cannot be disengaged', async () => {
     const engine = { disengage: async () => { throw new Error('tmux down'); }, isActive: () => false } as unknown as MissionEngine;
-    const { app, tasks, missions } = makeApp({ engine });
+    const { app, tasks, missions } = await makeApp({ engine });
     tasks.create({ id: 'E2', project_id: 1, title: 'Epic', type: 'epic' });
     missions.create({ id: 'm-E2', epic_id: 'E2', autonomy: 'L3', max_sessions: 1 });
     const res = await app.request('/admin/cleanup', post({}));
@@ -151,7 +168,7 @@ describe('destructive task routes keep the row when teardown fails', () => {
 
   it('POST /admin/cleanup wipes nothing when an agent session survives the sweep', async () => {
     const tmux = new StubbornTmux();
-    const { app, tasks } = makeApp({ tmux });
+    const { app, tasks } = await makeApp({ tmux });
     tasks.create({ id: 't-sweep', project_id: 1, title: 'T' });
     await tmux.spawn('elowen-Zoe', { cwd: '/o', command: 'agent' });
     const res = await app.request('/admin/cleanup', post({}));
@@ -160,7 +177,7 @@ describe('destructive task routes keep the row when teardown fails', () => {
   });
 
   it('POST /admin/cleanup wipes the operational data once teardown succeeded', async () => {
-    const { app, tasks, tmux } = makeApp();
+    const { app, tasks, tmux } = await makeApp();
     tasks.create({ id: 't-gone', project_id: 1, title: 'T' });
     await tmux.spawn('elowen-Ada', { cwd: '/o', command: 'agent' });
     const res = await app.request('/admin/cleanup', post({}));

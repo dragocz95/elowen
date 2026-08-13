@@ -13,6 +13,8 @@ import { openAgentsDb } from '../helpers/agentsDb.js';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import { makePluginDb } from '../../src/store/pluginDb.js';
+import { agentsTestHost } from '../helpers/testApp.js';
 import { safeProjectPath } from '../../src/integrations/projectFiles.js';
 
 function setup() {
@@ -24,15 +26,26 @@ function setup() {
   const adminTok = users.issueToken(admin.id);
   const bobTok = users.issueToken(bob.id);
   const projects = new ProjectStore(db);
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const bus = new EventBus();
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks, missions: new MissionStore(db), bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: process.cwd() }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
+    clock: new FakeClock(0), config,
     users, projects, userProjects: new UserProjectStore(db),
+    // The editor's /projects/:id/files AND the whole /tasks surface are plugin-served now — the work
+    // plugin owns the task routes, so it has to be loaded for this file's task assertions to mean
+    // anything. The agents plugin stays off: nothing here asserts a mission surface.
     plugins: new PluginRegistryProvider(() => loadPlugins({
-      dirs: [join(process.cwd(), 'plugins')], enabled: ['editor'], logger: { info() {}, warn() {}, error() {} },
-      host: { stores: { projects } as never, projectFiles: { safe: safeProjectPath } },
+      dirs: [join(process.cwd(), 'plugins')], enabled: ['editor', 'work'], logger: { info() {}, warn() {}, error() {} },
+      delegatedTurnsOutOfProcess: () => false,
+      pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
+      publishEvent: (e) => bus.publish(e),
+      subscribeEvents: (fn) => bus.subscribe(fn),
+      host: { ...agentsTestHost({ db, tasks, readiness, config, projects, users }), projectFiles: { safe: safeProjectPath } } as never,
     })),
     pluginDirs: [join(process.cwd(), 'plugins')],
   });

@@ -18,7 +18,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
-function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
+async function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const db = openAgentsDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
@@ -30,16 +30,28 @@ function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const readiness = new Readiness(db);
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
+  // The /missions surface — and the whole /tasks surface — is served by the plugins' root-mounted
+  // routes now.
+  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux });
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ prompts: promptSeam, tmux, agents: new AgentStore(db) }), tmux,
     missionGit: extra.missionGit as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,
     users, projects, userProjects,
-    // The /missions surface is served by the agents plugin's root-mounted routes now.
-    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux }),
+    plugins: provider,
   });
+  // The task routes reach mission teardown through the LIVE agents control, not through ServerDeps —
+  // so a test's engine/missionGit doubles have to be patched onto the very instances the registry
+  // hands those routes (own-property assignment over the class method), keeping the core-facing deps
+  // above (admin cleanup) in sync.
+  const control = (await provider.get()).control('agents');
+  if (!control) throw new Error('agents plugin failed to load in setup()');
+  const engineDouble = extra.engine as { disengage?: (id: string) => Promise<void> } | undefined;
+  if (engineDouble?.disengage) (control.engine() as { disengage: (id: string) => Promise<void> }).disengage = engineDouble.disengage;
+  const missionGitDouble = extra.missionGit as { cleanup?: (id: string) => Promise<void> } | undefined;
+  if (missionGitDouble?.cleanup) (control.missionGit() as { cleanup: (id: string) => Promise<void> }).cleanup = missionGitDouble.cleanup;
   return { app, db, users, userProjects, tasks, tmux, admin, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
@@ -49,14 +61,14 @@ const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Beare
 
 describe('PATCH /users/:id — admin manages permissions', () => {
   it('admin grants the admin role to another user', async () => {
-    const { app, adminTok, bob } = setup();
+    const { app, adminTok, bob } = await setup();
     const res = await app.request(`/users/${bob.id}`, patch(adminTok, { is_admin: true }));
     expect(res.status).toBe(200);
     expect((await res.json()).is_admin).toBe(true);
   });
 
   it('admin sets a per-user model allow-list, filtered to the global allow-list', async () => {
-    const { app, adminTok, bob } = setup();
+    const { app, adminTok, bob } = await setup();
     // 'sonnet' is globally allowed; 'bogus/model' is not → dropped.
     const res = await app.request(`/users/${bob.id}`, patch(adminTok, { allowed_execs: ['sonnet', 'bogus/model'] }));
     expect(res.status).toBe(200);
@@ -64,24 +76,24 @@ describe('PATCH /users/:id — admin manages permissions', () => {
   });
 
   it('a non-admin cannot edit anyone (403)', async () => {
-    const { app, bobTok, bob } = setup();
+    const { app, bobTok, bob } = await setup();
     expect((await app.request(`/users/${bob.id}`, patch(bobTok, { allowed_execs: ['sonnet'] }))).status).toBe(403);
   });
 
   it('refuses to demote the last admin', async () => {
-    const { app, adminTok, admin } = setup();
+    const { app, adminTok, admin } = await setup();
     expect((await app.request(`/users/${admin.id}`, patch(adminTok, { is_admin: false }))).status).toBe(400);
   });
 
   it('404 for an unknown user', async () => {
-    const { app, adminTok } = setup();
+    const { app, adminTok } = await setup();
     expect((await app.request('/users/999', patch(adminTok, { is_admin: true }))).status).toBe(404);
   });
 });
 
 describe('RBAC tightening — /users directory & deletion are admin-only', () => {
   it('GET /users is admin-only (non-admin → 403, admin → roster)', async () => {
-    const { app, adminTok, bobTok } = setup();
+    const { app, adminTok, bobTok } = await setup();
     expect((await app.request('/users', auth(bobTok))).status).toBe(403);
     const ok = await app.request('/users', auth(adminTok));
     expect(ok.status).toBe(200);
@@ -89,7 +101,7 @@ describe('RBAC tightening — /users directory & deletion are admin-only', () =>
   });
 
   it('DELETE /users/:id is admin-only — a non-admin cannot delete another user', async () => {
-    const { app, adminTok, bobTok, users } = setup();
+    const { app, adminTok, bobTok, users } = await setup();
     const carol = users.create('carol', 'pw'); // third, non-admin
     // Before the guard bob could wipe carol; now it's 403 and carol survives.
     expect((await app.request(`/users/${carol.id}`, del(bobTok))).status).toBe(403);
@@ -102,7 +114,7 @@ describe('RBAC tightening — /users directory & deletion are admin-only', () =>
 
 describe('admin impersonation (sign in as)', () => {
   it('admin gets a token that authenticates as the target; non-admin/self/unknown are rejected', async () => {
-    const { app, adminTok, bobTok, admin, bob } = setup();
+    const { app, adminTok, bobTok, admin, bob } = await setup();
     expect((await app.request(`/users/${admin.id}/impersonate`, post(bobTok, {}))).status).toBe(403); // non-admin blocked
     expect((await app.request(`/users/${admin.id}/impersonate`, post(adminTok, {}))).status).toBe(400); // self rejected
     expect((await app.request('/users/999/impersonate', post(adminTok, {}))).status).toBe(404); // unknown target
@@ -117,7 +129,7 @@ describe('admin impersonation (sign in as)', () => {
 
 describe('RBAC tightening — task deps respect project access', () => {
   it('GET /tasks/:id/deps 403s for a task in a project the caller cannot access, 404s for unknown', async () => {
-    const { app, bobTok, userProjects, tasks, db, bob } = setup();
+    const { app, bobTok, userProjects, tasks, db, bob } = await setup();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/x')").run();
     userProjects.assign(bob.id, 1); // clears the home-project middleware gate, but NOT project 2
     tasks.create({ id: 'elowen-p2', project_id: 2, title: 'Foreign' });
@@ -126,7 +138,7 @@ describe('RBAC tightening — task deps respect project access', () => {
   });
 
   it('a non-admin assigned only to a NON-home project passes the coarse gate and sees just that project', async () => {
-    const { app, bobTok, userProjects, tasks, db, bob } = setup();
+    const { app, bobTok, userProjects, tasks, db, bob } = await setup();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'sarah','/s')").run();
     userProjects.assign(bob.id, 2); // assigned to project 2 only — NOT the daemon's home project (1)
     tasks.create({ id: 'elowen-home', project_id: 1, title: 'Home' });
@@ -137,7 +149,7 @@ describe('RBAC tightening — task deps respect project access', () => {
   });
 
   it('GET /tasks/deps only returns edges for accessible projects (admin sees all)', async () => {
-    const { app, adminTok, bobTok, userProjects, tasks, db, bob } = setup();
+    const { app, adminTok, bobTok, userProjects, tasks, db, bob } = await setup();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/x')").run();
     userProjects.assign(bob.id, 1);
     tasks.create({ id: 'elowen-a', project_id: 1, title: 'A' });
@@ -156,7 +168,7 @@ describe('RBAC tightening — task deps respect project access', () => {
 
 describe('per-user model allow-list enforcement', () => {
   it('blocks a restricted user from spawning a disallowed (but globally-allowed) exec', async () => {
-    const { app, adminTok, bobTok, bob, userProjects, tasks, tmux } = setup();
+    const { app, adminTok, bobTok, bob, userProjects, tasks, tmux } = await setup();
     userProjects.assign(bob.id, 1);                                  // bob can reach the project surface
     await app.request(`/users/${bob.id}`, patch(adminTok, { allowed_execs: ['sonnet'] }));
     tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
@@ -172,7 +184,7 @@ describe('per-user model allow-list enforcement', () => {
   });
 
   it('an empty allow-list imposes no per-user restriction, and the admin is unrestricted', async () => {
-    const { app, adminTok, bobTok, bob, userProjects, tasks } = setup();
+    const { app, adminTok, bobTok, bob, userProjects, tasks } = await setup();
     userProjects.assign(bob.id, 1);
     tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
     // bob has no allowed_execs set → any globally-allowed exec works.
@@ -185,13 +197,13 @@ describe('per-user model allow-list enforcement', () => {
 
 describe('admin gates & input validation (batch 1 audit fixes)', () => {
   it('POST /missions rejects a missing epicId (400) and an unknown epic (404) before touching the engine', async () => {
-    const { app, adminTok } = setup();
+    const { app, adminTok } = await setup();
     expect((await app.request('/missions', post(adminTok, {}))).status).toBe(400);
     expect((await app.request('/missions', post(adminTok, { epicId: 'nope' }))).status).toBe(404);
   });
 
   it('POST /sessions/:name/keys rejects non-array / flag-injection keys (400)', async () => {
-    const { app, adminTok } = setup();
+    const { app, adminTok } = await setup();
     expect((await app.request('/sessions/elowen-Nova/keys', post(adminTok, { keys: 'Enter' }))).status).toBe(400);
     expect((await app.request('/sessions/elowen-Nova/keys', post(adminTok, { keys: [] }))).status).toBe(400);
     expect((await app.request('/sessions/elowen-Nova/keys', post(adminTok, { keys: ['-t', 'other', 'C-c'] }))).status).toBe(400);
@@ -200,7 +212,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   });
 
   it('POST /admin/cleanup is admin-only and wipes all tasks + missions', async () => {
-    const { app, adminTok, bobTok, tasks, db } = setup();
+    const { app, adminTok, bobTok, tasks, db } = await setup();
     tasks.create({ id: 'elowen-1', project_id: 1, title: 'X' });
     tasks.create({ id: 'elowen-2', project_id: 1, title: 'Y', type: 'epic' });
     db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','elowen-2','L3','active')").run();
@@ -215,7 +227,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   it('DELETE /tasks/:id?subtree=1 removes the epic, its children and the mission', async () => {
     const disengage = vi.fn().mockResolvedValue(undefined);
     const cleanup = vi.fn().mockResolvedValue(undefined);
-    const { app, adminTok, tasks, db } = setup({ engine: { disengage }, missionGit: { cleanup } });
+    const { app, adminTok, tasks, db } = await setup({ engine: { disengage }, missionGit: { cleanup } });
     tasks.create({ id: 'elowen-ep', project_id: 1, title: 'Epic', type: 'epic' });
     tasks.create({ id: 'elowen-c1', project_id: 1, title: 'C1', parent_id: 'elowen-ep' });
     tasks.create({ id: 'elowen-c2', project_id: 1, title: 'C2', parent_id: 'elowen-ep' });
@@ -239,7 +251,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
     // row, or both leak. disengage() is skipped (nothing is running); cleanup() runs unconditionally.
     const disengage = vi.fn().mockResolvedValue(undefined);
     const cleanup = vi.fn().mockResolvedValue(undefined);
-    const { app, adminTok, tasks, db } = setup({ engine: { disengage }, missionGit: { cleanup } });
+    const { app, adminTok, tasks, db } = await setup({ engine: { disengage }, missionGit: { cleanup } });
     tasks.create({ id: 'elowen-ep', project_id: 1, title: 'Epic', type: 'epic' });
     db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-elowen-ep','elowen-ep','L3','disengaged')").run();
     db.prepare("INSERT INTO mission_pr (mission_id,branch,worktree) VALUES ('m-elowen-ep','elowen/x','/wt')").run();
@@ -254,7 +266,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   it('DELETE /tasks/:id removes an epic\'s mission WITHOUT the ?subtree=1 flag — decided by the task\'s real type', async () => {
     const disengage = vi.fn().mockResolvedValue(undefined);
     const cleanup = vi.fn().mockResolvedValue(undefined);
-    const { app, adminTok, tasks, db } = setup({ engine: { disengage }, missionGit: { cleanup } });
+    const { app, adminTok, tasks, db } = await setup({ engine: { disengage }, missionGit: { cleanup } });
     tasks.create({ id: 'elowen-ep2', project_id: 1, title: 'Epic', type: 'epic' });
     tasks.create({ id: 'elowen-c3', project_id: 1, title: 'C3', parent_id: 'elowen-ep2' });
     db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-elowen-ep2','elowen-ep2','L3','active')").run();
@@ -272,7 +284,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   });
 
   it('DELETE /tasks/:id stops a running leaf task\'s own tmux session before removing the row', async () => {
-    const { app, adminTok, tasks, tmux } = setup();
+    const { app, adminTok, tasks, tmux } = await setup();
     tasks.create({ id: 'elowen-leaf', project_id: 1, title: 'Leaf', labels: ['agent:Nova'] });
     tasks.setStatus('elowen-leaf', 'in_progress');
     tmux.setPane('elowen-Nova', ''); // simulate the live agent session
@@ -285,7 +297,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
 
   it('POST /admin/cleanup frees a paused mission\'s worktree even though it is not "live"', async () => {
     const cleanup = vi.fn().mockResolvedValue(undefined);
-    const { app, adminTok, tasks, db } = setup({ missionGit: { cleanup } });
+    const { app, adminTok, tasks, db } = await setup({ missionGit: { cleanup } });
     tasks.create({ id: 'elowen-paused-ep', project_id: 1, title: 'Epic', type: 'epic' });
     // 'paused' is not in MissionStore.live() ('active'/'stalled' only), so the disengage sweep never
     // reaches it — but it still holds a worktree (pause keeps it for resume). cleanup() must still run.
@@ -297,7 +309,7 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   });
 
   it('PATCH /tasks/:id addDep 400s on a dangling or cross-project edge, applies a valid one', async () => {
-    const { app, adminTok, tasks, db } = setup();
+    const { app, adminTok, tasks, db } = await setup();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/o2')").run();
     tasks.create({ id: 'elowen-a', project_id: 1, title: 'A' });
     tasks.create({ id: 'elowen-b', project_id: 1, title: 'B' });

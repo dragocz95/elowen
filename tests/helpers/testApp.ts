@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
-import { projectHead, projectRangeDiff } from '../../src/integrations/projectFiles.js';
+import { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff } from '../../src/integrations/projectFiles.js';
 import { render, setPluginPromptSources } from '../../src/prompts/index.js';
 import { setPluginPromptCatalog } from '../../src/prompts/catalog.js';
 import { TaskRefs } from '../../src/store/taskRefs.js';
@@ -14,7 +14,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { EventBus } from '../../src/api/sse.js';
-import { PlanJobStore } from '../../src/api/planJobStore.js';
+import { PlanJobStore } from '../../plugins/agents/src/overseer/planJob.js';
 import { FakeInference } from '../../src/inference/client.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -22,7 +22,7 @@ import { createServer } from '../../src/api/server.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import type { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import type { PlanJob } from '../../src/api/planJobStore.js';
+import type { PlanJob } from '../../plugins/agents/src/overseer/planJob.js';
 import type { PluginHostAdvisor, PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
 
 /** The host seam wiring the agents plugin needs to load in tests — brainCore's shape with fakes for
@@ -39,12 +39,15 @@ export function agentsTestHost(w: {
   terminals?: PluginHostTerminals;
   /** Override the advisor collaborators seam (default: a real one over `users`, tmp working dirs). */
   advisorHost?: PluginHostAdvisor;
-  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
+  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string; userOverride?(userId: number, name: string): string | null };
+  /** Raw LLM output the relay path returns from `decompose` (a JSON array of phases) — the work
+   *  plugin's planning route reaches its inference client through THIS seam, like the daemon does. */
+  fakePlan?: string;
 }) {
   return {
     tmux: w.tmux ?? new FakeTmuxDriver(),
     brainWorker: () => undefined,
-    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined },
+    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined, tokenForUser: () => undefined },
     stores: {
       tasks: w.tasks,
       projects: w.projects,
@@ -61,10 +64,18 @@ export function agentsTestHost(w: {
       // the opposite answer on purpose.
       tasksAvailable: () => true,
     },
-    prompts: w.prompts ?? { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
+    prompts: {
+      // Forward the resolved userId too: a test that overrides this seam is usually asserting exactly
+      // that the route passed the right owner through.
+      render: (n: string, v?: Record<string, string>, userId?: number | null) => (w.prompts ? w.prompts.render(n, v, userId ?? undefined) : render(n, v)),
+      rawTemplate: (n: string) => w.prompts?.rawTemplate(n) ?? '',
+      // No per-user overrides by default: the planner prompt then falls back to the workspace template,
+      // exactly like a daemon whose users never edited theirs.
+      userOverride: (userId: number, n: string) => w.prompts?.userOverride?.(userId, n) ?? null,
+    },
     config: w.config as unknown as PluginHostConfig,
-    relayClient: () => ({ decide: async () => ({ text: '' }) }) as never,
-    git: { projectHead, projectRangeDiff } as never,
+    relayClient: () => new FakeInference(w.fakePlan ?? '[{"title":"Phase A","type":"task"}]'),
+    git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff } as never,
     push: () => ({ sendToUsers: async () => {} }),
     terminals: () => w.terminals ?? {
       chatTerminalStop: async () => {},
@@ -115,7 +126,11 @@ export function agentsPluginProvider(w: {
   /** Override the advisor collaborators seam (default: a real one over `users`). */
   advisorHost?: PluginHostAdvisor;
   /** Override the prompt seam (default: the core file renderer, no per-user overrides). */
-  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string };
+  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string; userOverride?(userId: number, name: string): string | null };
+  /** Raw LLM output the relay planning path returns (see agentsTestHost). */
+  fakePlan?: string;
+  /** Activity-log purge sink (ctx.deleteEventsForTarget) — the task DELETE route's history purge. */
+  deleteEvents?: (target: string) => void;
 }): PluginRegistryProvider {
   const bus = w.bus ?? new EventBus();
   return new PluginRegistryProvider(() => loadPlugins({
@@ -125,6 +140,7 @@ export function agentsPluginProvider(w: {
     pluginDb: (plugin) => makePluginDb(w.db, plugin, { canMigrate: true }),
     publishEvent: (e) => bus.publish(e),
     subscribeEvents: (fn) => bus.subscribe(fn),
+    ...(w.deleteEvents ? { deleteEvents: w.deleteEvents } : {}),
     host: agentsTestHost(w),
     logger: { info() {}, warn() {}, error() {} },
   }).then((registry) => {
@@ -144,6 +160,8 @@ export interface TestAppOpts {
   /** Stub a mission's isolated worktree dir (mirrors MissionGit.worktreeFor) so launch-path tests can
    *  assert that a mission phase runs in its worktree rather than the shared project checkout. */
   worktreeFor?: (missionId: string) => string | null | undefined;
+  /** Activity-log purge sink the task DELETE route calls (ctx.deleteEventsForTarget). */
+  deleteEvents?: (target: string) => void;
   /** Extra ServerDeps spread over the defaults — for routes whose collaborators (themes, brain stubs…)
    *  the standard wiring does not construct. */
   extra?: Partial<Parameters<typeof createServer>[0]>;
@@ -171,7 +189,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
 
   // The REAL agents plugin over this app's stores. One provider per app: each test gets its own
   // runtime generation over its own :memory: DB.
-  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, bus, tmux });
+  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, bus, tmux, ...(opts.fakePlan ? { fakePlan: opts.fakePlan } : {}), ...(opts.deleteEvents ? { deleteEvents: opts.deleteEvents } : {}) });
   const registry = await provider.get();
   const control = registry.control('agents');
   if (!control) throw new Error('agents plugin failed to load in makeTestApp');
@@ -187,22 +205,19 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   const spawn = control.spawn();
   const decisionQueue = control.decisionQueue();
   const planJobs = control.planJobs() as PlanJobStore;
-  // No-op pilot backend: whenever the REAL flow would pick the agent backend, park the job instead —
-  // it stays 'planning' until a test calls /plan/:id/submit. Every other planFlow decision is real.
+  // No-op pilot backend on the LIVE control the work plugin resolves: whenever the REAL flow would
+  // pick the agent backend, park the job instead — it stays 'planning' until a test calls
+  // /plan/:id/submit. Every other planFlow decision is real. Patched as an own property on the very
+  // instance the routes reach, since they resolve planFlow() through the registry, not through deps.
   const realPlanFlow = control.planFlow();
-  const planFlow: typeof realPlanFlow = {
-    ...realPlanFlow,
-    pilotBackend: (exec) => realPlanFlow.pilotBackend(exec) ? async (_job: PlanJob, _projectPath: string) => { /* parked */ } : null,
-  };
+  const realPilotBackend = realPlanFlow.pilotBackend.bind(realPlanFlow);
+  (realPlanFlow as { pilotBackend: typeof realPlanFlow.pilotBackend }).pilotBackend =
+    (exec) => realPilotBackend(exec) ? async (_job: PlanJob, _projectPath: string) => { /* parked */ } : null;
 
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions, engine, tmux, bus,
+    tasks, taskRefs: new TaskRefs(db), missions, engine, tmux, bus,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
-    planJobs, planFlow,
-    // Mirror bootstrap: the close path drives the plugin's review gate through the control.
-    onTaskClosed: control.onTaskClosed,
-    gitLock: control.gitLock(),
     missionGit: control.missionGit(),
     plugins: provider,
     // Mirror bootstrap: login autostart/user-deletion advisor hooks resolve through the control.
@@ -210,7 +225,6 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     // Mirror bootstrap: the SSE gate consults the plugin-registered event resolvers (signal/plan tenancy).
     eventProjectResolvers: () => registry.eventProjectResolvers.map((r) => r.fn),
     ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
-    makeInference: () => new FakeInference(opts.fakePlan ?? '[{"title":"Phase A","type":"task"}]'),
     ...(opts.extra ?? {}),
   });
 

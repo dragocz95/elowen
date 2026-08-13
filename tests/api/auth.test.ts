@@ -7,8 +7,10 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { ProjectStore } from '../../src/store/projectStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
+import { agentsPluginProvider } from '../helpers/testApp.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
 function makeAuthedApp() {
@@ -16,11 +18,17 @@ function makeAuthedApp() {
   const users = new UserStore(db); users.create('alice', 'secret');
   const brainStore = new BrainStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
+  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
+    tasks, missions: new MissionStore(db),
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db), users, brainStore, pushSubscriptions,
+    clock: new FakeClock(0), config, users, brainStore, pushSubscriptions,
+    // The /tasks surface is served by the work plugin's root-mounted routes now.
+    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
   });
   return { app, users, brainStore, pushSubscriptions };
 }

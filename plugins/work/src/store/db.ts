@@ -23,6 +23,17 @@ export function tolerateMissingPluginTables<T>(fn: () => T, fallback: T): T {
   }
 }
 
+/** State of the mission an epic drives, or null when there is none (or the agents plugin never created
+ *  its table). Read straight from the row rather than through the agents control, because the guard that
+ *  needs it — DELETE /tasks/:epicId refusing to strand a live mission — has to hold precisely when that
+ *  plugin is DISABLED: the rows outlive it, and the subtree delete below removes them either way. */
+export function missionState(db: WorkDb, missionId: string): string | null {
+  return tolerateMissingPluginTables(() => {
+    const row = db.prepare('SELECT state FROM missions WHERE id = ?').get(missionId) as { state: string } | undefined;
+    return row?.state ?? null;
+  }, null);
+}
+
 /** Delete a task and its whole descendant subtree — the rows, their dependency edges, and the missions
  *  (plus PR records and handoff notes) those tasks drove, in FK-safe order. Returns how many task rows
  *  went.

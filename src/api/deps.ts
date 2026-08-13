@@ -1,11 +1,8 @@
-import type { ReadinessContract, TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
+import type { TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
 import type { TaskRefs } from '../store/taskRefs.js';
-import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsGitLock, AgentsMissionEngine, AgentsMissionGit, AgentsMissions, AgentsPlanFlow, AgentsPlanJobs } from '../plugins/api.js';
-import type { Task } from '../store/types.js';
+import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsMissionEngine, AgentsMissionGit, AgentsMissions } from '../plugins/api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { ElowenEvent, EventBus } from './sse.js';
-import type { TokenUsage } from '../integrations/usage/types.js';
-import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { UserStore } from '../store/userStore.js';
@@ -35,8 +32,6 @@ export interface ServerDeps {
    *  while no plugin owns it: every route that needs task rows must then answer 503 rather than serve
    *  an empty list, which would read as "you have no tasks". */
   tasks?: TaskStoreContract;
-  /** Dependency-cleared open tasks. Same owner, same absent-owner rule as `tasks`. */
-  readiness?: ReadinessContract;
   /** The tenancy boundary's own read view of task rows — daemon-owned and tolerant of the table being
    *  absent, so an agent token's working set can be resolved before any plugin loads. Absent (minimal
    *  test wiring) → agent tokens resolve no projects at all, which is the fail-closed direction. */
@@ -51,13 +46,6 @@ export interface ServerDeps {
   tmux: TmuxDriver; bus: EventBus;
   /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
   missionGit?: AgentsMissionGit;
-  /** Shared per-checkout git serialization lock — the SAME instance the scheduler and mission engine
-   *  use, so a phase's commit+snapshot at close can't interleave with the baseline read at another
-   *  agent's spawn on the same checkout. Absent → a private lock (fine for isolated tests). */
-  gitLock?: AgentsGitLock;
-  /** LIVE token-usage reader (agents plugin control). Absent → /tasks/:id/usage serves the recorded
-   *  task_usage snapshot only, exactly what an embedded (elowen:) run already does. */
-  liveTaskUsage?: (taskId: string) => TokenUsage | null;
   /** Agent-CLI availability probe (agents plugin control). Absent → /integrations/cli-status 503s. */
   detectClis?: (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
   project: { id: number; path: string };
@@ -103,17 +91,6 @@ export interface ServerDeps {
   /** HMAC secret for short-lived signed avatar URLs (so an <img> src never carries the long-lived
    *  session token). Per-daemon-process; absent → signed avatar links unavailable (bearer only). */
   avatarSecret?: string;
-  /** Factory for the planning LLM client; defaults to RelayClient. Overridable in tests. */
-  makeInference?: (cfg: RelayConfig) => InferenceClient;
-  /** Async planning job registry (relay or agent backend resolves into it). Defaulted when absent. */
-  planJobs?: AgentsPlanJobs;
-  /** The agents plugin's post-done review gate (AgentsControl.onTaskClosed): drives the mission-phase
-   *  review workflow after a close. Absent (plugin disabled) → no gate, the close is final. */
-  onTaskClosed?: (id: string, existing: Task, opts: { outcome?: string; summary?: string }) => Promise<void>;
-  /** The agents half of the plan/replan flow (exec-override validation, PR mode, backend choice,
-   *  mission labels, post-persist engage/tick). Absent (plugin disabled) → a pure plan still
-   *  persists via the relay with no mission labels, and an engage request answers 503. */
-  planFlow?: AgentsPlanFlow;
   /** The agents plugin's advisor lifecycle hooks (login autostart, user-deletion teardown). The
    *  /advisor routes are plugin root mounts; absent (plugin disabled) → both hooks are skipped. */
   advisor?: import('../plugins/api.js').AgentsAdvisorHooks;
