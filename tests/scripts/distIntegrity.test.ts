@@ -94,7 +94,14 @@ describe('dist integrity', () => {
     expect(existsSync(join(root, 'dist/legacy.js'))).toBe(true);
   });
 
-  it('removes a stale emitted module during the normal build', { timeout: 180_000 }, () => {
+  // This one drives the REAL `npm run build` against THIS checkout, which is the only way to prove the
+  // shipped pipeline cleans up after itself — and also means it rewrites `dist/` in place. When the
+  // checkout is a live installation (the daemon loads its modules from that very directory, and a
+  // scheduled turn has already died on ENOENT mid-rebuild), running it as part of an ordinary
+  // `vitest run` quietly redeploys the machine. So it runs where a build is expected — CI — and says
+  // why it stood aside anywhere else, instead of skipping silently.
+  const liveBuildAllowed = process.env.ELOWEN_DIST_BUILD_TEST === '1';
+  it.skipIf(!liveBuildAllowed)('removes a stale emitted module during the normal build', { timeout: 180_000 }, () => {
     const stale = join(repositoryRoot, 'dist/cli/chat/legacy-build-output.js');
     mkdirSync(dirname(stale), { recursive: true });
     writeFileSync(stale, 'export {};');

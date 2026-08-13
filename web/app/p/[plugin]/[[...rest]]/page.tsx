@@ -88,9 +88,11 @@ export default function PluginHostPage() {
     const match = settingsComponent && section
       ? { Component: settingsComponent, params: { id: section.id } }
       : page;
+    // A declared section whose bundle registered no component is a different miss from an unknown page:
+    // the menu offered settings by name, so saying "page missing" would answer a question nobody asked.
     const rendered = match
       ? <match.Component plugin={plugin} params={match.params} rest={rest} surface="page" {...(settingsComponent && section ? { onSaveState: reportSaveState } : {})} />
-      : <Placeholder text={strings.pageMissing} />;
+      : <Placeholder text={section ? strings.settingsUnavailable : strings.pageMissing} />;
     // A settings section is written for the Settings deck: the deck's panel supplies the document surface
     // its groups sit on, and the deck page supplies the masthead title and the page column. Reached
     // directly it has to bring all three, or it reads as a fragment pasted onto an empty screen.

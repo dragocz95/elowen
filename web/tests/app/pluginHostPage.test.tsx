@@ -96,6 +96,16 @@ describe('plugin host route', () => {
     expect(retry).toHaveBeenCalled();
   });
 
+  it('tells a declared section with no registered component apart from an unknown page', async () => {
+    // The menu offered "Skills" by name, so the miss is a section that failed to register — not a page
+    // the reader guessed wrong. Answering "page missing" would explain the wrong thing.
+    route.rest = ['settings', 'skills'];
+    registration.value = { pages: {}, settings: {} } as unknown as PluginUiRegistration;
+    mount();
+    expect(await screen.findByText(en.pluginUi.settingsUnavailable)).toBeInTheDocument();
+    expect(screen.queryByText(en.pluginUi.pageMissing)).toBeNull();
+  });
+
   // `/p/skills/settings/skills` repeats the plugin's name back at the reader, so the bare route resolves
   // to the section when that section is the plugin's whole UI.
   it('serves the only settings section at the bare plugin route', async () => {

@@ -59,7 +59,12 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+      # tests/scripts/distIntegrity.test.ts drives the real build against the checkout to prove it
+      # removes stale output. That is safe on a throwaway runner and destructive on a machine whose
+      # daemon is SERVING this directory, so the test only arms itself here.
       - run: npm test
+        env:
+          ELOWEN_DIST_BUILD_TEST: '1'
       - run: npm run test:cli-tmux:built
 
   brain-e2e:
