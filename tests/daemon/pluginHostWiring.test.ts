@@ -109,7 +109,7 @@ describe('buildBrainCore plugin-host wiring', () => {
   it('purges the activity rows of one target, and only that target', async () => {
     // The delete twin of publishing: a plugin removing the row an activity history describes must be
     // able to take the history with it, or the feed keeps pointing at something that no longer exists.
-    const { core, captured } = await bootWith(`export function register(ctx){
+    const { core } = await bootWith(`export function register(ctx){
       globalThis.__hostCtx = ctx;
     }`);
     const ctx = (globalThis as { __hostCtx?: { deleteEventsForTarget(target: string): void } }).__hostCtx;
