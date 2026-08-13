@@ -14,7 +14,7 @@ export interface Mission { id: string; epic_id: string; autonomy: Autonomy; max_
 export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; project_id?: number }
 export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; addDep?: string; parent_id?: string }
 export interface PlanInput { goal: string; name?: string; exec?: string; autoModel?: boolean; pilotExec?: string; overseerExec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[]; project_id?: number; prEnabled?: boolean | null }
-export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
+interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
 interface PlanPhase { title: string; type: string; agent?: string; details?: string }
 type PlanJobStatus = 'planning' | 'done' | 'failed';
 export interface PlanJob { id: string; epicId: string | null; goal: string; status: PlanJobStatus; phases: PlanPhase[]; error?: string; sessionName?: string }
@@ -99,7 +99,7 @@ import type {
   CommitFileChange, CommitLogEntry,
 } from '../../src/shared/wireContract.js';
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
-export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, ToolDeferralOverrides, BrainUsage, CommitFileChange, CommitLogEntry };
+export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type { BrainContextBreakdown, BrainForkedSession };
 export type BrainMessage = BrainMessageView;
 /** One stored memory as served by `GET /memory` — the daemon's `MemoryRow` plus its server-computed

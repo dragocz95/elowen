@@ -61,7 +61,7 @@ export interface SubagentState {
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
 }
-export type Segment =
+type Segment =
   | { kind: 'text'; text: string }
   /** The model's reasoning/thinking stream — rendered dim + separate from the answer. */
   | { kind: 'reasoning'; text: string }
@@ -131,7 +131,7 @@ export function groupToolItems(items: ToolItem[]): ToolGroup[] {
   return groups;
 }
 
-export type YouTurn = { role: 'you'; text: string; id?: string };
+type YouTurn = { role: 'you'; text: string; id?: string };
 export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean;
   /** True while the model is writing a tool call whose marker has not yet rendered — a live-only hint set
    *  by `tool_authoring` and cleared by the first `tool` of the turn. Never persisted (history turns are
@@ -149,16 +149,16 @@ export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boole
   composingReason?: string };
 /** A context-compaction boundary: everything before it was summarized away, so the surface renders a
  *  subtle "context compacted" divider in its place followed by the kept tail (see `persistCompaction`). */
-export type DividerTurn = { role: 'divider' };
+type DividerTurn = { role: 'divider' };
 /** One visible marker of an owner session-state change. `id` dedups a live-folded event against the same
  *  durable marker already seeded from history. */
-export interface SessionEventItem { id: string; kind: string; detail: string }
+interface SessionEventItem { id: string; kind: string; detail: string }
 /** A run of session-change markers, interleaved into the transcript by time. Display-only — never part of
  *  the model's context. Consecutive markers (switching model AND mode before speaking again) collapse into
  *  ONE turn holding them all, exactly as consecutive tool calls collapse into one segment: they then stack
  *  as a block, and the single blank every turn ends with separates the block from what follows instead of
  *  falling between each pair. */
-export type EventTurn = { role: 'event'; events: SessionEventItem[] };
+type EventTurn = { role: 'event'; events: SessionEventItem[] };
 export type ChatTurn = YouTurn | ElowenTurn | DividerTurn | EventTurn;
 
 /** One stored turn as `turnsFromHistory` consumes it. Structurally the `BrainMessageView` the daemon serves

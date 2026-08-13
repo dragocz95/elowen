@@ -36,17 +36,8 @@
     "src/plugins/api.ts": [
       "types"
     ],
-    "src/brain/transcript.ts": [
-      "types"
-    ],
-    "web/lib/transcript.ts": [
-      "exports"
-    ],
     "plugins/_shared/lifecycle.mjs": [
       "exports"
-    ],
-    "web/lib/types.ts": [
-      "types"
     ],
     "plugins/agents/src/lib/execs.ts": [
       "exports"

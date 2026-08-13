@@ -144,7 +144,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
  *  stored segment holds the bare daemon path — strip the prefix here rather than teaching the renderer
  *  that a live image is addressed differently from a reloaded one. The mime type is not on the wire, so
  *  it is read off the extension the daemon constrains to png/jpg/gif/webp. */
-export function imageFromRef(ref: string): BrainMessageImage {
+function imageFromRef(ref: string): BrainMessageImage {
   const url = ref.startsWith('/api/') ? ref.slice('/api'.length) : ref;
   const extension = url.slice(url.lastIndexOf('.') + 1).toLowerCase();
   return { url, mimeType: IMAGE_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream' };
