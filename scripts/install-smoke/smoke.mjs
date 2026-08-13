@@ -97,10 +97,14 @@ async function main() {
     assert(r.json != null && r.json.user == null, `/auth/me should have no user: ${r.text}`);
   });
 
-  // 7. The onboarding backend the first-run UI needs is reachable tokenless.
-  await step('/integrations/cli-status reachable tokenless', async () => {
-    const r = await req('GET', DAEMON, '/integrations/cli-status');
-    assert(r.status === 200 && r.json !== undefined, `/integrations/cli-status = ${r.status} ${r.text}`);
+  // 7. The first-run readiness report the setup wizard prints works on a BARE install — the honest
+  //    "what works right now" answer, served by core alone (a fresh install enables no plugin that owns
+  //    a domain vertical, so nothing here may depend on one being present).
+  await step('/system/readiness reachable tokenless and reports core subsystems', async () => {
+    const r = await req('GET', DAEMON, '/system/readiness');
+    assert(r.status === 200 && Array.isArray(r.json?.checks), `/system/readiness = ${r.status} ${r.text}`);
+    const ids = r.json.checks.map((c) => c.id);
+    for (const id of ['chat', 'memory', 'platforms']) assert(ids.includes(id), `readiness is missing the ${id} row: ${r.text}`);
   });
 
   // 8. Create the first admin (the count==0 bootstrap path).

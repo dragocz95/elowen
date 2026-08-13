@@ -226,10 +226,13 @@ async function main() {
       assert(me.status === 200, `/api/auth/me tokenless should be 200 in setup mode, got ${me.status}`);
       assert(me.json != null && me.json.user == null, `/api/auth/me should carry no user in setup mode: ${me.text}`);
 
-      const cli = await http('GET', WEB, '/api/integrations/cli-status');
-      assert(cli.status === 200 && cli.json !== undefined, `/api/integrations/cli-status should be reachable tokenless, got ${cli.status} ${cli.text}`);
+      // A normally-protected CORE route proves the passthrough, not a plugin's root mount: a fresh
+      // install ships no plugin that owns one, so probing /integrations/cli-status here tested the
+      // harness rather than the proxy.
+      const cfg = await http('GET', WEB, '/api/config');
+      assert(cfg.status === 200 && cfg.json !== undefined, `/api/config should be reachable tokenless in setup mode, got ${cfg.status} ${cfg.text}`);
     }
-    ok('proxy setup-mode tokenless passthrough: /api/setup needsSetup=true, /api/auth/me 200 no-user, cli-status 200');
+    ok('proxy setup-mode tokenless passthrough: /api/setup needsSetup=true, /api/auth/me 200 no-user, /api/config 200');
 
     // --- 3) CREATE FIRST ADMIN THROUGH THE PROXY (the count==0 bootstrap path). -------------------
     {

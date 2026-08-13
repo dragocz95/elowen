@@ -62,6 +62,29 @@ describe('LoginGate', () => {
     expect(passwordInput()).toBeNull();
   });
 
+  it('resolves the first run from CORE endpoints only — never a plugin route', async () => {
+    // The first run must not depend on any plugin being installed. It used to be decided by
+    // /integrations/cli-status, which belongs to the `agents` plugin: on an install without it that
+    // probe answers 503 and the fresh-install branch silently stopped working. `/setup` is core and
+    // exists on every install, so first-run routing is now derived from it alone.
+    const paths: string[] = [];
+    server.use(
+      http.get('*/api/*', ({ request }) => {
+        const path = new URL(request.url).pathname;
+        paths.push(path);
+        if (path === '/api/auth/me') return new HttpResponse(null, { status: 401 });
+        if (path === '/api/setup') return HttpResponse.json({ needsSetup: true });
+        return HttpResponse.json({});
+      }),
+    );
+
+    render(<Wrap><LoginGate><span>secret-content</span></LoginGate></Wrap>);
+    await waitFor(() => expect(screen.getByText('elowen setup')).toBeInTheDocument());
+
+    expect(paths).toContain('/api/setup');
+    expect(paths.every((p) => p === '/api/auth/me' || p === '/api/setup')).toBe(true);
+  });
+
   it('opens the shell when the session cookie is valid (me() 200)', async () => {
     server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })));
 

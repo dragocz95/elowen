@@ -315,9 +315,9 @@ async function runAuthAndWs() {
     `[setup-open] GET /auth/me → 200 with no user in setup mode (got ${r.status} ${JSON.stringify(r.json)})`);
   ok('GET /auth/me → 200 (no user) tokenless in setup mode (count()===0 branch)');
 
-  r = await get(baseUrl, '/integrations/cli-status');
-  assert(r.status === 200, `[setup-open] GET /integrations/cli-status → 200 tokenless in setup mode (got ${r.status})`);
-  ok('GET /integrations/cli-status → 200 tokenless in setup mode (count()===0 branch)');
+  r = await get(baseUrl, '/projects');
+  assert(r.status === 200, `[setup-open] GET /projects → 200 tokenless in setup mode (got ${r.status})`);
+  ok('GET /projects → 200 tokenless in setup mode (count()===0 branch)');
 
   p = await postJson(baseUrl, '/users', null, admin);
   assert(p.status === 201, `[setup-open] POST /users → 201 creating first admin (got ${p.status} ${JSON.stringify(p.json)})`);
@@ -329,10 +329,10 @@ async function runAuthAndWs() {
   assert(r.status === 200 && r.json?.needsSetup === false, `[re-engaged] GET /setup → needsSetup:false after first user (got ${JSON.stringify(r.json)})`);
   ok('GET /setup → needsSetup:false after first user');
 
-  r = await get(baseUrl, '/integrations/cli-status');
+  r = await get(baseUrl, '/projects');
   assert(r.status === 401 && r.json?.error === 'unauthorized',
-    `[re-engaged/no-token] GET /integrations/cli-status → 401 unauthorized tokenless (got ${r.status} ${JSON.stringify(r.json)})`);
-  ok('GET /integrations/cli-status → 401 tokenless once a user exists (Bearer-required branch)');
+    `[re-engaged/no-token] GET /projects → 401 unauthorized tokenless (got ${r.status} ${JSON.stringify(r.json)})`);
+  ok('GET /projects → 401 tokenless once a user exists (Bearer-required branch)');
 
   r = await get(baseUrl, '/auth/me');
   assert(r.status === 401 && r.json?.error === 'unauthorized',
@@ -344,19 +344,19 @@ async function runAuthAndWs() {
   const token = p.json.token;
   ok('POST /auth/login (valid creds) → 200 with token');
 
-  r = await get(baseUrl, '/integrations/cli-status', token);
-  assert(r.status === 200, `[re-engaged/valid-bearer] GET /integrations/cli-status → 200 with valid Bearer (got ${r.status})`);
-  ok('GET /integrations/cli-status → 200 with valid Bearer (principal resolved)');
+  r = await get(baseUrl, '/projects', token);
+  assert(r.status === 200, `[re-engaged/valid-bearer] GET /projects → 200 with valid Bearer (got ${r.status})`);
+  ok('GET /projects → 200 with valid Bearer (principal resolved)');
 
   r = await get(baseUrl, '/auth/me', token);
   assert(r.status === 200 && r.json?.user?.is_admin === true,
     `[re-engaged/valid-bearer] GET /auth/me → 200 with the admin principal (got ${r.status} ${JSON.stringify(r.json)})`);
   ok('GET /auth/me → 200 with the resolved admin principal (valid Bearer)');
 
-  r = await get(baseUrl, '/integrations/cli-status', 'not-a-real-token-deadbeef');
+  r = await get(baseUrl, '/projects', 'not-a-real-token-deadbeef');
   assert(r.status === 401 && r.json?.error === 'unauthorized',
-    `[re-engaged/garbage-bearer] GET /integrations/cli-status → 401 with a garbage Bearer (got ${r.status} ${JSON.stringify(r.json)})`);
-  ok('GET /integrations/cli-status → 401 with a garbage Bearer (null principal branch)');
+    `[re-engaged/garbage-bearer] GET /projects → 401 with a garbage Bearer (got ${r.status} ${JSON.stringify(r.json)})`);
+  ok('GET /projects → 401 with a garbage Bearer (null principal branch)');
 
   r = await get(baseUrl, '/health');
   assert(r.status === 200 && r.json?.ok === true, `[public/isPublic] GET /health → 200 tokenless after re-engage (got ${r.status})`);

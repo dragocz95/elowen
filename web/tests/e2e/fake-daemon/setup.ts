@@ -4,8 +4,9 @@
 // toggle (`POST /__test/setup { needsSetup }`), so the onboarding spec can drive the whole gate.
 //
 // While setup mode is ON and no user has been created, `GET /setup` returns needsSetup:true (the login
-// gate routes to /onboarding) and `POST /users` is open (creates the bootstrap admin). Creating the first
-// user flips needsSetup:false — the same moment the real daemon's auth boundary re-engages.
+// gate shows the terminal-installer screen) and the otherwise-protected API is open, exactly as the real
+// daemon's `users.count() === 0` branch is. Creating the first user flips needsSetup:false — the same
+// moment the real daemon's auth boundary re-engages.
 
 interface FakeUser {
   readonly id: number;
