@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "prebuild": "npm run languages-check --silent && node scripts/dist-integrity.mjs clean",
-    "build:ts": "tsc -b tsconfig.json tsconfig.plugins.agents.json tsconfig.plugins.lsp.json tsconfig.plugins.editor.json tsconfig.plugins.work.json",
+    "build:ts": "tsc -b tsconfig.json $(ls tsconfig.plugins.*.json 2>/dev/null)",
     "build": "npm run build:ts --silent && npm run build:plugins-web --silent && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
     "build:plugins-web": "node scripts/build-plugins-web.mjs",
     "postbuild": "node scripts/dist-integrity.mjs chmod-bins && node scripts/dist-integrity.mjs verify",
