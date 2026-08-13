@@ -572,10 +572,6 @@ export const en = {
     mostActiveFiles: 'Most active files',
     noChangesInWindow: 'No commits in this window',
   },
-  review: {
-    escalated: 'Overseer rejected a phase: {reason}',
-    noReason: 'no reason given',
-  },
   dashboard: {
     needsAttentionTitle: 'Needs attention',
     greetingMorning: 'Good morning',

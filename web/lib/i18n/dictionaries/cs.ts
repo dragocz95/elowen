@@ -572,10 +572,6 @@ export const cs = {
     mostActiveFiles: 'Nejaktivnější soubory',
     noChangesInWindow: 'V tomto okně žádné commity',
   },
-  review: {
-    escalated: 'Dozorčí zamítl fázi: {reason}',
-    noReason: 'bez udání důvodu',
-  },
   dashboard: {
     needsAttentionTitle: 'Vyžaduje pozornost',
     greetingMorning: 'Dobré ráno',

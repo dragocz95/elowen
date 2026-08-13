@@ -572,10 +572,6 @@ export const sk = {
     mostActiveFiles: 'Najaktívnejšie súbory',
     noChangesInWindow: 'V tomto okne žiadne commity',
   },
-  review: {
-    escalated: 'Dozorca zamietol fázu: {reason}',
-    noReason: 'bez udania dôvodu',
-  },
   dashboard: {
     needsAttentionTitle: 'Vyžaduje pozornosť',
     greetingMorning: 'Dobré ráno',

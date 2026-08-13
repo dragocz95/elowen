@@ -161,6 +161,17 @@ for (const leaf of collectLeaves(dictionaries.en)) {
   }
 }
 
+// A whole SECTION nothing reaches. The name scan above cannot see this: a section survives as long as
+// each of its key names is spelled somewhere else in the tree — `review.noReason` stayed "used" purely
+// because an unrelated section had a `noReason` of its own. A top-level section is only reachable as
+// `t.<section>` (an alias still names it, and a computed read is `t.<section>[…]`), so the absence of
+// that literal is exact, not a heuristic — which is why it can be an error rather than an exemption.
+for (const section of Object.keys(dictionaries.en)) {
+  if (!sourceBlob.includes(`t.${section}`)) {
+    errors.push(`web: the whole "${section}" section is never reached (no source contains \`t.${section}\`) — delete it from every locale, or move it to the plugin that renders it`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin manifests + i18n overrides
 // ---------------------------------------------------------------------------
