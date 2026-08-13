@@ -132,8 +132,8 @@ describe('bundled plugin manifests', () => {
         expect(typeof route).toBe('string');
       }
       // A web block's bundle must be reproducible from the repo: either web-src/ sources exist (the
-      // build emits the gitignored bundle) or the entry itself is tracked (a build-free bundle like
-      // ui-demo's handwritten web/index.js).
+      // build emits the gitignored bundle) or the entry itself is tracked (a hand-written, build-free
+      // bundle).
       if (m.web) {
         expect(m.web.entry.startsWith('/')).toBe(false);
         const hasSources = existsSync(join(pluginsDir, name, 'web-src'));

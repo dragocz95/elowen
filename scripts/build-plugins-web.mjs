@@ -1,6 +1,6 @@
 // Build the browser-UI bundles of bundled plugins that ship TS/React sources: a plugin with a
 // `web-src/index.{tsx,ts,jsx,js}` gets it bundled to `web/index.js` (what the manifest's `web.entry`
-// points at) via @elowen/plugin-ui-kit. Plain-JS plugins (ui-demo) have no `web-src/` and keep their
+// points at) via @elowen/plugin-ui-kit. A plain-JS plugin has no `web-src/` and keeps its
 // checked-in bundle untouched. Runs inside `npm run build` BEFORE plugins/ is copied into dist/, so
 // the shipped tree carries the built bundles.
 import { readdirSync, existsSync, statSync } from 'node:fs';
