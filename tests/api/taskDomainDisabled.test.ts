@@ -9,6 +9,9 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { Hono } from 'hono';
+import { registerTaskRoutes } from '../../src/api/routes/tasks.js';
+import { createRouteContext } from '../../src/api/context.js';
 import { openAgentsDb } from '../helpers/agentsDb.js';
 
 /** A daemon whose task domain either has an owner (the work plugin loaded) or has none (it is disabled).
@@ -63,6 +66,32 @@ describe('the task API without an owner for the task domain', () => {
     expect(cleanup.status).toBe(200);
     // …and it reports zero task rows rather than claiming it removed any.
     expect(await cleanup.json()).toMatchObject({ ok: true, tasks: 0, missions: 0 });
+  });
+
+  // The list above is written by hand, so it can only prove the gate covers what somebody remembered
+  // to put in it. This derives the family from the ROUTER — every path the task routes actually
+  // register — so a route added tomorrow outside the gate's patterns turns this red instead of quietly
+  // falling through to the "missing availability gate" throw, i.e. a 500 where a 503 belongs.
+  it('covers every path the task routes register — not just the ones somebody listed', async () => {
+    const probe = new Hono();
+    registerTaskRoutes(probe as never, createRouteContext({ tmux: {}, bus: {}, config: {}, clock: {} } as never));
+    const registered = probe.routes
+      .filter((r) => r.method !== 'ALL') // the availability middleware itself, mounted on '*'
+      .map((r) => ({ method: r.method, path: r.path }));
+    expect(registered.length).toBeGreaterThan(10); // the probe really did register the family
+
+    const { app, db } = makeApp(false);
+    try {
+      for (const { method, path } of registered) {
+        // A concrete request path for the pattern; the gate is path-shaped only, so any segment does.
+        const concrete = path.replace(/:[A-Za-z0-9_]+/g, 'x');
+        const res = await app.request(concrete, {
+          method, headers: { 'content-type': 'application/json' },
+          ...(method === 'GET' || method === 'DELETE' ? {} : { body: '{}' }),
+        });
+        expect(`${method} ${concrete} → ${res.status}`).toBe(`${method} ${concrete} → 503`);
+      }
+    } finally { db.close(); }
   });
 
   it('serves the same paths normally as soon as the domain has an owner', async () => {
