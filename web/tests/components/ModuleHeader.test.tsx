@@ -12,11 +12,33 @@ const renderHeader = (ui: React.ReactElement) => {
 };
 
 describe('ModuleHeader — per-page document title (the single funnel)', () => {
-  it('sets "Elowen — <title>" while mounted and resets to "Elowen" on unmount', () => {
-    const { unmount } = renderHeader(<ModuleHeader title="Dashboard" icon={LayoutDashboard}><button>x</button></ModuleHeader>);
-    expect(document.title).toBe('Elowen — Dashboard');
+  it('titles the tab while mounted and hands the tab back to the layout on unmount', () => {
+    // The layout always renders a title of its own (Next metadata). Stand it up here so the fallback is
+    // the real one: unmounting must drop back to it, not blank the tab.
+    const layoutTitle = document.createElement('title');
+    layoutTitle.textContent = 'Elowen';
+    document.head.appendChild(layoutTitle);
+    try {
+      const { unmount } = renderHeader(<ModuleHeader title="Dashboard" icon={LayoutDashboard}><button>x</button></ModuleHeader>);
+      expect(document.title).toBe('Elowen — Dashboard');
+      unmount();
+      expect(document.title).toBe('Elowen');
+    } finally {
+      layoutTitle.remove();
+    }
+  });
+
+  it('leaves no title of its own behind — the node belongs to React, not to a write', () => {
+    // The imperative write lost the race against React's own commit of the <title> node: measured on
+    // /projects, the effect set the page title and React put the bare app name back afterwards, so core
+    // pages ended up untitled while plugin pages kept theirs only because their bundle lands later.
+    // Guard the mechanism: a title React renders is removed with the component, where a written one
+    // outlives it and leaves the tab claiming a page that is gone.
+    const before = document.head.querySelectorAll('title').length;
+    const { unmount } = renderHeader(<ModuleHeader title="Memory" />);
+    expect(document.head.querySelectorAll('title').length).toBe(before + 1);
     unmount();
-    expect(document.title).toBe('Elowen');
+    expect(document.head.querySelectorAll('title').length).toBe(before);
   });
 
   it('still updates the title on a bare title-only page (no children/subtitle → component renders nothing)', () => {

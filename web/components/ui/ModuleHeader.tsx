@@ -14,19 +14,22 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
   const { appName } = useBrand();
   useEffect(() => {
     setHeader?.({ title, count, icon: Icon });
-    // Reflect the page in the browser tab — "Elowen — <Page>". Every route funnels its title through
-    // this one component, so the whole app gets per-page titles here with no per-page effects. Cleanup
-    // resets to the bare app name so a chromeless/next route never inherits a stale title.
-    document.title = title ? `${appName} — ${title}` : appName;
-    return () => {
-      setHeader?.({});
-      document.title = appName;
-    };
-  }, [title, count, Icon, setHeader, appName]);
+    return () => setHeader?.({});
+  }, [title, count, Icon, setHeader]);
 
-  if (!children && !subtitle) return null;
+  // Reflect the page in the browser tab — "Elowen — <Page>". This is RENDERED, not written into
+  // document.title from an effect: React owns the <title> node, and an imperative write loses the race
+  // against React's own commit of it. Measured on /projects — the effect set "Elowen — Projects" at
+  // 437ms and React put the bare app name back afterwards with no setter call of its own, so core pages
+  // ended up untitled while plugin pages kept their title only because their bundle lands later.
+  // Rendering it hands React the value it is going to commit anyway; unmounting drops back to the
+  // layout's own title, which is what the cleanup used to imitate.
+  const tab = <title>{title ? `${appName} — ${title}` : appName}</title>;
+
+  if (!children && !subtitle) return tab;
   return (
     <div className="mb-6 flex flex-col gap-2">
+      {tab}
       {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : null}
       {/* Responsive toolbar: filter/action groups wrap as whole controls, while controls that contain
           their own collections (project pills, segmented filters) may wrap internally. Keeping every
