@@ -1813,7 +1813,6 @@ export const sk = {
     unknown: 'pracuje',
   },
   pluginUi: {
-    ready: 'Rozšírenie aktívne',
     eyebrow: 'Rozšírenie',
     unavailableTitle: 'Rozhranie nie je k dispozícii',
     manage: 'Spravovať pluginy',

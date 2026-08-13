@@ -1813,7 +1813,6 @@ export const cs = {
     unknown: 'pracuje',
   },
   pluginUi: {
-    ready: 'Rozšíření aktivní',
     eyebrow: 'Rozšíření',
     unavailableTitle: 'Rozhraní není k dispozici',
     manage: 'Spravovat pluginy',

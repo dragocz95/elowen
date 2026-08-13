@@ -65,10 +65,12 @@ interface CronComponents {
   Badge: AnyComponent; Button: AnyComponent; Input: AnyComponent; Field: AnyComponent; Toggle: AnyComponent;
   ConfirmDialog: AnyComponent; AutoSaveStatus: AnyComponent; LoadingState: AnyComponent; ErrorState: AnyComponent;
   ManageSelectionModal: AnyComponent; SelectionSummary: AnyComponent; BrainModelField: AnyComponent;
-  EmptyState: AnyComponent;
+  EmptyState: AnyComponent; Segmented: AnyComponent;
   DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent;
-  PluginSection: AnyComponent; PluginWorkspace: AnyComponent;
-  WorkspaceMetric: AnyComponent; WorkspaceDetailRail: AnyComponent;
+  ControlSurfaceDocument: AnyComponent; ControlSurfaceToolbar: AnyComponent;
+  ControlSurfaceRegister: AnyComponent; ControlSurfaceState: AnyComponent;
+  PluginSection: AnyComponent;
+  SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent; WorkspaceDetailRail: AnyComponent;
   SettingsGroup: AnyComponent;
 }
 

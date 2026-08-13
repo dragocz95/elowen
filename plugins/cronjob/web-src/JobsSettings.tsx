@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, CalendarClock, Check, ChevronRight, Clock, Hash, MessageSquare, PauseCircle, Plus, Timer, Trash2, X } from 'lucide-react';
+import { Activity, CalendarClock, Check, ChevronLeft, ChevronRight, Clock, Hash, MessageSquare, PauseCircle, Plus, Search, Timer, Trash2, X } from 'lucide-react';
 import { runtime, type BrainModelOption, type CronJob, type DiscordChannelOption, type ManageSelectionItem } from './runtime';
+
+/** One page of jobs, matching the register size the built-in workspaces page at. */
+const PAGE_SIZE = 20;
+type Filter = 'all' | 'active' | 'paused';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -305,6 +309,9 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const models = hooks.useBrainModels();
   const [drafts, setDrafts] = useState<CronJob[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [page, setPage] = useState(0);
 
   // A draft the server has taken is the server's now. Keeping it would resurrect the job as an unsaved
   // row the moment anything else deletes it — and one keystroke there would write it straight back.
@@ -322,6 +329,22 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     return ms != null && (newest == null || ms > newest) ? ms : newest;
   }, null);
 
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((j) => {
+      if (filter === 'active' && j.enabled === false) return false;
+      if (filter === 'paused' && j.enabled !== false) return false;
+      if (needle === '') return true;
+      return j.name.toLowerCase().includes(needle) || j.schedule.toLowerCase().includes(needle) || j.prompt.toLowerCase().includes(needle);
+    });
+  }, [rows, query, filter]);
+  // A narrowed list can be shorter than the page the user is on; landing on an empty page reads as
+  // "nothing matches" when the matches are simply on page 1.
+  useEffect(() => { setPage(0); }, [query, filter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
+
   const addJob = () => {
     // Same id shape the plugin's own CronAdd tool generates.
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -333,11 +356,8 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     setSelectedId((cur) => (cur === id ? null : cur));
   };
 
-  const body = () => {
-    if (isError) return <C.ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} />;
-    if (isLoading || !data) return <C.LoadingState />;
-    if (rows.length === 0) return <C.EmptyState title={s.empty} icon={Clock} />;
-    return (
+  const table = (
+    <div className="flex min-w-0 flex-col gap-3">
       <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem" compactColumns="2rem minmax(0,1fr) 5.5rem">
         <C.DataTableRow header>
           <C.DataTableCell header><span className="sr-only">{s.enabled}</span></C.DataTableCell>
@@ -347,7 +367,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
           <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colLastRun}</C.DataTableCell>
           <C.DataTableCell header />
         </C.DataTableRow>
-        {rows.map((job) => (
+        {pageItems.map((job) => (
           <CronJobRow
             key={job.id}
             job={job}
@@ -361,25 +381,80 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
           />
         ))}
       </C.DataTable>
-    );
-  };
 
+      <div className="flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <span className="font-mono text-xs text-text-muted">
+          {s.pageRange
+            .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
+            .replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length))
+            .replace('{total}', String(filtered.length))}
+        </span>
+        <div className="flex items-center gap-1">
+          <C.Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{s.prevPage}</C.Button>
+          <span className="min-w-24 text-center font-mono text-xs text-text-muted">
+            {s.pageLabel.replace('{page}', String(clampedPage + 1)).replace('{pages}', String(pageCount))}
+          </span>
+          <C.Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{s.nextPage}<ChevronRight size={15} className="ml-1" aria-hidden /></C.Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const surfaceDocument = (
+    <C.ControlSurfaceDocument>
+      {isLoading || !data ? <C.ControlSurfaceState><C.LoadingState variant="cards" /></C.ControlSurfaceState>
+        : isError ? <C.ControlSurfaceState tone="danger"><C.ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} /></C.ControlSurfaceState>
+        : (
+          <div className="flex min-w-0 flex-col gap-4">
+            <C.ControlSurfaceToolbar className="flex-col items-stretch">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
+                <div className="relative min-w-[15rem] flex-1">
+                  <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                  <C.Input value={query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)} placeholder={s.searchPlaceholder} className="pl-9" />
+                </div>
+                <C.Segmented
+                  value={filter}
+                  onChange={(v: string) => setFilter(v as Filter)}
+                  options={[{ value: 'all', label: s.filterAll }, { value: 'active', label: s.filterActive }, { value: 'paused', label: s.filterPaused }]}
+                  aria-label={s.enabled}
+                  nowrap
+                />
+              </div>
+            </C.ControlSurfaceToolbar>
+
+            <C.ControlSurfaceRegister className="flex flex-col gap-4">
+              {rows.length === 0
+                ? <C.EmptyState title={s.empty} icon={Clock} action={<C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>} />
+                : filtered.length === 0
+                  ? <C.EmptyState title={s.emptySearch} icon={Search} />
+                  : table}
+            </C.ControlSurfaceRegister>
+          </div>
+        )}
+    </C.ControlSurfaceDocument>
+  );
+
+  // In the Settings deck the surrounding panel supplies the page frame; on its own page the section
+  // wears the same spatial workspace every built-in page wears.
+  if (surface === 'deck') return surfaceDocument;
   return (
-    <C.PluginWorkspace
-      surface={surface}
-      plugin="cronjob"
-      section="jobs"
-      description={s.sectionHint}
-      count={rows.length}
-      state={{ isLoading, isError }}
-      action={<C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>}
-      metrics={<>
-        <C.WorkspaceMetric label={s.metricActive} value={active} icon={Activity} />
-        <C.WorkspaceMetric label={s.metricPaused} value={rows.length - active} icon={PauseCircle} />
-        <C.WorkspaceMetric label={s.colLastRun} value={lastRun != null ? utils.compactElapsed(Date.now() - lastRun) : '—'} icon={Timer} />
-      </>}
+    <C.SpatialWorkspaceLayout
+      hero={{
+        eyebrow: s.workspaceEyebrow,
+        title: s.title,
+        count: rows.length,
+        description: s.sectionHint,
+        mascotState: isLoading ? 'saving' : isError ? 'error' : 'idle',
+        status: !isLoading && !isError ? <span className="workspace-status">{s.workspaceReady}</span> : undefined,
+        action: <C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>,
+        metrics: <>
+          <C.WorkspaceMetric label={s.metricActive} value={active} icon={Activity} />
+          <C.WorkspaceMetric label={s.metricPaused} value={rows.length - active} icon={PauseCircle} />
+          <C.WorkspaceMetric label={s.colLastRun} value={lastRun != null ? utils.compactElapsed(Date.now() - lastRun) : '—'} icon={Timer} />
+        </>,
+      }}
     >
-      {body()}
-    </C.PluginWorkspace>
+      {surfaceDocument}
+    </C.SpatialWorkspaceLayout>
   );
 }

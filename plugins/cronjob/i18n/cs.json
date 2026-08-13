@@ -75,7 +75,18 @@
       "helpModel": "Na kterém modelu úloha poběží. Výchozí = výchozí model serveru.",
       "metricActive": "Aktivní",
       "metricPaused": "Pozastavené",
-      "colLastRun": "Poslední běh"
+      "colLastRun": "Poslední běh",
+      "workspaceEyebrow": "Automatizace",
+      "workspaceReady": "Plánovač běží",
+      "searchPlaceholder": "Hledat úlohu…",
+      "emptySearch": "Filtru neodpovídá žádná úloha",
+      "filterAll": "Vše",
+      "filterActive": "Aktivní",
+      "filterPaused": "Pozastavené",
+      "pageRange": "{from}–{to} z {total}",
+      "pageLabel": "Strana {page} z {pages}",
+      "prevPage": "Zpět",
+      "nextPage": "Další"
     }
   }
 }

@@ -38,7 +38,6 @@ import { EntityList, EntityRow } from '../components/ui/EntityList';
 import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
 import { SpatialWorkspaceLayout, WorkspaceMetric, WorkspacePage, CompactWorkspaceHeader } from '../components/ui/WorkspacePrimitives';
-import type { SpatialWorkspaceLayoutProps } from '../components/ui/WorkspacePrimitives';
 import { ProjectFilterPills } from '../components/ui/ProjectFilterPills';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../components/ui/ControlSurface';
 import { ModelIcon } from '../components/ui/ModelIcon';
@@ -180,58 +179,6 @@ function PluginPageFrame({ surface, title, description, icon, action, plugin, se
   );
 }
 
-/** The frame a plugin page wears when it is a WORKSPACE — a list or board the user works in rather
- *  than a settings form. It is the same spatial hero the built-in workspaces (Memory, Projects) wear,
- *  supplied from here rather than assembled inside each bundle: a plugin page should not be
- *  recognisable as "the plugin one" by its chrome, and the hero's shape has to be changeable in one
- *  place. `state` folds the loading/error pair that every caller used to spell out by hand into the
- *  mascot's expression and the default status pill, so six pages cannot drift into six moods.
- *
- *  In the Settings deck the surrounding panel already frames the section, so the children render bare. */
-function PluginWorkspace({ surface, title, description, count, state, status, action, metrics, navigation, plugin, section, children }: {
-  surface: 'page' | 'deck';
-  /** Omit it and the frame reads the section's label from the manifest listing (already localized),
-   *  exactly as PluginPageFrame does, so the page title cannot drift from the sidebar entry. */
-  title?: string;
-  description?: string;
-  count?: number;
-  /** The page's data query. Its two flags drive the mascot and the default status pill. */
-  state?: { isLoading?: boolean; isError?: boolean };
-  /** Overrides the default "ready" pill for a page that has something better to report. */
-  status?: ReactNode;
-  action?: ReactNode;
-  metrics?: ReactNode;
-  navigation?: SpatialWorkspaceLayoutProps['navigation'];
-  plugin?: string;
-  section?: string;
-  children: ReactNode;
-}) {
-  const { t, locale } = useTranslation();
-  const listing = usePluginUi(locale);
-  if (surface === 'deck') return <>{children}</>;
-  const entry = plugin === undefined ? undefined : listing.data?.find((p) => p.name === plugin);
-  const label = title ?? entry?.settings.find((s) => s.id === section)?.label ?? '';
-  const busy = state?.isLoading === true;
-  const failed = state?.isError === true;
-  return (
-    <SpatialWorkspaceLayout
-      hero={{
-        eyebrow: t.pluginUi.eyebrow,
-        title: label,
-        count,
-        description,
-        mascotState: failed ? 'error' : busy ? 'saving' : 'idle',
-        status: status ?? (busy || failed ? undefined : <span className="workspace-status">{t.pluginUi.ready}</span>),
-        action,
-        metrics,
-      }}
-      navigation={navigation}
-    >
-      {children}
-    </SpatialWorkspaceLayout>
-  );
-}
-
 /** The common shape: one settings group. In the deck the group carries the section's own title block;
  *  on a page that block becomes the page header instead, because a page that repeats its own name
  *  inside the first card reads like a fragment someone pasted onto an empty screen. */
@@ -321,7 +268,7 @@ export function ensurePluginUiRuntime(): void {
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
       // rebuilt the layout for itself.
-      WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginWorkspace, PluginSection, ProjectFilterPills,
+      WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,

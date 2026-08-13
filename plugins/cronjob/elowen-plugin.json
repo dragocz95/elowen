@@ -158,7 +158,18 @@
       "helpModel": "Which model the job runs on. Default = the server default model.",
       "metricActive": "Active",
       "metricPaused": "Paused",
-      "colLastRun": "Last run"
+      "colLastRun": "Last run",
+      "workspaceEyebrow": "Automation",
+      "workspaceReady": "Scheduler running",
+      "searchPlaceholder": "Search jobs…",
+      "emptySearch": "No job matches the filter",
+      "filterAll": "All",
+      "filterActive": "Active",
+      "filterPaused": "Paused",
+      "pageRange": "{from}–{to} of {total}",
+      "pageLabel": "Page {page} of {pages}",
+      "prevPage": "Back",
+      "nextPage": "Next"
     }
   }
 }
