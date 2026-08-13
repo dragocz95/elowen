@@ -168,6 +168,50 @@ describe('per-resource task/mission access', () => {
     expect(tasks.list().length).toBe(0);
   });
 
+  // Setup mode (the users store exists but holds NO user yet) is the one state where the request
+  // reaches a handler with no identity at all: src/api/auth.ts lets it through so onboarding can run
+  // before the first admin exists. Core answered such a caller with 403 on every per-project task
+  // route (canAccessProject: `!!u && …`), while its LIST scoping helper (accessibleProjects) returned
+  // "unrestricted" for the same request. The plugin's tenancy block carries only the list helper, so a
+  // canProject() that reads `null` as a blanket allow hands an unauthenticated caller every project.
+  // Both halves are pinned here: writes stay refused, the list stays open exactly as core left it.
+  it('setup mode (no users yet) refuses per-project task writes to an unauthenticated caller', async () => {
+    const db = openPluginTablesDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
+    const users = new UserStore(db); // NO user created → setup mode
+    const userProjects = new UserProjectStore(db);
+    const tasks = new TaskStore(db);
+    tasks.create({ id: 't1', project_id: 1, title: 'home task' });
+    tasks.create({ id: 'epic1', project_id: 1, title: 'E1', type: 'epic' });
+    const readiness = new Readiness(db);
+    const config = new ConfigStore(db);
+    const projects = new ProjectStore(db);
+    const app = createServer({
+      tasks, taskRefs: new TaskRefs(db), missions: new MissionStore(db), bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config,
+      users, projects, userProjects,
+      plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
+    });
+    const post = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await app.request('/tasks', post({ title: 'unauthenticated task' }))).status).toBe(403);
+    expect(tasks.list().map((t) => t.id).sort()).toEqual(['epic1', 't1']); // never created
+    expect((await app.request('/tasks', post({ title: 'x', project_id: 1 }))).status).toBe(403);
+    expect((await app.request('/tasks/plan', post({ goal: 'unauthenticated plan' }))).status).toBe(403);
+    expect((await app.request('/tasks/epic1/phases', post({ phases: [{ title: 'x' }] }))).status).toBe(403);
+    expect((await app.request('/tasks/t1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'hijack' }) })).status).toBe(403);
+    expect(tasks.get('t1')!.title).toBe('home task');
+    expect((await app.request('/tasks/t1', { method: 'DELETE' })).status).toBe(403);
+    expect((await app.request('/tasks/t1/usage')).status).toBe(403);
+    expect((await app.request('/tasks/t1/deps')).status).toBe(403);
+    // The list surface keeps core's own (looser) setup-mode answer: unrestricted, not empty. Tightening
+    // it here would be a second, opposite deviation from what core shipped.
+    const list = await app.request('/tasks');
+    expect(list.status).toBe(200);
+    expect((await list.json() as { id: string }[]).map((t) => t.id).sort()).toEqual(['epic1', 't1']);
+  });
+
   // The final-phase agent closes the epic itself right after closing its own leaf. By then its task is
   // no longer in_progress and the mission has disengaged, so the agent's working set (in_progress agent
   // tasks + active missions' epics) is empty — its epic-close would 403. The still-open epic, having
