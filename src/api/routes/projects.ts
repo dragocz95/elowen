@@ -69,9 +69,14 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     // already shows as gone. A mission's worktree also leaks (missionGit resolves it via the epic TASK
     // row, which the cascade deletes), so every mission is freed here too, not just the running ones.
     // Mirrors the epic-delete teardown at DELETE /tasks/:id.
-    // With no task domain there is no epic to tear down (and the cascade below purges any rows left
-    // behind by a previously-enabled owner), so the teardown loop simply has nothing to walk.
-    for (const t of d.tasks?.list({ project_id: id }) ?? []) {
+    // With no owner for the task domain the rows are still THERE (disabling a plugin drops no table)
+    // and the cascade below still deletes them — so the loop must walk core's own tolerant view instead
+    // of skipping. Skipping stranded the mission's worktree on disk with the epic row that resolves it
+    // erased, and let a LIVE mission's rows go while nothing could stop it. TaskRefs carries exactly the
+    // fields this teardown reads, and it answers before any plugin has loaded.
+    const doomed: { id: string; type: string; status: string; labels: string[] }[] =
+      d.tasks?.list({ project_id: id }) ?? d.taskRefs?.all().filter((t) => t.project_id === id) ?? [];
+    for (const t of doomed) {
       if (t.type === 'epic') {
         const missionId = `m-${t.id}`;
         const mission = d.missions.get(missionId);
