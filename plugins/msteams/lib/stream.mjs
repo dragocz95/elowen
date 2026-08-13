@@ -45,6 +45,10 @@ const style = {
   italic: (s) => `_${s}_`,
   subtext: (s) => s,
   summaryLine: (s) => `  ↳ ${s}`,
+  // Teams renders a bot's message as markdown, where a single newline is a SOFT wrap: the tool trace
+  // came out as one run-on paragraph ("Skill … ToolSearch … CronAdd …" on one line). A blank line is
+  // the only separator the documented Teams subset gives a bot, so trace rows are joined by one.
+  lineBreak: '\n\n',
 };
 
 export const LiveMessage = createLiveMessage({ transport, style, CHUNK, splitContent, postWithImages, footerLine });

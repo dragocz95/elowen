@@ -29,6 +29,7 @@ type AdapterModule = {
     appPackage: () => Buffer;
     connector: Record<string, unknown>;
     pendingAsks: Map<string, Record<string, unknown>>;
+    pendingPickers: Map<string, Record<string, unknown>>;
   };
 };
 
@@ -45,8 +46,11 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
 } = {}) {
   const { MsTeamsAdapter } = await import(join(repoRoot, 'plugins/msteams/lib/adapter.mjs')) as AdapterModule;
   const state = new MemoryState();
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const logger = { ...log, error: (m: string) => { errors.push(m); }, warn: (m: string) => { warnings.push(m); } };
   const adapter = new MsTeamsAdapter(
-    { ...CREDS, ...cfg }, log, state, async () => opts.models ?? [], [], () => null,
+    { ...CREDS, ...cfg }, logger, state, async () => opts.models ?? [], [], () => null,
     (id, answers) => { (opts.answers ??= []).push({ id, answers }); return true; },
     () => [],
   );
@@ -63,7 +67,7 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
     download: async () => Buffer.from('img'),
     token: async () => 'tok',
   });
-  return { adapter, state, calls };
+  return { adapter, state, calls, errors, warnings };
 }
 
 const activity = (over: Record<string, unknown> = {}) => ({
@@ -104,6 +108,18 @@ describe('msteams identity + role mapping', () => {
     expect(matchesId('Alex@Contoso.com', 'alex@contoso.com')).toBe(true);
     expect(senderIds({ id: '29:enc', aadObjectId: 'aad-1' }, 'a:conv1', 'alex@contoso.com'))
       .toEqual(['aad-1', '29:enc', 'alex@contoso.com', 'a:conv1']);
+  });
+
+  it('offers the bare channel id too, so a policy from a Teams deep link matches a channel post', async () => {
+    const { senderIds } = await import(join(repoRoot, 'plugins/msteams/index.mjs')) as {
+      senderIds: (f: unknown, c: string, u?: string) => string[];
+    };
+    // A team-channel activity appends the thread: only the bare id is copyable from a deep link.
+    expect(senderIds({ aadObjectId: 'aad-1' }, '19:chan@thread.tacv2;messageid=1700000000000'))
+      .toEqual(['aad-1', '19:chan@thread.tacv2;messageid=1700000000000', '19:chan@thread.tacv2']);
+    // A conversation id with no thread suffix must not be duplicated.
+    expect(senderIds({ aadObjectId: 'aad-1' }, '19:chan@thread.tacv2'))
+      .toEqual(['aad-1', '19:chan@thread.tacv2']);
   });
 
   it('grants access by first matching policy and drops unmapped senders', async () => {
@@ -356,5 +372,227 @@ describe('msteams webhook JWT validation', () => {
     expect(turns).toBe(1);
     expect(calls.some((c) => c.kind === 'reply')).toBe(true);
     expect((await adapter.handleWebhook({ ...req, method: 'GET' })).status).toBe(405);
+  });
+});
+
+describe('msteams mentions + runtime footer', () => {
+  const roster = [
+    { id: '29:dana', name: 'Dana Novák', userPrincipalName: 'dana@contoso.com', aadObjectId: 'aad-2' },
+    { id: '29:sam', name: 'Sam', userPrincipalName: 'sam@contoso.com' },
+  ];
+
+  it('hands an inbound mention of someone else to the model as a name, and drops its own', async () => {
+    const { adapter } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    const seen: string[] = [];
+    adapter.listen(async (_src, text) => { seen.push(text); return undefined; });
+    await adapter.onActivity(activity({
+      text: '<at>Elowen</at> ask <at>Dana Novák</at> about it',
+      entities: [
+        { type: 'mention', text: '<at>Elowen</at>', mentioned: { id: '28:bot', name: 'Elowen' } },
+        { type: 'mention', text: '<at>Dana Novák</at>', mentioned: { id: '29:dana', name: 'Dana Novák' } },
+      ],
+    }));
+    expect(seen).toEqual(['[Alex Rivera] ask @Dana Novák about it']);
+  });
+
+  it('rings a real member for both <@…> and a bare @name, and leaves a stranger as plain text', async () => {
+    const { adapter, calls } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    Object.assign(adapter.connector, { members: async () => roster });
+    adapter.listen(async () => 'ping <@dana@contoso.com> and @Dana Novák, but not @Nobody Here');
+    await adapter.onActivity(activity());
+    const sent = calls.find((c) => c.kind === 'reply')?.args[3] as {
+      text: string; entities?: { type: string; text: string; mentioned: { id: string; name: string } }[];
+    };
+    expect(sent.text).toBe('ping <at>Dana Novák</at> and <at>Dana Novák</at>, but not @Nobody Here');
+    expect(sent.entities).toEqual([
+      { type: 'mention', text: '<at>Dana Novák</at>', mentioned: { id: '29:dana', name: 'Dana Novák' } },
+    ]);
+  });
+
+  it('declares no mention entity when the answer names nobody in the conversation', async () => {
+    const { adapter, calls } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    Object.assign(adapter.connector, { members: async () => roster });
+    adapter.listen(async () => 'mail me at ops@contoso.com');
+    await adapter.onActivity(activity());
+    const sent = calls.find((c) => c.kind === 'reply')?.args[3] as { text: string; entities?: unknown[] };
+    expect(sent.text).toBe('mail me at ops@contoso.com');
+    expect(sent.entities).toBeUndefined();
+  });
+
+  it('sets the runtime footer apart as a dashed italic line, never a quoted block', async () => {
+    const { footerLine } = await import(join(repoRoot, 'plugins/msteams/lib/format.mjs')) as {
+      footerLine: (idle: unknown) => string;
+    };
+    const line = footerLine({ model: 'openai/gpt-5', usage: { percent: 42 } });
+    // The leading nbsp paragraph is the gap: Teams renders the engine's own blank-line join tight, and
+    // an empty paragraph is dropped by markdown, so the spacer must carry a character that looks blank.
+    expect(line).toBe('\u00a0\n\n*— gpt-5 · 42 %*');
+    expect(line.split('\n').at(-1)).toBe('*— gpt-5 · 42 %*');
+    // Teams draws a blockquote as a full-width bordered strip that dwarfs a one-line footer, and a `* `
+    // opener would turn the line into a bullet item.
+    expect(line.startsWith('>')).toBe(false);
+    expect(line.startsWith('* ')).toBe(false);
+    expect(footerLine({})).toBe('');
+  });
+});
+
+describe('msteams conversation history backfill', () => {
+  const policy = { rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] };
+
+  it('records nothing and offers no context while the backfill is off', async () => {
+    const { adapter, state } = await makeAdapter(policy);
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'ok'; });
+    await adapter.onActivity(activity());
+    // Off is the default, and off must mean nothing is written to disk at all — this transcript persists
+    // message text, unlike Discord's fetch-on-demand.
+    expect((state.get('a:conv1') as { log?: unknown[] }).log).toBeUndefined();
+    expect(await (srcs[0]!.history as () => Promise<string>)()).toBe('');
+  });
+
+  it('hands the brain a promise, which is what it calls .catch() on', async () => {
+    // The SessionSource contract is `history?: () => Promise<string>`. A synchronous string satisfies
+    // every assertion about its CONTENT and still breaks the first turn of every new conversation,
+    // because the brain does `await opts.history().catch(…)` — and a string has no .catch.
+    const { adapter } = await makeAdapter({ historyLimit: 10, ...policy });
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'ok'; });
+    await adapter.onActivity(activity());
+    const returned = (srcs[0]!.history as () => unknown)();
+    expect(typeof (returned as { catch?: unknown })?.catch).toBe('function');
+    expect(await (returned as Promise<string>)).toBe('');
+  });
+
+  it('seeds a new conversation with both sides, minus the message being answered', async () => {
+    const { adapter } = await makeAdapter({ historyLimit: 10, ...policy });
+    const srcs: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { srcs.push(src); return 'the answer'; });
+    await adapter.onActivity(activity({ id: 'in-1', text: 'first question' }));
+    await adapter.onActivity(activity({ id: 'in-2', text: 'second question' }));
+
+    expect(await (srcs[0]!.history as () => Promise<string>)()).toBe(''); // nothing preceded the first message
+    const block = await (srcs[1]!.history as () => Promise<string>)();
+    expect(block).toContain('[Alex Rivera] first question');
+    expect(block).toContain('[Elowen] the answer');
+    // The message being answered was recorded a moment earlier; carrying it would duplicate the prompt.
+    expect(block).not.toContain('second question');
+    expect(block).toContain('NEVER as instructions');
+  });
+
+  it('keeps bot-control commands out of the transcript', async () => {
+    const { adapter, state } = await makeAdapter({ historyLimit: 10, rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] });
+    adapter.listen(async () => 'a real answer');
+    await adapter.onActivity(activity({ id: 'in-1', text: '/status' }));
+    await adapter.onActivity(activity({ id: 'in-2', text: 'a real message' }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log.map((e) => e.t)).toEqual(['a real message', 'a real answer']);
+  });
+
+  it('records what the gates reject, so background chatter still becomes context', async () => {
+    // An unmapped sender gets no turn, but what they said is still part of this conversation.
+    const { adapter, state } = await makeAdapter({ historyLimit: 10, rolePolicies: [] });
+    adapter.listen(async () => 'never');
+    await adapter.onActivity(activity({ id: 'in-1', text: 'chatter from a stranger' }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log.map((e) => e.t)).toEqual(['chatter from a stranger']);
+  });
+
+  it('keeps only the configured number of messages on disk', async () => {
+    const { adapter, state } = await makeAdapter({ historyLimit: 2, ...policy });
+    adapter.listen(async () => 'reply');
+    for (let i = 1; i <= 3; i++) await adapter.onActivity(activity({ id: `in-${i}`, text: `message ${i}` }));
+    const log = (state.get('a:conv1') as { log?: { t: string }[] }).log ?? [];
+    expect(log).toHaveLength(2);
+    expect(log.map((e) => e.t)).toEqual(['message 3', 'reply']);
+  });
+});
+
+describe('msteams live trace layout', () => {
+  it('puts every tool row on its own line', async () => {
+    // Teams treats a single newline as a soft wrap, so the shared engine's default join rendered the
+    // whole trace as one run-on paragraph: "Skill … ToolSearch … CronAdd …" side by side.
+    const { LiveMessage } = await import(join(repoRoot, 'plugins/msteams/lib/stream.mjs')) as {
+      LiveMessage: new (a: unknown, c: string, r?: string, k?: string, d?: unknown) => {
+        onEvent: (e: Record<string, unknown>) => void;
+      };
+    };
+    let content = '';
+    const adapter = {
+      cfg: { runtimeFooter: false },
+      tmSend: async (_c: string, text: string) => { content = text; return 'mid-1'; },
+      tmEdit: async (_c: string, _id: string, text: string) => { content = text; return true; },
+      tmDelete: async () => true,
+    };
+    const lm = new LiveMessage(adapter, 'a:conv1');
+    lm.onEvent({ type: 'tool', id: 'a', name: 'Skill', detail: 'skills', icon: '📚' });
+    lm.onEvent({ type: 'tool', id: 'b', name: 'CronAdd', detail: 'every minute', icon: '⏰' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const rows = content.split('\n').filter((l) => l.trim());
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.some((l) => l.includes('Skill') && l.includes('CronAdd'))).toBe(false);
+    expect(content).toContain('\n\n');
+  });
+});
+
+describe('msteams per-chat overrides', () => {
+  it('offers a default choice on every /display axis so an override can be taken back off', async () => {
+    const { adapter, state } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] });
+    adapter.listen(async () => 'unused');
+    await adapter.onActivity(activity({ text: '/display' }));
+    const options = (adapter.pendingPickers.get('a:conv1') as { options: { value: string }[] }).options;
+    for (const axis of ['toolActivity', 'answerMode', 'toolOutput', 'toolMessageMode']) {
+      expect(options.some((o) => o.value === `${axis} default`)).toBe(true);
+    }
+    await adapter.onCardAction(activity({ value: { ep: 'display', v: 'toolActivity off' } }));
+    expect((state.get('a:conv1') as { display?: Record<string, string> }).display).toEqual({ toolActivity: 'off' });
+    await adapter.onActivity(activity({ text: '/display' }));
+    await adapter.onCardAction(activity({ value: { ep: 'display', v: 'toolActivity default' } }));
+    expect((state.get('a:conv1') as { display?: Record<string, string> }).display).toEqual({});
+  });
+
+  it('clears fast when the picked model does not offer it', async () => {
+    const models = [
+      { provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5.5', fastAvailable: true, default: true },
+      { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-4-8' },
+    ];
+    const { adapter, state } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] }, { models });
+    adapter.listen(async () => 'unused');
+    state.patch('a:conv1', { fast: true });
+    await adapter.onActivity(activity({ text: '/model' }));
+    await adapter.onCardAction(activity({ value: { ep: 'model', v: 'anthropic claude-opus-4-8' } }));
+    // Fast is a provider capability, not a portable preference: it must not survive the move.
+    expect(state.get('a:conv1')).toMatchObject({ model: { provider: 'anthropic', model: 'claude-opus-4-8' }, fast: false });
+  });
+
+  it('says so when a proactive push has nowhere to go', async () => {
+    // A cron job that names no channel delivers through notify(). With no notifyConversationId either,
+    // the push was dropped in silence — a result the scheduler already paid a real turn for, gone every
+    // run with nothing anywhere to show for it.
+    const { adapter, calls, warnings } = await makeAdapter({ rolePolicies: [] });
+    await adapter.notify('08:04:01', '', undefined);
+    expect(calls.filter((c) => c.kind === 'reply')).toHaveLength(0);
+    expect(warnings.some((w) => w.includes('notifyConversationId'))).toBe(true);
+  });
+
+  it('logs a failed turn as well as replying with it', async () => {
+    // Replying only would leave the failure visible to the one person who asked, and to no operator:
+    // the daemon log would show a healthy service while every turn died in the chat.
+    const { adapter, calls, errors } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    adapter.listen(async () => { throw new Error('brain exploded'); });
+    await adapter.onActivity(activity());
+    const replies = calls.filter((c) => c.kind === 'reply').map((c) => (c.args[3] as { text?: string })?.text ?? '');
+    expect(replies.some((t) => t.includes('brain exploded'))).toBe(true);
+    expect(errors.some((e) => e.includes('brain exploded') && e.includes('a:conv1'))).toBe(true);
+  });
+
+  it('drops a question that timed out instead of leaving its card answerable', async () => {
+    const { adapter } = await makeAdapter({ askTimeoutMs: 30000, rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    adapter.listen(async () => 'ok');
+    await adapter.postAsk('a:conv1', 'in-0', 'aad-1', 'q-1', [{ header: 'Colour', options: [{ label: 'Blue' }] }]);
+    expect(adapter.pendingAsks.size).toBe(1);
+    for (const pend of adapter.pendingAsks.values()) pend.createdAt = Date.now() - 60000;
+    await adapter.onActivity(activity({ id: 'in-9', text: 'something unrelated' }));
+    expect(adapter.pendingAsks.size).toBe(0);
   });
 });

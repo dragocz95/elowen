@@ -20,7 +20,15 @@ export function senderIds(from, conversationId, upn) {
   if (from?.aadObjectId) ids.push(String(from.aadObjectId));
   if (from?.id) ids.push(String(from.id));
   if (upn) ids.push(String(upn));
-  if (conversationId) ids.push(String(conversationId));
+  if (conversationId) {
+    const conv = String(conversationId);
+    ids.push(conv);
+    // A team-channel activity carries the thread too: `19:<channel>@thread.tacv2;messageid=<thread>`.
+    // The bare channel id is the form an operator copies out of a Teams deep link, so without this a
+    // policy meant to grant a whole channel silently never matches — offer both forms.
+    const bare = conv.split(';')[0];
+    if (bare && bare !== conv) ids.push(bare);
+  }
   return ids;
 }
 
