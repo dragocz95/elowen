@@ -65,6 +65,30 @@ describe('cronjob JobsSettings — error state', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('digest')).toBeInTheDocument();
   });
+
+  // The destinations come from the DISCORD plugin's own root mount now, so with discord off the
+  // platform answers 503 — into a section owned by a different, enabled plugin. Production shape on
+  // this instance is exactly that combination. The editor must degrade the way it did when the list
+  // came back empty for want of a bot token: a picker offering what it can, not an error state thrown
+  // over the whole cron editor, and not a saved destination the user can no longer see.
+  it('stays usable when the discord plugin is disabled (503 destinations)', async () => {
+    server.use(
+      http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json([job({ notifyChannelId: '100' })])),
+      http.get('*/api/plugins/discord/channels', () => HttpResponse.json({ error: 'discord plugin is disabled' }, { status: 503 })),
+      http.get('*/api/brain/models', () => HttpResponse.json(MODELS)),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByText('digest'));
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull(); // no error state for the section
+    // The configured destination is still shown — as its raw id, since nothing can resolve the name.
+    expect(screen.getAllByText('100').length).toBeGreaterThan(0);
+    // And the picker still opens, with the guild default and that id pinned, so the job stays editable.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Manage' })[0]!);
+    expect(await screen.findByRole('button', { name: '(default)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '100' })).toHaveAttribute('aria-pressed', 'true');
+  });
 });
 
 /** The trash icon of row `index`, then the dialog's confirm (both are labelled "Delete job"). */
