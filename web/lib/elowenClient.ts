@@ -17,7 +17,12 @@ export function terminalWsUrl(ticket: string, directPort?: number | null): strin
 }
 
 export class ElowenApiError extends Error {
-  constructor(message: string, public status: number, public code?: string) { super(message); this.name = 'ElowenApiError'; }
+  /** `details` carries the parsed error body. A refusal sometimes states what the caller has to answer
+   *  with — the grants an enable must acknowledge, say — which the short `code` cannot express. */
+  constructor(message: string, public status: number, public code?: string, public details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'ElowenApiError';
+  }
 }
 
 /** A presentable message for a caught error: prefer the server-provided error code (a short
@@ -35,9 +40,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { ...init, credentials: 'same-origin' });
   if (res.status === 401) { clearToken(); throw new ElowenApiError(`elowen 401 on ${path}`, 401); }
   if (!res.ok) {
-    let code: string | undefined;
-    try { code = ((await res.json()) as { error?: string }).error; } catch { /* non-JSON body */ }
-    throw new ElowenApiError(`elowen ${res.status} on ${path}`, res.status, code);
+    let body: Record<string, unknown> | undefined;
+    try { body = (await res.json()) as Record<string, unknown>; } catch { /* non-JSON body */ }
+    const code = typeof body?.error === 'string' ? body.error : undefined;
+    throw new ElowenApiError(`elowen ${res.status} on ${path}`, res.status, code, body);
   }
   // 204 No Content (and other empty 2xx bodies) have nothing to parse — callers of such routes
   // type the result as void/unknown, so returning undefined is correct and avoids a SyntaxError.
@@ -162,7 +168,10 @@ export const elowenClient = {
   plugins: () => req<PluginInfo[]>('/plugins'),
   /** `pending` comes back (with HTTP 202) when the toggle is saved but the live registry swap had to wait
    *  for running work — the plugin set on disk already changed and the daemon applies it as work settles. */
-  togglePlugin: (name: string, enabled: boolean) => req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled }, 'PATCH')),
+  // `acknowledgeGrants` names the powers the operator agreed to hand over; the daemon refuses an enable
+  // that leaves one of them unnamed (409 with the list), so the consent cannot be skipped client-side.
+  togglePlugin: (name: string, enabled: boolean, acknowledgeGrants?: string[]) =>
+    req<PluginInfo & { pending?: boolean }>(`/plugins/${encodeURIComponent(name)}`, json({ enabled, ...(acknowledgeGrants ? { acknowledgeGrants } : {}) }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
   savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
   /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */

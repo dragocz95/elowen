@@ -262,7 +262,8 @@ export function useDeleteAllLogFiles() {
 export function useTogglePlugin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { name: string; enabled: boolean }) => elowenClient.togglePlugin(v.name, v.enabled),
+    mutationFn: (v: { name: string; enabled: boolean; acknowledgeGrants?: string[] }) =>
+      elowenClient.togglePlugin(v.name, v.enabled, v.acknowledgeGrants),
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: ['plugins'] });
       const prevList = qc.getQueryData<PluginInfo[]>(['plugins']);

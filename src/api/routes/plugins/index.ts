@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { discoverPlugins } from '../../../plugins/loader.js';
+import { CONSENT_REQUIRED_MUTATES } from '../../../plugins/api.js';
 import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../../plugins/contributionReport.js';
 import { MarketplaceError } from '../../../plugins/marketplace.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -289,8 +290,20 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const name = c.req.param('name');
     if (!listing().some((p) => p.name === name)) return c.json({ error: 'unknown plugin' }, 404);
-    const b = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+    const b = (await c.req.json().catch(() => ({}))) as { enabled?: unknown; acknowledgeGrants?: unknown };
     if (typeof b.enabled !== 'boolean') return c.json({ error: 'enabled must be a boolean' }, 400);
+    // Turning a plugin ON is the moment its declared capabilities become real, so it is the moment to
+    // ask. The caller must name the powers it is handing over; a request that names none (or not all)
+    // is answered with the list rather than performed, which is what makes the UI's dialog enforceable
+    // instead of decorative — the same refusal reaches a marketplace one-click install and curl alike.
+    // Turning it OFF takes powers away and needs no consent.
+    if (b.enabled) {
+      const claimed = discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name)?.manifest.capabilities?.mutates ?? [];
+      const needed = CONSENT_REQUIRED_MUTATES.filter((g) => claimed.includes(g));
+      const acked = new Set(Array.isArray(b.acknowledgeGrants) ? b.acknowledgeGrants.filter((g): g is string => typeof g === 'string') : []);
+      const missing = needed.filter((g) => !acked.has(g));
+      if (missing.length) return c.json({ error: 'grants require consent', grants: needed }, 409);
+    }
     const cur = new Set(d.config.get().plugins.enabled);
     if (b.enabled) cur.add(name); else cur.delete(name);
     d.config.update({ plugins: { enabled: [...cur] } });

@@ -19,7 +19,9 @@ export function ConfirmDialog({ open, title, description, confirmLabel, onConfir
   return (
     <Modal title={title} onClose={onClose} size="sm" icon={AlertTriangle}>
       <ModalBody>
-        {description ? <p className="text-sm leading-relaxed text-text-muted">{description}</p> : null}
+        {/* `whitespace-pre-line`: a confirmation that lists what is about to happen needs its lines to
+            survive. Single-paragraph descriptions read identically. */}
+        {description ? <p className="whitespace-pre-line text-sm leading-relaxed text-text-muted">{description}</p> : null}
       </ModalBody>
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>

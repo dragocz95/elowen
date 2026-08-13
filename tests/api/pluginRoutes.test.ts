@@ -45,6 +45,9 @@ function setup() {
   const dataRoot = tmpDir('plugdata');
   makePlugin(root, 'skills');
   makePlugin(root, 'files');
+  // Claims two powers that outlive a turn (stored memory, the live workflow DAG) plus one that does not
+  // (`prompt`), so the consent tests can prove the line is drawn by REACH and not by "declares anything".
+  makePlugin(root, 'risky', { capabilities: { mutates: ['prompt', 'memory', 'workflow-dag'] } });
   makePlugin(root, 'discord', {
     configSchema: [
       { key: 'botToken', label: 'Bot token', type: 'secret', required: true },
@@ -86,7 +89,7 @@ describe('plugin routes', () => {
     const res = await app.request('/plugins', auth(adminTok));
     expect(res.status).toBe(200);
     const list = await res.json() as { name: string; enabled: boolean; configurable: boolean; provides: { tools?: string[] } }[];
-    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'skills']);
+    expect(list.map((p) => p.name).sort()).toEqual(['discord', 'files', 'risky', 'skills']);
     expect(list.every((p) => !p.enabled)).toBe(true);
     expect(list.find((p) => p.name === 'files')?.provides.tools).toEqual(['files_tool']);
     expect(list.find((p) => p.name === 'discord')?.configurable).toBe(true);
@@ -145,6 +148,42 @@ describe('plugin routes', () => {
     const off = await app.request('/plugins/skills', patch(adminTok, { enabled: false }));
     expect((await off.json() as { enabled: boolean }).enabled).toBe(false);
     expect(config.get().plugins.enabled).toEqual([]);
+  });
+
+  it('refuses to enable a plugin claiming powers the caller did not acknowledge', async () => {
+    // Enabling is the moment a declared capability becomes real. The red badge in Settings is not
+    // consent — nothing makes a reader look at it, and a marketplace install never renders it — so the
+    // refusal lives in the API, where curl and a one-click install meet the same answer.
+    const { app, config, reloadPlugins, adminTok } = setup();
+    config.update({ plugins: { enabled: [], removed: [] } });
+
+    const bare = await app.request('/plugins/risky', patch(adminTok, { enabled: true }));
+    expect(bare.status).toBe(409);
+    // The answer names what it wants, or the caller is left guessing at a list it cannot see.
+    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['memory', 'workflow-dag'] });
+    expect(config.get().plugins.enabled).toEqual([]);
+    expect(reloadPlugins).not.toHaveBeenCalled();
+
+    // Half a consent is no consent: acknowledging one power must not smuggle the other past.
+    const partial = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['memory'] }));
+    expect(partial.status).toBe(409);
+    expect(config.get().plugins.enabled).toEqual([]);
+
+    const full = await app.request('/plugins/risky', patch(adminTok, { enabled: true, acknowledgeGrants: ['memory', 'workflow-dag'] }));
+    expect(full.status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['risky']);
+  });
+
+  it('asks for no consent to take powers away, nor for a plugin that only shapes a live turn', async () => {
+    const { app, config, adminTok } = setup();
+    config.update({ plugins: { enabled: ['risky'], removed: [] } });
+
+    // Disabling only ever removes reach.
+    expect((await app.request('/plugins/risky', patch(adminTok, { enabled: false }))).status).toBe(200);
+    // `prompt`/`turnContext` leave nothing behind after the turn — the reach any chat message has — so
+    // gating them would train the operator to click through a dialog that never means anything.
+    expect((await app.request('/plugins/skills', patch(adminTok, { enabled: true }))).status).toBe(200);
+    expect(config.get().plugins.enabled).toEqual(['skills']);
   });
 
   it('answers 202 pending — not an error — when the live swap has to wait for running work', async () => {

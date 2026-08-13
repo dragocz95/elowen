@@ -142,6 +142,17 @@ export interface PluginCapabilities {
   network?: boolean;
 }
 
+/** The `mutates` values that reach past the live prompt and touch state the operator owns: the tool
+ *  vocabulary, stored memory, the activity log, and the running sub-agent DAG. Enabling a plugin that
+ *  claims one of these hands third-party code a key, so the API refuses to do it unless the caller names
+ *  the keys it means. A red badge in the settings UI is not consent — nothing forces a reader to see it,
+ *  and a marketplace install is one POST away from never showing it at all.
+ *
+ *  `prompt` and `turnContext` are deliberately absent: they ride the ephemeral prompt of a single turn
+ *  and leave nothing behind, which is the reach any instruction in the chat already has. */
+export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
+  ['tools', 'memory', 'events', 'workflow-dag'];
+
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
  *  (an unmapped user gets no brain). `admin: true` runs the turn with the owner's full powers (all

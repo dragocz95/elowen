@@ -20,7 +20,8 @@ import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useMarketplace } from '../../lib/queries';
-import { useTogglePlugin, useInstallPlugin, useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
+import { useInstallPlugin, useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
+import { usePluginConsent } from './usePluginConsent';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { SettingsGroup, SettingsState, SettingsToolbar } from './SettingsSurface';
@@ -195,7 +196,15 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
 export function PluginsSection() {
   const { data, isLoading } = usePlugins();
   const marketplace = useMarketplace();
-  const toggle = useTogglePlugin();
+  // Enabling a plugin that claims power over stored state is refused by the daemon until the operator
+  // names what is being handed over; the hook owns that dialog and the retry, so the list and the detail
+  // page ask exactly the same question.
+  const consent = usePluginConsent({
+    // A 202 means the change is on disk but the live swap waits for running work — say so instead of
+    // claiming it already took effect.
+    onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : res.enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
+    onError: () => toast(t.plugins.toggleError, 'error'),
+  });
   const install = useInstallPlugin();
   const update = useUpdatePlugin();
   const uninstall = useUninstallPlugin();
@@ -258,15 +267,7 @@ export function PluginsSection() {
   if (detail) return <PluginDetail name={detail} onBack={() => setDetail(null)} />;
   if (isLoading) return <SettingsGroup density="compact"><SettingsState><LoadingState variant="list" /></SettingsState></SettingsGroup>;
 
-  const flip = (p: PluginInfo, enabled: boolean) => toggle.mutate(
-    { name: p.name, enabled },
-    {
-      // A 202 means the change is on disk but the live swap waits for running work — say so instead of
-      // claiming it already took effect.
-      onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
-      onError: () => toast(t.plugins.toggleError, 'error'),
-    },
-  );
+  const flip = (p: PluginInfo, enabled: boolean) => consent.setEnabled(p.name, enabled);
   const doInstall = (name: string) => {
     setPending(name);
     install.mutate({ name }, {
@@ -329,7 +330,7 @@ export function PluginsSection() {
           <MotionLayoutItem key={p.name} layoutId={`installed-plugin-${p.name}`}>
             <PluginCard
               p={p} updatable={updatable.has(p.name)}
-              busy={pending === p.name || (toggle.isPending && toggle.variables?.name === p.name)}
+              busy={pending === p.name || consent.isBusy(p.name)}
               onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)}
               onUpdate={() => doUpdate(p.name)} onUninstall={() => setConfirmRemove(p.name)}
               onContextMenu={(e) => openMenu(e, p)}
@@ -401,6 +402,7 @@ export function PluginsSection() {
         onConfirm={() => confirmRemove && doUninstall(confirmRemove)}
         onClose={() => setConfirmRemove(null)}
       />
+      {consent.dialog}
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
     </>
   );

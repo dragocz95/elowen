@@ -23,6 +23,7 @@ vi.mock('../../../lib/mutations', () => ({
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 
 import { PluginsSection } from '../../../modules/settings/PluginsSection';
+import { ElowenApiError } from '../../../lib/elowenClient';
 
 const plugin = (over: Partial<PluginInfo>): PluginInfo => ({
   name: 'files', version: '1.0.0', description: 'File tools', provides: { tools: ['read'] },
@@ -132,5 +133,53 @@ describe('PluginsSection available view', () => {
     renderSection();
     fireEvent.click(screen.getByRole('radio', { name: en.plugins.tabAvailable }));
     expect(screen.getByText(en.plugins.marketplaceError)).toBeInTheDocument();
+  });
+});
+
+describe('PluginsSection grant consent', () => {
+  beforeEach(() => {
+    usePlugins.mockReset(); useMarketplace.mockReset(); toggleMutate.mockReset();
+    useMarketplace.mockReturnValue({ data: { plugins: [] }, isLoading: false });
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'risky', enabled: false })], isLoading: false });
+  });
+
+  // The daemon refuses an enable whose grants are unacknowledged (409 + the list). The UI must turn that
+  // refusal into the question it is, and must send back what the daemon named — never a list of its own,
+  // or a build that predates a new grant would consent to something it never displayed.
+  const refuseOnce = (grants: string[]) => toggleMutate.mockImplementationOnce((_v: unknown, o: { onError?: (e: unknown) => void }) => {
+    o.onError?.(new ElowenApiError('elowen 409 on /plugins/risky', 409, 'grants require consent', { grants }));
+  });
+
+  it('asks before handing over declared powers and replays the enable with the acknowledgement', async () => {
+    refuseOnce(['memory', 'workflow-dag']);
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
+
+    expect(await screen.findByText(en.plugins.grantsTitle.replace('{name}', 'risky'))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(en.plugins.grantMemory))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(en.plugins.grantWorkflowDag))).toBeInTheDocument();
+    expect(toggleMutate).toHaveBeenCalledTimes(1);
+    expect(toggleMutate.mock.calls[0][0]).toEqual({ name: 'risky', enabled: true });
+
+    fireEvent.click(screen.getByRole('button', { name: en.plugins.grantsConfirm }));
+    await waitFor(() => expect(toggleMutate).toHaveBeenCalledTimes(2));
+    expect(toggleMutate.mock.calls[1][0]).toEqual({ name: 'risky', enabled: true, acknowledgeGrants: ['memory', 'workflow-dag'] });
+  });
+
+  it('shows a grant it does not have a translation for rather than dropping it from the list', async () => {
+    refuseOnce(['telepathy']);
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
+    expect(await screen.findByText(/telepathy/)).toBeInTheDocument();
+  });
+
+  it('leaves the plugin off when the operator declines', async () => {
+    refuseOnce(['memory']);
+    renderSection();
+    fireEvent.click(screen.getByLabelText(`risky: ${en.plugins.enable}`));
+    fireEvent.click(await screen.findByRole('button', { name: en.common.cancel }));
+
+    await waitFor(() => expect(screen.queryByText(en.plugins.grantsTitle.replace('{name}', 'risky'))).not.toBeInTheDocument());
+    expect(toggleMutate).toHaveBeenCalledTimes(1);
   });
 });
