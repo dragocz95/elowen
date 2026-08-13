@@ -158,7 +158,6 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
 /** Drill-down: full event detail + the project's working-tree diff (for task/review events that
  *  carry a project). Reuses the existing PatchView so diff rendering stays single-source. */
 function EventDetail({ point, display }: { point: AxisPoint; display: Display }) {
-  const { t } = useTranslation();
   const s = usePluginStrings('work');
   const Icon = eventIcon(point.type);
   const tone = markerTone(point.type, point.detail);

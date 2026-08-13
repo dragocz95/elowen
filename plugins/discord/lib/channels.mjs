@@ -17,8 +17,6 @@ const MEDIA = 16;
 const CACHE_MS = 60_000;
 let cache = null;
 
-export function resetChannelCache() { cache = null; }
-
 export async function listGuildChannels(config) {
   const token = typeof config.botToken === 'string' ? config.botToken : '';
   const guildId = typeof config.guildId === 'string' ? config.guildId.trim() : '';
