@@ -56,6 +56,10 @@ export function agentsTestHost(w: {
       },
       readiness: w.readiness,
       taskUsage: new TaskUsageStore(w.db),
+      // These wirings hand the plugin a real task store, so the domain HAS an owner — the question a
+      // dependent plugin asks before it builds anything. tests/plugins/agents/withoutWork.test.ts wires
+      // the opposite answer on purpose.
+      tasksAvailable: () => true,
     },
     prompts: w.prompts ?? { render: (n: string, v?: Record<string, string>) => render(n, v), rawTemplate: () => '' },
     config: w.config as unknown as PluginHostConfig,

@@ -1073,8 +1073,15 @@ export interface PluginContext {
    *  the model's available-skills block on the next message. No-op when the host wires no reloader. */
   requestReload(): void;
   /** Register an admin/runtime control surface for this plugin. Unlike tools, controls are called by
-   *  daemon routes and operate on the LIVE loaded plugin instance. */
-  registerControl(name: string, control: PluginControl): void;
+   *  daemon routes and operate on the LIVE loaded plugin instance.
+   *
+   *  `opts.requires` names another control this one is BUILT ON — a domain owned by a sibling plugin (the
+   *  missions control is built on the `tasks` domain). While that domain has no valid owner, this control
+   *  does not resolve at all: `PluginRegistry.control()` answers undefined, exactly as it does for a
+   *  disabled plugin, and every consumer degrades down the path it already has for that case. Without it
+   *  a dependent subsystem stays reachable and answers with half a runtime — which is how "no missions"
+   *  gets reported as fact when the truth is "the domain missions are made of is switched off". */
+  registerControl(name: string, control: PluginControl, opts?: { requires?: string }): void;
   /** Resolve ANOTHER plugin's registered control — the one supported way one plugin reaches a capability
    *  a sibling owns (a domain that was extracted out of core, say). Gated by `reads:['controls']`.
    *

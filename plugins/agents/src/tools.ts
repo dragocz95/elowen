@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import { missionsListPayload } from './api/missions.js';
 import { sessionsListPayload } from './api/sessions.js';
 import type { ApiAuth } from './api/http.js';
+import { MISSIONS_WITHOUT_TASKS } from './lib/taskDomain.js';
 import type { PluginContext } from '../../../src/plugins/api.js';
 import type { AgentsRuntime } from './runtime.js';
 
@@ -44,6 +45,12 @@ export function registerAgentsTools(ctx: PluginContext, rt: () => AgentsRuntime)
   };
   const refusal = { content: [{ type: 'text' as const, text: 'This tool is only available in the owner\'s own chat session.' }], details: {} };
   const denied = (): boolean => !ctx.currentAccess().owner;
+  // Both listings are made of the task domain a sibling plugin owns. Whether to ADVERTISE a tool is
+  // decided at load time and cannot depend on that (the owner may load after this plugin), so the
+  // refusal happens at execute time — and it says why. Returning an empty list instead would tell the
+  // model "no missions, no agents are running", which it would then act on.
+  const unavailable = { content: [{ type: 'text' as const, text: MISSIONS_WITHOUT_TASKS }], details: {} };
+  const withoutTasks = (): boolean => !ctx.host.stores().tasksAvailable();
 
   ctx.registerTool(defineTool({
     name: 'ElowenListMissions', label: 'List missions',
@@ -51,6 +58,7 @@ export function registerAgentsTools(ctx: PluginContext, rt: () => AgentsRuntime)
     parameters: Type.Object({}),
     execute: async () => {
       if (denied()) return refusal;
+      if (withoutTasks()) return unavailable;
       return { content: [{ type: 'text' as const, text: JSON.stringify(missionsListPayload(rt(), ctx.host.stores().tasks, auth())) }], details: {} };
     },
   }));
@@ -61,6 +69,7 @@ export function registerAgentsTools(ctx: PluginContext, rt: () => AgentsRuntime)
     parameters: Type.Object({}),
     execute: async () => {
       if (denied()) return refusal;
+      if (withoutTasks()) return unavailable;
       return { content: [{ type: 'text' as const, text: JSON.stringify(await sessionsListPayload(ctx.host.tmux(), rt, auth())) }], details: {} };
     },
   }));

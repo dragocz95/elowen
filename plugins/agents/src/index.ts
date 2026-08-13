@@ -31,6 +31,7 @@ import { AGENTS_MCP_TOOLS } from './mcpTools.js';
 import { agentsPluginConfig } from './config.js';
 import { logger, setBaseLogger } from './lib/logger.js';
 import { detectClis } from './lib/cliDetection.js';
+import { MISSIONS_WITHOUT_TASKS, TaskDomainUnavailableError, gateRoutesOnTaskDomain } from './lib/taskDomain.js';
 
 export function register(ctx: PluginContext): void {
   // Logging first: every subsystem module logs through lib/logger's scoped facade, which delegates to
@@ -49,8 +50,28 @@ export function register(ctx: PluginContext): void {
   // The runtime's own lines (sweeps, resume capture, …) under their own scope tag.
   const log = logger('runtime');
 
+  // This subsystem is BUILT ON the task domain (§missions are epics with phases), which a sibling plugin
+  // owns. Resolved per call, never cached: a plugin reload can hand the domain to another owner or take
+  // it away, and a captured answer would keep a dead generation alive.
+  const tasksAvailable = (): boolean => ctx.host.stores().tasksAvailable();
+  // Sweeps tick every 30-90s. Without the domain they must be quiet no-ops, not a warning per tick and
+  // certainly not a throw per tick — so the reason is stated ONCE per loaded generation (a reload builds
+  // a new closure and says it again, which is exactly when it is news).
+  let idleWarned = false;
+  const idleWithoutTasks = (): boolean => {
+    if (tasksAvailable()) return false;
+    if (!idleWarned) {
+      idleWarned = true;
+      log.warn(`${MISSIONS_WITHOUT_TASKS} — the mission engine, scheduler, deriver and sweeps stay idle`);
+    }
+    return true;
+  };
+
   let runtime: AgentsRuntime | null = null;
   const rt = (): AgentsRuntime => {
+    // Fail closed BEFORE construction: the runtime's stores include the task store, so building it
+    // without an owner would throw somewhere inside a service instead of at this seam.
+    if (!tasksAvailable()) throw new TaskDomainUnavailableError();
     if (!runtime) {
       const stores = ctx.host.stores();
       runtime = buildAgentsRuntime({
@@ -109,20 +130,21 @@ export function register(ctx: PluginContext): void {
   let stopDeriver: (() => void) | null = null;
   ctx.registerService({
     name: 'deriver',
-    start: () => { stopDeriver = rt().deriver.start(); },
+    start: () => { if (!idleWithoutTasks()) stopDeriver = rt().deriver.start(); },
     stop: () => { stopDeriver?.(); stopDeriver = null; },
   });
 
   // Boot reconciles (idempotent; re-run on plugin reload): zombie in_progress tasks whose session died
-  // with the daemon, and re-parking/orphan-killing the per-mission overseers.
-  ctx.registerBootReconcile(() => rt().reconcileZombies());
-  ctx.registerBootReconcile(() => rt().reconcileOverseers());
+  // with the daemon, and re-parking/orphan-killing the per-mission overseers. Both reconcile TASK state,
+  // so without the domain there is nothing to reconcile — skip rather than fail the boot sequence.
+  ctx.registerBootReconcile(() => { if (!idleWithoutTasks()) rt().reconcileZombies(); });
+  ctx.registerBootReconcile(() => { if (!idleWithoutTasks()) rt().reconcileOverseers(); });
 
   // The interval sweeps, with the original bootstrap periods (AGENTS_INTERVAL_MS — the same map the
   // runtime builds its definitions from, so the two cannot drift). Each tick resolves its fn by name
   // off the live runtime, keeping registration construction-free.
   for (const [name, ms] of Object.entries(AGENTS_INTERVAL_MS)) {
-    ctx.registerInterval(name, () => { rt().intervals.find((i) => i.name === name)?.fn(); }, ms);
+    ctx.registerInterval(name, () => { if (!idleWithoutTasks()) rt().intervals.find((i) => i.name === name)?.fn(); }, ms);
   }
 
   // Tenancy for the subsystem's own events — the SOLE source since the core copies were deleted:
@@ -131,6 +153,10 @@ export function register(ctx: PluginContext): void {
   // force runtime construction; `plan` jobs live in the runtime's PlanJobStore — no runtime, no jobs.
   ctx.registerEventProjectResolver((e: ElowenEvent) => {
     if (e.type === 'signal') {
+      // No task domain, no way to attribute a session to a project: null records the event admin-only,
+      // which is the fail-closed answer. (A throw here is caught and treated as null too, but then the
+      // reason is a stack trace in the log rather than a decision.)
+      if (!tasksAvailable()) return null;
       const name = stripPrefix(e.session, 'elowen-');
       const matches = ctx.host.stores().tasks.list().filter((t) => t.labels.includes(`agent:${name}`));
       return matches[matches.length - 1]?.project_id ?? null;
@@ -149,6 +175,15 @@ export function register(ctx: PluginContext): void {
   // planner/overseer need either the OpenAI-compatible relay or a configured pilot CLI.
   ctx.registerReadinessCheck(() => {
     const cfg = ctx.host.config();
+    // A credential cannot make missions ready while the domain they are made of is switched off — the
+    // onboarding row must say what is actually missing, not offer to configure a relay that changes
+    // nothing.
+    if (!tasksAvailable()) {
+      return {
+        id: 'missions', label: 'Missions', ok: false, detail: 'task tracking is disabled',
+        hint: 'Missions are built on tasks. Enable the plugin that provides task tracking first.',
+      };
+    }
     const relay = cfg.autopilotRelay();
     const pilotExec = agentsPluginConfig(ctx.config, cfg).pilotExec;
     const ok = relay != null || pilotExec.length > 0;
@@ -161,12 +196,17 @@ export function register(ctx: PluginContext): void {
 
   // The grandfathered '/missions' + '/sessions' + '/notes' API surfaces (root-mounted; declared in
   // the manifest, so a disabled plugin answers the explicit 503 instead of a bare 404).
-  registerMissionsApi(ctx, rt);
-  registerSessionsApi(ctx, rt);
-  registerAsksApi(ctx, rt);
-  registerApproveGateApi(ctx, rt);
-  registerNotesApi(ctx, rt);
-  registerAdvisorApi(ctx, rt);
+  //
+  // Every one of them drives the runtime, so they are registered through the task-domain gate: with the
+  // domain unowned they answer 503 with the reason instead of a 500 from a construction that cannot
+  // succeed. `/system/skills` is deliberately NOT gated — it reads skill files and owes nothing to tasks.
+  const gated = gateRoutesOnTaskDomain(ctx, tasksAvailable);
+  registerMissionsApi(gated, rt);
+  registerSessionsApi(gated, rt);
+  registerAsksApi(gated, rt);
+  registerApproveGateApi(gated, rt);
+  registerNotesApi(gated, rt);
+  registerAdvisorApi(gated, rt);
   registerSkillsApi(ctx);
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
@@ -202,7 +242,11 @@ export function register(ctx: PluginContext): void {
     }),
     // Static — probing the agent CLIs' presence must not construct the runtime.
     detectClis: () => detectClis,
-  } satisfies AgentsControl);
+    // Declared dependency: while no plugin owns the `tasks` domain this control does not resolve at all,
+    // so core sees exactly what it sees when this plugin is disabled — mission reads degrade, mission
+    // routes answer 503, the login advisor hook is skipped — instead of every accessor throwing into a
+    // caller that was never taught a second failure mode.
+  } satisfies AgentsControl, { requires: 'tasks' });
 
   ctx.logger.info('agents plugin loaded (runtime lazy; engine/scheduler/deriver via host services)');
 }

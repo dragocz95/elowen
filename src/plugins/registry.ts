@@ -134,6 +134,10 @@ export class PluginRegistry {
    *  the immutable serving URL) + the manifest's nav/settings menu metadata. */
   readonly webUi = new Map<string, PluginWebUi>();
   readonly controls = new Map<string, PluginControl>();
+  /** For a control BUILT ON another one, the key of that dependency (`registerControl(…, {requires})`).
+   *  Resolution consults it live, so a control whose domain has no owner is unreachable rather than
+   *  half-working. Travels with its control through `merge`. */
+  readonly controlRequires = new Map<string, string>();
   /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
   readonly commandOwner = new Map<string, string>();
@@ -191,6 +195,10 @@ export class PluginRegistry {
       const owner = other.controlOwner.get(k) ?? '?';
       if (prior && prior !== owner) { warn?.(`control "${k}" from "${owner}" ignored — already registered by "${prior}"`); continue; }
       this.controls.set(k, v); this.controlOwner.set(k, owner);
+      // The dependency travels WITH the control: dropping it here would leave the merged registry
+      // resolving a control whose domain may be absent — the exact half-working state it prevents.
+      const requires = other.controlRequires.get(k);
+      if (requires) this.controlRequires.set(k, requires);
     }
     for (const [k, v] of other.commands) {
       const prior = this.commandOwner.get(k);
@@ -391,15 +399,31 @@ export class PluginRegistry {
     }
   }
 
+  /** Whether a registered control is present AND carries every method its key promises. Deliberately
+   *  ignores `controlRequires` (one level, no recursion): it answers "does this domain have a real
+   *  owner", which is what a dependency check needs and what makes a dependency cycle impossible. */
+  private controlResolves(name: string): boolean {
+    const raw: unknown = this.controls.get(name);
+    if (!raw) return false;
+    const methods: readonly string[] | undefined = KNOWN_CONTROL_METHODS[name as keyof KnownControls];
+    if (!methods) return true; // a control core does not call by key — presence is all there is to check
+    const blob = raw as Record<string, unknown>;
+    return !methods.some((method) => typeof blob[method] !== 'function');
+  }
+
   /** Resolve a KNOWN plugin control already narrowed to its typed contract, or undefined when no plugin
    *  registered it (or it lacks the expected method). The one place an opaque `PluginControl` is narrowed
-   *  for core callers, so no call site needs an `as unknown as` cast. */
+   *  for core callers, so no call site needs an `as unknown as` cast.
+   *
+   *  A control that declared `requires` also stops resolving while that domain has no owner. The point is
+   *  that a dependent subsystem then looks EXACTLY like a disabled one to every caller, instead of
+   *  handing out accessors that throw halfway through a request — callers already degrade honestly for
+   *  the disabled case, and there is no second failure mode to teach them. */
   control<K extends keyof KnownControls>(name: K): KnownControls[K] | undefined {
-    const raw: unknown = this.controls.get(name);
-    if (!raw) return undefined;
-    const blob = raw as Record<string, unknown>;
-    if (KNOWN_CONTROL_METHODS[name].some((method) => typeof blob[method] !== 'function')) return undefined;
-    return raw as KnownControls[K];
+    if (!this.controlResolves(name)) return undefined;
+    const requires = this.controlRequires.get(name);
+    if (requires !== undefined && !this.controlResolves(requires)) return undefined;
+    return this.controls.get(name) as unknown as KnownControls[K];
   }
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
@@ -464,7 +488,7 @@ export class PluginRegistry {
         this.tools.push(t); this.toolOwner.set(t.name, name);
       },
       registerSkill: (s) => { this.skills.push(s); this.skillOwners.push(name); },
-      registerControl: (key, control) => {
+      registerControl: (key, control, opts) => {
         const clean = key.trim();
         if (!clean) { scoped.warn('registerControl refused: empty name'); return; }
         // Cross-plugin collisions (a second plugin hijacking a control name like 'mcp') are caught at
@@ -472,6 +496,11 @@ export class PluginRegistry {
         // is just the plugin overriding its own control.
         this.controls.set(clean, control);
         this.controlOwner.set(clean, name);
+        // A control built on a sibling's domain: recorded here, enforced at resolution (see control()),
+        // never at registration — the domain's owner may well load after this plugin does.
+        const requires = opts?.requires?.trim();
+        if (requires) this.controlRequires.set(clean, requires);
+        else this.controlRequires.delete(clean);
       },
       // Cross-plugin capability resolution (see PluginContext.control). Deny-by-default behind
       // `reads:['controls']`, and WARN-and-undefined rather than throw when refused — same shape as

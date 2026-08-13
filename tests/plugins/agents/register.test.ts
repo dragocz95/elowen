@@ -35,7 +35,9 @@ async function loadAgentsPlugin(logger?: PluginLogger) {
   } as unknown as PluginHostConfig;
   const registry = await loadPlugins({
     dirs: [join(process.cwd(), 'plugins')],
-    enabled: ['agents'],
+    // The plugin under test declares that its control is built on the `tasks` domain, so the generation
+    // must contain that domain's OWNER for the control to resolve — the same composition the daemon has.
+    enabled: ['agents', 'work'],
     delegatedTurnsOutOfProcess: () => false,
     pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
     publishEvent: (e) => bus.publish(e),
@@ -51,6 +53,8 @@ async function loadAgentsPlugin(logger?: PluginLogger) {
         usersRead: { list: () => [{ id: 1, username: 'admin', isAdmin: true }], isAdmin: () => true, allowedExecs: () => [] },
         readiness: new Readiness(db),
         taskUsage: new TaskUsageStore(db),
+        // The domain has an owner in this wiring — what the plugin asks before it builds anything.
+        tasksAvailable: () => true,
       },
       prompts: { render: (name: string) => `[${name}]`, rawTemplate: (name: string) => `[raw:${name}]` },
       config,

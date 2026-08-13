@@ -38,7 +38,7 @@ function capturedAgentsTools(access: FakeAccess = CHANNEL_ADMIN, rt?: () => unkn
     isAdminSession: () => access.admin,
     currentAccess: () => ({ ...access, permissionBoundary: null }),
     currentIdentity: () => null,
-    host: { stores: () => ({ tasks: { get: () => ({ project_id: 1 }) } }), tmux: () => ({ list: async () => [] }) },
+    host: { stores: () => ({ tasks: { get: () => ({ project_id: 1 }) }, tasksAvailable: () => true }), tmux: () => ({ list: async () => [] }) },
   } as unknown as PluginContext;
   registerAgentsTools(ctx, (rt ?? (() => { throw new Error('runtime must not be touched at registration'); })) as never);
   return tools;
