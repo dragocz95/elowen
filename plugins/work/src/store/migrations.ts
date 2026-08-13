@@ -12,12 +12,16 @@ const addColumn = (db: PluginDbHandle, table: string, column: string, decl: stri
  *  bookkept in plugin_migrations.
  *
  *  v1 is an ADOPTION, not a creation: the table names are GRANDFATHERED from the core era (tasks,
- *  task_deps, task_usage — not p_work_*) and the DDL is byte-matched to what src/store/schema.sql
- *  creates, so on every existing install the IF NOT EXISTS forms find the tables already there and the
- *  step is a no-op that moves, renames and copies nothing. Not one row is touched by the extraction; a
- *  rollback to a daemon whose core still owns these tables is lossless in both directions. On a FRESH
- *  install the same DDL is what brings the tables into existence — which is what makes the ownership
- *  real rather than nominal, and is proven by dropping the tables and migrating them back.
+ *  task_deps, task_usage — not p_work_*) and the CREATE forms carry exactly the columns core had ARRIVED
+ *  at — schema.sql's own CREATE plus the additive ALTERs core applied on top of it (changed_files,
+ *  base_sha, head_sha, resume_note), which is why this is not byte-identical to any single core
+ *  statement. On every existing install the IF NOT EXISTS forms therefore find the tables already there
+ *  and the step is a no-op that moves, renames and copies nothing; not one row is touched by the
+ *  extraction, and a rollback to a daemon whose core still owns these tables is lossless in both
+ *  directions. On a FRESH install the same DDL is what brings the tables into existence — which is what
+ *  makes the ownership real rather than nominal. That the resulting shape matches core's, on a fresh
+ *  install and on an upgraded one alike, is proven by tests/store/taskSchemaParity.test.ts (column ORDER
+ *  differs between the two histories; nothing reads columns positionally).
  *
  *  v2 is the safety net for an ANCIENT database: the columns that only ever existed as core additive
  *  migrations (never in schema.sql's CREATE). Any install that booted a daemon carrying those steps

@@ -50,3 +50,27 @@ describe('the work plugin fallback stores stay in logical lockstep with the agen
     });
   }
 });
+
+// The lenient-JSON pair. BOTH plugins parse a model's near-JSON — the work plugin for plan/replan
+// submissions, the agents plugin for overseer decisions — and each carries its own copy because they
+// are separate compile units. This pair is plugin↔plugin, so neither of the existing parity nets sees
+// it: tests/contract/pluginCoreCopyParity.test.ts DISCOVERS core↔plugin twins by path, and the lists
+// above name core↔plugin pairs by hand. A one-sided fix here (a quoting rule, a trailing-comma case)
+// would make the same malformed model output parse in one subsystem and fail in the other.
+// `export` is normalized away with the import specifiers: work's copy exports repairJson for its unit
+// test, which is a visibility difference, not a behavioural one.
+const LIB_TWINS: [work: string, agents: string][] = [
+  ['plugins/work/src/lib/jsonRepair.ts', 'plugins/agents/src/overseer/jsonRepair.ts'],
+  ['plugins/work/src/lib/llmParse.ts', 'plugins/agents/src/overseer/llmParse.ts'],
+];
+
+const normalizeLib = (src: string): string => normalize(src).replace(/^export /gm, '');
+
+describe('the lenient-JSON copies stay in lockstep across the two plugins', () => {
+  for (const [work, agents] of LIB_TWINS) {
+    it(`${work} matches ${agents} modulo import paths and visibility`, () => {
+      expect(normalizeLib(readFileSync(resolve(root, work), 'utf8')))
+        .toBe(normalizeLib(readFileSync(resolve(root, agents), 'utf8')));
+    });
+  }
+});
