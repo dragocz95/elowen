@@ -76,24 +76,23 @@ describe('cli/setup deployment-step gating (install/setup parity)', () => {
 
   it('buildSteps inserts the Deployment step after Account when it applies', () => {
     const steps = buildSteps({ info: installInfo(), isRoot: true, embedded: false });
-    expect(steps.map((s) => s.id)).toEqual(['account', 'deployment', 'project', 'ai', 'preferences', 'memory', 'lsp', 'autopilot']);
+    expect(steps.map((s) => s.id)).toEqual(['account', 'deployment', 'project', 'ai', 'preferences', 'memory', 'lsp']);
   });
 
   it('buildSteps omits the Deployment step off a systemd box', () => {
     const steps = buildSteps({ info: null, isRoot: true, embedded: false });
-    expect(steps.map((s) => s.id)).toEqual(['account', 'project', 'ai', 'preferences', 'memory', 'lsp', 'autopilot']);
+    expect(steps.map((s) => s.id)).toEqual(['account', 'project', 'ai', 'preferences', 'memory', 'lsp']);
     expect(steps.some((s) => s.id === 'deployment')).toBe(false);
   });
 });
 
-describe('cli/setup step order (personal agent first, autopilot last)', () => {
-  it('sets up the personal assistant before the optional add-ons, with autopilot the final step', () => {
+describe('cli/setup step order (the assistant, and nothing but the assistant)', () => {
+  it('sets up the personal assistant before the optional add-ons, and asks about no plugin at all', () => {
     const steps = buildSteps({ info: null, isRoot: false, embedded: false }).map((s) => s.id);
-    // Autopilot (the orchestrator) is optional: it must come AFTER code intelligence, never before the
-    // provider the user's own conversations run on.
-    expect(steps[steps.length - 1]).toBe('autopilot');
-    expect(steps.indexOf('ai')).toBeLessThan(steps.indexOf('autopilot'));
-    expect(steps.indexOf('lsp')).toBeLessThan(steps.indexOf('autopilot'));
+    // A fresh install ships no missions and no task tracking, so the wizard must not offer to configure
+    // them: the last thing it asks about is the assistant's own code intelligence.
+    expect(steps).not.toContain('autopilot');
+    expect(steps[steps.length - 1]).toBe('lsp');
     // Preferences tune the assistant right after it's connected, before the optional add-ons.
     expect(steps.indexOf('ai')).toBeLessThan(steps.indexOf('preferences'));
     expect(steps.indexOf('preferences')).toBeLessThan(steps.indexOf('memory'));

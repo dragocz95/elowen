@@ -171,7 +171,7 @@ describe('install/planFromArgs (unattended flags)', () => {
   // Nobody is watching an unattended run, so the parse has to die instead.
   const VALUE_FLAGS = [
     '--user', '--agents', '--domain', '--ip', '--host', '--proxy', '--email',
-    '--admin-user', '--admin-pass', '--autopilot-cli', '--autopilot-model',
+    '--admin-user', '--admin-pass',
     '--llm-url', '--llm-key', '--llm-model',
   ];
 
@@ -200,18 +200,22 @@ describe('install/planFromArgs (unattended flags)', () => {
     expect(plan.admin?.password).toBe('--secret');
   });
 
-  it('reads the autopilot and hosted-LLM flags into the admin answers', async () => {
+  it('reads the --llm-* flags into the admin answers, filling the other two from defaults', async () => {
     const plan = await planFromArgs(noUsers, [
       '--unattended', '--admin-user', 'root', '--admin-pass', 'hunter2',
       '--llm-url', 'https://llm.example/v1', '--llm-key', 'sk-test', '--llm-model', 'gpt-5',
     ]);
-    expect(plan.admin).toMatchObject({ apiUrl: 'https://llm.example/v1', apiKey: 'sk-test', model: 'gpt-5' });
+    expect(plan.admin?.llm).toEqual({ apiUrl: 'https://llm.example/v1', apiKey: 'sk-test', model: 'gpt-5' });
 
-    const viaCli = await planFromArgs(noUsers, [
-      '--unattended', '--admin-user', 'root', '--admin-pass', 'hunter2',
-      '--autopilot-cli', 'opencode', '--autopilot-model', 'anthropic/claude-sonnet-4-5',
-    ]);
-    expect(viaCli.admin?.pilotExec).toBe('opencode:anthropic/claude-sonnet-4-5');
+    const keyOnly = await planFromArgs(noUsers, ['--unattended', '--admin-user', 'root', '--admin-pass', 'hunter2', '--llm-key', 'sk-test']);
+    expect(keyOnly.admin?.llm).toEqual({ apiUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o-mini' });
+  });
+
+  it('saves no provider when the operator named none — the defaults are not a decision', async () => {
+    // An install with no --llm-* flag used to still write an OpenAI endpoint (as the autopilot relay),
+    // so a box provisioned for a local model came up pointing at api.openai.com.
+    const plan = await planFromArgs(noUsers, ['--unattended', '--admin-user', 'root', '--admin-pass', 'hunter2']);
+    expect(plan.admin?.llm).toBeUndefined();
   });
 
   it('--no-tmux is the only way to skip tmux', async () => {

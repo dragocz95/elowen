@@ -18,6 +18,8 @@ Open **Settings → Plugins** to inspect installed plugins, enable or disable a 
 
 Bundled capabilities include file and terminal tools, MCP, skills, sub-agent delegation, ask-user questions, scheduled jobs, codebase indexing, formatters, runtime context, Discord, Telegram, Microsoft Teams, WhatsApp, and supporting presentation/security tools. The exact installed set can differ by deployment, so Settings is the source of truth for a running instance.
 
+A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, skills, sub-agents, the Elowen manual, scheduled jobs, security scanning, statusline, codebase search, MCP, and language-server diagnostics. Anything that brings its own pages and its own data — tasks and Kanban (`work`), missions and autopilot (`agents`), the code editor (`editor`) — is installed deliberately from **Settings → Plugins**, as are the chat platforms, which each need a credential.
+
 **ElowenDocs** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
 
 ## Plugin anatomy
@@ -88,9 +90,11 @@ The sub-agent plugin's detail card in **Settings → Plugins** lists the built-i
 
 The tmux-agent and missions subsystem — spawning coding agents into tmux
 sessions, the autopilot mission engine, the overseer, escalations, and the
-Sessions/Escalations web pages — ships as the bundled `agents` plugin. It is
-enabled by default, and an existing install is enabled automatically on
-upgrade so running missions continue uninterrupted.
+Sessions/Escalations web pages — ships as the bundled `agents` plugin. A fresh
+install does **not** enable it: a new instance is a bare assistant, and
+missions are turned on in **Settings → Plugins** when they are wanted. An
+install that already had the subsystem keeps it — it is enabled automatically
+on upgrade so running missions continue uninterrupted.
 
 Disabling it turns that whole layer off: no missions, no agent sessions, the
 `/missions` and `/sessions` API paths answer 404, the web app hides the

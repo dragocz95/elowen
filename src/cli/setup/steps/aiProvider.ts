@@ -310,10 +310,12 @@ async function done(ctx: WizardCtx, label: string, model: string, providerId: st
   return { status: 'done' };
 }
 
-/** Point the default task executor at the embedded (in-process) engine on the just-connected provider, so
- *  tasks run on ANY provider without an external agent CLI. Delegates to the shared per-field PUT. */
+/** Point the core DEFAULT EXECUTOR at the embedded (in-process) engine on the just-connected provider,
+ *  so anything that later runs work on this instance runs on it without an external agent CLI. Silent
+ *  on purpose: a fresh install ships no task tracking, so announcing "tasks will run…" would name a
+ *  product the operator does not have. The value is what makes that plugin work the day it is added. */
 async function setEmbeddedExec(ctx: WizardCtx, providerId: string, model: string): Promise<void> {
-  if (await putEmbeddedExec(ctx, providerId, model)) p.log.info('Tasks will run in-process on this provider (built-in engine).');
+  await putEmbeddedExec(ctx, providerId, model);
 }
 
 /** Run one chat smoke test against the configured brain, looping on retry. Mirrors the memory step's

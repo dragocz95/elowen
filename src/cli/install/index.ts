@@ -9,7 +9,7 @@ import { daemonUnit, webUnit, updateService, updateTimer, elowenSudoers, type Un
 import { LAUNCHD_DAEMON_LABEL, LAUNCHD_UPDATE_LABEL, LAUNCHD_WEB_LABEL, agentPlistPath, daemonAgent, updateAgent, webAgent, type LaunchdParams } from './launchdUnits.js';
 import { detectProxy } from './proxy.js';
 import { SERVICES } from '../systemd.js';
-import { applySetup, buildSetupPlan, defaultExecForCli, isFirstRun, type SetupAnswers } from '../setup.js';
+import { applySetup, buildSetupPlan, isFirstRun, type SetupAnswers } from '../setup.js';
 import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
@@ -287,7 +287,7 @@ function agentCli(id: string) {
  *  than provisioning a box from defaults nobody asked for. */
 const VALUE_FLAGS = [
   '--user', '--agents', '--domain', '--ip', '--host', '--proxy', '--email',
-  '--admin-user', '--admin-pass', '--autopilot-cli', '--autopilot-model',
+  '--admin-user', '--admin-pass',
   '--llm-url', '--llm-key', '--llm-model',
 ] as const;
 
@@ -311,12 +311,17 @@ export async function planFromArgs(r: Runner, args: string[]): Promise<InstallPl
   if ((adminUser === undefined) !== (adminPass === undefined)) {
     throw new Error('elowen install: --admin-user and --admin-pass must be given together (pass both to create the first admin, or neither to create it later)');
   }
-  // `--autopilot-cli <claude|opencode|codex>` runs autopilot through an agent CLI (no API key);
-  // otherwise the --llm-* flags configure the hosted-API engine.
-  const autopilotCli = flag(args, '--autopilot-cli');
-  const pilotExec = autopilotCli ? defaultExecForCli(autopilotCli, flag(args, '--autopilot-model')) : undefined;
+  // The --llm-* flags connect the ASSISTANT's model provider. Only when at least one was passed: the
+  // defaults below are a convenience for filling in the other two, never a reason to save an OpenAI
+  // endpoint on a box whose operator never mentioned one.
+  const llmUrl = flag(args, '--llm-url');
+  const llmKey = flag(args, '--llm-key');
+  const llmModel = flag(args, '--llm-model');
+  const llm = (llmUrl || llmKey || llmModel)
+    ? { apiUrl: llmUrl ?? 'https://api.openai.com/v1', apiKey: llmKey ?? '', model: llmModel ?? 'gpt-4o-mini' }
+    : undefined;
   const admin: SetupAnswers | null = adminUser && adminPass
-    ? { username: adminUser, password: adminPass, pilotExec, apiUrl: flag(args, '--llm-url') ?? 'https://api.openai.com/v1', apiKey: flag(args, '--llm-key') ?? '', model: flag(args, '--llm-model') ?? 'gpt-4o-mini' }
+    ? { username: adminUser, password: adminPass, ...(llm ? { llm } : {}) }
     : null;
 
   // macOS: everything runs as the invoking user on localhost — a --user/--domain/--ip flag has nothing
@@ -439,14 +444,12 @@ OPTIONS
   --proxy <nginx|apache>          reverse proxy to configure for --domain
   --email <addr>                  contact email for Let's Encrypt renewal notices
 
-  First admin + autopilot:
+  First admin + the assistant's model access:
   --admin-user <name>             create the first admin account   (with --admin-pass; both or neither)
   --admin-pass <pass>             admin password
-  --autopilot-cli <cli>           run autopilot through an agent CLI (claude|opencode|codex) — no API key
-  --autopilot-model <spec>        model for --autopilot-cli opencode (e.g. anthropic/claude-sonnet-4-5)
-  --llm-url <url>                 hosted-API engine: base URL    (default: https://api.openai.com/v1)
-  --llm-key <key>                 hosted-API engine: API key
-  --llm-model <name>              hosted-API engine: model       (default: gpt-4o-mini)
+  --llm-url <url>                 OpenAI-compatible base URL     (default: https://api.openai.com/v1)
+  --llm-key <key>                 API key (omit for a keyless local endpoint)
+  --llm-model <name>              default model                  (default: gpt-4o-mini)
 
   -h, --help                      show this help`;
 

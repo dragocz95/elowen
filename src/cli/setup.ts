@@ -5,44 +5,25 @@
 export interface SetupAnswers {
   username: string;
   password: string;
-  /** Autopilot engine. When set, autopilot plans & oversees missions through an installed agent CLI
-   *  (claude-code / opencode / codex) — no API key needed. When empty, the apiUrl/apiKey/model below
-   *  drive the hosted-API (relay) engine instead. */
-  pilotExec?: string;
-  apiUrl: string;
-  apiKey: string;
-  model: string;
+  /** Model access for the assistant itself: an OpenAI-compatible endpoint, its key (optional — a local
+   *  runtime like Ollama needs none) and the default model. Absent → the account is created and the
+   *  provider is connected later (`elowen setup`, or Settings → Elowen AI). */
+  llm?: { apiUrl: string; apiKey: string; model: string };
 }
 
-/** Default autopilot exec spec for a detected agent CLI — a well-formed `<prefix>:<model>` spec that
- *  resolveExecutor routes to the right program (so it passes the daemon's allow-list guard without
- *  needing a custom model entry). opencode/kilo/pi/omp are provider-agnostic, so their model comes
- *  from the caller (the same default applies to all of them). */
-export function defaultExecForCli(cli: string, agnosticModel = 'anthropic/claude-sonnet-4-5'): string {
-  switch (cli) {
-    case 'claude': return 'claude:sonnet';
-    case 'codex': return 'codex:gpt-5.5';
-    case 'opencode': return `opencode:${agnosticModel}`;
-    case 'kilo': return `kilo:${agnosticModel}`;
-    case 'pi': return `pi:${agnosticModel}`;
-    case 'omp': return `omp:${agnosticModel}`;
-    default: return '';
-  }
-}
-
-/** Daemon autopilot config patch (subset of the daemon's ConfigPatch): the hosted-API engine's relay
- *  credentials. The CLI-engine keys (pilotExec/overseerExec) are agents-plugin config since the
- *  wave-2 config split and travel in SetupConfigPatch.agents instead. */
-interface AutopilotPatch {
-  model?: string;
-  apiUrl?: string;
+/** The brain provider entry an unattended install saves. `openai` covers every OpenAI-compatible
+ *  endpoint, which is what `--llm-url` accepts; anything else is connected interactively later. */
+interface BrainProviderPatch {
+  id: string;
+  label: string;
+  type: 'openai';
+  baseUrl: string;
+  models: string[];
   apiKey?: string;
 }
 
 interface SetupConfigPatch {
-  autopilot?: AutopilotPatch;
-  /** plugins.config.agents values (the CLI autopilot engine) — saved via PATCH /plugins/agents/config. */
-  agents?: Record<string, unknown>;
+  brain?: { providers: BrainProviderPatch[] };
 }
 
 export interface SetupPlan {
@@ -58,17 +39,22 @@ export async function isFirstRun(fetchFn: typeof fetch, base: string): Promise<b
   return body.needsSetup === true;
 }
 
-/** Pure mapper: wizard answers → the API payloads. With a pilotExec the autopilot runs through an
- *  agent CLI (same exec for pilot and overseer; saved into the agents plugin's config slice) and no
- *  API key is sent; otherwise a blank apiKey is omitted so we never overwrite an existing key with
- *  an empty string. */
+/** Pure mapper: wizard answers → the API payloads. The config half configures the ASSISTANT's own model
+ *  access (a brain provider) — the one thing an unattended install cannot leave for later without
+ *  handing over a box that cannot answer. It used to write the `autopilot` relay block instead, which
+ *  is read only by the mission subsystem: on an install that does not ship it, `--llm-key` configured a
+ *  subsystem that was not there and left the assistant itself with no provider at all.
+ *  A blank apiKey is omitted rather than sent, so a keyless local endpoint stays keyless and an existing
+ *  stored key is never overwritten with an empty string. */
 export function buildSetupPlan(a: SetupAnswers): SetupPlan {
-  if (a.pilotExec) {
-    return { user: { username: a.username, password: a.password }, config: { agents: { pilotExec: a.pilotExec, overseerExec: a.pilotExec } } };
-  }
-  const autopilot: AutopilotPatch = { model: a.model, apiUrl: a.apiUrl };
-  if (a.apiKey) autopilot.apiKey = a.apiKey;
-  return { user: { username: a.username, password: a.password }, config: { autopilot } };
+  const user = { username: a.username, password: a.password };
+  if (!a.llm) return { user, config: {} };
+  const provider: BrainProviderPatch = {
+    id: 'default', label: 'Default', type: 'openai',
+    baseUrl: a.llm.apiUrl, models: a.llm.model ? [a.llm.model] : [],
+    ...(a.llm.apiKey ? { apiKey: a.llm.apiKey } : {}),
+  };
+  return { user, config: { brain: { providers: [provider] } } };
 }
 
 /** Log in with existing credentials and return a full-scope bearer token. Shared by createAdmin and the
@@ -93,26 +79,18 @@ export async function createAdmin(fetchFn: typeof fetch, base: string, user: { u
   return login(fetchFn, base, user);
 }
 
-/** Persist the config patch with an admin bearer token: the relay credentials over PUT /config, the
- *  agents-plugin values (CLI autopilot engine) over PATCH /plugins/agents/config. */
+/** Persist the config patch with an admin bearer token. Nothing to save is a no-op, not an empty PUT. */
 async function saveConfig(fetchFn: typeof fetch, base: string, token: string, config: SetupConfigPatch): Promise<void> {
-  if (config.autopilot) {
-    const r = await fetchFn(`${base}/config`, {
-      method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ autopilot: config.autopilot }),
-    });
-    if (!r.ok) throw new Error(`setup: saving config failed (${r.status})`);
-  }
-  if (config.agents) {
-    const r = await fetchFn(`${base}/plugins/agents/config`, {
-      method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ values: config.agents }),
-    });
-    if (!r.ok) throw new Error(`setup: saving the agents plugin config failed (${r.status})`);
-  }
+  if (!config.brain) return;
+  const r = await fetchFn(`${base}/config`, {
+    method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ brain: config.brain }),
+  });
+  if (!r.ok) throw new Error(`setup: saving config failed (${r.status})`);
 }
 
 /** Create the admin, log in for a bearer token, then save the config. Kept for the non-interactive
- *  (unattended) install path; the interactive wizard creates the admin earlier so it can probe the
- *  daemon for installed CLIs before choosing the autopilot engine. */
+ *  (unattended) install path; the interactive wizard creates the admin earlier so it can talk to the
+ *  daemon while the operator picks a provider. */
 export async function applySetup(fetchFn: typeof fetch, base: string, plan: SetupPlan): Promise<void> {
   const token = await createAdmin(fetchFn, base, plan.user);
   await saveConfig(fetchFn, base, token, plan.config);

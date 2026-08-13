@@ -5,7 +5,6 @@ import { runAiStep } from './steps/aiProvider.js';
 import { runPreferencesStep } from './steps/preferences.js';
 import { runMemoryStep } from './steps/memory.js';
 import { runLspStep } from './steps/lsp.js';
-import { runAutopilotStep } from './steps/autopilot.js';
 import { runDeploymentStep } from './steps/deployment.js';
 import { readMarker, writeMarker } from './marker.js';
 import { readInstallInfo, webBaseUrl, type InstallInfo } from '../installInfo.js';
@@ -13,9 +12,10 @@ import { apiJson } from './http.js';
 import { guard, WizardCancelled, type WizardAnswers, type WizardCtx, type WizardStep } from './types.js';
 import type { ReadinessCheck } from '../doctor.js';
 
-// The personal assistant is set up FIRST — sign in, connect the provider your own conversations run on,
-// tune its behaviour, then the optional memory/code-intelligence add-ons. Autopilot (the orchestrator) is
-// optional and comes LAST, so onboarding never front-loads it before the assistant itself works.
+// The wizard sets up the ASSISTANT and nothing else — sign in, connect the provider your own
+// conversations run on, tune its behaviour, then the optional memory/code-intelligence add-ons. It
+// deliberately configures no plugin: a fresh install ships a bare assistant, and asking about a
+// subsystem that is not installed (autopilot/missions, tasks) is asking about somebody else's product.
 const BASE_STEPS: WizardStep[] = [
   { id: 'account', title: 'Account', run: runAccountStep },
   { id: 'project', title: 'Project', run: runProjectStep },
@@ -23,7 +23,6 @@ const BASE_STEPS: WizardStep[] = [
   { id: 'preferences', title: 'Preferences', run: runPreferencesStep },
   { id: 'memory', title: 'Memory', run: runMemoryStep },
   { id: 'lsp', title: 'Code intelligence', run: runLspStep },
-  { id: 'autopilot', title: 'Autopilot', run: runAutopilotStep },
 ];
 
 /** Whether the optional Deployment step applies. It reconfigures nginx/TLS, so it's only shown on a
@@ -132,7 +131,6 @@ async function review(ctx: WizardCtx, steps: WizardStep[]): Promise<ReviewDecisi
     `Prefs     ${a.preferences?.summary ?? 'defaults'}`,
     `Memory    ${a.memory?.summary ?? 'skipped'}`,
     `LSP       ${a.lsp?.summary ?? 'skipped'}`,
-    `Autopilot ${a.autopilot?.summary ?? 'not enabled'}`,
   );
   p.note(rows.join('\n'), 'Setup summary');
 

@@ -99,12 +99,11 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     aiHasModel = models.length > 0;
     ok('ai', model ? `${label} (${model})` : `${label} — saved keyless (add --api-key/--model later to make it answer)`);
 
-    if (model) {
-      if (await putEmbeddedExec(ctx, id, model)) ok('tasks', `built-in engine → elowen:${id}/${model}`);
-      else warn('tasks', 'couldn\'t wire the built-in task engine (config save failed).');
-    }
-    // Autopilot relay needs a real openai key + model; skip for keyless/model-less saves.
-    if (aiIsOpenAiKey && model) await apiJson(ctx, 'PUT', '/config', { autopilot: { providerId: id, model } });
+    // The core default executor points at the embedded engine on this provider, so work run by a plugin
+    // added later needs no external agent CLI. Not announced as "tasks": a fresh install ships no task
+    // tracking, and the autopilot relay this used to configure alongside it belongs to a subsystem that
+    // is not installed either — writing it made a bare install look configured for a product it lacks.
+    if (model && !(await putEmbeddedExec(ctx, id, model))) warn('ai', 'couldn\'t set the default executor (config save failed).');
   }
 
   // ── Memory ───────────────────────────────────────────────────────────────────────────────────

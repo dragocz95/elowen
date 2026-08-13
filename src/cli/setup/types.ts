@@ -5,8 +5,8 @@ import type { BrainProviderType } from '../../store/configStore.js';
 type StepStatus = 'done' | 'skipped' | 'back';
 export interface StepResult { status: StepStatus }
 
-/** The accumulator every step reads/writes. `ai` is the hand-off the Memory step and the autopilot-
- *  wiring logic depend on (a reused key + an openai-type provider is what can back embeddings/relay). */
+/** The accumulator every step reads/writes. `ai` is the hand-off the Memory step depends on (a reused
+ *  key + an openai-type provider is what can back embeddings). */
 export interface WizardAnswers {
   account?: { username: string; created: boolean; signedIn: boolean };
   deployment?: { mode: string; url: string };
@@ -15,7 +15,6 @@ export interface WizardAnswers {
   preferences?: { status: StepStatus; summary: string };
   memory?: { status: StepStatus; summary: string };
   lsp?: { status: StepStatus; summary: string };
-  autopilot?: { status: StepStatus; summary: string };
 }
 
 /** Shared context handed to every step. `token` is the admin bearer set once the Account step succeeds;
@@ -32,7 +31,7 @@ export interface WizardCtx {
 }
 
 export interface WizardStep {
-  id: 'account' | 'deployment' | 'project' | 'ai' | 'preferences' | 'memory' | 'lsp' | 'autopilot';
+  id: 'account' | 'deployment' | 'project' | 'ai' | 'preferences' | 'memory' | 'lsp';
   /** Shown in the "[n/TOTAL] <title>" progress header. */
   title: string;
   run(ctx: WizardCtx): Promise<StepResult>;
