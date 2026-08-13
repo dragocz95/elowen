@@ -1,7 +1,9 @@
 // Admin/owner-gated Teams* tools: outbound messaging, conversation/member inspection and raw
-// connector access. All of them ride the Bot Connector API only — no Graph permissions involved.
+// connector access. All of them ride the Bot Connector API only — no Graph permissions involved,
+// except TeamsMessagePerson's optional last resort, which stays behind a config switch that is off.
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { personLine } from './directory.mjs';
 
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -35,6 +37,57 @@ export function registerTools(ctx, adapter) {
     },
   }));
 
+  // Write to a PERSON the bot has never had a conversation id for — OWNER only, exactly like
+  // TeamsSend: an unsolicited direct message is the most intrusive thing this plugin can do.
+  ctx.registerTool(defineTool({
+    name: 'TeamsMessagePerson', label: 'Teams message a person',
+    description: 'Send a Microsoft Teams message directly to a PERSON — addressed by e-mail/UPN, Entra object id, "29:…" account id or display name, no conversation id needed. The bot opens (or reuses) the 1:1 chat itself. Use it for "tell Michal the build broke". An ambiguous name is refused with the candidates rather than guessed — check first with TeamsFindPerson. Operator only.',
+    parameters: Type.Object({
+      text: Type.String({ description: 'Message text (markdown)' }),
+      email: Type.Optional(Type.String({ description: 'The person\'s e-mail / UPN' })),
+      aadObjectId: Type.Optional(Type.String({ description: 'The person\'s Entra object id (a GUID)' })),
+      userId: Type.Optional(Type.String({ description: 'The person\'s Teams account id ("29:…")' })),
+      name: Type.Optional(Type.String({ description: 'The person\'s display name — must match exactly one known person' })),
+    }),
+    execute: async (_id, p) => {
+      try {
+        ownerGate('TeamsMessagePerson');
+        const target = {
+          email: p.email ? String(p.email) : undefined,
+          aadObjectId: p.aadObjectId ? String(p.aadObjectId) : undefined,
+          userId: p.userId ? String(p.userId) : undefined,
+          name: p.name ? String(p.name) : undefined,
+        };
+        if (!target.email && !target.aadObjectId && !target.userId && !target.name) {
+          return ok('Error: name the recipient with one of email, aadObjectId, userId or name.');
+        }
+        const { person, conversationId } = await adapter.messagePerson(target, String(p.text ?? ''));
+        return ok(`Sent to ${person.name || person.upn || person.aad || person.id} (chat ${conversationId}).`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  // Read-only counterpart: check WHO you would be writing to before writing to them.
+  ctx.registerTool(defineTool({
+    name: 'TeamsFindPerson', label: 'Teams find person',
+    description: 'Look up people the bot can message proactively, by e-mail/UPN, Entra object id, "29:…" account id or (part of) a display name. Shows whether a 1:1 chat is already open. Sends nothing — use it to confirm the recipient before TeamsMessagePerson.',
+    parameters: Type.Object({
+      query: Type.String({ description: 'E-mail, Entra object id, "29:…" account id, or a display name (or part of one)' }),
+    }),
+    execute: async (_id, p) => {
+      try {
+        adminGate();
+        const query = String(p.query ?? '').trim();
+        if (!query) return ok('Error: give something to look for.');
+        const found = adapter.lookupPeople(query);
+        if (!found.length) return ok(adapter.unknownPersonHelp(query));
+        const lines = found.slice(0, 25).map((person) => `· ${personLine(person)}`);
+        if (found.length > 25) lines.push(`… and ${found.length - 25} more`);
+        return ok(`${found.length === 1 ? 'One match' : `${found.length} matches`} for "${query}":\n${lines.join('\n')}`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
   ctx.registerTool(defineTool({
     name: 'TeamsChatInfo', label: 'Teams chat info',
     description: 'Details of a Teams conversation the bot participates in: type, tenant and member count.',
@@ -44,12 +97,12 @@ export function registerTools(ctx, adapter) {
         adminGate();
         const id = String(p.conversationId);
         const ref = adapter.state.get(id).ref ?? {};
-        const members = await adapter.connector.members(adapter.requireServiceUrl(id), id);
+        const members = await adapter.readRoster(id);
         return ok([
           `id: ${id}`,
           `type: ${ref.conversationType ?? 'unknown'}`,
           ref.tenantId ? `tenant: ${ref.tenantId}` : null,
-          `members: ${Array.isArray(members) ? members.length : '?'}`,
+          `members: ${members.length}`,
         ].filter(Boolean).join('\n'));
       } catch (e) { return fail(e); }
     },
@@ -57,14 +110,13 @@ export function registerTools(ctx, adapter) {
 
   ctx.registerTool(defineTool({
     name: 'TeamsMembers', label: 'Teams members',
-    description: 'List the members of a Teams conversation (name, id, Entra object id and UPN/email from the roster). To notify one of them, write "<@id>" (or their e-mail, or their exact display name) in your reply — it is turned into a real Teams mention.',
+    description: 'List the members of a Teams conversation (name, id, Entra object id and UPN/email from the roster). To notify one of them, write "<@id>" (or their e-mail, or their exact display name) in your reply — it is turned into a real Teams mention. Reading a roster also teaches the bot who these people are, so they can later be reached directly with TeamsMessagePerson.',
     parameters: Type.Object({ conversationId: Type.String({ description: 'Teams conversation id' }) }),
     execute: async (_id, p) => {
       try {
         adminGate();
         const id = String(p.conversationId);
-        const members = await adapter.connector.members(adapter.requireServiceUrl(id), id);
-        const list = Array.isArray(members) ? members : [];
+        const list = await adapter.readRoster(id);
         const lines = list.slice(0, 50).map(memberLine);
         if (list.length > 50) lines.push(`… and ${list.length - 50} more`);
         return ok(lines.join('\n') || '(no members)');

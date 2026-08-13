@@ -5,6 +5,8 @@
 // trace (edited in place), AskUserQuestion as Adaptive Cards, slash commands with card pickers, per-chat
 // model/reasoning/display settings and image round-trips.
 import { ConnectorClient } from './connector.mjs';
+import { GraphClient } from './graph.mjs';
+import { PeopleDirectory, personLine } from './directory.mjs';
 import { makeTokenVerifier } from './auth.mjs';
 import { matchesId, senderIds, senderIsAdmin, displayNameOf } from './ids.mjs';
 import { parseModelExec, splitContent } from './format.mjs';
@@ -64,6 +66,12 @@ const escapeSpan = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** How a directory person is named back to the operator. */
+const personLabel = (p) => String(p?.name || p?.upn || p?.aad || p?.id || 'that person');
+
+/** How the REQUESTED target is quoted back when it resolves to nobody (or to too many). */
+const targetLabel = (t) => String(t?.email || t?.name || t?.aadObjectId || t?.userId || t?.query || '').trim() || 'that person';
+
 /** Read a numeric config field, clamped to [min,max], falling back to `def` when unset/invalid. */
 function cfgNum(cfg, key, def, min, max) {
   return Math.min(Math.max(Number(cfg?.[key]) || def, min), max);
@@ -84,10 +92,12 @@ export class MsTeamsAdapter {
     this.ctl = null;
     this.stopped = false;
     this.connector = new ConnectorClient(cfg, logger);
+    // Layer 2 is opt-in: with the switch off no Graph client exists, so no Graph call can be made.
+    this.graph = cfg.graphLookup === true ? new GraphClient(cfg, logger) : null;
+    this.people = new PeopleDirectory(state, logger); // who the bot may write to first, and where
     this.verifyToken = makeTokenVerifier(cfg, logger);
     this.upnCache = new Map();       // from.id → UPN/email resolved via the conversation roster
     this.rosterCache = new Map();    // conversationId → { at, members } for outbound mention resolution
-    this.notifyConversations = new Map(); // notify user target → opened personal conversation id
     this.pendingAsks = new Map();    // token → { id, conversationId, activityId, questions, askerId, selected, createdAt }
     this.pendingPickers = new Map(); // conversationId → { kind, options, activityId, page, senderId, createdAt, sessions? }
     this.askSeq = 0;
@@ -157,6 +167,46 @@ export class MsTeamsAdapter {
     const prior = this.state.get(String(conv.id)).ref;
     if (JSON.stringify(prior) !== JSON.stringify(ref)) this.state.patch(String(conv.id), { ref });
     if (this.state.get('_meta').serviceUrl !== activity.serviceUrl) this.state.patch('_meta', { serviceUrl: activity.serviceUrl });
+    this.notePerson(activity);
+  }
+
+  /** Record the sender in the people directory, so the bot can write to them FIRST later on.
+   *
+   *  Called for every inbound activity — including `conversationUpdate`, which is what an app
+   *  INSTALL arrives as: that one carries the personal conversation id before the person has said
+   *  anything at all, which is the cheapest moment there is to capture it. */
+  notePerson(activity, upn) {
+    const from = activity?.from;
+    if (!from?.id || from.id === activity?.recipient?.id) return; // our own echo is not a person
+    const conv = activity?.conversation;
+    this.people.remember({
+      aadObjectId: from.aadObjectId,
+      id: from.id,
+      name: from.name,
+      upn,
+      // Only a 1:1 chat is a route TO this person; a group id would address the whole room.
+      conversationId: conv?.conversationType === 'personal' ? conv.id : undefined,
+      serviceUrl: activity.serviceUrl,
+    });
+  }
+
+  /** Record a conversation roster in the people directory. The roster is the only place the bot learns
+   *  someone's UPN/e-mail without a Graph permission, so every roster read feeds the directory. */
+  notePeople(conversationId, members, serviceUrl) {
+    const id = String(conversationId);
+    const personal = this.state.get(id).ref?.conversationType === 'personal';
+    const botId = `28:${this.cfg.appId}`;
+    for (const m of Array.isArray(members) ? members : []) {
+      if (!m?.id || m.id === botId) continue;
+      this.people.remember({
+        aadObjectId: m.aadObjectId ?? m.objectId,
+        id: m.id,
+        name: m.name || [m.givenName, m.surname].filter(Boolean).join(' '),
+        upn: m.userPrincipalName || m.email,
+        conversationId: personal ? id : undefined,
+        serviceUrl,
+      });
+    }
   }
 
   /** The connector route for a conversation: its stored ref, else the last serviceUrl seen anywhere. */
@@ -309,6 +359,9 @@ export class MsTeamsAdapter {
       const member = await this.connector.member(serviceUrl, conversationId, from.id);
       const upn = member?.userPrincipalName || member?.email || undefined;
       this.upnCache.set(from.id, upn);
+      // The roster is where an e-mail becomes knowable at all, so a resolved one is worth keeping:
+      // it is what makes "write to alex@contoso.com" resolvable later without any Graph permission.
+      if (upn) this.people.remember({ aadObjectId: from.aadObjectId, id: from.id, name: from.name, upn, serviceUrl });
       return upn;
     } catch {
       this.upnCache.set(from.id, undefined);
@@ -448,11 +501,24 @@ export class MsTeamsAdapter {
     let members = hit?.members ?? [];
     try {
       const list = await this.connector.members(serviceUrl, key);
-      if (Array.isArray(list)) members = list;
+      if (Array.isArray(list)) {
+        members = list;
+        this.notePeople(key, members, serviceUrl);
+      }
     } catch (e) {
       this.log.warn(`msteams roster lookup failed for ${key}: ${e?.message ?? e}`);
     }
     this.rosterCache.set(key, { at: Date.now(), members });
+    return members;
+  }
+
+  /** A FRESH roster read for the Teams* tools (no mention cache in the way), recorded into the people
+   *  directory on the way past — reading a team's members is how the bot gets to know them. */
+  async readRoster(conversationId) {
+    const serviceUrl = this.requireServiceUrl(conversationId);
+    const list = await this.connector.members(serviceUrl, conversationId);
+    const members = Array.isArray(list) ? list : [];
+    this.notePeople(conversationId, members, serviceUrl);
     return members;
   }
 
@@ -572,13 +638,129 @@ export class MsTeamsAdapter {
     }
   }
 
-  // ── proactive + tools ──
+  // ── proactive messaging (addressing a PERSON, not a conversation) ──
+
+  /**
+   * Open — or re-open — the 1:1 chat with one person and return its conversation id.
+   *
+   * Teams returns the SAME conversation for the same bot/user pair, so this is idempotent; the id is
+   * still remembered, both in the people directory and as a conversation ref, so the second message to
+   * someone costs no extra call and rides the right service host.
+   */
+  async openPersonalConversation(memberId, serviceUrl) {
+    const conversationId = await this.connector.createConversation(serviceUrl, {
+      bot: { id: `28:${this.cfg.appId}` },
+      members: [{ id: memberId }],
+      // Teams requires the tenant on the channelData; `tenantId` is the connector's own top-level form.
+      channelData: { tenant: { id: this.cfg.tenantId } },
+      tenantId: this.cfg.tenantId,
+      isGroup: false,
+    });
+    if (conversationId && !this.state.get(String(conversationId)).ref) {
+      this.state.patch(String(conversationId), {
+        ref: { serviceUrl, conversationType: 'personal', tenantId: this.cfg.tenantId, botId: `28:${this.cfg.appId}` },
+      });
+    }
+    return conversationId;
+  }
+
+  /** A person's 1:1 conversation id — the stored one, else a freshly opened chat. */
+  async conversationForPerson(person) {
+    if (person?.conv) return person.conv;
+    const who = personLabel(person);
+    const serviceUrl = person?.url || this.state.get('_meta').serviceUrl;
+    if (!serviceUrl) throw new Error('the bot has no Teams route yet — it must receive at least one message before it can open a chat');
+    const memberId = person?.id || person?.aad;
+    if (!memberId) throw new Error(`no usable Teams id for ${who}`);
+    let conversationId;
+    try {
+      conversationId = await this.openPersonalConversation(memberId, serviceUrl);
+    } catch (e) {
+      throw new Error(`could not open a chat with ${who}: ${e?.message ?? e}. Teams allows this only once the Elowen app is installed for that person — ask them to message the bot once, or enable Microsoft Graph app installation in the plugin config.`);
+    }
+    if (!conversationId) throw new Error(`Teams returned no conversation id for ${who}`);
+    this.people.remember({ aadObjectId: person.aad, id: person.id, conversationId, serviceUrl });
+    return conversationId;
+  }
+
+  /**
+   * Resolve a target (`email` / `aadObjectId` / `userId` / `name`, or a free-form `query`) to exactly
+   * ONE person the bot may write to.
+   *
+   * Layer 1 is the directory built from traffic the bot already saw — no extra Microsoft permission.
+   * Layer 2 (Graph) is consulted only for an e-mail and only when explicitly switched on. An ambiguous
+   * name is REFUSED with its candidates: which colleague a message goes to is never a guess.
+   */
+  async findPerson(target = {}) {
+    const local = this.people.resolve(target);
+    if (local.person) return local.person;
+    if (local.candidates) {
+      throw new Error(`"${targetLabel(target)}" matches ${local.candidates.length} people — name one of them exactly, or address them by e-mail or Entra object id:\n${local.candidates.map((c) => `· ${personLine(c)}`).join('\n')}`);
+    }
+    const query = String(target.query ?? '').trim();
+    const email = String(target.email ?? '').trim() || (query.includes('@') ? query : '');
+    if (email && this.graph) return this.findPersonViaGraph(email);
+    throw new Error(this.unknownPersonHelp(targetLabel(target)));
+  }
+
+  /** Layer 2: an e-mail the bot has never seen → a tenant user, the app installed for them, and a
+   *  directory entry the 1:1 chat can then be opened against. */
+  async findPersonViaGraph(email) {
+    const found = await this.graph.findUser(email);
+    if (!found) throw new Error(`Microsoft Graph found no user with the address "${email}" in this tenant.`);
+    const catalogAppId = String(this.cfg.graphCatalogAppId ?? '').trim();
+    // Without a catalog id there is nothing to install FROM; opening the chat still works when the app
+    // is already deployed to that user by Teams policy, and fails with an explicit reason if it is not.
+    if (catalogAppId) await this.graph.installApp(found.id, catalogAppId);
+    return this.people.remember({ aadObjectId: found.id, name: found.displayName, upn: found.userPrincipalName })
+      ?? { aad: found.id, name: found.displayName, upn: found.userPrincipalName };
+  }
+
+  /** What to do about a person the bot cannot reach — the answer is never a bare error. */
+  unknownPersonHelp(label) {
+    const graphHint = this.graph
+      ? 'Microsoft Graph lookup is on, but it only resolves an e-mail address — pass one.'
+      : 'or switch on "Microsoft Graph lookup" in the msteams plugin config to resolve people by e-mail straight from the tenant directory (needs admin consent).';
+    return [
+      `The bot does not know anyone matching "${label}". It can only address people it has already seen.`,
+      'To make someone reachable:',
+      '· ask them to send the bot one direct message in Teams, or',
+      '· add the bot to a team or group chat they are in and read that chat once with TeamsMembers,',
+      `· ${graphHint}`,
+    ].join('\n');
+  }
+
+  /** Directory lookup for the read-only tool: the unique match, or every candidate. */
+  lookupPeople(query) {
+    const found = this.people.resolve({ query });
+    if (found.person) return [found.person];
+    return found.candidates ?? [];
+  }
+
+  /**
+   * Send a message to a PERSON, opening the 1:1 chat if this is the first time. Returns the person and
+   * the conversation the message landed in; throws with actionable text when the target cannot be
+   * resolved or reached — and sends nothing at all in that case.
+   */
+  async messagePerson(target, text) {
+    const body = String(text ?? '').trim();
+    if (!body) throw new Error('nothing to send — the message text is empty');
+    const person = await this.findPerson(target);
+    const conversationId = await this.conversationForPerson(person);
+    let delivered = 0;
+    for (const piece of splitContent(body)) {
+      if (await this.tmSend(conversationId, piece)) delivered += 1;
+    }
+    if (!delivered) throw new Error(`Teams accepted no message for ${personLabel(person)} (conversation ${conversationId}) — see the daemon log for the connector error.`);
+    return { person, conversationId };
+  }
+
+  // ── proactive pushes + tools ──
 
   /** Host-initiated push (cron/tick echoes) → an explicit target or the configured notification
-   *  conversation. A target without a stored ref is treated as a user (Entra object id) and the
-   *  personal conversation is opened via the connector — Teams hands back the existing chat for a
-   *  known pair. No-op (with a warn) until the bot has seen at least one activity: proactive sends
-   *  ride the last known serviceUrl. */
+   *  conversation. The target may be a conversation id, or a PERSON (e-mail, Entra object id, `29:…`
+   *  account id or display name) — a person's 1:1 chat is opened and remembered. No-op (with a warn)
+   *  until the bot has seen at least one activity: proactive sends ride the last known serviceUrl. */
   async notify(text, channelId, notice) {
     const target = (typeof channelId === 'string' && channelId.trim().replace(/#\d+$/, ''))
       || (typeof this.cfg.notifyConversationId === 'string' ? this.cfg.notifyConversationId.trim() : '');
@@ -586,26 +768,48 @@ export class MsTeamsAdapter {
     // delivers here, and returning in silence means its result — already paid for with a real turn — is
     // dropped every single run with nothing anywhere to say so.
     if (!target) {
-      this.log.warn('msteams notify: no target — set the plugin\'s notifyConversationId, or give the job a notifyChannelId; the push was dropped');
+      this.log.warn('msteams notify: no target — set the plugin\'s notifyConversationId, or give the job a notifyChannelId (a conversation id, or a person\'s e-mail/Entra object id/display name); the push was dropped');
       return;
     }
     const serviceUrl = this.serviceUrlFor(target);
     if (!serviceUrl) { this.log.warn('msteams notify: no serviceUrl known yet — send the bot one message first'); return; }
     let conversationId = target;
     if (!this.state.get(target).ref) {
-      conversationId = this.notifyConversations.get(target) ?? await this.connector.createConversation(serviceUrl, {
-        bot: { id: `28:${this.cfg.appId}` },
-        members: [{ id: target }],
-        tenantId: this.cfg.tenantId,
-        isGroup: false,
-      });
-      if (!conversationId) { this.log.warn(`msteams notify: could not open a conversation with ${target}`); return; }
-      this.notifyConversations.set(target, conversationId);
+      conversationId = await this.notifyConversationFor(target, serviceUrl);
+      if (!conversationId) return; // already warned, with the reason
     }
     // Translate before splitting: the pieces are sized to the transport, and a translation has its own
     // length.
     for (const piece of splitContent(String(lifecycleText(this.cfg.language, notice, text)))) {
       await this.tmSend(conversationId, piece);
+    }
+  }
+
+  /** A notify target that is not a known conversation: resolved through the people directory, falling
+   *  back to treating it as a raw Teams user id. Warns and returns null rather than throwing — a
+   *  scheduler is on the other end of this, not a person who can read a stack trace. */
+  async notifyConversationFor(target, serviceUrl) {
+    try {
+      const found = this.people.resolve({ query: target });
+      if (found.candidates) {
+        this.log.warn(`msteams notify: "${target}" matches ${found.candidates.length} people — name the person exactly or use their e-mail; the push was dropped`);
+        return null;
+      }
+      if (found.person) return await this.conversationForPerson(found.person);
+      // An e-mail nobody here has met yet is exactly what layer 2 exists for — when it is switched on.
+      if (this.graph && target.includes('@')) return await this.conversationForPerson(await this.findPersonViaGraph(target));
+      // Unknown to the directory: the historical behaviour is to take the target for a user id and let
+      // Teams decide — that is what a notifyChannelId holding an Entra object id has always meant.
+      const conversationId = await this.openPersonalConversation(target, serviceUrl);
+      if (!conversationId) {
+        this.log.warn(`msteams notify: could not open a conversation with ${target}`);
+        return null;
+      }
+      this.people.remember({ aadObjectId: target, conversationId, serviceUrl });
+      return conversationId;
+    } catch (e) {
+      this.log.warn(`msteams notify: could not reach ${target}: ${e?.message ?? e}`);
+      return null;
     }
   }
 

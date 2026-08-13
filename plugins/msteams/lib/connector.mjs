@@ -1,6 +1,8 @@
 // Bot Connector REST client: outbound auth (Entra client-credentials, cached) + the handful of
 // conversation calls the adapter drives. Hand-rolled over global fetch, like the Discord adapter's
 // REST layer — the protocol is small and an SDK would bring its own middleware model.
+import { TokenSource } from './token.mjs';
+
 const SCOPE = 'https://api.botframework.com/.default';
 
 /** Retry-once pause on a 429, capped so a stuck rate limit can't wedge a turn. */
@@ -10,44 +12,13 @@ export class ConnectorClient {
   constructor(cfg, logger) {
     this.cfg = cfg;
     this.log = logger;
-    this.cached = null; // { token, expiresAt }
-    this.refreshing = null;
+    // `oauthTokenUrl` is the E2E seam — a fake Bot Framework serves its own token endpoint.
+    this.tokens = new TokenSource(cfg, SCOPE, 'oauthTokenUrl');
   }
 
-  /** The OAuth token endpoint — tenant-scoped for a single-tenant app registration. The cfg override is
-   *  the E2E seam (a fake Bot Framework serves its own token endpoint). */
-  tokenUrl() {
-    const seam = String(this.cfg.oauthTokenUrl ?? '').trim();
-    return seam || `https://login.microsoftonline.com/${encodeURIComponent(String(this.cfg.tenantId ?? ''))}/oauth2/v2.0/token`;
-  }
-
-  /** A valid bearer for the connector, refreshed ~60s before expiry; concurrent callers share one refresh. */
+  /** A valid bearer for the connector audience. */
   async token() {
-    if (this.cached && Date.now() < this.cached.expiresAt - 60_000) return this.cached.token;
-    this.refreshing ??= (async () => {
-      try {
-        const body = new URLSearchParams({
-          grant_type: 'client_credentials',
-          client_id: String(this.cfg.appId ?? ''),
-          client_secret: String(this.cfg.appPassword ?? ''),
-          scope: SCOPE,
-        });
-        const res = await fetch(this.tokenUrl(), {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        });
-        if (!res.ok) throw new Error(`token endpoint ${res.status}: ${(await res.text()).slice(0, 200)}`);
-        const data = await res.json();
-        if (typeof data?.access_token !== 'string') throw new Error('token endpoint returned no access_token');
-        const ttlSeconds = Number(data.expires_in) || 3600;
-        this.cached = { token: data.access_token, expiresAt: Date.now() + ttlSeconds * 1000 };
-        return this.cached.token;
-      } finally {
-        this.refreshing = null;
-      }
-    })();
-    return this.refreshing;
+    return this.tokens.token();
   }
 
   /** One connector call against the activity's serviceUrl. 429 waits Retry-After once, then rethrows. */

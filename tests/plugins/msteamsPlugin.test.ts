@@ -27,6 +27,10 @@ type AdapterModule = {
     verifyToken: (h: string | undefined, a: unknown) => Promise<boolean>;
     notify: (text: string, channelId?: string) => Promise<void>;
     appPackage: () => Buffer;
+    readRoster: (conversationId: string) => Promise<Record<string, unknown>[]>;
+    lookupPeople: (query: string) => Record<string, unknown>[];
+    messagePerson: (target: Record<string, unknown>, text: string) => Promise<{ person: Record<string, unknown>; conversationId: string }>;
+    unknownPersonHelp: (label: string) => string;
     connector: Record<string, unknown>;
     pendingAsks: Map<string, Record<string, unknown>>;
     pendingPickers: Map<string, Record<string, unknown>>;
@@ -69,6 +73,47 @@ async function makeAdapter(cfg: Record<string, unknown> = {}, opts: {
   });
   return { adapter, state, calls, errors, warnings };
 }
+
+/** The Teams* tools against a fake plugin ctx, so the gates can be driven from a test. */
+async function makeTools(adapter: unknown, gate: { admin?: boolean; owner?: boolean } = {}) {
+  const { registerTools } = await import(join(repoRoot, 'plugins/msteams/lib/tools.mjs')) as {
+    registerTools: (ctx: unknown, adapter: unknown) => void;
+  };
+  type Tool = { name: string; execute: (id: string, p: Record<string, unknown>) => Promise<{ content: { text: string }[] }> };
+  const tools = new Map<string, Tool>();
+  registerTools({
+    isAdminSession: () => gate.admin === true,
+    currentIdentity: () => ({ owner: gate.owner === true }),
+    registerTool: (t: Tool) => { tools.set(t.name, t); },
+  }, adapter);
+  const run = async (name: string, params: Record<string, unknown> = {}) => {
+    const out = await tools.get(name)!.execute('call-1', params);
+    return out.content.map((c) => c.text).join('\n');
+  };
+  return { tools, run };
+}
+
+/** Global fetch stub — the ONLY seam Microsoft Graph rides (the connector is stubbed per adapter). */
+function stubFetch(route: (url: string, method: string) => { status: number; body: unknown } | undefined) {
+  const seen: { url: string; method: string; body?: string }[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: { method?: string; body?: string }) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    seen.push({ url, method, body: init?.body });
+    const hit = route(url, method) ?? { status: 404, body: { error: { code: 'Request_ResourceNotFound' } } };
+    return {
+      ok: hit.status >= 200 && hit.status < 300,
+      status: hit.status,
+      headers: { get: () => null },
+      text: async () => (typeof hit.body === 'string' ? hit.body : JSON.stringify(hit.body)),
+      json: async () => hit.body,
+    };
+  }) as unknown as typeof fetch;
+  return { seen, restore: () => { globalThis.fetch = original; } };
+}
+
+const TOKEN_URL = 'https://login.microsoftonline.com/tenant-guid/oauth2/v2.0/token';
 
 const activity = (over: Record<string, unknown> = {}) => ({
   type: 'message',
@@ -594,5 +639,244 @@ describe('msteams per-chat overrides', () => {
     for (const pend of adapter.pendingAsks.values()) pend.createdAt = Date.now() - 60000;
     await adapter.onActivity(activity({ id: 'in-9', text: 'something unrelated' }));
     expect(adapter.pendingAsks.size).toBe(0);
+  });
+});
+
+describe('msteams proactive person messaging', () => {
+  // Two people share a first name on purpose: "Dana" must never be guessed.
+  const roster = [
+    { id: '29:dana', name: 'Dana Novák', userPrincipalName: 'dana@contoso.com', aadObjectId: 'aad-2' },
+    { id: '29:danam', name: 'Dana Malá', userPrincipalName: 'dana.mala@contoso.com', aadObjectId: 'aad-3' },
+    { id: '29:sam', name: 'Sam', userPrincipalName: 'sam@contoso.com', aadObjectId: 'aad-4' },
+  ];
+
+  /** An adapter that has met the roster of a team channel — the layer-1 case: no Graph anywhere. */
+  async function withRoster(cfg: Record<string, unknown> = {}) {
+    const made = await makeAdapter(cfg);
+    made.state.patch('_meta', { serviceUrl: 'https://smba.test/emea' });
+    made.state.patch('a:team', { ref: { serviceUrl: 'https://smba.test/emea', conversationType: 'channel' } });
+    Object.assign(made.adapter.connector, {
+      members: async () => roster,
+      createConversation: async (...args: unknown[]) => { made.calls.push({ kind: 'create', args }); return 'a:dm-dana'; },
+    });
+    await made.adapter.readRoster('a:team');
+    return made;
+  }
+
+  it('learns people from a roster and resolves them by e-mail, Entra id and exact name', async () => {
+    const { adapter } = await withRoster();
+    expect(adapter.lookupPeople('dana@contoso.com')).toMatchObject([{ aad: 'aad-2', id: '29:dana', name: 'Dana Novák' }]);
+    expect(adapter.lookupPeople('aad-3')).toMatchObject([{ name: 'Dana Malá' }]);
+    expect(adapter.lookupPeople('29:sam')).toMatchObject([{ name: 'Sam' }]);
+    expect(adapter.lookupPeople('Dana Novák')).toMatchObject([{ aad: 'aad-2' }]);
+    // A channel roster is not a route TO anyone: the personal chat still has to be opened.
+    expect(adapter.lookupPeople('Sam')[0]!.conv).toBeUndefined();
+  });
+
+  it('learns the personal chat straight from an inbound activity, so it never needs opening', async () => {
+    const { adapter } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] });
+    adapter.listen(async () => 'ok');
+    await adapter.onActivity(activity());
+    // from + conversationType 'personal' + the roster's UPN — the whole address in one message.
+    expect(adapter.lookupPeople('alex@contoso.com')).toMatchObject([
+      { aad: 'aad-1', id: '29:enc', name: 'Alex Rivera', conv: 'a:conv1' },
+    ]);
+  });
+
+  it('refuses an ambiguous name with its candidates and sends nothing', async () => {
+    const { adapter, calls } = await withRoster();
+    await expect(adapter.messagePerson({ name: 'Dana' }, 'the build broke')).rejects.toThrow(/matches 2 people/);
+    const message = await adapter.messagePerson({ name: 'Dana' }, 'x').catch((e: Error) => e.message);
+    expect(message).toContain('Dana Novák');
+    expect(message).toContain('Dana Malá');
+    expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+  });
+
+  it('opens the 1:1 chat on the first message and reuses it on the second', async () => {
+    const { adapter, calls } = await withRoster();
+    const first = await adapter.messagePerson({ email: 'dana@contoso.com' }, 'the build broke');
+    expect(first.conversationId).toBe('a:dm-dana');
+    const creates = calls.filter((c) => c.kind === 'create');
+    expect(creates).toHaveLength(1);
+    expect(creates[0]!.args[1]).toEqual({
+      bot: { id: '28:app-guid' },
+      members: [{ id: '29:dana' }],
+      channelData: { tenant: { id: 'tenant-guid' } },
+      tenantId: 'tenant-guid',
+      isGroup: false,
+    });
+    const sent = calls.filter((c) => c.kind === 'send');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.args[0]).toBe('https://smba.test/emea');
+    expect(sent[0]!.args[1]).toBe('a:dm-dana');
+    expect(sent[0]!.args[2]).toMatchObject({ type: 'message', text: 'the build broke' });
+
+    // Second time, addressed differently — the remembered conversation is used, nothing is opened.
+    await adapter.messagePerson({ name: 'Dana Novák' }, 'and now it is green');
+    expect(calls.filter((c) => c.kind === 'create')).toHaveLength(1);
+    expect(calls.filter((c) => c.kind === 'send')).toHaveLength(2);
+  });
+
+  it('tells an operator how to make an unknown person reachable, and calls no Graph', async () => {
+    const { adapter, calls } = await withRoster();
+    const fetched = stubFetch(() => undefined);
+    try {
+      const message = await adapter.messagePerson({ email: 'michal@contoso.com' }, 'hi').catch((e: Error) => e.message);
+      expect(message).toContain('does not know anyone matching "michal@contoso.com"');
+      expect(message).toContain('send the bot one direct message');
+      expect(message).toContain('TeamsMembers');
+      expect(message).toContain('Microsoft Graph lookup');
+      expect(fetched.seen).toHaveLength(0); // layer 2 is off: nothing left this process
+      expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+    } finally {
+      fetched.restore();
+    }
+  });
+
+  it('resolves an unseen e-mail through Graph, installs the app and then opens the chat', async () => {
+    const { adapter, state, calls } = await makeAdapter({ graphLookup: true, graphCatalogAppId: 'catalog-1' });
+    state.patch('_meta', { serviceUrl: 'https://smba.test/emea' });
+    Object.assign(adapter.connector, {
+      createConversation: async (...args: unknown[]) => { calls.push({ kind: 'create', args }); return 'a:dm-michal'; },
+    });
+    const fetched = stubFetch((url, method) => {
+      if (url === TOKEN_URL) return { status: 200, body: { access_token: 'graph-tok', expires_in: 3600 } };
+      if (method === 'GET' && url.includes('/users/michal%40contoso.com')) {
+        return { status: 200, body: { id: 'aad-9', displayName: 'Michal Král', userPrincipalName: 'michal@contoso.com' } };
+      }
+      if (method === 'POST' && url.endsWith('/users/aad-9/teamwork/installedApps')) return { status: 201, body: {} };
+      return undefined;
+    });
+    try {
+      const out = await adapter.messagePerson({ email: 'michal@contoso.com' }, 'deploy finished');
+      expect(out.conversationId).toBe('a:dm-michal');
+      const graph = fetched.seen.filter((c) => c.url.startsWith('https://graph.microsoft.com'));
+      expect(graph.map((c) => `${c.method} ${c.url.replace('https://graph.microsoft.com/v1.0', '')}`)).toEqual([
+        'GET /users/michal%40contoso.com?$select=id,displayName,userPrincipalName,mail',
+        'POST /users/aad-9/teamwork/installedApps',
+      ]);
+      expect(JSON.parse(graph[1]!.body!)).toEqual({
+        'teamsApp@odata.bind': 'https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/catalog-1',
+      });
+      expect(calls.filter((c) => c.kind === 'create')[0]!.args[1]).toMatchObject({ members: [{ id: 'aad-9' }] });
+      expect(calls.filter((c) => c.kind === 'send')[0]!.args[2]).toMatchObject({ text: 'deploy finished' });
+      // The person is now known locally: the next message costs no Graph call at all.
+      expect(adapter.lookupPeople('michal@contoso.com')).toMatchObject([{ aad: 'aad-9', conv: 'a:dm-michal' }]);
+    } finally {
+      fetched.restore();
+    }
+  });
+
+  it('translates a missing Graph consent into what the admin has to grant', async () => {
+    const { adapter, calls } = await makeAdapter({ graphLookup: true, graphCatalogAppId: 'catalog-1' });
+    const fetched = stubFetch((url) => {
+      if (url === TOKEN_URL) return { status: 200, body: { access_token: 'graph-tok', expires_in: 3600 } };
+      return { status: 403, body: { error: { code: 'Authorization_RequestDenied', message: 'Insufficient privileges.' } } };
+    });
+    try {
+      const message = await adapter.messagePerson({ email: 'michal@contoso.com' }, 'hi').catch((e: Error) => e.message);
+      expect(message).toContain('User.ReadBasic.All');
+      expect(message).toContain('Grant admin consent');
+      expect(message).toContain('App registrations');
+      expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+    } finally {
+      fetched.restore();
+    }
+  });
+
+  it('lets a scheduled push address a person instead of a conversation id', async () => {
+    const { adapter, calls } = await withRoster();
+    await adapter.notify('nightly build done', 'dana@contoso.com');
+    await adapter.notify('and the second run too', 'dana@contoso.com');
+    expect(calls.filter((c) => c.kind === 'create')).toHaveLength(1);
+    const sent = calls.filter((c) => c.kind === 'send');
+    expect(sent.map((c) => c.args[1])).toEqual(['a:dm-dana', 'a:dm-dana']);
+    expect(sent[0]!.args[2]).toMatchObject({ text: 'nightly build done' });
+  });
+
+  it('drops an ambiguous scheduled push with a warning rather than picking someone', async () => {
+    const { adapter, calls, warnings } = await withRoster();
+    await adapter.notify('who gets this?', 'Dana');
+    expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+    expect(warnings.some((w) => w.includes('matches 2 people'))).toBe(true);
+  });
+});
+
+describe('msteams person tools gating', () => {
+  const roster = [{ id: '29:dana', name: 'Dana Novák', userPrincipalName: 'dana@contoso.com', aadObjectId: 'aad-2' }];
+
+  async function known(cfg: Record<string, unknown> = {}) {
+    const made = await makeAdapter(cfg);
+    made.state.patch('_meta', { serviceUrl: 'https://smba.test/emea' });
+    made.state.patch('a:team', { ref: { serviceUrl: 'https://smba.test/emea', conversationType: 'channel' } });
+    Object.assign(made.adapter.connector, {
+      members: async () => roster,
+      createConversation: async (...args: unknown[]) => { made.calls.push({ kind: 'create', args }); return 'a:dm-dana'; },
+    });
+    await made.adapter.readRoster('a:team');
+    return made;
+  }
+
+  it('refuses TeamsMessagePerson for a non-operator and sends nothing', async () => {
+    const { adapter, calls } = await known();
+    const { run } = await makeTools(adapter, { admin: true, owner: false });
+    const out = await run('TeamsMessagePerson', { email: 'dana@contoso.com', text: 'unsolicited' });
+    expect(out).toContain('only available to the operator');
+    expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+  });
+
+  it('refuses TeamsFindPerson outside an admin session', async () => {
+    const { adapter } = await known();
+    const { run } = await makeTools(adapter, { admin: false, owner: false });
+    expect(await run('TeamsFindPerson', { query: 'dana' })).toContain('admin session');
+  });
+
+  it('sends for the operator and reports the person and the chat', async () => {
+    const { adapter, calls } = await known();
+    const { run } = await makeTools(adapter, { admin: true, owner: true });
+    expect(await run('TeamsMessagePerson', { email: 'dana@contoso.com', text: 'the build broke' }))
+      .toBe('Sent to Dana Novák (chat a:dm-dana).');
+    expect(calls.filter((c) => c.kind === 'send')).toHaveLength(1);
+  });
+
+  it('requires a named recipient and never guesses one', async () => {
+    const { adapter, calls } = await known();
+    const { run } = await makeTools(adapter, { admin: true, owner: true });
+    expect(await run('TeamsMessagePerson', { text: 'to whom?' })).toContain('name the recipient');
+    expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+  });
+
+  it('looks a person up read-only, and guides when nobody matches', async () => {
+    const { adapter, calls } = await known();
+    const { run } = await makeTools(adapter, { admin: true, owner: false });
+    const found = await run('TeamsFindPerson', { query: 'dana@contoso.com' });
+    expect(found).toContain('Dana Novák');
+    expect(found).toContain('chat: not opened yet');
+    expect(await run('TeamsFindPerson', { query: 'nobody@contoso.com' })).toContain('does not know anyone');
+    expect(calls.filter((c) => c.kind === 'send' || c.kind === 'create')).toHaveLength(0);
+  });
+
+  it('never leaks the app password into tool output, the log or the state file', async () => {
+    const { adapter, state, calls, errors, warnings } = await known({ graphLookup: true, graphCatalogAppId: 'catalog-1' });
+    const { run } = await makeTools(adapter, { admin: true, owner: true });
+    const fetched = stubFetch((url) => (url === TOKEN_URL
+      ? { status: 401, body: { error: 'invalid_client', error_description: 'secret is wrong' } }
+      : undefined));
+    let outputs: string[] = [];
+    try {
+      outputs = [
+        await run('TeamsFindPerson', { query: 'dana@contoso.com' }),
+        await run('TeamsMessagePerson', { email: 'dana@contoso.com', text: 'ok' }),
+        await run('TeamsMessagePerson', { email: 'stranger@contoso.com', text: 'hi' }), // drives the Graph path
+      ];
+    } finally {
+      fetched.restore();
+    }
+    // Tool output, the daemon log, everything persisted, and every outbound connector payload.
+    const persisted = JSON.stringify(state.data);
+    const outbound = JSON.stringify(calls);
+    for (const text of [...outputs, ...errors, ...warnings, persisted, outbound]) {
+      expect(text).not.toContain(CREDS.appPassword);
+    }
   });
 });
