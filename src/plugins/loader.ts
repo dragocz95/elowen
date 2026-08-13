@@ -217,6 +217,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
         registry.setCapabilities(name, manifest.capabilities ?? {});
+        registry.setUserGrantable(name, manifest.userGrantable);
         registry.setIcons(manifest.icons);
         registry.setShowOutput(manifest.showOutput);
         registry.setPlanSafe(manifest.planSafe, manifest.provides, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));

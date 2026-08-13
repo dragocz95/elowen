@@ -230,7 +230,7 @@ export interface ConfigPatch {
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; memoryRetention?: Partial<MemoryRetentionConfig> };
 }
 interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null }
-export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[] }
+export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
@@ -304,6 +304,9 @@ export interface PluginInfo {
    *  Available tab. Only ever true for `source: 'bundled'` (user plugins are uninstalled outright). */
   removed?: boolean;
   configurable: boolean;
+  /** The plugin is handed out PER USER: non-admins reach it only once an admin grants it to them
+   *  (`User.granted_plugins`). Drives the grant picker in the users panel. */
+  userGrantable?: boolean;
   /** Per-locale manifest translations (from the plugin's `i18n/<lang>.json`). English lives in the
    *  manifest itself and is the fallback; a locale entry overrides `description` + per-field label/hint. */
   i18n?: Record<string, PluginI18n>;

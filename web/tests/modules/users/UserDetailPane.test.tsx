@@ -11,12 +11,13 @@ import type { Project, User } from '../../../lib/types';
 const server = setupServer(
   http.get('*/api/users/:id/stats', () => HttpResponse.json({ memoryCount: 0, sessionCount: 0, topModel: null })),
   http.get('*/api/users/:id/tools', () => HttpResponse.json([])),
+  http.get('*/api/plugins', () => HttpResponse.json([])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 const user = (over: Partial<User> = {}): User => ({
   id: 2, username: 'bob', name: '', email: '', avatar: '', created_at: '2026-01-02', is_admin: false,
-  allowed_execs: [], disabled_tools: [], default_exec: '', advisor_exec: '', advisor_autostart: false, ...over,
+  allowed_execs: [], disabled_tools: [], granted_plugins: [], default_exec: '', advisor_exec: '', advisor_autostart: false, ...over,
 });
 
 const project = (id: number, slug: string): Project => ({ id, slug, path: `/p/${slug}`, notes: '', icon: '', pr_enabled: null });

@@ -85,6 +85,10 @@ interface TurnRunnerDeps {
   projects?: BrainDeps['projects'];
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   plugins(): Promise<PluginRegistry | undefined>;
+  /** Every tool name denied for a user (their `disabled_tools` plus the tools of any per-user-granted
+   *  plugin they do not hold). Resolved by the facade, which is the only layer holding the registry
+   *  synchronously. Absent (test doubles) → nothing is denied. */
+  deniedTools?(userId: number): string[];
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   sendDelegatedCustom?(userId: number, sessionId: string, customType: string, content: string, resultId: string): Promise<void>;

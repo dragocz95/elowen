@@ -111,6 +111,11 @@ export class PluginRegistry {
    *  boot reconciles (run sequentially BEFORE platforms serve turns). Both carry their owner for logs. */
   readonly services: { plugin: string; service: PluginService }[] = [];
   readonly bootReconciles: { plugin: string; fn: () => void | Promise<void> }[] = [];
+  /** Per-user teardown handlers (see PluginContext.registerUserRemoved). A plugin that keeps per-user
+   *  state OUTSIDE the core database — a data-dir folder, a JSON store — has no other way to hear that
+   *  an account is gone, and `users.id` is handed out again after a delete, so leftovers would attach
+   *  to whoever gets that id next. Run by the delete route before the user row disappears. */
+  readonly userRemovedHandlers: { plugin: string; fn: (userId: number) => void | Promise<void> }[] = [];
   /** Plugin-contributed editable prompt templates: catalog entries (merged into the account UI catalog)
    *  and template sources keyed by BARE template name — bare so existing per-user overrides in
    *  `user_prompts` keep matching when a template migrates from core into a plugin. */
@@ -155,6 +160,10 @@ export class PluginRegistry {
    *  name. The hook bus looks these up by owner to gate a hook's mutation patch (deny-by-default). The
    *  loader records this after a clean register+merge; the manifest is otherwise discarded. */
   readonly pluginCapabilities = new Map<string, PluginCapabilities>();
+  /** Plugins whose manifest opted into PER-USER grants (`userGrantable`). Everything that gates a
+   *  plugin per user — the API dispatcher, the UI listing, the brain's tool policy — asks here rather
+   *  than re-reading manifests from disk, so the answer is the one this registry generation loaded. */
+  readonly userGrantable = new Set<string>();
   /** Per-tool display icons declared across all plugin manifests (`icons`), keyed by tool name. Merged
    *  with the core defaults by `makeToolIconResolver` when the daemon stamps a `tool` event's icon. */
   readonly toolIcons = new Map<string, string>();
@@ -221,6 +230,7 @@ export class PluginRegistry {
     }
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
+    this.userRemovedHandlers.push(...other.userRemovedHandlers);
     this.eventProjectResolvers.push(...other.eventProjectResolvers);
     this.eventRowResolvers.push(...other.eventRowResolvers);
     this.readinessChecks.push(...other.readinessChecks);
@@ -245,6 +255,7 @@ export class PluginRegistry {
     this.turnContextOwners.push(...other.turnContextOwners);
     this.platformOwners.push(...other.platformOwners);
     for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
+    for (const n of other.userGrantable) this.userGrantable.add(n);
   }
 
   /** Detach every live bus subscription this registry's plugins hold — called on the OLD registry
@@ -350,6 +361,12 @@ export class PluginRegistry {
    *  clean register+merge so the hook bus can gate that plugin's mutations. */
   setCapabilities(name: string, caps: PluginCapabilities): void {
     this.pluginCapabilities.set(name, caps);
+  }
+
+  /** Record whether a plugin opted into per-user grants (manifest `userGrantable`). Called by the
+   *  loader alongside the other manifest facts, so the gate reads the generation that actually loaded. */
+  setUserGrantable(name: string, on: boolean | undefined): void {
+    if (on) this.userGrantable.add(name);
   }
 
   /** Record a plugin's manifest tool icons (from its parsed manifest `icons`). Called by the loader
@@ -620,6 +637,7 @@ export class PluginRegistry {
         this.services.push({ plugin: name, service });
       },
       registerBootReconcile: (fn) => { this.bootReconciles.push({ plugin: name, fn }); },
+      registerUserRemoved: (fn) => { this.userRemovedHandlers.push({ plugin: name, fn }); },
       // Event-bus reach decides what tenants SEE, so both verbs ride one explicit mutates:['events']
       // grant. Publishing throws (like db()): a plugin built around events cannot degrade meaningfully.
       publishEvent: (event) => {

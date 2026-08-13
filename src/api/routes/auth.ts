@@ -5,6 +5,8 @@ import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
+import { grantablePluginNames } from '../../shared/pluginAccess.js';
+import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
@@ -352,6 +354,15 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     d.memoryCategoryStore?.removeForUser(id); // drop the user's memory categories so no orphan rows linger
     d.brainStore?.removeForUser(id);
     d.pushSubscriptions?.removeAllForUser(id);
+    // Per-user state a PLUGIN owns sits outside this store (its data-dir folders, its JSON schedules),
+    // so the core cascade above cannot reach it — each plugin drops its own through the seam. Runs while
+    // the user row still exists (a handler may need to read it), and one failing plugin must not strand
+    // the rest of the teardown: the delete stays retryable either way.
+    const pluginRegistry = await d.plugins?.get().catch(() => undefined);
+    for (const h of pluginRegistry?.userRemovedHandlers ?? []) {
+      try { await h.fn(id); }
+      catch (e) { log.warn(`plugin ${h.plugin} failed to drop data for user ${id}: ${e instanceof Error ? e.message : String(e)}`); }
+    }
     users.delete(id);
     return c.json({ ok: true });
   });
@@ -377,6 +388,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
     if (Array.isArray(b.disabled_tools)) {
       users.setDisabledTools(id, b.disabled_tools.filter((t) => typeof t === 'string'));
+    }
+    if (Array.isArray(b.granted_plugins)) {
+      // Clamp to plugins that actually declare `userGrantable`, read from the manifests ON DISK rather
+      // than from the live registry: a DISABLED plugin has no registry entry, and dropping its grant
+      // here would silently revoke every user the moment an admin toggles that plugin off and on again.
+      const grantable = new Set(grantablePluginNames(discoverPlugins(d.pluginDirs ?? []).map((p) => p.manifest)));
+      users.setGrantedPlugins(id, b.granted_plugins.filter((p) => typeof p === 'string' && grantable.has(p)));
     }
     return c.json(users.get(id));
   });

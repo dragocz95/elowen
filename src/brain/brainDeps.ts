@@ -1,3 +1,4 @@
+import { ungrantedPluginTools } from '../plugins/toolGrants.js';
 import type { createAgentSession, ModelRuntime, ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { HookAuditBuffer } from '../shared/hookAudit.js';
@@ -25,7 +26,7 @@ export interface BrainDeps {
   store: BrainStore;
   users: {
     ensureAdvisorToken(userId: number): string;
-    get(userId: number): { name?: string; username?: string; is_admin?: boolean; disabled_tools?: string[] } | null | undefined;
+    get(userId: number): { name?: string; username?: string; is_admin?: boolean; disabled_tools?: string[]; granted_plugins?: string[] } | null | undefined;
   };
   /** The provider set, or a live resolver so provider/OAuth changes apply without a daemon restart.
    *  A resolver returning null means "nothing configured yet" — `start` fails with a clear error. */
@@ -141,4 +142,21 @@ export interface BrainDeps {
    *  notification is readable without unlocking. Kept as an opaque callback so this seam never depends on
    *  the push module; a turn watched live never calls it. */
   notifyTurnComplete?: (userId: number, title: string, preview: string) => void;
+}
+
+/** Every tool name denied for a user's own sessions: the deny-list an admin set for them
+ *  (`disabled_tools`), plus the tools of any `userGrantable` plugin they hold no grant for.
+ *
+ *  One resolver so the three places that mint a ToolPolicy — owner chat, a channel's linked sender and a
+ *  delegated child — cannot drift into three different answers about what a user may reach. An unknown
+ *  user id resolves to "no grants", which withholds a grant-gated tool rather than handing it out.
+ */
+export function deniedToolsForUser(d: Pick<BrainDeps, 'users' | 'plugins'>, userId: number): string[] {
+  const u = d.users.get(userId);
+  const ungranted = ungrantedPluginTools(
+    { is_admin: u?.is_admin === true, granted_plugins: u?.granted_plugins ?? [] },
+    d.plugins?.peek(),
+  );
+  const own = u?.disabled_tools ?? [];
+  return ungranted.length ? [...own, ...ungranted] : [...own];
 }

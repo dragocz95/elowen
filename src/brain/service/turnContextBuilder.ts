@@ -45,6 +45,7 @@ interface TurnContextBuilderDeps {
   memoryCategoryStore?: MemoryCategoryStore;
   projects?: ProjectStore;
   plugins(): Promise<PluginRegistry | undefined>;
+  deniedTools?(userId: number): string[];
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   completeSubagent?(parentSessionId: string, userId: number, completion: SubagentCompletion): void;
@@ -439,7 +440,7 @@ export class TurnContextBuilder {
   private applyOwnerToolPolicy(userId: number, live: LiveBrain, mode: TurnMode): ToolPolicy | undefined {
     // The user's own disabled tools are a STABLE property of the conversation, so hiding them costs
     // nothing: the set is the same on every turn and the cached prefix holds.
-    const disabled = new Set(this.d.users.get(userId)?.disabled_tools ?? []);
+    const disabled = new Set(this.d.deniedTools?.(userId) ?? this.d.users.get(userId)?.disabled_tools ?? []);
     const visibility = disabled.size ? { deny: disabled } : undefined;
     // Plan mode's denials are ENFORCEMENT ONLY, deliberately kept out of the visible set. Tool schemas sit
     // at the front of the prompt, so narrowing them on a mode switch rewrites the whole cached prefix —

@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin INTEGER NOT NULL DEFAULT 0,
   allowed_execs TEXT NOT NULL DEFAULT '',
   disabled_tools TEXT NOT NULL DEFAULT '',
+  -- Per-user plugin GRANTS (CSV of plugin names). The semantics are the INVERSE of `allowed_execs`:
+  -- empty there means "no personal restriction", empty here means "granted nothing". The list only
+  -- matters for a plugin whose manifest opts in with `userGrantable`; every other plugin stays
+  -- reachable by everyone exactly as before. See shared/pluginAccess.ts.
+  granted_plugins TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   avatar TEXT NOT NULL DEFAULT '',

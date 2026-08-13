@@ -30,6 +30,14 @@ export class PluginRegistryProvider {
     return this.memo;
   }
 
+  /** The last successfully loaded registry, without awaiting one. For the few callers that must answer
+   *  SYNCHRONOUSLY inside a turn (resolving which plugin owns a tool while a tool policy is minted) and
+   *  can only ever run after a registry has loaded. Undefined before the first load — a caller that gets
+   *  undefined must fall back to the answer that grants nothing new. */
+  peek(): PluginRegistry | undefined {
+    return this.lastGood;
+  }
+
   /** Drop the memo so the next get() reloads from disk/config. Callers restart their sessions
    *  themselves — this only guarantees a fresh registry for everything spawned afterwards. */
   invalidate(): void {

@@ -3,8 +3,11 @@ import { ZodError } from 'zod';
 import { logger } from '../../shared/logger.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { bodyLimitBytes, formatZodError, readBoundedBody } from '../validation.js';
+import { runWithIdentity } from '../../plugins/policyContext.js';
+import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
+import type { TurnIdentity } from '../../plugins/policyContext.js';
 import type { PluginApiAccess, PluginApiRequest, PluginApiRoute } from '../../plugins/api.js';
 
 /** Authenticated plugin API payloads are app traffic (JSON bodies, small uploads), not webhooks — a
@@ -19,7 +22,7 @@ const log = logger('plugin-api');
 async function dispatchPluginApi(
   c: ElowenContext,
   ctx: RouteContext,
-  match: { handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params?: Record<string, string> },
+  match: { plugin: string; userGrantable: boolean; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params?: Record<string, string> },
 ) {
   // Declared access, enforced centrally. An agent service token reaches ONLY a route that opted into
   // `access: 'agent'` (it runs with skipped permissions — same deny-by-default as the core agent
@@ -28,6 +31,12 @@ async function dispatchPluginApi(
   const scope = c.get('tokenScope') === 'agent' ? 'agent' as const : 'user' as const;
   if (scope === 'agent' && match.access !== 'agent') return c.json({ error: 'forbidden' }, 403);
   if (scope === 'user' && match.access === 'admin' && ctx.notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
+  // Per-user grant, for a plugin whose manifest opted in. Checked HERE rather than per route, so a
+  // plugin cannot grow an ungated endpoint by forgetting one. An agent token is out of scope: it already
+  // passed the stricter `access: 'agent'` gate and acts for a task, not for an account.
+  if (scope === 'user' && match.userGrantable && !isPluginAllowedForUser(c.get('user'), { name: match.plugin, userGrantable: true })) {
+    return c.json({ error: 'forbidden' }, 403);
+  }
 
   // Bounded read, not "buffer then measure": the root dispatcher below is a catch-all with no path
   // pattern to front with bodyLimit middleware (one would cap every core route too), so the cap has to
@@ -54,12 +63,28 @@ async function dispatchPluginApi(
     },
   };
 
+  // The handler runs inside an IDENTITY scope so `ctx.currentIdentity()` answers in an API handler the
+  // same way it does in a tool — a plugin that owns per-user data needs one way to ask "whose request is
+  // this?", not two. It is explicitly not a turn scope: no Policy, no tool policy, no session id, so
+  // `isAdminSession()` stays false and the path guard keeps refusing.
+  const ownerId = ctx.d.users?.ownerId();
+  const identity: TurnIdentity = {
+    platform: 'http',
+    userId: String(request.auth.userId ?? ''),
+    ...(request.auth.userId !== null ? { elowenUserId: request.auth.userId } : {}),
+    ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
+    admin: request.auth.admin,
+    owner: request.auth.userId !== null && ownerId !== undefined && request.auth.userId === ownerId,
+  };
+
   try {
-    const res = await match.handler(request);
+    const res = await runWithIdentity(identity, () => match.handler(request));
     if (res.sse && res.body === undefined) {
       return streamSSE(c, async (stream) => {
         const send = (data: string, event?: string) => stream.writeSSE({ data, ...(event ? { event } : {}) });
-        await res.sse!(send, c.req.raw.signal);
+        // The stream body runs long after the handler returned, i.e. outside the scope above — re-enter
+        // it, or a plugin streaming per-user data would suddenly see no identity at all.
+        await runWithIdentity(identity, () => res.sse!(send, c.req.raw.signal));
       });
     }
     const status = (res.status ?? 200) as ContentfulStatusCode;
@@ -96,7 +121,7 @@ export function registerPluginApiRoutes(app: ElowenApp, ctx: RouteContext): void
     if (!c.req.path.startsWith(mount)) return c.json({ error: 'not found' }, 404);
     const match = registry?.apiRoute(name, c.req.path.slice(mount.length), c.req.method);
     if (!match) return c.json({ error: 'not found' }, 404);
-    return dispatchPluginApi(c, ctx, match);
+    return dispatchPluginApi(c, ctx, { ...match, plugin: name, userGrantable: registry!.userGrantable.has(name) });
   });
 }
 
@@ -187,6 +212,6 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
       if (owner) return c.json({ error: `${owner} plugin is disabled` }, 503);
       return next();
     }
-    return dispatchPluginApi(c, ctx, match);
+    return dispatchPluginApi(c, ctx, { ...match, userGrantable: registry.userGrantable.has(match.plugin) });
   });
 }

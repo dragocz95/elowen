@@ -640,7 +640,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // Platform channels (Discord, …): role mappings resolve to project-scoped policies; the admin's
         // token anchors the channel sessions.
         policyForProjects,
-        platformOwner: () => users.list().find((u) => u.is_admin)?.id,
+        platformOwner: () => users.ownerId(),
         // Present only in the daemon: a runner builds its core without one and therefore always runs a
         // nested delegation itself.
         ...(opts.subagentRunner ? { subagentRunner: opts.subagentRunner } : {}),

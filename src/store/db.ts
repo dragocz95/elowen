@@ -118,6 +118,10 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   // Per-user tool deny-list (CSV of plugin tool names disabled for this user's own brain sessions).
   addColumn(db, 'users', 'disabled_tools', "TEXT NOT NULL DEFAULT ''");
+  // Per-user plugin grant-list (CSV of plugin names). Empty on every migrated row, which is the
+  // deny-by-default this feature wants: a `userGrantable` plugin stays admin-only until an admin hands
+  // it out. Plugins that do not opt in are unaffected, so an upgrade changes nothing on its own.
+  addColumn(db, 'users', 'granted_plugins', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'name', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'email', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'avatar', "TEXT NOT NULL DEFAULT ''");

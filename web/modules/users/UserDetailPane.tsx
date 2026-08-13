@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { FolderGit2, Cpu, Wrench, ShieldCheck } from 'lucide-react';
-import { useUserProjects } from '../../lib/queries';
+import { FolderGit2, Cpu, Wrench, ShieldCheck, Puzzle } from 'lucide-react';
+import { usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
@@ -169,6 +169,64 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   );
 }
 
+/** Admin-only: which per-user-granted plugins this user may reach. Deny-by-default — an empty selection
+ *  means the user reaches none of them (the inverse of the model list above, where empty means "all"),
+ *  which is why the summary counts grants rather than describing an allowance. */
+function PluginGrantChips({ user }: { user: ElowenUser }) {
+  const { t } = useTranslation();
+  const update = useUpdateUser();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const plugins = usePlugins();
+
+  const grantable = (plugins.data ?? []).filter((p) => p.userGrantable && !p.removed);
+  if (grantable.length === 0) return <p className="text-xs italic text-text-muted">{t.users.grantedPluginsEmpty}</p>;
+
+  const granted = grantable.filter((p) => user.granted_plugins.includes(p.name));
+  const items: ManageSelectionItem[] = grantable.map((p) => ({
+    id: p.name,
+    label: p.name,
+    group: 'plugins',
+    groupLabel: t.users.grantedPlugins,
+    icon: <Puzzle size={14} aria-hidden />,
+  }));
+
+  const handleSave = async (next: Set<string>) => {
+    try {
+      await update.mutateAsync({ id: user.id, patch: { granted_plugins: [...next] } });
+      toast(t.users.grantedPluginsUpdated);
+    } catch (e) {
+      toast(String(e) || t.users.updateError, 'error');
+      throw e;
+    }
+  };
+
+  return (
+    <>
+      <SelectionSummary
+        countText={t.users.grantedPluginsCount
+          .replace('{n}', String(granted.length))
+          .replace('{total}', String(grantable.length))}
+        samples={granted.slice(0, 3).map((p) => ({ label: p.name, icon: <Puzzle size={13} aria-hidden /> }))}
+        moreCount={Math.max(0, granted.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={t.users.grantedPlugins}
+        subtitle={t.users.grantedPluginsHint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(granted.map((p) => p.name))}
+        onSave={handleSave}
+        saving={update.isPending}
+        countLabel={(n) => t.users.grantedPluginsSelected.replace('{n}', String(n))}
+      />
+    </>
+  );
+}
+
 /** A labeled block within the detail pane. `hint` renders as a hover "?" (HelpTip), not inline text. */
 function Block({ icon: Icon, title, hint, children }: { icon: typeof FolderGit2; title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -210,6 +268,7 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
       <div className="flex flex-col gap-5">
         <Block icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></Block>
         <Block icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></Block>
+        <Block icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></Block>
         <Block icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills userId={user.id} /></Block>
       </div>
     </div>

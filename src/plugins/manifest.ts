@@ -96,6 +96,11 @@ export interface PluginManifest {
   icon?: string;
   /** Declared config fields — drives the per-plugin settings form. */
   configSchema?: PluginConfigField[];
+  /** Opt in to PER-USER grants: the plugin's API routes, tools and pages are then deny-by-default for
+   *  non-admins until an admin grants the plugin to that user (`users.granted_plugins`). Omitted (the
+   *  default) means the plugin behaves as it always has — reachable by every authenticated user. Only
+   *  declare it for a subsystem where one user's work must not be another's (schedules, skills). */
+  userGrantable?: boolean;
   /** What the plugin is allowed to do (deny-by-default). Gates runtime hook mutations: a patch is
    *  applied only if the matching value is listed in `mutates`. A manifest with no `capabilities` can
    *  mutate nothing. */
@@ -178,6 +183,7 @@ const ManifestSchema = Type.Object({
       equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
     })),
   }))),
+  userGrantable: Type.Optional(Type.Boolean()),
   capabilities: Type.Optional(Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([
       Type.Literal('prompt'), Type.Literal('turnContext'),

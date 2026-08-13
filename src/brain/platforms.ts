@@ -29,8 +29,12 @@ export interface PlatformOrchestratorDeps {
   /** A LINKED platform sender runs fully through their Elowen account: this resolves that account's own
    *  project Policy (same as their web chat). Absent → falls back to the role policy. */
   policyForUser?: (userId: number) => Policy;
-  /** A linked user's own tool deny-list (their Account → disabled tools), applied for their platform turns. */
+  /** A linked user's own tool deny-list (their Account → disabled tools plus any per-user-granted plugin
+   *  they do not hold), applied for their platform turns. */
   disabledToolsFor?: (userId: number) => string[];
+  /** The grant-gated tool names to withhold from a sender that has NO Elowen account (an unlinked channel
+   *  member), described by the access their platform role gives them. Absent → nothing is withheld. */
+  ungrantedPluginTools?: (sender: { is_admin: boolean; granted_plugins: readonly string[] }) => string[];
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
@@ -228,7 +232,14 @@ export class PlatformOrchestrator {
             // would match no real tool name and deny the whole toolset).
             const roleTools = src.access.tools;
             const unrestricted = !roleTools?.length || roleTools.includes('*');
-            toolPolicy = !src.access.admin && !unrestricted ? { allow: new Set(roleTools) } : undefined;
+            const allow = !src.access.admin && !unrestricted ? new Set(roleTools) : undefined;
+            // A per-user-granted plugin is reached through an ACCOUNT, and this sender has none. An admin
+            // role still passes (that is what an admin role means for every other tool here); anyone else
+            // is denied, so an unlinked stranger cannot borrow a subsystem an admin hands out per person.
+            const ungranted = this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? [];
+            toolPolicy = allow || ungranted.length
+              ? { ...(allow ? { allow } : {}), ...(ungranted.length ? { deny: new Set(ungranted) } : {}) }
+              : undefined;
           }
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           return this.d.channels.send({

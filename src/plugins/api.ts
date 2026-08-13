@@ -1214,6 +1214,14 @@ export interface PluginContext {
    *  idempotent. Reconciles run sequentially, in registration order; a throw is logged and does not
    *  block the boot (same contract as the core boot reconciles). */
   registerBootReconcile(fn: () => void | Promise<void>): void;
+  /** Drop everything the plugin keeps for an Elowen ACCOUNT that is being deleted — its schedules, its
+   *  files under `dataDir()`, its rows. Called with the account's id while the user row still exists,
+   *  so a handler may still read it; a throw is logged and the remaining handlers still run.
+   *
+   *  Registering this is mandatory for any plugin that stores per-user state, and not merely for
+   *  tidiness: `users.id` is handed back out to the next account created, so a leftover row or folder
+   *  is not orphaned data — it is another person's data, silently attached to a stranger. */
+  registerUserRemoved(fn: (userId: number) => void | Promise<void>): void;
   /** Sugar over {@link registerService} for the common periodic-tick shape: the host owns a real timer
    *  (unref'd — a plugin tick must not keep the process alive), starts it with the services and clears
    *  it on stop/reload. A tick that throws is logged and the interval keeps running. */

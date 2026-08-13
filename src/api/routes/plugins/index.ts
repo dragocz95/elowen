@@ -52,6 +52,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       // A soft-removed bundled plugin: hidden from the installed list, restorable from "Available".
       removed: removed.has(p.manifest.name),
       configurable: (p.manifest.configSchema?.length ?? 0) > 0,
+      // Whether this plugin is handed out PER USER (manifest `userGrantable`) — drives the grant picker
+      // in the users panel. Read from the manifest so a disabled plugin is still offerable.
+      userGrantable: p.manifest.userGrantable === true,
       // Coarse health for the marketplace card badge, derived from the log ring (default `ok` when
       // the buffer isn't wired — e.g. in tests that build deps by hand).
       health: d.pluginLogs?.health(p.manifest.name) ?? 'ok',

@@ -1,6 +1,7 @@
 import type { BrainStore, RecoverableRun } from '../../store/brainStore.js';
 import { syntheticRestartResultId } from '../../store/brainStore.js';
 import { settlePartialTurn, outstandingToolCalls } from '../persistence.js';
+import { deniedToolsForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
@@ -408,7 +409,7 @@ export class DelegatedSessionService {
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
       : this.d.policyForProjects?.(scope.projectIds)
         ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
-    const deniedTools = [...(this.d.users.get(userId)?.disabled_tools ?? []), ...(opts?.extraDeny ?? [])];
+    const deniedTools = [...deniedToolsForUser(this.d, userId), ...(opts?.extraDeny ?? [])];
     return this.d.channelService.send({
       channelId: channelIdOf(sessionId),
       ownerUserId: row.user_id,

@@ -24,8 +24,8 @@ export type StoredScope = TokenScope | 'advisor' | 'terminal';
  *  specific task — that task's id, so route guards can narrow an agent to its own work. `taskId` is
  *  null for every other token (interactive sessions, and the unbound shared service token). */
 export interface Principal { user: User; scope: TokenScope; taskId: string | null }
-type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '', advisor_exec: r.advisor_exec ?? '', advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
+type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '', advisor_exec: r.advisor_exec ?? '', advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -56,6 +56,13 @@ export class UserStore {
     const r = this.db.prepare('SELECT is_admin FROM users WHERE id = ?').get(id) as { is_admin: number } | undefined;
     return !!r?.is_admin;
   }
+  /** The instance OPERATOR: the first admin by creation order. One definition shared by the brain's
+   *  `platformOwner` (which anchors channel sessions) and the API's identity minting, so "owner" cannot
+   *  come to mean two different accounts on the two surfaces. Undefined when no admin exists yet. */
+  ownerId(): number | undefined {
+    const r = this.db.prepare('SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at, id LIMIT 1').get() as { id: number } | undefined;
+    return r?.id;
+  }
   /** How many admins exist — used to refuse demoting/deleting the last one. */
   adminCount(): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get() as { n: number }).n;
@@ -74,6 +81,13 @@ export class UserStore {
    *  Empty → the user gets every enabled plugin tool. Tool names are comma-free, so a CSV is safe. */
   setDisabledTools(id: number, tools: string[]): User | null {
     this.db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
+    return this.get(id);
+  }
+  /** Set the per-user plugin GRANT-list (names of `userGrantable` plugins this user may use). Empty →
+   *  the user reaches no grant-gated plugin, which is the deny-by-default this list exists for. Plugin
+   *  names are comma-free (NAME_RE), so a CSV is safe. */
+  setGrantedPlugins(id: number, plugins: string[]): User | null {
+    this.db.prepare('UPDATE users SET granted_plugins = ? WHERE id = ?').run([...new Set(plugins)].join(','), id);
     return this.get(id);
   }
   /** Self-service profile fields (name / email / preferred default executor). Only provided keys

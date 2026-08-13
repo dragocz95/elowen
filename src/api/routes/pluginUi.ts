@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginWebUi } from '../../plugins/api.js';
 
@@ -27,7 +28,13 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
   app.get('/plugins/ui', async (c) => {
     const registry = await d.plugins?.get().catch(() => undefined);
     const lang = c.req.query('lang') ?? '';
-    return c.json([...(registry?.webUi.values() ?? [])].map((w) => ({
+    const user = c.get('user');
+    // A per-user-granted plugin is chrome only for the users who hold the grant. Filtered SERVER-side:
+    // the web builds its menu purely from this list, so a client-side filter would still leave the
+    // page reachable by typing its URL.
+    const visible = [...(registry?.webUi.values() ?? [])].filter((w) =>
+      isPluginAllowedForUser(user, { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) }));
+    return c.json(visible.map((w) => ({
       name: w.plugin,
       url: `/plugins/${w.plugin}/web/${w.hash}.js`,
       apiVersion: w.requiresApiVersion,
@@ -42,6 +49,11 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
     const registry = await d.plugins?.get().catch(() => undefined);
     const w = registry?.webUi.get(c.req.param('name'));
     if (!w || c.req.param('file') !== `${w.hash}.js`) return c.json({ error: 'not found' }, 404);
+    // Same grant as the listing: hiding a plugin from the menu is worthless if its bundle is still
+    // downloadable, since the bundle carries the plugin's whole UI.
+    if (!isPluginAllowedForUser(c.get('user'), { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) })) {
+      return c.json({ error: 'forbidden' }, 403);
+    }
     if (!existsSync(w.file)) return c.json({ error: 'bundle missing' }, 404);
     return c.body(readFileSync(w.file, 'utf8'), 200, {
       'Content-Type': 'text/javascript; charset=utf-8',

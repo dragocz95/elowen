@@ -169,7 +169,7 @@ export interface BrainStreamControl {
 /** The user as served by `GET /auth/me` — the shape that actually drifted once: the daemon grew
  *  `advisor_exec`/`advisor_autostart` and the web mirror silently rendered `undefined` until an AST
  *  mirror test caught it (see web/tests/lib/dtoMirror.test.ts). */
-export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
+export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; granted_plugins: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
 
 /** A durable RAW memory row (v1: user-scoped; `GET /memory`). Deletes are SOFT (`status='deleted'`).
  *  `status` is a closed set because the daemon's own API schema enums exactly these three

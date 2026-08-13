@@ -44,6 +44,8 @@ import { SessionProcessService } from './service/sessionProcesses.js';
 import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
+import { deniedToolsForUser } from './brainDeps.js';
+import { ungrantedPluginTools } from '../plugins/toolGrants.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
@@ -247,6 +249,7 @@ export class BrainService {
       get memoryCategoryStore() { return d.memoryCategoryStore; },
       get projects() { return d.projects; },
       plugins: () => this.resolvePlugins(),
+      deniedTools: (userId) => deniedToolsForUser(d, userId),
       get hookAudit() { return d.hookAudit; },
       get projectPath() { return d.projectPath; },
       sendDelegatedCustom: async (userId, sessionId, customType, content, resultId) => {
@@ -334,7 +337,8 @@ export class BrainService {
       // A linked platform sender runs fully through their Elowen account: reuse the SAME per-user policy
       // resolver the owner web chat uses, plus their own tool deny-list.
       policyForUser: d.policy,
-      disabledToolsFor: (userId) => d.users.get(userId)?.disabled_tools ?? [],
+      disabledToolsFor: (userId) => deniedToolsForUser(d, userId),
+      ungrantedPluginTools: (sender) => ungrantedPluginTools(sender, d.plugins?.peek()),
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,
