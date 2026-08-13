@@ -18,7 +18,8 @@ const useBrainModels = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels }));
 vi.mock('../../../lib/mutations', () => ({
   useSavePluginConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({ ok: true }), isPending: false }),
-  useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false }),
+  useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+  useInstallPlugin: () => ({ mutate: vi.fn(), isPending: false }),
   useClearPluginData: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));

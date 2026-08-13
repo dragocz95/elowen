@@ -62,6 +62,29 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   };
   const manifestOf = (name: string) => discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name)?.manifest;
 
+  /** The powers this plugin claims that the operator has to agree to hand over, read from the manifest
+   *  on disk — the only copy that will actually run. Empty for a plugin that claims nothing durable. */
+  const consentRequiredFor = (name: string) => {
+    const claimed = manifestOf(name)?.capabilities?.mutates ?? [];
+    return CONSENT_REQUIRED_MUTATES.filter((g) => claimed.includes(g));
+  };
+
+  /** Which required grants the caller left unnamed. Consent is all-or-nothing on purpose: acknowledging
+   *  one power must not carry the rest in with it. */
+  const missingConsent = (needed: readonly string[], ack: unknown) => {
+    const acked = new Set(Array.isArray(ack) ? ack.filter((g): g is string => typeof g === 'string') : []);
+    return needed.filter((g) => !acked.has(g));
+  };
+
+  /** Enable + apply live, shared by the toggle and the marketplace install so both reach the runtime the
+   *  same way (config write, then registry swap; a deferred swap answers 202, see `applied`). */
+  const enablePlugin = async (c: Context, name: string) => {
+    const cur = new Set(d.config.get().plugins.enabled);
+    cur.add(name);
+    d.config.update({ plugins: { enabled: [...cur] } });
+    return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
+  };
+
   const mcpControl = async (): Promise<McpControl | null> => {
     const registry = await d.plugins?.get();
     const control = registry?.controls.get('mcp');
@@ -150,10 +173,20 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
     const name = c.req.param('name');
-    const body = (await c.req.json().catch(() => ({}))) as { enable?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { enable?: unknown; acknowledgeGrants?: unknown };
+    const wantEnabled = typeof body.enable === 'boolean' ? body.enable : true;
     try {
-      await d.marketplace.install(name, typeof body.enable === 'boolean' ? { enable: body.enable } : {});
-      return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+      // Install first, ALWAYS disabled: a plugin's manifest is only trustworthy once its validated copy
+      // is on disk, and that manifest is what the grant check reads. Landing it inert also means a
+      // refused enable leaves something the operator can inspect and switch on deliberately, rather than
+      // a half-done install. Enabling then goes through the SAME gate as the toggle — one-click install
+      // was the hole: it enabled by default and never asked.
+      await d.marketplace.install(name, { enable: false });
+      if (!wantEnabled) return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+      const needed = consentRequiredFor(name);
+      const missing = missingConsent(needed, body.acknowledgeGrants);
+      if (missing.length) return c.json({ error: 'grants require consent', grants: needed, installed: true }, 409);
+      return await enablePlugin(c, name);
     } catch (e) { return marketplaceFail(c, e); }
   });
 
@@ -293,19 +326,14 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = (await c.req.json().catch(() => ({}))) as { enabled?: unknown; acknowledgeGrants?: unknown };
     if (typeof b.enabled !== 'boolean') return c.json({ error: 'enabled must be a boolean' }, 400);
     // Turning a plugin ON is the moment its declared capabilities become real, so it is the moment to
-    // ask. The caller must name the powers it is handing over; a request that names none (or not all)
-    // is answered with the list rather than performed, which is what makes the UI's dialog enforceable
-    // instead of decorative — the same refusal reaches a marketplace one-click install and curl alike.
-    // Turning it OFF takes powers away and needs no consent.
+    // ask. Turning it OFF takes powers away and needs no consent.
     if (b.enabled) {
-      const claimed = discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name)?.manifest.capabilities?.mutates ?? [];
-      const needed = CONSENT_REQUIRED_MUTATES.filter((g) => claimed.includes(g));
-      const acked = new Set(Array.isArray(b.acknowledgeGrants) ? b.acknowledgeGrants.filter((g): g is string => typeof g === 'string') : []);
-      const missing = needed.filter((g) => !acked.has(g));
-      if (missing.length) return c.json({ error: 'grants require consent', grants: needed }, 409);
+      const needed = consentRequiredFor(name);
+      if (missingConsent(needed, b.acknowledgeGrants).length) return c.json({ error: 'grants require consent', grants: needed }, 409);
+      return await enablePlugin(c, name);
     }
     const cur = new Set(d.config.get().plugins.enabled);
-    if (b.enabled) cur.add(name); else cur.delete(name);
+    cur.delete(name);
     d.config.update({ plugins: { enabled: [...cur] } });
     // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
     return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());

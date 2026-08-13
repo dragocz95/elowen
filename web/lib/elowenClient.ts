@@ -194,7 +194,10 @@ export const elowenClient = {
   /** The plugin marketplace catalog (curated registry ✕ what's on disk). `refresh` forces a registry pull. */
   marketplace: (refresh = false) => req<Marketplace>(`/plugins/marketplace${refresh ? '?refresh=1' : ''}`),
   /** Download + install a registry plugin into the user plugin dir; enables it by default. Applies live. */
-  installPlugin: (name: string, enable = true) => req<PluginInfo>(`/plugins/marketplace/${encodeURIComponent(name)}/install`, json({ enable })),
+  // Installing lands the plugin inert; the daemon then applies the SAME grant gate as the toggle before
+  // enabling it, so a one-click install cannot hand over powers the operator never saw.
+  installPlugin: (name: string, enable = true, acknowledgeGrants?: string[]) =>
+    req<PluginInfo>(`/plugins/marketplace/${encodeURIComponent(name)}/install`, json({ enable, ...(acknowledgeGrants ? { acknowledgeGrants } : {}) })),
   /** Update an installed (user) plugin to the registry's newer version. Applies live. */
   updatePlugin: (name: string) => req<PluginInfo>(`/plugins/marketplace/${encodeURIComponent(name)}/update`, json({})),
   /** Remove a plugin: a user plugin is uninstalled (folder + data deleted); a bundled plugin is

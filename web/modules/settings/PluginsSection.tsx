@@ -20,7 +20,7 @@ import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useMarketplace } from '../../lib/queries';
-import { useInstallPlugin, useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
+import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
 import { usePluginConsent } from './usePluginConsent';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
@@ -204,8 +204,10 @@ export function PluginsSection() {
     // claiming it already took effect.
     onSuccess: (res) => toast(res.pending ? t.plugins.pendingToast : res.enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
     onError: () => toast(t.plugins.toggleError, 'error'),
+    onInstalled: () => { toast(t.plugins.installedToast); setView('installed'); },
+    onInstallError: () => toast(t.plugins.installError, 'error'),
+    onSettled: () => setPending(null),
   });
-  const install = useInstallPlugin();
   const update = useUpdatePlugin();
   const uninstall = useUninstallPlugin();
   const restore = useRestorePlugin();
@@ -268,14 +270,9 @@ export function PluginsSection() {
   if (isLoading) return <SettingsGroup density="compact"><SettingsState><LoadingState variant="list" /></SettingsState></SettingsGroup>;
 
   const flip = (p: PluginInfo, enabled: boolean) => consent.setEnabled(p.name, enabled);
-  const doInstall = (name: string) => {
-    setPending(name);
-    install.mutate({ name }, {
-      onSuccess: () => { toast(t.plugins.installedToast); setView('installed'); },
-      onError: () => toast(t.plugins.installError, 'error'),
-      onSettled: () => setPending(null),
-    });
-  };
+  // Installing goes through the consent hook too: the daemon lands the plugin inert and refuses to switch
+  // it on until its declared powers are acknowledged, so the same dialog answers both entry points.
+  const doInstall = (name: string) => { setPending(name); consent.install(name); };
   const doUpdate = (name: string) => {
     setPending(name);
     update.mutate(name, {

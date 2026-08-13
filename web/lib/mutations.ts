@@ -297,7 +297,7 @@ function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
 /** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
 export function useInstallPlugin() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { name: string; enable?: boolean }) => elowenClient.installPlugin(v.name, v.enable ?? true), onSuccess: () => invalidatePluginViews(qc) });
+  return useMutation({ mutationFn: (v: { name: string; enable?: boolean; acknowledgeGrants?: string[] }) => elowenClient.installPlugin(v.name, v.enable ?? true, v.acknowledgeGrants), onSuccess: () => invalidatePluginViews(qc) });
 }
 /** Update an installed user plugin to the registry's newer version. */
 export function useUpdatePlugin() {

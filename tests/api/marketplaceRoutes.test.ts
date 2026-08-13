@@ -24,10 +24,10 @@ let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 
 /** Write a minimal valid plugin manifest into `<dir>/<name>/elowen-plugin.json` so discoverPlugins finds it. */
-function writePlugin(dir: string, name: string): void {
+function writePlugin(dir: string, name: string, extra: Record<string, unknown> = {}): void {
   const pdir = join(dir, name);
   mkdirSync(pdir, { recursive: true });
-  writeFileSync(join(pdir, 'elowen-plugin.json'), JSON.stringify({ name, version: '1.0.0', apiVersion: '1', description: 'x', entry: 'index.mjs' }));
+  writeFileSync(join(pdir, 'elowen-plugin.json'), JSON.stringify({ name, version: '1.0.0', apiVersion: '1', description: 'x', entry: 'index.mjs', ...extra }));
 }
 
 let dirs: string[] = [];
@@ -64,6 +64,7 @@ function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [])
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: '{}' });
+const postBody = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('marketplace routes', () => {
@@ -129,9 +130,49 @@ describe('marketplace routes', () => {
 
   it('installs via POST and returns the updated listing shape', async () => {
     const install = vi.fn(async () => {});
-    const { app, adminTok } = setup({ install });
+    const { app, config, adminTok } = setup({ install });
     const res = await app.request('/plugins/marketplace/weather/install', post(adminTok));
     expect(res.status).toBe(200);
-    expect(install).toHaveBeenCalledWith('weather', {});
+    // The route lands it inert and enables it itself, so the enable meets the same gate as the toggle.
+    expect(install).toHaveBeenCalledWith('weather', { enable: false });
+    expect(config.get().plugins.enabled).toContain('weather');
+  });
+
+  // One-click install was the way around the consent gate: it enabled by default and asked nothing, so a
+  // registry plugin could claim power over memory or the live workflow DAG and get it from one POST.
+  it('refuses to enable an installed plugin whose declared powers were not acknowledged', async () => {
+    const base = tmpDir('mp-grants');
+    const user = join(base, 'user');
+    writePlugin(user, 'weather', { capabilities: { mutates: ['prompt', 'memory', 'workflow-dag'] } });
+    const install = vi.fn(async () => {});
+    const { app, config, adminTok } = setup({ install }, [user]);
+
+    const bare = await app.request('/plugins/marketplace/weather/install', post(adminTok));
+    expect(bare.status).toBe(409);
+    // `installed: true` is the honest part: the folder IS on disk, it just is not switched on.
+    expect(await bare.json()).toEqual({ error: 'grants require consent', grants: ['memory', 'workflow-dag'], installed: true });
+    expect(install).toHaveBeenCalledWith('weather', { enable: false });
+    expect(config.get().plugins.enabled).not.toContain('weather');
+
+    const partial = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['memory'] }));
+    expect(partial.status).toBe(409);
+    expect(config.get().plugins.enabled).not.toContain('weather');
+
+    const full = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['memory', 'workflow-dag'] }));
+    expect(full.status).toBe(200);
+    expect(config.get().plugins.enabled).toContain('weather');
+  });
+
+  it('installs without asking when the caller does not want it enabled', async () => {
+    const base = tmpDir('mp-noenable');
+    const user = join(base, 'user');
+    writePlugin(user, 'weather', { capabilities: { mutates: ['memory'] } });
+    const install = vi.fn(async () => {});
+    const { app, config, adminTok } = setup({ install }, [user]);
+
+    // Nothing is being handed over yet, so there is nothing to consent to.
+    const res = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { enable: false }));
+    expect(res.status).toBe(200);
+    expect(config.get().plugins.enabled).not.toContain('weather');
   });
 });

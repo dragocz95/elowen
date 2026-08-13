@@ -15,7 +15,7 @@ const uninstallMutate = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/queries', () => ({ usePlugins, useMarketplace }));
 vi.mock('../../../lib/mutations', () => ({
   useTogglePlugin: () => ({ mutate: toggleMutate, isPending: false, variables: undefined }),
-  useInstallPlugin: () => ({ mutate: installMutate, isPending: false }),
+  useInstallPlugin: () => ({ mutate: installMutate, isPending: false, variables: undefined }),
   useUpdatePlugin: () => ({ mutate: updateMutate, isPending: false }),
   useUninstallPlugin: () => ({ mutate: uninstallMutate, isPending: false }),
   useRestorePlugin: () => ({ mutate: vi.fn(), isPending: false }),
@@ -181,5 +181,28 @@ describe('PluginsSection grant consent', () => {
 
     await waitFor(() => expect(screen.queryByText(en.plugins.grantsTitle.replace('{name}', 'risky'))).not.toBeInTheDocument());
     expect(toggleMutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PluginsSection install consent', () => {
+  beforeEach(() => {
+    usePlugins.mockReset(); useMarketplace.mockReset(); installMutate.mockReset();
+    usePlugins.mockReturnValue({ data: [], isLoading: false });
+    useMarketplace.mockReturnValue({ data: { plugins: [entry({ name: 'risky' })] }, isLoading: false });
+  });
+
+  // One-click install used to enable by default and ask nothing — the way around the whole gate.
+  it('asks before a marketplace install switches declared powers on, and replays the install', async () => {
+    installMutate.mockImplementationOnce((_v: unknown, o: { onError?: (e: unknown) => void }) => {
+      o.onError?.(new ElowenApiError('elowen 409', 409, 'grants require consent', { grants: ['tools'], installed: true }));
+    });
+    renderSection();
+    fireEvent.click(screen.getByRole('radio', { name: en.plugins.tabAvailable }));
+    fireEvent.click(screen.getByRole('button', { name: en.plugins.install }));
+
+    expect(await screen.findByText(new RegExp(en.plugins.grantTools))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.plugins.grantsConfirm }));
+    await waitFor(() => expect(installMutate).toHaveBeenCalledTimes(2));
+    expect(installMutate.mock.calls[1][0]).toEqual({ name: 'risky', acknowledgeGrants: ['tools'] });
   });
 });
