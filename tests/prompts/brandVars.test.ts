@@ -13,8 +13,9 @@ describe('advisor prompts with the built-in brand', () => {
     expect(out).toContain("the user's Elowen advisor");
     expect(out).toContain('You act through Elowen with the current user');
     expect(out).not.toContain('{{productName}}');
-    // Tool names are an API contract, not brand — they must stay literal even under a theme.
-    expect(out).toContain('`ElowenListTasks` lists tasks.');
+    // Interface identifiers are an API contract, not brand — they must stay literal even under a theme.
+    // (Not a tool name: a core template must not name a tool a plugin owns, see corePromptToolPromises.)
+    expect(out).toContain('`ELOWEN_TOKEN` is already provided');
   });
 
   it('platform overlay substitutes cleanly too', () => {
@@ -27,7 +28,8 @@ describe('advisor prompts with the built-in brand', () => {
     const out = render('elowen', { ...defaults, agentName: 'Acme Bot', productName: 'Acme' });
     expect(out).toContain('inside their Acme workspace');
     expect(out).toContain('<name>Acme Bot</name>');
-    expect(out).toContain('`ElowenListTasks` lists tasks.');
+    expect(out).toContain('`ELOWEN_TOKEN` is already provided');
+    expect(out).toContain('`elowen api METHOD PATH [jsonBody]`');
     expect(out).not.toContain('Elowen workspace');
   });
 });
