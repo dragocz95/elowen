@@ -92,14 +92,21 @@ export const useTasks = (projectId?: number) => {
 };
 
 /** Live session names — the stable handles used for liveness checks, signal keys and ops.
- *  Backed by the same query as useSessionInfos (one fetch); selects just the names. */
-export const useSessions = () =>
+ *  Backed by the same query as useSessionInfos (one fetch); selects just the names. Gated on the agents
+ *  plugin, which owns the `/sessions` root mount: the sidebar, the bell and the needs-input banner all
+ *  read it on every page, so without the gate a plugin-less instance runs a permanent 503 loop. Every
+ *  consumer already treats "no sessions" as an empty list, so what they render does not change. */
+export const useSessions = () => {
+  const agents = useAgentDomainReachable();
   // SSE `signal` events invalidate ['sessions']; no poll needed.
-  useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions, select: (s) => s.map((x) => x.name) });
+  return useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions, select: (s) => s.map((x) => x.name), enabled: agents });
+};
 
-/** Live sessions with their daemon-classified role/identity, for display surfaces. */
-export const useSessionInfos = () =>
-  useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions });
+/** Live sessions with their daemon-classified role/identity, for display surfaces. Same query, same gate. */
+export const useSessionInfos = () => {
+  const agents = useAgentDomainReachable();
+  return useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: elowenClient.sessions, enabled: agents });
+};
 
 export const useAllDeps = () => {
   const work = useTaskDomainReachable(); // same domain, same gate as useTasks
@@ -138,8 +145,13 @@ export const useUsageByDay = (projectId?: number, days = 7) =>
     refetchInterval: 60_000,
   });
 
-export const useMissions = () =>
-  useQuery({ queryKey: QUERY_KEYS.missions, queryFn: elowenClient.missions });
+/** Autopilot missions. The agents plugin owns the `/missions` root mount, and the work plugin's Kanban
+ *  reads this through the plugin runtime — so with agents off and work on, the board polled a route that
+ *  answers 503. Gated like every other agents-domain read. */
+export const useMissions = () => {
+  const agents = useAgentDomainReachable();
+  return useQuery({ queryKey: QUERY_KEYS.missions, queryFn: elowenClient.missions, enabled: agents });
+};
 
 export const useHealth = () =>
   useQuery({
@@ -191,8 +203,12 @@ export const useEscalations = (): Escalation[] => {
 
 /** Worker `elowen ask` questions parked on a human (overseer escalated / none) — shown in the Escalations
  *  inbox so a person can answer and unblock the agent. Refreshed live by the SSE `ask` event. */
-export const usePendingAsks = () =>
-  useQuery({ queryKey: ['pending-asks'], queryFn: () => elowenClient.pendingAsks() });
+export const usePendingAsks = () => {
+  // `/asks/pending` is an agents root mount. The notification bell reads this on every page and already
+  // hides the inbox row without the plugin, so the fetch was the one half that stayed unconditional.
+  const agents = useAgentDomainReachable();
+  return useQuery({ queryKey: ['pending-asks'], queryFn: () => elowenClient.pendingAsks(), enabled: agents });
+};
 
 export const useProjects = () =>
   useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects });
@@ -236,9 +252,12 @@ export const useTaskCommits = (taskId: string | null) =>
 export const useTaskCommitFileDiff = (taskId: string | null, hash: string | null, path: string | null) =>
   useQuery({ queryKey: ['task-commit-diff', taskId, hash, path], queryFn: () => elowenClient.taskCommitFileDiff(taskId as string, hash as string, path as string), enabled: !!taskId && !!hash && !!path });
 
-/** Handoff notes for a mission (keyed by epic id), shown read-only in the detail pane. */
-export const useMissionNotes = (target: string | null) =>
-  useQuery({ queryKey: ['mission-notes', target], queryFn: () => elowenClient.missionNotes(target as string), enabled: !!target, refetchInterval: 10000 });
+/** Handoff notes for a mission (keyed by epic id), shown read-only in the detail pane. `/notes` is an
+ *  agents root mount like the mission it belongs to, so it carries the same domain gate. */
+export const useMissionNotes = (target: string | null) => {
+  const agents = useAgentDomainReachable();
+  return useQuery({ queryKey: ['mission-notes', target], queryFn: () => elowenClient.missionNotes(target as string), enabled: !!target && agents, refetchInterval: 10000 });
+};
 
 export const useProjectChanges = (id: number | null, enabled: boolean) =>
   useQuery({ queryKey: ['project-changes', id], queryFn: () => elowenClient.projectChanges(id as number), enabled: !!id && enabled });
@@ -304,15 +323,23 @@ export const useCronjobPlugin = (): boolean => usePluginPresent('cronjob');
  *  the truth is "this instance does not track work at all". Affordances hide; they never report zero. */
 export const useWorkPlugin = (): boolean => usePluginPresent('work');
 
-/** Whether asking for task data can possibly be answered. Deliberately NOT `useWorkPlugin()`: an
- *  affordance hides until the plugin listing confirms it (never flash a dead link), but a READ must not
- *  be suppressed on a state we do not know yet — that would blank every task surface for the length of
- *  the /plugins/ui round-trip. So: fetch until the listing says the domain has no owner. */
-const useTaskDomainReachable = (): boolean => {
+/** Whether asking a domain's routes for data can possibly be answered. Deliberately NOT
+ *  `usePluginPresent()`: an affordance hides until the plugin listing confirms it (never flash a dead
+ *  link), but a READ must not be suppressed on a state we do not know yet — that would blank every
+ *  surface of that domain for the length of the /plugins/ui round-trip. So: fetch until the listing
+ *  says the domain has no owner. Once it does, the request is a guaranteed 503 on a root mount the
+ *  plugin no longer serves, and react-query would keep re-running it on every mount and window focus. */
+const useDomainReachable = (plugin: string): boolean => {
   const { locale } = useTranslation();
   const pluginUi = usePluginUi(locale);
-  return pluginUi.data === undefined || pluginUi.data.some((p) => p.name === 'work');
+  return pluginUi.data === undefined || pluginUi.data.some((p) => p.name === plugin);
 };
+
+/** The work domain's routes: /tasks and everything under it. */
+const useTaskDomainReachable = (): boolean => useDomainReachable('work');
+
+/** The agents domain's routes: /missions, /sessions, /asks/pending, /notes, /advisor. */
+const useAgentDomainReachable = (): boolean => useDomainReachable('agents');
 
 /** First-run subsystem readiness (admin-only endpoint). Gated by `enabled` so non-admin surfaces never
  *  fire the 403 request. Powers the dashboard "finish setup" nudge and the onboarding checklist. */
