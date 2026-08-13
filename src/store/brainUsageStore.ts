@@ -80,7 +80,12 @@ const USAGE_ROWS = `
 // here instead of vanishing from every stat. Non-task chat sessions always pass.
 // `substr(id, TASK_PREFIX.length + 1)` recovers the task id (SQLite substr is 1-indexed) — derived from
 // the prefix so a rename can't leave the old magic offset behind.
-const TASK_SNAPSHOT_EXCLUSION = `NOT (session_id LIKE '${TASK_PREFIX}%' AND EXISTS (SELECT 1 FROM task_usage tu WHERE tu.task_id = substr(session_id, ${TASK_PREFIX.length + 1})))`;
+// `task_usage` is a WORK-PLUGIN table: a fresh install with that plugin disabled has none at all, and
+// then nothing is snapshotted anywhere — so the clause degrades to "keep every row", which is exactly
+// what an existing-but-empty task_usage already evaluates to. Chat usage stays intact either way.
+const taskSnapshotExclusion = (hasTaskUsage: boolean) => hasTaskUsage
+  ? `NOT (session_id LIKE '${TASK_PREFIX}%' AND EXISTS (SELECT 1 FROM task_usage tu WHERE tu.task_id = substr(session_id, ${TASK_PREFIX.length + 1})))`
+  : '1 = 1';
 
 /** How long a usage view may be served from memory. Both /usage/by-* views run TWO full scans of
  *  brain_messages (the largest table) behind a UNION ALL with per-row json_extract/json_each — yet the
@@ -96,11 +101,11 @@ const USAGE_VIEW_TTL_MS = 60_000;
  *  mid-table delete/update that leaves every MAX untouched (deleteMessage, reassignSession); such a
  *  change is served stale until the TTL lapses. The probe runs before EVERY read, cached or not, so the
  *  stored sentinel always describes the data the value was computed from. */
-const USAGE_SENTINEL_SQL = `SELECT
+const usageSentinelSql = (hasTaskUsage: boolean) => `SELECT
   (SELECT MAX(rowid) FROM brain_messages) AS m,
   (SELECT MAX(rowid) FROM brain_sessions) AS s,
   (SELECT MAX(updated_at) FROM brain_sessions) AS su,
-  (SELECT MAX(rowid) FROM task_usage) AS tu`;
+  ${hasTaskUsage ? '(SELECT MAX(rowid) FROM task_usage)' : 'NULL'} AS tu`;
 
 interface UsageSentinel { m: number | null; s: number | null; su: string | null; tu: number | null }
 interface ViewCacheEntry { at: number; sentinel: UsageSentinel; value: unknown }
@@ -203,6 +208,15 @@ export class BrainUsageStore {
 
   constructor(private db: Db, private readonly now: () => number = Date.now) {}
 
+  /** Does this database carry the work plugin's `task_usage` table? Re-read per query rather than cached
+   *  on the instance: enabling the plugin creates the table inside a LIVE process (a registry reload runs
+   *  its migrations), and a remembered "absent" would go on counting spend that IS snapshotted, i.e.
+   *  double it, until the next restart. The read is a lookup in sqlite_master — nothing beside the full
+   *  brain_messages scans these views run. */
+  private hasTaskUsage(): boolean {
+    return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_usage'").get();
+  }
+
   /** Strip this user's recorded spend from the rows the Stats charts are derived from. Chat spend has no
    *  separate snapshot to delete — it is read back out of the conversation itself — so clearing it means
    *  rewriting those rows. Only the accounting is removed; message text, model and timestamp stay, so
@@ -239,7 +253,7 @@ export class BrainUsageStore {
    *  pattern is borrowed from, a local SQL read has no transient failure mode worth riding out, and a
    *  genuinely broken database should surface errors, not hide behind last-known numbers. */
   private cachedView<T>(key: string, compute: () => T): T {
-    const sentinel = this.db.prepare(USAGE_SENTINEL_SQL).get() as UsageSentinel;
+    const sentinel = this.db.prepare(usageSentinelSql(this.hasTaskUsage())).get() as UsageSentinel;
     const hit = this.viewCache.get(key);
     if (hit && this.now() - hit.at < USAGE_VIEW_TTL_MS
         && hit.sentinel.m === sentinel.m && hit.sentinel.s === sentinel.s
@@ -255,7 +269,7 @@ export class BrainUsageStore {
   /** Per-day token/cost totals of the user's OWN brain chat sessions (NOT task worker or channel-anchor
    *  sessions) over the last `days` days, for the dashboard spend tiles — task_usage only covers task
    *  workers, so without this a paid chat model burned money invisibly. `brain-task-%` sessions are
-   *  excluded only when already snapshotted in task_usage (see {@link TASK_SNAPSHOT_EXCLUSION}). */
+   *  excluded only when already snapshotted in task_usage (see {@link taskSnapshotExclusion}). */
   usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
     return this.cachedView(`byDay${userId}${daysArg}`, () => this.db.prepare(
@@ -266,7 +280,7 @@ export class BrainUsageStore {
          FROM usage_rows
         WHERE user_id = ?
           AND ts IS NOT NULL
-          AND ${TASK_SNAPSHOT_EXCLUSION}
+          AND ${taskSnapshotExclusion(this.hasTaskUsage())}
           AND date(ts / 1000, 'unixepoch') >= date('now', ?)
         GROUP BY day ORDER BY day`
     ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[]);
@@ -279,7 +293,7 @@ export class BrainUsageStore {
    *  current model, so switching a conversation's model never retroactively re-attributes its history —
    *  and emits `elowen:<model>` so a model that ALSO ran as a task worker folds into the SAME bucket the
    *  task_usage aggregate uses. `brain-task-%` sessions are excluded only when already snapshotted in
-   *  task_usage (TASK_SNAPSHOT_EXCLUSION); platform channel sessions (Discord) ARE included — the operator
+   *  task_usage (taskSnapshotExclusion); platform channel sessions (Discord) ARE included — the operator
    *  anchors them, so their spend counts as the operator's. Brain chat cost is OpenRouter provider-reported, so a costed
    *  bucket is `provider_reported`; an uncosted one is `unavailable` (costUsd null), matching usageByDay's
    *  null-vs-real-$0 distinction. Optional `window` narrows by each row's own attribution timestamp (ms
@@ -287,7 +301,7 @@ export class BrainUsageStore {
    *  view (`ts IS NOT NULL`) so windowed totals always sum to the unwindowed total. A bucket comes back
    *  if it has any tokens OR any cost (a provider that reports cost with zero tokens still counts). */
   usageByModel(userId: number, window?: { fromIso?: string; toIso?: string }): { exec: string; usage: TokenUsage }[] {
-    const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`, TASK_SNAPSHOT_EXCLUSION];
+    const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`, taskSnapshotExclusion(this.hasTaskUsage())];
     const params: (string | number)[] = [userId];
     const fromMs = window?.fromIso ? Date.parse(window.fromIso) : NaN;
     const toMs = window?.toIso ? Date.parse(window.toIso) : NaN;

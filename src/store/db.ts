@@ -114,22 +114,6 @@ function applyAdditiveMigrations(db: Db): void {
   // Project icon: a project-relative path to an image file already in the repo (e.g. assets/logo.png).
   // Empty = the default folder glyph. Never an uploaded copy — it references a file in the project.
   addColumn(db, 'projects', 'icon', "TEXT NOT NULL DEFAULT ''");
-  addColumn(db, 'tasks', 'description', "TEXT NOT NULL DEFAULT ''");
-  addColumn(db, 'tasks', 'scheduled_at', 'TEXT');
-  addColumn(db, 'tasks', 'autostart', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(db, 'tasks', 'result_summary', 'TEXT');
-  addColumn(db, 'tasks', 'outcome', 'TEXT');
-  addColumn(db, 'tasks', 'closed_at', 'TEXT');
-  // Per-task frozen change list captured at close: the files THIS task committed (JSON CommitFileChange[]),
-  // plus the base/head SHAs the diff was taken between so a single file's diff can be regenerated lazily.
-  // Never the live working tree (shared per project) — see TaskSnapshot. Old DBs default empty/NULL.
-  addColumn(db, 'tasks', 'changed_files', 'TEXT');
-  addColumn(db, 'tasks', 'base_sha', 'TEXT');
-  addColumn(db, 'tasks', 'head_sha', 'TEXT');
-  // Transient input for a task's NEXT run — a review-reject rationale, or a stuck/manual relaunch
-  // reason — kept as a first-class field instead of being concatenated into the description, so it's
-  // set and read without parsing. Surfaces in the re-spawned agent's prompt. Old DBs default NULL.
-  addColumn(db, 'tasks', 'resume_note', 'TEXT');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   // Per-user tool deny-list (CSV of plugin tool names disabled for this user's own brain sessions).
@@ -161,11 +145,11 @@ function applyAdditiveMigrations(db: Db): void {
   // 1/0 = force on/off for this project (each project can run a different flow). Old DBs default NULL.
   addColumn(db, 'projects', 'pr_enabled', 'INTEGER');
   // The mission_pr/missions column additions that used to sit here (fix_rounds, last_feedback,
-  // created_by, pilot_exec, overseer_exec) moved to the agents plugin's migration v2 — those tables
-  // are plugin-owned and a fresh install with the plugin disabled does not have them at all.
-  // Who created the task — used to attribute a spawned agent to a user so its prompts resolve to that
-  // user's overrides (else admin fallback). Nullable: legacy/system tasks have no owner. Old DBs NULL.
-  addColumn(db, 'tasks', 'created_by', 'INTEGER');
+  // created_by, pilot_exec, overseer_exec) moved to the agents plugin's migration v2, and the
+  // tasks/task_usage ones (description … resume_note, created_by; reasoning, cost_source, currency,
+  // raw_usage_metadata) to the work plugin's — those tables are plugin-owned and a fresh install with
+  // the plugin disabled does not have them at all. Both plugins add their columns in the ORDER core
+  // used to, so an ancient database upgrading through them lands in the exact shape it always did.
   // Memory categories: a memory's assigned category (nullable, id-addressed — a rename never re-tags).
   // Index created here (not schema.sql) so it runs after the column exists on migrated DBs.
   addColumn(db, 'memories', 'category_id', 'INTEGER');
@@ -239,12 +223,6 @@ function applyAdditiveMigrations(db: Db): void {
   // Mid-turn (provisional) message rows — see brain_messages in schema.sql. Every existing row was written
   // by a settled agent_end, so the 0 default correctly reads the whole back catalogue as durable history.
   addColumn(db, 'brain_messages', 'pending', 'INTEGER NOT NULL DEFAULT 0');
-  // Extended usage/cost accounting (see task_usage in schema.sql). All nullable/zero-default so existing
-  // rows read as legacy (reasoning 0, no currency, cost_source NULL treated as unknown).
-  addColumn(db, 'task_usage', 'reasoning', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(db, 'task_usage', 'cost_source', 'TEXT');
-  addColumn(db, 'task_usage', 'currency', 'TEXT');
-  addColumn(db, 'task_usage', 'raw_usage_metadata', 'TEXT');
   // A linked Discord snowflake is an identity key — enforce one-owner-per-id with a partial UNIQUE index
   // so a squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs.
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId'");

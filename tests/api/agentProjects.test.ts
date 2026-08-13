@@ -7,14 +7,14 @@ import { EventBus } from '../../src/api/sse.js';
 import { createRouteContext } from '../../src/api/context.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 // agentProjects() is the confinement boundary for agent-scoped tokens (canAccessProject /
 // accessibleProjects never admin-bypass them). It was rewritten from a per-mission/per-child
 // `tasks.get()` N+1 to a single `tasks.list()` pass — this pins the exact set it must keep
 // returning across that rewrite, group by group.
 function setup() {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'p1','/p1')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'p2','/p2')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (3,'p3','/p3')").run();

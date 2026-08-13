@@ -17,7 +17,7 @@ import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
 let sharedRuntime: ModelRuntime;
@@ -45,7 +45,7 @@ function pluginDirsFixture(): string[] {
 }
 
 function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = []) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');

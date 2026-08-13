@@ -5,7 +5,7 @@ import { inMemoryModelRuntime } from '../../../src/brain/providers.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
-import { openDb } from '../../../src/store/db.js';
+import { openWorkDb } from '../../helpers/workDb.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
 import { TaskRefs } from '../../../src/store/taskRefs.js';
 import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
@@ -39,7 +39,7 @@ function fakeSession() {
 }
 
 function setup(opts: { idleMs?: number; prompts?: unknown } = {}) {
-  const db = openDb(':memory:');
+  const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
   const tasks = new TaskStore(db);
   tasks.create({ id: 'T-1', project_id: 1, title: 'Fix bug' });
@@ -226,7 +226,7 @@ describe('BrainWorkerService', () => {
   it('appends the TDD directive even when the owner saved a wholesale worker-brain override', async () => {
     // Reproduces the reported bug at the embedded-worker seam: an override edited before TDD mode
     // existed omits any {{tddDirective}} placeholder, yet TDD mode must still reach the worker.
-    const overrideDb = openDb(':memory:');
+    const overrideDb = openWorkDb(':memory:');
     const store = new UserPromptStore(overrideDb);
     store.set(0, 'worker-brain', 'You are agent {{agentName}} on {{taskId}}. Do the task and close it.');
     const prompts = new PromptService(store);

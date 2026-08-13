@@ -12,7 +12,8 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { openDb } from '../../src/store/db.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openWorkDb } from '../helpers/workDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
@@ -41,7 +42,7 @@ function workOnlyPlugins(w: {
  *  mission/session/plan write paths must answer an explicit 503, never crash on an undefined dep, and
  *  the read paths must keep working off the RouteContext's local fallbacks. */
 function setup() {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -125,7 +126,7 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
   it('FRESH install (agents tables never created): epic delete and admin cleanup succeed', async () => {
     // A fresh daemon with the plugin disabled has NO missions/mission_pr/agents/notes tables at all —
     // the destructive core paths must tolerate that shape, not crash on "no such table".
-    const db = openDb(':memory:');
+    const db = openWorkDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
@@ -180,7 +181,7 @@ describe('agents plugin disabled → explicit degradation (404 mounts, 503 core 
     bare.tasks.create({ id: 'a1', project_id: 1, title: 'A1' });
     expect((await bare.app.request('/tasks/a1/approve-gate', post(bare.tok, {}))).status).toBe(404);
     // Discovered-but-disabled plugin → the manifest-declared mount degrades to the explicit 503.
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');

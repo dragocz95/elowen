@@ -16,10 +16,10 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 async function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // first user → is_admin

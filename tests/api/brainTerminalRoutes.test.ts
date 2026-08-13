@@ -16,10 +16,10 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { BrainTerminalService } from '../../src/brain/terminalService.js';
 import { classifySession } from '../../src/shared/sessionInfo.js';
 import { freshUserSessionId, brainTerminalName } from '../../src/brain/sessionId.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 function setup() {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw'); // id 1, is_admin

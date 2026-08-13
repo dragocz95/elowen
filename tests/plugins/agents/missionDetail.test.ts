@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
 import { assembleMissionDetail } from '../../../plugins/agents/src/api/missionDetail.js';
-import { openAgentsDb } from '../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 
 let tasks: TaskStore; let missions: MissionStore;
 beforeEach(() => {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/var/www/elowen')").run();
   tasks = new TaskStore(db); missions = new MissionStore(db);
 });

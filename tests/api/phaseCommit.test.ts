@@ -14,7 +14,7 @@ import { createServer } from '../../src/api/server.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 let base: string, repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -22,7 +22,7 @@ const close = (app: ReturnType<typeof createServer>, id: string) =>
   app.request(`/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'closed', result_summary: 'done', outcome: 'ok' }) });
 
 async function build(prEnabled: boolean) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);

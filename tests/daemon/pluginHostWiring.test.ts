@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
+import { applyWorkMigrations } from '../helpers/workDb.js';
 import type { PluginElowenCli, PluginHostStores } from '../../src/plugins/api.js';
 
 // The WIRING is the protection here. `ctx.host.stores().tasks` is what an extracted subsystem (agents)
@@ -37,6 +38,10 @@ describe('buildBrainCore plugin-host wiring', () => {
       bootstrap,
       pluginDirs: [pluginsDir, join(dir, 'user-plugins')],
     });
+    // The task tables belong to the work plugin, which is NOT loaded here — give this database their
+    // shape anyway, so "a core row exists" is a real arrangement and the assertions below are about the
+    // seam resolving an owner, not about a missing table.
+    applyWorkMigrations(core.db);
     core.config.update({ plugins: { enabled: ['probe'] } });
     await core.pluginProvider.get();
     const captured = globalThis as { __hostStores?: PluginHostStores; __hostCli?: PluginElowenCli };

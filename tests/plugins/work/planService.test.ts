@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../../src/store/db.js';
+import { openWorkDb } from '../../helpers/workDb.js';
 import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { ConfigStore } from '../../../src/store/configStore.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
@@ -8,7 +8,7 @@ import { createPlanService } from '../../../plugins/work/src/api/planService.js'
 import type { CreateTaskInput } from '../../../src/store/types.js';
 
 function makeService() {
-  const db = openDb(':memory:');
+  const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/proj')").run();
   const tasks = new TaskStore(db);
   const events: ElowenEvent[] = [];

@@ -137,7 +137,9 @@ export class UserStore {
     // person who no longer has the account. Nulling is correct even independent of id reuse: a
     // `created_by` pointing at a user that no longer exists is already a dangling reference.
     this.db.transaction(() => {
-      this.db.prepare('UPDATE tasks SET created_by = NULL WHERE created_by = ?').run(id);
+      // `tasks` is a WORK-PLUGIN table (as `missions` is an agents one) — null the attribution when
+      // present, tolerate a fresh install where the plugin never created it.
+      tolerateMissingPluginTables(() => { this.db.prepare('UPDATE tasks SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);
       // `missions` is an AGENTS-PLUGIN table (created_by arrives with its migration v2) — null the
       // attribution when present, tolerate a fresh/ancient install without the table or column.
       tolerateMissingPluginTables(() => { this.db.prepare('UPDATE missions SET created_by = NULL WHERE created_by = ?').run(id); }, undefined);

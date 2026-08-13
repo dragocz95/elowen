@@ -4,7 +4,7 @@ import { BrainService } from '../../src/brain/brainService.js';
 import { BrainWorkerService } from '../../src/brain/worker/brainWorker.js';
 import { compactionReserveTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
-import { openDb } from '../../src/store/db.js';
+import { openWorkDb } from '../helpers/workDb.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { EventBus } from '../../src/api/sse.js';
@@ -73,7 +73,7 @@ function brainHarness(settings: (userId: number) => CliSettings | undefined) {
     return { session };
   });
   const d = {
-    store: new BrainStore(openDb(':memory:')),
+    store: new BrainStore(openWorkDb(':memory:')),
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
@@ -179,7 +179,7 @@ describe('auto-compact threshold on live sessions', () => {
 
 describe('auto-compact threshold on task workers', () => {
   function workerHarness(userSettings?: (userId: number) => CliSettings) {
-    const db = openDb(':memory:');
+    const db = openWorkDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'T-1', project_id: 1, title: 'Fix bug' });

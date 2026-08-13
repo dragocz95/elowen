@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
+import { openWorkDb } from '../../../helpers/workDb.js';
 import { TaskUsageStore } from '../../../../plugins/work/src/store/taskUsageStore.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { UsageRecorder } from '../../../../plugins/agents/src/usage/recorder.js';
@@ -10,7 +10,7 @@ const task = (over: Partial<{ id: string; project_id: number; labels: string[]; 
   ({ id: 't1', project_id: 1, parent_id: null, created_at: '', labels: ['exec:sonnet'], ...over });
 
 function setup(read: () => TokenUsage | null = () => fakeUsage) {
-  const usage = new TaskUsageStore(openDb(':memory:'));
+  const usage = new TaskUsageStore(openWorkDb(':memory:'));
   const bus = new EventBus();
   const tasks = { get: (_id: string) => task(), list: () => [task()] };
   new UsageRecorder({ usage, tasks: tasks as never, pathFor: () => '/p', fallback: { program: 'claude-code', model: 'sonnet' }, read }).subscribe(bus);
@@ -44,7 +44,7 @@ describe('UsageRecorder', () => {
   });
 
   it('stamps the resume label from the detected CLI session on close', () => {
-    const usage = new TaskUsageStore(openDb(':memory:'));
+    const usage = new TaskUsageStore(openWorkDb(':memory:'));
     const bus = new EventBus();
     const stamped: { id: string; program: string; sessionId: string }[] = [];
     const tasks = { get: () => task(), list: () => [task()], setResumeLabel: (id: string, program: string, sessionId: string) => stamped.push({ id, program, sessionId }) };
@@ -57,7 +57,7 @@ describe('UsageRecorder', () => {
   });
 
   it('stamps the resume label even when usage parsing finds nothing (session still resumable)', () => {
-    const usage = new TaskUsageStore(openDb(':memory:'));
+    const usage = new TaskUsageStore(openWorkDb(':memory:'));
     const bus = new EventBus();
     const stamped: string[] = [];
     const tasks = { get: () => task(), list: () => [task()], setResumeLabel: (_id: string, _p: string, sessionId: string) => stamped.push(sessionId) };
@@ -70,7 +70,7 @@ describe('UsageRecorder', () => {
   });
 
   it('never lets a reader error abort the bus broadcast', () => {
-    const usage = new TaskUsageStore(openDb(':memory:'));
+    const usage = new TaskUsageStore(openWorkDb(':memory:'));
     const bus = new EventBus();
     const tasks = { get: () => task(), list: () => [task()] };
     new UsageRecorder({ usage, tasks: tasks as never, pathFor: () => '/p', fallback: { program: 'claude-code', model: 'sonnet' }, read: () => { throw new Error('boom'); } }).subscribe(bus);

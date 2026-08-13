@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { openDb, type Db } from '../../src/store/db.js';
+import { type Db } from '../../src/store/db.js';
+import { openWorkDb } from '../helpers/workDb.js';
 import { BrainUsageStore } from '../../src/store/brainUsageStore.js';
 
 // The /usage/by-model and /usage/by-day views each run two full scans of brain_messages behind a
@@ -25,7 +26,7 @@ describe('BrainUsageStore view cache', () => {
     spy.mock.calls.filter((call) => call[0].includes('usage_rows')).length;
 
   beforeEach(() => {
-    db = openDb(':memory:');
+    db = openWorkDb(':memory:');
     now = Date.parse('2026-07-29T12:00:00Z');
     store = new BrainUsageStore(db, () => now);
     addSession('s1');

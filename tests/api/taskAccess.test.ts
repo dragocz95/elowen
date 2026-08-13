@@ -11,12 +11,12 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 // Two projects: bob is assigned to #1 only; admin sees both. Cross-project task/mission access
 // must be gated per-resource (by the resource's own project), not just by home-project membership.
 function setup() {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);
@@ -99,7 +99,7 @@ describe('per-resource task/mission access', () => {
   // original version of this test masked exactly this by assigning its second user to the home
   // project. Here Carol is a member of project 2 ONLY, never of the home project (1).
   it('a non-admin not assigned to the home project cannot POST /tasks or /tasks/plan into it', async () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
     const users = new UserStore(db);
@@ -141,7 +141,7 @@ describe('per-resource task/mission access', () => {
   // agent token with an empty working set (no live agent task/mission) must be refused the home
   // project exactly like any other project it hasn't been confined to.
   it('an agent-scoped token outside its working set cannot POST /tasks into the home project', async () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
@@ -173,7 +173,7 @@ describe('per-resource task/mission access', () => {
   // tasks + active missions' epics) is empty — its epic-close would 403. The still-open epic, having
   // hosted agent work, must keep its project reachable to that agent until the epic itself is closed.
   it('an agent can close its own (still-open) mission epic after its final leaf closed — no 403 race', async () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');

@@ -10,6 +10,15 @@ import type { Db } from './db.js';
  *  - 'project': every task with `project_id = id`.
  *  - 'epic': the task `id` and its whole descendant subtree. */
 export function deleteTasksAndDeps(db: Db, scope: 'project' | 'epic', id: string | number): number {
+  // tasks/task_deps are WORK-PLUGIN tables now: purge them when they exist (even with the plugin off —
+  // skipping would strand orphans that resurface on re-enable), tolerate a fresh install where the
+  // plugin never created them. The tolerance wraps the WHOLE teardown rather than each statement: with
+  // no `tasks` table there is no id to collect, and the agents rows below are keyed by exactly the ids
+  // this could not read — so there is nothing left for them to purge either.
+  return tolerateMissingPluginTables(() => deleteTaskRows(db, scope, id), 0);
+}
+
+function deleteTaskRows(db: Db, scope: 'project' | 'epic', id: string | number): number {
   const ids: string[] = scope === 'project'
     ? (db.prepare('SELECT id FROM tasks WHERE project_id = ?').all(id) as { id: string }[]).map((r) => r.id)
     : [String(id), ...(db.prepare(

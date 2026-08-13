@@ -11,10 +11,10 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 function makeAuthedApp() {
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('alice', 'secret');
   const brainStore = new BrainStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);

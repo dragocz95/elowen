@@ -10,7 +10,7 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { safeProjectPath } from '../../src/integrations/projectFiles.js';
@@ -19,7 +19,7 @@ import { safeProjectPath } from '../../src/integrations/projectFiles.js';
 // behaviour, not the tenancy gate (covered in projectAccess.test.ts). The project points at a real
 // temp dir so every operation hits the actual filesystem.
 function makeApp() {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const projects = new ProjectStore(db);
   const app = createServer({

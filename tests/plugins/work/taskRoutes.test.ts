@@ -11,14 +11,14 @@ import { FakeClock } from '../../../src/shared/clock.js';
 import { FakeTmuxDriver } from '../../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../../src/store/configStore.js';
 import { ProjectStore } from '../../../src/store/projectStore.js';
-import { openAgentsDb } from '../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 
 /** A daemon serving the task API the way the product does: the REAL work plugin (loaded from its dist
  *  build) root-mounts `/tasks*` and `/plan/*` over these stores, with the agents plugin loaded beside
  *  it — the plan/mission half of the flow resolves through its control, exactly as in the daemon.
  *  No user store, so the routes are exercised in open mode without auth. */
 function makeApp(opts: { apiKey?: string; fakePlan?: string; extraProject?: boolean } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   if (opts.extraProject) db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const tasks = new TaskStore(db);

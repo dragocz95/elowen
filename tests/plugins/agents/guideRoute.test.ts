@@ -11,13 +11,13 @@ import { UserStore } from '../../../src/store/userStore.js';
 import { ProjectStore } from '../../../src/store/projectStore.js';
 import { FakeTmuxDriver } from '../../../src/tmux/fakeDriver.js';
 import { agentsPluginProvider } from '../../helpers/testApp.js';
-import { openAgentsDb } from '../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 
 /** GET /tasks/:id/guide is served by the agents plugin (pattern root mount). With no prompts override
  *  the provider renders the real `agent-guide*.md` files from disk — so these tests also guard the
  *  shipped template content, exactly as the old guideService unit tests did. */
 function setup(opts: { withMission?: boolean; prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string }; createdBy?: number } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');

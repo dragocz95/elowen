@@ -13,7 +13,7 @@ import { MemoryStore } from '../../src/store/memoryStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { EmbeddingService, type ProviderResolver } from '../../src/embeddings/embeddingService.js';
 import { runMemoryEvictionSweep } from '../../src/daemon/bootstrap.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 interface MemoryDto {
   id: number;
@@ -49,7 +49,7 @@ function embeddingFetch(vectors: Record<string, number[]>): typeof fetch {
 }
 
 function setup(withEmbeddings = true) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id, slug, path) VALUES (1, 'elowen', '/o')").run();
   const users = new UserStore(db);
   const user = users.create('amy', 'pw');

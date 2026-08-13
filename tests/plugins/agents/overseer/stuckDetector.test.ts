@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../../../src/store/db.js';
+import { openWorkDb } from '../../../helpers/workDb.js';
 import { TaskStore } from '../../../../plugins/work/src/store/taskStore.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../../src/api/sse.js';
@@ -9,7 +9,7 @@ import { sweepStuckTasks, deadAgentTasks } from '../../../../plugins/agents/src/
 const NOW = Date.parse('2026-06-18T12:00:00.000Z');
 
 function setup() {
-  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openWorkDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const tmux = new FakeTmuxDriver();
   const bus = new EventBus();
@@ -103,7 +103,7 @@ describe('sweepStuckTasks', () => {
 
 describe('sweepStuckTasks created_at fallback (#54)', () => {
   it('parses an already-ISO created_at (with zone) without producing NaN', async () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openWorkDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     const tmux = new FakeTmuxDriver();
     const bus = new EventBus();
@@ -120,7 +120,7 @@ describe('sweepStuckTasks created_at fallback (#54)', () => {
 
 describe('deadAgentTasks', () => {
   it('flags in_progress tasks with no live session (or no agent label)', () => {
-    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openWorkDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'live', project_id: 1, title: 'l', labels: ['agent:Live'] });
     tasks.create({ id: 'dead', project_id: 1, title: 'd', labels: ['agent:Dead'] });

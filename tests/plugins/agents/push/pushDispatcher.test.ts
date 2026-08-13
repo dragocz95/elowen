@@ -7,12 +7,12 @@ import { EventBus } from '../../../../src/api/sse.js';
 import { PushDispatcher, type PrInfoReader } from '../../../../plugins/agents/src/push/pushDispatcher.js';
 import type { PushSender } from '../../../../src/push/pushSender.js';
 import type { PushPayload } from '../../../../src/push/messages.js';
-import { openAgentsDb } from '../../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../../helpers/pluginTablesDb.js';
 
 interface Captured { userIds: number[]; payload: PushPayload }
 
 function harness(prInfo?: PrInfoReader) {
-  const db: Db = openAgentsDb(':memory:');
+  const db: Db = openPluginTablesDb(':memory:');
   const missions = new MissionStore(db);
   const tasks = new TaskStore(db);
   const users = new UserStore(db);

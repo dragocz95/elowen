@@ -13,14 +13,14 @@ import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore, type ConfigPatch } from '../../src/store/configStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
 
 interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
 function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; agents?: boolean } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (over.patch) config.update(over.patch);

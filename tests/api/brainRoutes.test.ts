@@ -18,7 +18,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { ProcessInfo } from '../../src/brain/processRegistry.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 const proc = (id: string, sessionId: string | null): ProcessInfo => ({
   id, command: `sleep ${id}`, cwd: '/w', startedAt: '2026-01-01T00:00:00Z', sessionId, running: true, exitCode: null,
@@ -316,7 +316,7 @@ function lspPluginProvider(diagnosticsEnabled: boolean): PluginRegistryProvider 
 }
 
 function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegistryProvider } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -1016,7 +1016,7 @@ describe('GET /brain/status telemetry', () => {
 
 describe('GET /brain/models allow-list', () => {
   function setupWithProviders() {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');

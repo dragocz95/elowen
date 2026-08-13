@@ -3,7 +3,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 import { builtinToolMetas, BUILTIN_TOOL_PLAN_SAFE } from '../../src/brain/tools/index.js';
-import { openDb } from '../../src/store/db.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { Readiness } from '../../plugins/work/src/store/readiness.js';
@@ -34,7 +34,7 @@ async function loadEveryBundledPlugin() {
   // The agents plugin needs a database and host seams at register() time (schema migration, tmux for
   // its '/sessions' surface) — without them it fails load and its declared tools would silently drop
   // out of the parity comparison below. Everything deeper is resolved lazily and never touched here.
-  const db = openDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const host = agentsTestHost({ db, tasks: new TaskStore(db), readiness: new Readiness(db), config: new ConfigStore(db), projects: new ProjectStore(db) });
   return loadPlugins({

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { openDb } from '../../src/store/db.js';
+import { openWorkDb } from '../helpers/workDb.js';
 import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 
 function setup() {
-  const db = openDb(':memory:');
+  const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'o','/o')").run();
   const tasks = new TaskStore(db);
   tasks.create({ id: 't', project_id: 1, title: 'T' });

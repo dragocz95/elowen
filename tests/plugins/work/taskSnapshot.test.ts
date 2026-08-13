@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { openDb } from '../../../src/store/db.js';
 import type { Db } from '../../../src/store/db.js';
+import { openWorkDb } from '../../helpers/workDb.js';
 import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { projectHead, projectRangeDiff } from '../../../src/integrations/projectFiles.js';
 import { snapshotTaskChanges } from '../../../plugins/work/src/api/taskSnapshot.js';
@@ -24,7 +24,7 @@ const deps: SnapshotDeps = {
 };
 
 beforeEach(() => {
-  db = openDb(':memory:');
+  db = openWorkDb(':memory:');
   tasks = new TaskStore(db);
   root = mkdtempSync(join(tmpdir(), 'elowen-snap-'));
   git('init', '-q');

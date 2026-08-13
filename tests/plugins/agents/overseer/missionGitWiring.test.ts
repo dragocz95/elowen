@@ -22,14 +22,14 @@ import { SpawnService } from '../../../../plugins/agents/src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../../../src/api/sse.js';
 import { SystemClock } from '../../../../src/shared/clock.js';
-import { openAgentsDb } from '../../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../../helpers/pluginTablesDb.js';
 
 let base: string;   // unique parent so the sibling `.elowen-worktrees/` dir is isolated + cleaned
 let repo: string;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
 
 function setup(prEnabled: boolean) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);

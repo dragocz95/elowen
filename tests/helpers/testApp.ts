@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdirSync } from 'node:fs';
 import { openDb } from '../../src/store/db.js';
+import { openWorkDb } from './workDb.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff } from '../../src/integrations/projectFiles.js';
 import { render, setPluginPromptSources } from '../../src/prompts/index.js';
@@ -173,7 +174,7 @@ export interface TestAppOpts {
  *  plugin's root-mounted routes use. Exposes the live stores/queues so tests can arrange state and
  *  assert side effects. */
 export async function makeTestApp(opts: TestAppOpts = {}) {
-  const db = openDb(':memory:');
+  const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const readiness = new Readiness(db);

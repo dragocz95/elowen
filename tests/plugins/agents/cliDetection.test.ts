@@ -8,7 +8,7 @@ import { EventBus } from '../../../src/api/sse.js';
 import { FakeClock } from '../../../src/shared/clock.js';
 import { ConfigStore } from '../../../src/store/configStore.js';
 import { UserStore } from '../../../src/store/userStore.js';
-import { openAgentsDb } from '../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 
 // Every detectClis() call spawns 9 real binaries with --version, and one of them (kilo) boots a
 // daemon to answer, so a single case costs ~2.5s idle. Vitest's 5s default left only 2x headroom,
@@ -17,7 +17,7 @@ import { openAgentsDb } from '../../helpers/agentsDb.js';
 vi.setConfig({ testTimeout: 30_000 });
 
 function makeAuthedApp() {
-  const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('admin', 'pass');
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
@@ -86,7 +86,7 @@ describe('cli detection unit', () => {
 
 describe('cli detection integration via API', () => {
   it('answers 503 when the agents plugin (the detector owner) is absent', async () => {
-    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db); users.create('admin', 'pass');
     const app = createServer({
       tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
@@ -140,7 +140,7 @@ describe('cli detection integration via API', () => {
   });
 
   it('detects fresh install state (fresh db — no settings row)', async () => {
-    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const config = new ConfigStore(db); // no settings saved yet
     const users = new UserStore(db); users.create('admin', 'pass');
     // Overwrite settings so the row actually exists — force a known state.
@@ -158,7 +158,7 @@ describe('cli detection integration via API', () => {
   });
 
   it('detects configured install after config is saved', async () => {
-    const db = openAgentsDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const config = new ConfigStore(db);
     // Persist a config row to simulate configured install.
     config.update({ autopilot: { apiKey: 'sk-set' } });

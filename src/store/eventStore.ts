@@ -1,3 +1,4 @@
+import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import type { ElowenEvent } from '../api/sse.js';
 import type { EventPersistenceRow } from '../plugins/api.js';
@@ -46,18 +47,20 @@ export class EventStore {
     // Stamp the event with its owning project so the timeline can scope it to the right repo. The bus
     // subscriber resolves the project for EVERY event type and passes it in; a direct caller that
     // omits it falls back to the row's task lookup (rows without a labelTitleId stay null).
+    // `tasks` is a WORK-PLUGIN table: with that plugin disabled the timeline stays core and still
+    // records the event, it merely has no task to derive a project or a label from (another plugin's
+    // resolver can still name one — an agents mission event labels itself with its epic).
+    const task = r.labelTitleId
+      ? tolerateMissingPluginTables(
+          () => this.db.prepare('SELECT project_id, title FROM tasks WHERE id = ?').get(r.labelTitleId) as { project_id: number; title: string } | undefined,
+          undefined)
+      : undefined;
     let pid = projectId;
-    if (pid === undefined) {
-      pid = r.labelTitleId
-        ? (this.db.prepare('SELECT project_id FROM tasks WHERE id = ?').get(r.labelTitleId) as { project_id: number } | undefined)?.project_id ?? null
-        : null;
-    }
+    if (pid === undefined) pid = task?.project_id ?? null;
     // Snapshot a human label now so the event still reads as a name after its task/epic is deleted
     // (events outlive tasks). The row names the task whose title labels it (task/review → the task,
     // mission → its epic); signal/plan rows carry no title id — the target already reads as a name.
-    const label = r.labelTitleId
-      ? (this.db.prepare('SELECT title FROM tasks WHERE id = ?').get(r.labelTitleId) as { title: string } | undefined)?.title ?? ''
-      : '';
+    const label = task?.title ?? '';
     this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, pid, label);
   }
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */

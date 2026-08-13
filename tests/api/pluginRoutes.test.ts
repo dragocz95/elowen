@@ -18,7 +18,7 @@ import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makeAgentCatalog } from '../../src/brain/agents/catalogService.js';
 import { promptsPath } from '../../src/prompts/index.js';
 
@@ -53,7 +53,7 @@ function setup() {
       { key: 'rolePolicies', label: 'Role policies', type: 'rolePolicies' },
     ],
   });
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -194,7 +194,7 @@ describe('plugin routes', () => {
     const root = tmpDir('plugcaps');
     makePlugin(root, 'enricher', { capabilities: { hooks: ['brain.turn.contextBuilt'], mutates: ['turnContext'], network: true } });
     makePlugin(root, 'plain');
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const app = createServer({
@@ -237,7 +237,7 @@ describe('plugin routes', () => {
         });
       }
     `);
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');
@@ -328,7 +328,7 @@ describe('sub-agent (typed .md) routes', () => {
     const pluginDataRoot = join(cfgDir, 'plugins-data');
     mkdirSync(pluginDataRoot, { recursive: true });
     const userAgentsDir = join(cfgDir, 'agents');
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');

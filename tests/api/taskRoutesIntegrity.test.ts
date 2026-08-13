@@ -13,7 +13,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
 import type { MissionEngine } from '../../plugins/agents/src/overseer/missionEngine.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 /** Make a store's dependency write always fail — stands in for any error inside setDeps (locked DB,
  *  constraint violation) so the create path's atomicity can be observed. */
@@ -40,7 +40,7 @@ class GhostTmux extends FakeTmuxDriver {
  *  over these stores — `tmux` is injectable (the routes kill through `ctx.host.tmux()`), and the loaded
  *  'agents' control is returned so a test can make a teardown fail on the very instance the routes use. */
 async function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const readiness = new Readiness(db);

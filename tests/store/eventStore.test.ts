@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
+import { openWorkDb } from '../helpers/workDb.js';
 import { EventStore } from '../../src/store/eventStore.js';
 import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
 
@@ -9,7 +9,7 @@ import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
 // (type strings, details, labels) across the extraction. The plugin-OFF degradation is covered below.
 let db: Db;
 let events: EventStore;
-beforeEach(() => { db = openDb(':memory:'); events = new EventStore(db, () => [agentsEventRow]); });
+beforeEach(() => { db = openWorkDb(':memory:'); events = new EventStore(db, () => [agentsEventRow]); });
 
 describe('EventStore', () => {
   it('records each event kind to the right row', () => {

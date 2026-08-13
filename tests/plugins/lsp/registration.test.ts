@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { openAgentsDb } from '../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 import { loadPlugins } from '../../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../../src/plugins/pluginsProvider.js';
 import { createServer } from '../../../src/api/server.js';
@@ -26,7 +26,7 @@ const loadWith = (enabled: string[]) => loadPlugins({
 });
 
 function serverWith(enabled: string[]) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');

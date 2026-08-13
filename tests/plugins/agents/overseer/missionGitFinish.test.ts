@@ -9,7 +9,7 @@ import { ProjectStore } from '../../../../src/store/projectStore.js';
 import { ConfigStore } from '../../../../src/store/configStore.js';
 import { MissionPrStore } from '../../../../plugins/agents/src/store/missionPrStore.js';
 import { MissionGit } from '../../../../plugins/agents/src/overseer/missionGit.js';
-import { openAgentsDb } from '../../../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../../../helpers/pluginTablesDb.js';
 
 let base: string, repo: string, remote: string, binDir: string, origPath: string | undefined;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -20,7 +20,7 @@ function fakeGh(script: string) {
 }
 
 function build(opts: { prAutoOpen: boolean; verify: string }) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   const projects = new ProjectStore(db);
   const project = projects.create({ slug: 'demo', path: repo });
   const tasks = new TaskStore(db);

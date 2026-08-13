@@ -16,7 +16,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 const AGENTS_NAMES = AGENTS_MCP_TOOLS.map((t) => t.name);
 const WORK_NAMES = WORK_MCP_TOOLS.map((t) => t.name);
@@ -44,7 +44,7 @@ describe('/mcp surface composition (live plugin registry)', () => {
   });
 
   it('with the plugins discovered-but-DISABLED, their tools vanish and the escape hatch stays', async () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');

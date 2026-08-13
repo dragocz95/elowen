@@ -1,42 +1,10 @@
 CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', pr_enabled INTEGER);
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, title TEXT NOT NULL,
-  type TEXT NOT NULL DEFAULT 'task', status TEXT NOT NULL DEFAULT 'open',
-  priority TEXT NOT NULL DEFAULT 'P2', parent_id TEXT, labels TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '', scheduled_at TEXT,
-  autostart INTEGER NOT NULL DEFAULT 0,
-  result_summary TEXT, outcome TEXT, closed_at TEXT,
-  created_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS task_deps (
-  task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL,
-  PRIMARY KEY (task_id, depends_on_id),
-  CHECK (task_id != depends_on_id)
-);
--- Persisted per-task token/cost usage, snapshotted once when a task settles (closed/cancelled) so the
--- stats page reads aggregates straight from the DB instead of re-scanning the CLIs' session stores.
-CREATE TABLE IF NOT EXISTS task_usage (
-  task_id TEXT PRIMARY KEY,
-  project_id INTEGER NOT NULL,
-  exec TEXT NOT NULL,
-  input INTEGER NOT NULL DEFAULT 0,
-  output INTEGER NOT NULL DEFAULT 0,
-  cache_read INTEGER NOT NULL DEFAULT 0,
-  cache_write INTEGER NOT NULL DEFAULT 0,
-  total INTEGER NOT NULL DEFAULT 0,
-  reasoning INTEGER NOT NULL DEFAULT 0,
-  cost_usd REAL,
-  currency TEXT,
-  -- 'provider_reported' | 'calculated' | 'unavailable'; NULL on legacy rows (read as unknown).
-  cost_source TEXT,
-  -- Small non-sensitive provider usage blob (tokens + cost only) for debugging a reported figure.
-  raw_usage_metadata TEXT,
-  captured_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
 -- The agents/missions/mission_pr/notes tables are AGENTS-PLUGIN-owned now: their DDL lives in
--- plugins/agents/src/store/migrations.ts and is applied only when that plugin is enabled.
+-- plugins/agents/src/store/migrations.ts and is applied only when that plugin is enabled. The same is
+-- true of the task domain — tasks/task_deps/task_usage and their indexes live in
+-- plugins/work/src/store/migrations.ts. A fresh install with either plugin disabled simply does not
+-- have those tables, so core code that still has to sweep them (delete cascades, the user-sequence
+-- seed) goes through tolerateMissingPluginTables (see db.ts).
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
 -- `id` is AUTOINCREMENT, not a bare rowid: ownership columns (tasks.created_by, missions.created_by)
 -- reference it, and a plain rowid is REUSED after the highest-numbered user is deleted — the next
@@ -110,8 +78,6 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_target ON events(target);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts DESC);
-CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 -- Embedded brain (advisor engine): per-user conversations. SQLite is the sole authoritative store —
 -- the PI agent session runs in-memory (SessionManager.inMemory) and every settled turn is projected
 -- here; on start the history is rehydrated back into a fresh in-memory session. No JSONL on disk.

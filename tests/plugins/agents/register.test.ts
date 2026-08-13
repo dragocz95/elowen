@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { openDb } from '../../../src/store/db.js';
+import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
 import { makePluginDb } from '../../../src/store/pluginDb.js';
 import { TaskRefs } from '../../../src/store/taskRefs.js';
 import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
@@ -20,7 +20,7 @@ import type { PluginLogger } from '../../../src/plugins/api.js';
  *  tsconfig.plugins.json` must have built it) against a full fake host wiring. This is the B2b
  *  activation proof: the daemon reaches the subsystem exclusively through what register() registers. */
 async function loadAgentsPlugin(logger?: PluginLogger) {
-  const db = openDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const tasks = new TaskStore(db);
   const projects = new ProjectStore(db);

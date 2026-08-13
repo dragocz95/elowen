@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { openDb, type Db } from '../../src/store/db.js';
+import { type Db } from '../../src/store/db.js';
+import { openWorkDb } from '../helpers/workDb.js';
 import { BrainStore, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 import { rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
@@ -18,7 +19,7 @@ describe('BrainStore', () => {
   let db: Db;
   let dirs: string[] = [];
   afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
-  beforeEach(() => { db = openDb(':memory:'); store = new BrainStore(db); });
+  beforeEach(() => { db = openWorkDb(':memory:'); store = new BrainStore(db); });
 
   it('creates and reads back a session', () => {
     const s = store.createSession({ id: 's1', userId: 7, model: 'anthropic/claude' });

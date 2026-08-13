@@ -14,7 +14,7 @@ import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../../src/brain/memoryCategorizer.js';
 import type { InferenceClient } from '../../src/inference/types.js';
 import { EmbeddingService, type ProviderResolver } from '../../src/embeddings/embeddingService.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 /** A stub /v1/embeddings endpoint returning a fixed 3-dim vector for every input. */
 function stubFetch(vector: number[] = [0.1, 0.2, 0.3]): typeof fetch {
@@ -25,7 +25,7 @@ function stubFetch(vector: number[] = [0.1, 0.2, 0.3]): typeof fetch {
 }
 
 function setup(opts: { fetchImpl?: typeof fetch; embeddingConfigured?: boolean } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const amy = users.create('amy', 'pw'); // first user → admin
@@ -272,7 +272,7 @@ describe('memory routes', () => {
  *  fixed reply (so classify decisions are deterministic and offline). `categorizationConfigured:false`
  *  makes inference() null so the categorizer reports unconfigured. */
 function setupCat(opts: { categorizeReply?: string; categorizationConfigured?: boolean } = {}) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const amy = users.create('amy', 'pw'); // first user → admin

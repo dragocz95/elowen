@@ -14,7 +14,7 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { agentsPluginProvider } from '../helpers/testApp.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 /** The bundled plugin dir — DISCOVERABLE in both shapes below, so an unowned daemon still knows the
  *  task surface exists and is merely switched off (declared-but-inactive → 503, not a bare 404). */
@@ -23,7 +23,7 @@ const PLUGIN_DIRS = [join(process.cwd(), 'plugins')];
 /** A daemon whose task domain either has an owner (the work plugin loaded) or has none (it is disabled).
  *  Which plugins are ENABLED is the ONLY difference — everything else is wired identically. */
 async function makeApp(owned: boolean) {
-  const db = openAgentsDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);

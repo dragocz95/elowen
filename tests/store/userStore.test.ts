@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { UserStore } from '../../src/store/userStore.js';
-import { openAgentsDb } from '../helpers/agentsDb.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 
 let users: UserStore;
-beforeEach(() => { users = new UserStore(openAgentsDb(':memory:')); });
+beforeEach(() => { users = new UserStore(openPluginTablesDb(':memory:')); });
 
 describe('UserStore', () => {
   it('create + verify round-trips and never exposes the hash', () => {
@@ -33,7 +33,7 @@ describe('UserStore', () => {
     expect(users.principalForToken('garbage')).toBeNull();
   });
   it('expires tokens past the TTL and purgeExpiredTokens drops them', () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const store = new UserStore(db);
     const u = store.create('a', 'x');
     const t = store.issueToken(u.id);
@@ -92,7 +92,7 @@ describe('UserStore', () => {
     expect(users.changePassword(999, 'whatever', 'newpass')).toBe(false);
   });
   it('delete removes the user, their tokens and project assignments in one go', () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const store = new UserStore(db);
     const u = store.create('a', 'x');
     const t = store.issueToken(u.id);
@@ -110,7 +110,7 @@ describe('UserStore', () => {
   // owner's prompt attribution and mission notifications. The rows themselves must survive — only the
   // attribution is cleared, exactly like a task surviving its epic's deletion elsewhere in the store.
   it('nulls created_by on tasks and missions instead of leaving it to be inherited by a reused id', () => {
-    const db = openAgentsDb(':memory:');
+    const db = openPluginTablesDb(':memory:');
     const store = new UserStore(db);
     const u = store.create('a', 'x');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/var/www/elowen')").run();
