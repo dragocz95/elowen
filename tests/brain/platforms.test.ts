@@ -472,6 +472,27 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.channelId).toBe('cron-job-1'); // today's channel-keyed session
   });
 
+  it('never falls back to the channel path for a job bound to an ACCOUNT rather than a conversation', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: linkedResolver(false),
+      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '' } as never,
+      dispatch: noDispatch,
+      originSend: async () => null,
+    });
+    await orch.startAll();
+    // The channel session is anchored on the instance owner, so falling through would persist this
+    // person's job transcript under the operator's account. The scheduler keeps the outcome itself.
+    const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
+      origin: { userId: 9 }, access: { admin: false, projectIds: [], actAsUserId: 9 } } as never, 'run it');
+    expect(reply).toBeUndefined();
+    expect(sent).toBeUndefined();
+  });
+
   // A proactive push that reached nobody used to resolve like a successful one, so the cron scheduler
   // deleted the pending delivery it had promised to retry and the finished result was lost for good.
   describe('proactive notify', () => {

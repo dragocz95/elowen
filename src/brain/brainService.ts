@@ -356,7 +356,13 @@ export class BrainService {
         // degrades to the caller's own fallback exactly like a vanished origin does.
         const target = sessionId ?? defaultUserSessionId(userId);
         const row = this.d.store.getSession(target);
-        if (!isOwnedUserSession(row, userId, target)) return null;
+        // An account that has never chatted has no row for its own default conversation yet. That is not
+        // somebody else's session — it is one that does not exist, and `send` creates it under this
+        // account. Refusing here would push the turn onto the channel fallback, where the transcript ends
+        // up in a session owned by the operator: the exact place this person's job must not report.
+        // A NAMED session still has to exist and be theirs; only the derived default may be created.
+        const mayCreate = sessionId === undefined && row === undefined;
+        if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
         await this.send({ userId, text, mode: 'build', session: target });
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);

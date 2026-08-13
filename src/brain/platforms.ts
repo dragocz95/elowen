@@ -89,6 +89,11 @@ export class PlatformOrchestrator {
           if (src.origin && this.d.originSend) {
             const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, onEvent);
             if (reply !== null) return reply;
+            // An origin naming no session is bound to the ACCOUNT (an owned scheduled job): its result
+            // belongs to that person, so it must never fall through to the channel path, which anchors the
+            // session on the instance owner and would persist the transcript under the operator's account.
+            // The caller records the outcome itself (cron keeps it in the job's last result).
+            if (src.origin.sessionId === undefined) return undefined;
           }
           // Delegated children belong to the account that owns their durable parent, not necessarily the
           // instance-wide platform owner. Resolve that owner from the parent row, then let channels.send

@@ -226,6 +226,21 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           && !staging.userRemovedHandlers.some((h) => h.plugin === name)) {
           opts.logger.warn(`[plugin:${name}] keeps per-account state but registers no registerUserRemoved handler — a deleted account's data will be left behind`);
         }
+        // A grant withholds this plugin's TOOLS, its HTTP routes and its web UI. Everything else a plugin
+        // can contribute reaches a session unfiltered — prompt fragments and slash commands are merged
+        // into the system prompt for everyone, and hooks run on everyone's tool calls. That is fine for
+        // today's grant-gated plugins because none of them register any; it would open silently the day
+        // one did, so the load says it out loud instead.
+        if (manifest.userGrantable === true) {
+          const ungated = [
+            staging.promptFragments.length > 0 ? 'prompt fragments' : '',
+            staging.commands.size > 0 ? 'slash commands' : '',
+            staging.hooks.length > 0 ? 'hooks' : '',
+          ].filter((x) => x !== '');
+          if (ungated.length > 0) {
+            opts.logger.warn(`[plugin:${name}] is user-grantable but registers ${ungated.join(' + ')}, which reach every session regardless of the grant`);
+          }
+        }
         registry.setIcons(manifest.icons);
         registry.setShowOutput(manifest.showOutput);
         registry.setPlanSafe(manifest.planSafe, manifest.provides, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
