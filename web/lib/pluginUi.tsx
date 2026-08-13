@@ -211,12 +211,26 @@ function PluginSection({ surface, title, description, icon, action, actions, cla
 }
 
 /** Localized view strings for one plugin's bundle: the /plugins/ui listing's merged `strings` record
- *  (manifest English overlaid with the active locale's i18n `web.strings`). Empty while the listing
- *  loads — callers render the empty string, which resolves on the next paint. */
+ *  (manifest English overlaid with the active locale's i18n `web.strings`).
+ *
+ *  TOTAL by construction: an unknown key reads as the empty string rather than `undefined`. The record
+ *  is empty for the paint or two before the listing resolves, and a view that formats its copy
+ *  (`s.someKey.replace('{n}', …)`) would not render a blank label there — it would throw and take the
+ *  whole page down over a string that was one round-trip away. Rendering nothing for that instant is
+ *  the only sane behaviour.
+ *
+ *  This is deliberately NOT the place that catches a missing key: a typo or a renamed manifest entry
+ *  is caught statically by `tests/contract/pluginBundleStringKeys.test.ts` (the key a bundle reads must
+ *  exist in its manifest) and by `scripts/check-languages.mjs` (every manifest key is translated in
+ *  every locale). Crashing at runtime would not find them any earlier — it would only find them in
+ *  front of a user. */
 function usePluginStrings(plugin: string): Record<string, string> {
   const { locale } = useTranslation();
   const listing = usePluginUi(locale);
-  return listing.data?.find((p) => p.name === plugin)?.strings ?? {};
+  const strings = listing.data?.find((p) => p.name === plugin)?.strings;
+  return React.useMemo(() => new Proxy(strings ?? {}, {
+    get: (target, key) => (typeof key === 'string' ? target[key] ?? '' : undefined),
+  }), [strings]);
 }
 
 /** Same-origin JSON fetch against the daemon through the BFF (`/api` + path). Rejects on non-2xx. */
