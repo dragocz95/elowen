@@ -7,9 +7,11 @@ import { useTranslation } from '../../lib/i18n';
 import type { PluginConfigField, PluginDetail } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS, namePill } from './pluginDetail.shared';
 
-/** Mutation target → Badge tone by blast radius: tools/memory reach beyond the turn (danger),
- *  prompt/turnContext ride only the ephemeral live prompt (warning). */
-const MUTATE_TONE: Record<'prompt' | 'turnContext' | 'tools' | 'memory', Tone> = { prompt: 'warning', turnContext: 'warning', tools: 'danger', memory: 'danger' };
+/** Mutation target → Badge tone by blast radius: tools/memory/events/workflow-dag reach beyond the turn
+ *  and write host-owned state (danger), prompt/turnContext ride only the ephemeral live prompt (warning).
+ *  Keyed off the core union (src/plugins/api.ts PluginCapabilities) — a target added there must land here
+ *  too, or its badge renders untoned. */
+const MUTATE_TONE: Record<NonNullable<NonNullable<PluginDetail['capabilities']>['mutates']>[number], Tone> = { prompt: 'warning', turnContext: 'warning', tools: 'danger', memory: 'danger', events: 'danger', 'workflow-dag': 'danger' };
 
 /** Permissions panel: derived requirements + risk summary (read-only). */
 export function PluginPermissionsPanel({ detail, fieldLabel, riskText, toolCount, platformCount }: {

@@ -200,9 +200,10 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           () => [...registry.commands.values()].map((c) => ({ name: c.name, description: c.description, prompt: c.prompt, surfaces: c.surfaces, plugin: registry.commandOwner.get(c.name) })),
           opts.delegateContextChars, opts.delegatedChildren, opts.mcpBridgeSnapshot, opts.delegatedTurnsOutOfProcess,
           opts.delegatedWorkflowExpansionAvailable,
-          // Reverse mutation belongs exclusively to the bundled workflow owner. Do not hand arbitrary enabled
-          // plugins a client that can mutate daemon-owned DAGs from a runner turn.
-          name === 'subagent' ? opts.workflowExpansionRpc : undefined,
+          // Reverse mutation of a daemon-owned DAG is gated INSIDE contextFor by the manifest's declared
+          // `mutates:['workflow-dag']` capability — a plugin that does not declare it gets null. The loader
+          // deliberately no longer knows which plugin owns the workflow surface.
+          opts.workflowExpansionRpc,
           opts.pluginDb, opts.publishEvent, opts.host, opts.subscribeEvents,
           // ctx.control(): resolve a SIBLING plugin's control. Closes over the MERGED registry for the
           // same reason `toolNames` does, and here it is load-bearing rather than convenient: plugins are

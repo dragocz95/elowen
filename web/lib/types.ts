@@ -394,7 +394,7 @@ export interface McpServerSpec { name: string; command: string; args: string[]; 
  *  data surfaces it reads, `hooks` the hook points it subscribes to. `{}` = declares nothing → mutates nothing. */
 interface PluginCapabilities {
   hooks?: string[];
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag')[];
   reads?: string[];
   network?: boolean;
 }

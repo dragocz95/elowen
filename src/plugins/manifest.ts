@@ -178,6 +178,7 @@ const ManifestSchema = Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([
       Type.Literal('prompt'), Type.Literal('turnContext'),
       Type.Literal('tools'), Type.Literal('memory'), Type.Literal('events'),
+      Type.Literal('workflow-dag'),
     ]))),
     reads: Type.Optional(Type.Array(Type.String())),
     network: Type.Optional(Type.Boolean()),

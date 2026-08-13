@@ -88,6 +88,9 @@
     }
   ],
   "capabilities": {
+    "mutates": [
+      "workflow-dag"
+    ],
     "reads": [
       "agent-catalog"
     ]

@@ -863,7 +863,11 @@ export class PluginRegistry {
       // Capability and client are intentionally separate. The daemon advertises what its remote children
       // will receive; only a runner process holds the client that can call back upward.
       delegatedWorkflowExpansionAvailable: delegatedWorkflowExpansionAvailable ?? (() => false),
-      workflowExpansionRpc: () => workflowExpansionRpc ?? null,
+      // The reverse client mutates a LIVE daemon-owned DAG, so it is handed out on a DECLARED capability
+      // (`mutates:['workflow-dag']`) rather than to a plugin the loader recognizes by name — the same
+      // deny-by-default shape as the event sinks above. Null, never a throw: "this process has no runner
+      // RPC" is already a legitimate state every caller handles (the daemon itself is one).
+      workflowExpansionRpc: () => (capabilities.mutates?.includes('workflow-dag') ? workflowExpansionRpc ?? null : null),
       currentModel: currentTurnModel,
       notify: notify ?? (async () => { /* no notification sink wired */ }),
       listModels: listModels ?? (async () => []),

@@ -129,9 +129,15 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
  *  the plugin claims — two are runtime-wired: `'providers'` permits `ctx.resolveProvider()` for provider
  *  ids beyond the plugin's own config (see PluginContext.resolveProvider), and `'embeddings'` permits
  *  `ctx.embeddings.embed*()` (the shared text→vector pipeline, see PluginContext.embeddings). Both are
- *  deny-by-default. */
+ *  deny-by-default.
+ *
+ *  `mutates` also gates host SINKS handed to the plugin, not only hook patches: `'events'` for the
+ *  event-bus writers and `'workflow-dag'` for `ctx.workflowExpansionRpc()` — the reverse client that
+ *  mutates a LIVE daemon-owned workflow DAG from a runner turn. It is a declared capability rather than
+ *  a hardcoded plugin name so ownership of the workflow surface can move, be renamed or be replaced
+ *  without core knowing who holds it. */
 export interface PluginCapabilities {
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events')[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag')[];
   reads?: string[];
   network?: boolean;
 }
@@ -1361,7 +1367,8 @@ export interface PluginContext {
   /** Whether such a remote child has the reverse workflow-expansion RPC. A false answer is load-bearing:
    *  the workflow engine denies WorkflowAddNodes in the child's effective tool policy. */
   delegatedWorkflowExpansionAvailable(): boolean;
-  /** Runner-only client for the reverse RPC. Null in the daemon and in ordinary in-process contexts. */
+  /** Runner-only client for the reverse RPC. Null in the daemon and in ordinary in-process contexts, and
+   *  null for any plugin that did not declare `mutates:['workflow-dag']` in its manifest. */
   workflowExpansionRpc(): WorkflowExpansionRpc | null;
   /** The provider entry id + model the CURRENT turn's session runs on, or null outside a prompt turn —
    *  a delegating plugin uses it to default the child to "the same model as me". */
