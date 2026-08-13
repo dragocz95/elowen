@@ -13,6 +13,8 @@ export interface CronJob {
   id: string; name: string; schedule: string; prompt: string;
   check?: string; hours?: string; notifyChannelId?: string; plain?: boolean;
   model?: { provider: string; model: string };
+  /** The account this job belongs to; absent/null = an instance job (admin-created, admin-powered). */
+  ownerUserId?: number | null;
   enabled?: boolean; runAt?: string; createdAt?: string; lastRun?: string; lastResult?: string;
 }
 export interface DiscordChannelOption { id: string; name: string; type: 'channel' | 'thread'; parentName?: string }
@@ -39,6 +41,7 @@ interface CronHooks {
   useTranslation(): { t: Dict; locale: string };
   useToast(): { toast: (msg: string, tone?: 'ok' | 'error') => void };
   useCronJobs(enabled?: boolean): QueryResult<CronJob[]>;
+  useMe(): QueryResult<{ user?: { id: number; is_admin: boolean; username: string } }>;
   useDiscordChannels(): QueryResult<DiscordChannelOption[]>;
   useBrainModels(): QueryResult<BrainModelOption[]>;
   useSaveCronJob(): MutationResult<CronJob>;

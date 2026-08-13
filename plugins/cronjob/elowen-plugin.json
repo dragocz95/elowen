@@ -2,8 +2,14 @@
   "name": "cronjob",
   "version": "0.1.0",
   "apiVersion": "1",
-  "description": "Scheduled prompts: recurring jobs (\"every 30m\", \"daily 07:30\") and one-shot wake-ups (\"in 20m\", \"at 18:30\") that run as the brain's own conversations with full owner powers. Admin-only management.",
+  "description": "Scheduled prompts: recurring jobs (\"every 30m\", \"daily 07:30\") and one-shot wake-ups (\"in 20m\", \"at 18:30\") that run as the brain's own conversations. An admin's jobs belong to the instance and run with full owner powers; a job somebody else schedules runs with that person's own rights and reports into their own conversation.",
   "entry": "index.mjs",
+  "capabilities": {
+    "reads": [
+      "stores"
+    ]
+  },
+  "userGrantable": true,
   "provides": {
     "tools": [
       "CronAdd",
@@ -109,6 +115,34 @@
       "step": 30000,
       "placeholder": "host default (30 min)",
       "hint": "Optional. A job idle longer than this between runs starts a fresh conversation on its next tick — past the model's prompt-cache window, reusing the old context is pure cost with no cache benefit. Leave empty to use the host default (like Discord). Set a smaller value for frequent jobs, a larger one to keep continuity longer, or 0 to never start fresh (always keep the running context)."
+    },
+    {
+      "key": "sec_user_limits",
+      "label": "Per-account limits",
+      "type": "section",
+      "hint": "Ceilings on what one non-admin account may schedule. Instance jobs (created by an admin) are not limited."
+    },
+    {
+      "key": "maxJobsPerUser",
+      "label": "Jobs per account",
+      "type": "number",
+      "min": 1,
+      "max": 200,
+      "step": 1,
+      "placeholder": "20",
+      "default": 20,
+      "hint": "How many scheduled jobs one non-admin account may keep at a time."
+    },
+    {
+      "key": "minIntervalMinutes",
+      "label": "Shortest interval (minutes)",
+      "type": "number",
+      "min": 1,
+      "max": 1440,
+      "step": 5,
+      "placeholder": "15",
+      "default": 15,
+      "hint": "The fastest recurring schedule a non-admin account may set. Every fire is a model call the operator pays for."
     }
   ],
   "web": {
@@ -169,7 +203,12 @@
       "pageRange": "{from}–{to} of {total}",
       "pageLabel": "Page {page} of {pages}",
       "prevPage": "Back",
-      "nextPage": "Next"
+      "nextPage": "Next",
+      "ownerColumn": "Owner",
+      "ownerInstance": "Everyone",
+      "ownerMine": "Mine",
+      "filterMine": "Mine",
+      "filterInstance": "Instance"
     }
   }
 }

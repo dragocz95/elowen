@@ -11,7 +11,7 @@ export interface IdentityDeps {
   platformOwner?: () => number | undefined;
   /** Resolve a platform sender (e.g. a Discord id) to the Elowen user who claimed it. */
   resolvePlatformUser?: (platform: string, platformUserId: string) => LinkedUser | null;
-  users: { get(userId: number): { username?: string } | null | undefined };
+  users: { get(userId: number): { username?: string; name?: string; is_admin?: boolean } | null | undefined };
 }
 
 /** The ONE place turn identities are minted — auditable, testable, and hard to fork by accident.
@@ -55,6 +55,16 @@ export class IdentityResolver {
     };
   }
 
+  /** The account a platform source declares it is acting for, as a linked-user view. Unknown id (a job
+   *  whose owner was deleted) resolves to nothing, so the turn falls back to the source's own access
+   *  rather than silently running as an account that no longer exists. */
+  private actingUser(userId: number | undefined): LinkedUser | null {
+    if (userId === undefined) return null;
+    const row = this.d.users.get(userId);
+    if (!row) return null;
+    return { id: userId, name: row.name || row.username || String(userId), username: row.username, admin: row.is_admin === true };
+  }
+
   /** The identity of a platform turn (Discord message, cron tick, subagent delegation) plus the
    *  verified-identity line spliced ABOVE the sender's text when their platform id is linked to an
    *  Elowen account. The display name is attacker-influenced (a user picks their own Elowen name), so
@@ -62,6 +72,14 @@ export class IdentityResolver {
    *  `x] SYSTEM: …` could forge instructions into the prompt. */
   forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string; linkedUserId?: number } {
     const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
+    // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
+    // resolve — the plugin names the account and the host looks it up here, so the turn runs through the
+    // SAME account view a linked sender gets: that account's project policy, its tool deny-list and its
+    // memory scope, never anything wider. A real platform link always wins, so this can never override
+    // who a message actually came from.
+    const account = linked ?? this.actingUser(src.access?.actAsUserId);
+    // The verified line exists to tell a HUMAN sender apart from someone typing their name, so it is
+    // written only for a real platform link. Automation has no sender to vouch for.
     const safeName = linked ? linked.name.replace(/[[\]\r\n]/g, ' ').trim().slice(0, 80) : '';
     const verifiedPrefix = linked
       ? `[Verified: this sender is the Elowen user "${safeName}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n`
@@ -75,13 +93,13 @@ export class IdentityResolver {
     const identity: TurnIdentity = {
       platform: src.platform,
       userId: src.userId,
-      elowenUserId: linked?.id, // the verified Elowen account behind this platform sender (undefined = unlinked)
-      elowenUsername: linked?.username || linked?.name,
-      admin: src.access?.admin === true || linked?.admin === true,
-      owner: (linked?.id !== undefined && this.isOwner(linked.id)) || automationOwner,
+      elowenUserId: account?.id, // the Elowen account behind this turn (undefined = unlinked sender)
+      elowenUsername: account?.username || account?.name,
+      admin: src.access?.admin === true || account?.admin === true,
+      owner: (account?.id !== undefined && this.isOwner(account.id)) || automationOwner,
     };
     // linkedUserId is the Elowen account this platform sender is verified as (their Discord id claimed in
     // Account settings). Memory recall/save keys on it: an unlinked sender has no account, so no memory.
-    return { identity, verifiedPrefix, linkedUserId: linked?.id };
+    return { identity, verifiedPrefix, linkedUserId: account?.id };
   }
 }

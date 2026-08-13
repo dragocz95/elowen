@@ -4,7 +4,7 @@ import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-const users = { get: (id: number) => ({ username: `user${id}` }) };
+const users = { get: (id: number) => ({ username: `user${id}`, name: `User ${id}`, is_admin: id === 1 }) };
 const src = (over: Record<string, unknown>) => ({
   platform: 'discord', userId: 'D1', roleIds: [], channelId: 'c1',
   access: { projectIds: [], admin: false },
@@ -37,6 +37,35 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(linked.linkedUserId).toBe(2); // channel memory recall/save keys on this
     const unlinked = resolver(null).forPlatformTurn(src({}), 1);
     expect(unlinked.linkedUserId).toBeUndefined(); // unlinked sender → no memory
+  });
+
+  // A scheduled job somebody owns runs through the SAME account view a linked sender gets, so downstream
+  // (project policy, tool deny-list, memory scope) it is that person and nothing wider.
+  it('resolves access.actAsUserId to the acting account, without vouching for it as a sender', () => {
+    const owned = src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 2 } });
+    const { identity, verifiedPrefix, linkedUserId } = resolver(null).forPlatformTurn(owned, 1);
+    expect(identity.elowenUserId).toBe(2);
+    expect(linkedUserId).toBe(2); // memory and policy key on it, exactly like a linked sender
+    expect(identity.admin).toBe(false);
+    expect(identity.owner).toBe(false);
+    // The verified line exists to tell a human sender apart from someone typing their name. Automation has
+    // no sender to vouch for, so it must not claim one.
+    expect(verifiedPrefix).toBe('');
+  });
+
+  it('a real platform link always wins over a claimed acting account', () => {
+    const claimed = src({ access: { projectIds: [], admin: false, actAsUserId: 9 } });
+    const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false }).forPlatformTurn(claimed, 1);
+    expect(identity.elowenUserId).toBe(2); // who the message actually came from
+  });
+
+  it('an acting account that no longer exists resolves to nobody, not to the operator', () => {
+    const gone = { get: () => null };
+    const resolved = new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => null, users: gone })
+      .forPlatformTurn(src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 7 } }), 1);
+    expect(resolved.identity.elowenUserId).toBeUndefined();
+    expect(resolved.identity.admin).toBe(false);
+    expect(resolved.identity.owner).toBe(false);
   });
 
   it('cron admin automation is owner, while subagents preserve the origin owner bit independently of admin', () => {

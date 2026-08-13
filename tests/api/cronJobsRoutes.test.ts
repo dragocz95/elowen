@@ -22,7 +22,7 @@ afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true
 
 const pluginsDir = join(process.cwd(), 'plugins');
 
-function setup(opts: { enabled?: string[] } = {}) {
+function setup(opts: { enabled?: string[]; config?: Record<string, Record<string, unknown>> } = {}) {
   const dataRoot = tmpDir('cronjobs');
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -31,7 +31,7 @@ function setup(opts: { enabled?: string[] } = {}) {
   const amy = users.create('amy', 'pw');
   // The '/plugins/cronjob/jobs' surface is served by the REAL cronjob plugin (root mounts) now.
   const provider = new PluginRegistryProvider(() => loadPlugins({
-    dirs: [pluginsDir], enabled: opts.enabled ?? ['cronjob'], dataRoot,
+    dirs: [pluginsDir], enabled: opts.enabled ?? ['cronjob'], dataRoot, config: opts.config,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   }));
   const app = createServer({
@@ -42,7 +42,7 @@ function setup(opts: { enabled?: string[] } = {}) {
     pluginDataRoot: dataRoot, pluginDirs: [pluginsDir],
     plugins: provider,
   });
-  return { app, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  return { app, dataRoot, users, amy, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -230,11 +230,80 @@ describe('cron jobs routes', () => {
     expect((await app.request('/plugins/cronjob/jobs/x', put(adminTok, { name: 'n', schedule: 'every 1h' }))).status).toBe(400);
   });
 
-  it('rejects a non-admin (403) on GET, save and DELETE', async () => {
+  // Cronjob is a user-grantable plugin: an account the admin has not granted it reaches nothing, and the
+  // refusal happens in the core HTTP gate before the plugin sees the request.
+  it('rejects an ungranted non-admin (403) on GET, save and DELETE', async () => {
     const { app, amyTok } = setup();
     expect((await app.request('/plugins/cronjob/jobs', auth(amyTok))).status).toBe(403);
     expect((await save(app, amyTok, job())).status).toBe(403);
     expect((await app.request('/plugins/cronjob/jobs/j1', del(amyTok))).status).toBe(403);
+  });
+
+  it('gives a granted non-admin her OWN jobs, and nobody else\'s', async () => {
+    const { app, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['cronjob']);
+    expect((await save(app, adminTok, job({ id: 'shared', name: 'instance job' }))).status).toBe(200);
+
+    // Ownership comes from the SERVER: a body claiming otherwise cannot make it someone else's job.
+    expect((await save(app, amyTok, job({ id: 'mine', name: 'my job', ownerUserId: 1 }))).status).toBe(200);
+    const mine = (await (await app.request('/plugins/cronjob/jobs', auth(amyTok))).json()) as { id: string; ownerUserId?: number | null }[];
+    expect(mine.map((j) => j.id)).toEqual(['mine']);
+    expect(mine[0]!.ownerUserId).toBe(amy.id);
+
+    // The admin sees both, and an instance job carries no owner at all.
+    const all = (await (await app.request('/plugins/cronjob/jobs', auth(adminTok))).json()) as { id: string; ownerUserId?: number | null }[];
+    expect(all.map((j) => j.id).sort()).toEqual(['mine', 'shared']);
+    expect(all.find((j) => j.id === 'shared')).not.toHaveProperty('ownerUserId');
+
+    // She may not reach the instance job — neither to edit nor to delete it.
+    expect((await save(app, amyTok, job({ id: 'shared', name: 'hijacked' }))).status).toBe(403);
+    expect((await app.request('/plugins/cronjob/jobs/shared', del(amyTok))).status).toBe(403);
+    const still = (await (await app.request('/plugins/cronjob/jobs', auth(adminTok))).json()) as { id: string; name: string }[];
+    expect(still.find((j) => j.id === 'shared')?.name).toBe('instance job');
+  });
+
+  // An owned job runs unattended on the operator's machine, so the capabilities that reach past its owner
+  // are the admin's alone: a shell guard, a notification channel of someone else's, and schedules fast
+  // enough (or expressive enough) to occupy the instance.
+  it('refuses a shell check, a notification channel, cron expressions and too-fast schedules from an account', async () => {
+    const { app, users, amy, amyTok } = setup();
+    users.setGrantedPlugins(amy.id, ['cronjob']);
+    const denied = async (fields: Record<string, unknown>) => {
+      const res = await save(app, amyTok, job({ id: 'x', ...fields }));
+      expect(res.status, JSON.stringify(fields)).toBe(400);
+      return ((await res.json()) as { error: string }).error;
+    };
+    expect(await denied({ check: 'ls /' })).toMatch(/shell check/);
+    expect(await denied({ notifyChannelId: '123' })).toMatch(/notification channel/);
+    expect(await denied({ schedule: '*/5 * * * *' })).toMatch(/cron expressions/);
+    expect(await denied({ schedule: 'every 1m' })).toMatch(/shortest interval/);
+    // The plain forms she is meant to use go through.
+    expect((await save(app, amyTok, job({ id: 'ok', schedule: 'daily 07:30' }))).status).toBe(200);
+  });
+
+  it('caps how many jobs one account may keep', async () => {
+    const { app, users, amy, amyTok } = setup({ config: { cronjob: { maxJobsPerUser: 2 } } });
+    users.setGrantedPlugins(amy.id, ['cronjob']);
+    expect((await save(app, amyTok, job({ id: 'a' }))).status).toBe(200);
+    expect((await save(app, amyTok, job({ id: 'b' }))).status).toBe(200);
+    const res = await save(app, amyTok, job({ id: 'c' }));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/already have 2/);
+    // Editing one she already owns is not "another job" — the cap must not lock her out of her own list.
+    expect((await save(app, amyTok, job({ id: 'b', name: 'renamed' }))).status).toBe(200);
+  });
+
+  // `users.id` is recycled by the next account, so a job left behind would keep firing — and start
+  // reporting into a stranger's conversation.
+  it('drops an account\'s jobs when the account is deleted', async () => {
+    const { app, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['cronjob']);
+    await save(app, adminTok, job({ id: 'shared' }));
+    await save(app, amyTok, job({ id: 'hers' }));
+
+    expect((await app.request(`/users/${amy.id}`, del(adminTok))).status).toBe(200);
+    const left = (await (await app.request('/plugins/cronjob/jobs', auth(adminTok))).json()) as { id: string }[];
+    expect(left.map((j) => j.id)).toEqual(['shared']);
   });
 
   it('answers 503 "cronjob plugin is disabled" when the plugin is off', async () => {

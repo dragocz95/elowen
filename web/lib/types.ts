@@ -502,6 +502,10 @@ export interface CronJob {
   /** Brain model the job runs on; empty = the server default. */
   model?: { provider: string; model: string };
   enabled?: boolean;
+  /** The account this job belongs to. Absent/null = an instance job: created by an admin, running with
+   *  admin powers and reporting to the notification channel. An owned job runs with its owner's rights
+   *  and reports into that person's own conversation. */
+  ownerUserId?: number | null;
   runAt?: string;
   createdAt?: string;
   lastRun?: string;

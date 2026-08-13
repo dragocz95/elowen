@@ -32,6 +32,18 @@
     "sessionIdleMs": {
       "label": "Práh nečinnosti pro novou session (ms)",
       "hint": "Volitelné. Úloha nečinná déle než tato hodnota mezi běhy začne při dalším tiknutí novou konverzaci — po vypršení cache promptu je opětovné použití starého kontextu čistá cena bez úspory. Nechte prázdné pro výchozí hodnotu hosta (jako Discord). Nižší hodnota pro časté úlohy, vyšší pro delší zachování návaznosti, nebo 0 pro trvalé zachování kontextu (nikdy nezačínat znovu)."
+    },
+    "sec_user_limits": {
+      "label": "Limity pro účet",
+      "hint": "Stropy na to, co smí naplánovat jeden neadministrátorský účet. Instanční úlohy (od administrátora) omezené nejsou."
+    },
+    "maxJobsPerUser": {
+      "label": "Úloh na účet",
+      "hint": "Kolik naplánovaných úloh smí mít jeden neadministrátorský účet současně."
+    },
+    "minIntervalMinutes": {
+      "label": "Nejkratší interval (minuty)",
+      "hint": "Nejrychlejší opakování, které smí nastavit neadministrátorský účet. Každé spuštění je volání modelu, které platí provozovatel."
     }
   },
   "web": {
@@ -86,7 +98,12 @@
       "pageRange": "{from}–{to} z {total}",
       "pageLabel": "Strana {page} z {pages}",
       "prevPage": "Zpět",
-      "nextPage": "Další"
+      "nextPage": "Další",
+      "ownerColumn": "Vlastník",
+      "ownerInstance": "Všichni",
+      "ownerMine": "Moje",
+      "filterMine": "Moje",
+      "filterInstance": "Instanční"
     }
   }
 }

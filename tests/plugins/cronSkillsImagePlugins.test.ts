@@ -87,7 +87,8 @@ describe('cronjob plugin', () => {
     const remove = reg.tools.find((t) => t.name === 'CronRemove')!;
 
     await runWithPolicy(LIMITED, async () => {
-      expect(asText(await add.execute('t', { name: 'x', schedule: 'every 15m', prompt: 'p' }, undefined as never, undefined as never))).toMatch(/admin session/);
+      // Not an admin session AND no account behind the turn: there is nobody to own the job.
+      expect(asText(await add.execute('t', { name: 'x', schedule: 'every 15m', prompt: 'p' }, undefined as never, undefined as never))).toMatch(/needs an Elowen account/);
     });
     await runWithPolicy(ADMIN, async () => {
       expect(asText(await add.execute('t', { name: 'ranní report', schedule: 'daily 07:30', prompt: 'shrň stav' }, undefined as never, undefined as never))).toMatch(/Scheduled/);

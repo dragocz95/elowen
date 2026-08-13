@@ -1,7 +1,12 @@
 // Cronjob plugin: recurring prompts for the brain, sized for Elowen.
 // Jobs persist in the plugin's data dir; a lightweight scheduler (platform adapter) ticks every 30 s
-// and feeds due prompts back into the brain via the host's channel handler — with `admin: true`,
-// because only an admin session can create jobs in the first place.
+// and feeds due prompts back into the brain via the host's channel handler.
+//
+// A job either belongs to the INSTANCE (no ownerUserId — created by an admin, runs with admin powers and
+// reports to the notification channel, exactly as every job did before ownership existed) or to ONE
+// account: that job runs as its owner (`access.actAsUserId`, so the host applies that account's project
+// policy, tool deny-list and plugin grants), reports into that person's own conversation, and may not
+// run a shell guard or address a notification channel.
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { exec } from 'node:child_process';
@@ -23,6 +28,10 @@ const CHECK_MAX_BUFFER = 1024 * 1024; // 1 MB of stdout is plenty of "what's new
 // How much of a guard's stdout is fed into the brain turn. A collector that aggregates real data (a full
 // debtor list, a daily digest) easily runs past a few KB, so the cap is generous; it only trims runaway output.
 const DEFAULT_CHECK_OUTPUT_CHARS = 32_000;
+// Cheap ceilings on what ONE non-admin account may schedule. Without them, per-user cron is an open
+// invitation to occupy the instance: every fire is a model call the operator pays for.
+const DEFAULT_MAX_JOBS_PER_USER = 20;
+const DEFAULT_MIN_INTERVAL_MINUTES = 15;
 const DEFAULT_CRON_TURN_ATTEMPTS = 2; // one retry on a request-time failure (a transient relay/gateway/network blip)
 const DEFAULT_CRON_RETRY_BACKOFF_MS = 3_000; // brief pause before the retry so the transient condition can clear
 // How many undelivered results may wait for a retry at once. A delivery sink that is down for good (a
@@ -387,8 +396,11 @@ class CronAdapter {
   // multiplying every cron echo into dozens of Discord messages.
   // `timezone` is a LIVE getter, not a captured string: the operator can change the zone in Settings and
   // the very next tick must schedule against it, without a plugin reload.
-  constructor(store, deliveryStore, logger, deliver, config = {}, timezone = systemZone) {
+  constructor(store, deliveryStore, logger, deliver, config = {}, timezone = systemZone, ownerIsAdmin = () => true) {
     this.store = store; this.deliveryStore = deliveryStore; this.log = logger; this.deliver = deliver;
+    // Re-asked at every fire, never captured: a job's shell guard is allowed by WHO owns it, and rights
+    // can be taken away between the write that stored the guard and the tick that would run it.
+    this.ownerIsAdmin = ownerIsAdmin;
     this.handler = null; this.running = false;
     // Set by disconnect(): this adapter generation has been torn down (a plugin reload) and must not
     // start any further work — see disconnect() and the tick loop.
@@ -447,8 +459,19 @@ class CronAdapter {
       // Cheap guard gate: if the job has a `check` command, run it FIRST (no LLM). Only spend a brain
       // turn when the guard surfaces fresh work — an "every 5m" poll that finds nothing costs a shell
       // exec, not a model call. The guard's output is fed into the turn so the brain acts on real data.
+      // WHOSE job this is. No owner = an instance job: admin powers, notification-channel delivery —
+      // exactly the behaviour every job had before ownership existed.
+      const owner = typeof job.ownerUserId === 'number' ? job.ownerUserId : null;
       let checkOutput = null;
       if (typeof job.check === 'string' && job.check.trim()) {
+        // A shell guard runs on the daemon host with the daemon's rights, so only an admin's job may carry
+        // one. Re-checked HERE and not only at write time: the owner may have lost admin since. Skipping
+        // (rather than deleting, or running the job without its guard) keeps a temporary demotion
+        // recoverable and never turns a gated poll into an ungated one.
+        if (!this.ownerIsAdmin(owner)) {
+          this.store.patch(job.id, { lastResult: '⏭️ skipped: a shell check may only run on an admin-owned job' });
+          continue;
+        }
         const res = await runCheck(job.check, this.log, this.checkTimeoutMs);
         if (res.skip) {
           this.store.patch(job.id, { lastResult: `⏭️ ${res.reason}` });
@@ -471,17 +494,24 @@ class CronAdapter {
       let userText = checkOutput
         ? `${job.prompt}\n\n--- Check output (fresh data to act on) ---\n${checkOutput.slice(0, this.checkOutputMaxChars)}`
         : job.prompt;
-      // An origin-bound wake-up replays INTO the user conversation it was scheduled from: frame the
-      // prompt so the model knows this is its own earlier schedule firing, not the user speaking now.
-      // (The channel fallback keeps its wake-up context via access.prompt; this framing reads fine there too.)
-      if (job.originSessionId) userText = `[Scheduled wake-up "${job.name}" fires now — you set it earlier. Do the task and reply now.]\n${userText}`;
+      // Where the reply belongs. A wake-up scheduled from a user conversation names that conversation; an
+      // owned job names no session, so the host delivers into its owner's own default conversation. An
+      // instance job has neither and reports through the notification channel as before.
+      const origin = job.originSessionId && job.originUserId != null
+        ? { sessionId: job.originSessionId, userId: job.originUserId }
+        : (owner !== null ? { userId: owner } : undefined);
+      // A bound run replays INTO a real conversation, so frame the prompt: without this the model reads
+      // its own schedule as the user speaking just now. (The channel fallback keeps its wake-up context
+      // via access.prompt; this framing reads fine there too.)
+      if (origin) userText = `[Scheduled ${job.runAt ? 'wake-up' : 'job'} "${job.name}" fires now — you set it earlier. Do the task and reply now.]\n${userText}`;
       const src = {
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
-        // A wake-up scheduled from a user conversation carries its origin: the host routes it as a
-        // bound send into that conversation (ownership-verified host-side, channel path as fallback).
-        origin: job.originSessionId && job.originUserId != null ? { sessionId: job.originSessionId, userId: job.originUserId } : undefined,
+        origin,
         access: {
-          projectIds: [], admin: true,
+          projectIds: [], admin: owner === null,
+          // An owned job runs AS its owner: the host resolves the account and applies its project policy,
+          // tool deny-list and plugin grants — the job can never do more than the person who scheduled it.
+          ...(owner !== null ? { actAsUserId: owner } : {}),
           // A timer-driven turn: the host swaps the coding-agent base for the focused `scheduled` system
           // prompt (unattended, channel-only delivery, report the outcome not the progress). Core stays
           // agnostic to which plugin fired it — it keys only off this generic flag.
@@ -530,7 +560,17 @@ class CronAdapter {
       // its `session` event, so deliveredTo already matches the origin while nothing actually landed — and
       // if no bound-stream client is attached the user never learns it failed. Echo those to the
       // notification channel so a failed scheduled wake-up is never silently lost.
-      if (job.originSessionId && deliveredTo === job.originSessionId && !trimmed.startsWith('Error:')) continue;
+      const boundDelivery = origin !== undefined && deliveredTo !== null
+        && (origin.sessionId === undefined || deliveredTo === origin.sessionId);
+      if (boundDelivery && !trimmed.startsWith('Error:')) continue;
+      // An owned job NEVER echoes to the notification channel: that channel belongs to the operator, and
+      // this result belongs to somebody else. When the bound delivery could not land (the owner has no
+      // conversation yet, or it changed hands) the outcome stays in the job's own last-result field,
+      // which is what its owner sees on the Automation page.
+      if (owner !== null) {
+        if (!boundDelivery) this.log.error(`cron job ${job.id} (${job.name}) could not reach its owner's conversation — result kept in the job's last result`);
+        continue;
+      }
       // Echo the outcome to the notification channel (Discord) so it reaches the user proactively.
       // A job with nothing to say answers with a quiet marker (isQuietReply) and stays silent.
       if (trimmed && !isQuietReply(trimmed)) {
@@ -713,7 +753,51 @@ class DeliveryStore {
 export function register(ctx) {
   const store = new JobStore(join(ctx.dataDir(), 'jobs.json'), ctx.logger);
   const deliveryStore = new DeliveryStore(join(ctx.dataDir(), 'pending-deliveries.json'), ctx.logger);
-  const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('cron jobs can only be managed from an admin session'); };
+  const maxJobsPerUser = clampConfig(ctx.config?.maxJobsPerUser, DEFAULT_MAX_JOBS_PER_USER, 1, 200);
+  const minIntervalMs = clampConfig(ctx.config?.minIntervalMinutes, DEFAULT_MIN_INTERVAL_MINUTES, 1, 1440) * 60_000;
+
+  /** Whether the account owning a job may run its shell guard. Fail CLOSED: when the host cannot answer
+   *  (a process with no store seam), the guard does not run — a shell command is the one thing here that
+   *  must never execute on an assumption. An instance job has no owner and is admin-authored by
+   *  construction, which is exactly what it meant before ownership existed. */
+  const ownerIsAdmin = (userId) => {
+    if (userId === null || userId === undefined) return true;
+    try { return ctx.host.stores().usersRead.isAdmin(userId) === true; } catch { return false; }
+  };
+  /** WHO owns a job: an account id, or null for an instance job. */
+  const ownerOf = (job) => (typeof job?.ownerUserId === 'number' ? job.ownerUserId : null);
+  /** The account behind the current turn, or null (an unlinked sender, a cron-of-cron turn). */
+  const callerId = () => ctx.currentIdentity()?.elowenUserId ?? null;
+
+  /** Why this account may not store this job, or null when it may. Instance jobs (admin authors) keep
+   *  every capability they always had; an owned job is deliberately narrower, because it runs unattended
+   *  on the operator's machine at a schedule its owner chose. */
+  const ownedJobError = (job, jobs) => {
+    if (typeof job.check === 'string' && job.check.trim()) {
+      return 'a shell check may only be used on an instance job (admin)';
+    }
+    if (typeof job.notifyChannelId === 'string' && job.notifyChannelId.trim()) {
+      return 'your jobs report into your own conversation; a notification channel can only be set by an admin';
+    }
+    const parsed = parseSchedule(job.schedule);
+    // A 5-field cron expression can express "every minute" in ways a simple bound cannot catch, so the
+    // plain forms — which the interval floor below fully covers — are the ones offered per account.
+    if (parsed?.kind === 'cron') return 'cron expressions are an admin tool — use "every 30m", "daily 07:30" or "weekly mon 09:00"';
+    if (parsed?.kind === 'interval' && parsed.ms < minIntervalMs) {
+      return `the shortest interval you can schedule is every ${Math.round(minIntervalMs / 60_000)}m`;
+    }
+    const mine = jobs.filter((j) => ownerOf(j) === ownerOf(job) && j.id !== job.id).length;
+    if (mine >= maxJobsPerUser) return `you already have ${maxJobsPerUser} scheduled jobs — remove one first`;
+    return null;
+  };
+
+  // An account is gone: its jobs go with it. `users.id` is recycled, so a job left behind would keep
+  // firing — and start reporting into a stranger's conversation.
+  ctx.registerUserRemoved((userId) => {
+    const jobs = store.all();
+    const rest = jobs.filter((j) => ownerOf(j) !== userId);
+    if (rest.length !== jobs.length) store.save(rest);
+  });
 
   // ── Admin jobs API (root mounts, grandfathered core URLs): jobs.json is a SHARED list — the
   // scheduler stamps runs into it, CronAdd/CronRemove write it, and the settings deck edits it here.
@@ -735,7 +819,7 @@ export function register(ctx) {
    *  lastSlot, lastResult, wake-up origin) and is merged back from the file — writing a stale lastRun
    *  back would make an interval job due again on the next tick, and a dropped lastSlot would re-fire
    *  a slot already run. */
-  const CRON_FIELDS = ['id', 'name', 'schedule', 'prompt', 'check', 'hours', 'notifyChannelId', 'plain', 'model', 'enabled', 'runAt', 'createdAt'];
+  const CRON_FIELDS = ['id', 'name', 'schedule', 'prompt', 'check', 'hours', 'notifyChannelId', 'plain', 'model', 'enabled', 'runAt', 'createdAt', 'ownerUserId'];
   /** Why this job is not storable, or null when it is. */
   const cronJobError = (j) => {
     for (const k of ['id', 'name', 'schedule', 'prompt']) {
@@ -753,22 +837,41 @@ export function register(ctx) {
         return 'model must be omitted or an object with non-empty provider and model';
       }
     }
+    if (j.ownerUserId !== undefined && j.ownerUserId !== null && !Number.isInteger(j.ownerUserId)) {
+      return 'ownerUserId must be omitted, null or an account id';
+    }
     return null;
   };
   const jsonRes = (body, status = 200) => ({ status, body });
 
+  /** WHOSE job a tool call creates: null (the instance) from an admin session — the behaviour this plugin
+   *  has always had — otherwise the account behind the turn. Throws when there is neither, because a job
+   *  with no owner and no admin behind it would run unattended for nobody. */
+  const toolOwner = () => {
+    if (ctx.isAdminSession()) return null;
+    const me = callerId();
+    if (me === null) throw new Error('scheduling needs an Elowen account behind the conversation');
+    return me;
+  };
+  /** The jobs a tool call may see or address. */
+  const visibleJobs = (jobs) => (ctx.isAdminSession() ? jobs : jobs.filter((j) => ownerOf(j) === callerId()));
+
   ctx.registerApiRoute({
-    rootMount: '/plugins/cronjob/jobs', path: '', method: 'GET', access: 'admin',
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'GET', access: 'user',
     handler: async (req) => {
       if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
-      try { return jsonRes(readJobsStrict()); }
+      let jobs;
+      try { jobs = readJobsStrict(); }
       catch { return jsonRes([]); } // a read-only view may show an unreadable file as empty; a write may not
+      // The admin sees every job (with its owner) because he is the one who has to know what this machine
+      // runs; everyone else sees exactly their own.
+      return jsonRes(req.auth.admin ? jobs : jobs.filter((j) => ownerOf(j) === req.auth.userId));
     },
   });
 
   // Upsert ONE job, leaving every other job on disk exactly as it is.
   ctx.registerApiRoute({
-    rootMount: '/plugins/cronjob/jobs', path: '', method: 'PUT', access: 'admin',
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'PUT', access: 'user',
     handler: async (req) => {
       const segs = req.path === '' ? [] : req.path.split('/');
       if (segs.length !== 1) return jsonRes({ error: 'not found' }, 404);
@@ -777,13 +880,29 @@ export function register(ctx) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonRes({ error: 'body must be a job object' }, 400);
       // The URL names the job — a body id can't redirect the write onto another one.
       const job = { ...body, id: decodeURIComponent(segs[0]) };
-      const error = cronJobError(job);
-      if (error) return jsonRes({ error }, 400);
 
       let jobs;
       try { jobs = readJobsStrict(); }
       catch { return jsonRes({ error: 'jobs file is unreadable — refusing to write over it' }, 500); }
       const prev = jobs.find((j) => j.id === job.id);
+      // Ownership is decided by the SERVER, never by the body: a non-admin always writes his own job, and
+      // may not reach one that is not his (nor learn it exists — the refusal is the same either way).
+      if (!req.auth.admin) {
+        if (req.auth.userId === null) return jsonRes({ error: 'forbidden' }, 403);
+        if (prev && ownerOf(prev) !== req.auth.userId) return jsonRes({ error: 'forbidden' }, 403);
+        job.ownerUserId = req.auth.userId;
+      } else if (job.ownerUserId === undefined) {
+        // An admin's edit keeps whoever owns the job; a job he creates is an INSTANCE job, exactly as
+        // every job was before ownership existed. An instance job carries NO owner key at all, so a
+        // jobs.json written before ownership existed round-trips unchanged.
+        const inherited = prev ? ownerOf(prev) : null;
+        if (inherited !== null) job.ownerUserId = inherited;
+        else delete job.ownerUserId;
+      } else if (job.ownerUserId === null) {
+        delete job.ownerUserId;
+      }
+      const error = cronJobError(job) ?? (ownerOf(job) !== null ? ownedJobError(job, jobs) : null);
+      if (error) return jsonRes({ error }, 400);
       const edit = {};
       for (const k of CRON_FIELDS) if (job[k] !== undefined) edit[k] = job[k];
       const runtime = {};
@@ -805,14 +924,18 @@ export function register(ctx) {
   // in-flight save (or another tab) must be able to say "this job should not exist" without having to
   // know whether it currently does.
   ctx.registerApiRoute({
-    rootMount: '/plugins/cronjob/jobs', path: '', method: 'DELETE', access: 'admin',
+    rootMount: '/plugins/cronjob/jobs', path: '', method: 'DELETE', access: 'user',
     handler: async (req) => {
       const segs = req.path === '' ? [] : req.path.split('/');
       if (segs.length !== 1) return jsonRes({ error: 'not found' }, 404);
       let jobs;
       try { jobs = readJobsStrict(); }
       catch { return jsonRes({ error: 'jobs file is unreadable — refusing to write over it' }, 500); }
-      const rest = jobs.filter((j) => j.id !== decodeURIComponent(segs[0]));
+      const id = decodeURIComponent(segs[0]);
+      const target = jobs.find((j) => j.id === id);
+      // Deleting is idempotent (a job already gone is a success), but deleting SOMEONE ELSE'S never is.
+      if (target && !req.auth.admin && ownerOf(target) !== req.auth.userId) return jsonRes({ error: 'forbidden' }, 403);
+      const rest = jobs.filter((j) => j.id !== id);
       if (rest.length !== jobs.length) store.save(rest);
       return jsonRes({ ok: true });
     },
@@ -821,7 +944,7 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'CronAdd', label: 'Schedule job',
     description: [
-      'Schedule a recurring prompt for yourself — daily summaries, periodic checks, recurring reminders. The prompt fires as a brain turn on the schedule you set, and results go to the default notification channel unless you override it with notifyChannelId. Admin only.',
+      'Schedule a recurring prompt for yourself — daily summaries, periodic checks, recurring reminders. The prompt fires as a brain turn on the schedule you set. From an admin session the job belongs to the instance and reports to the notification channel (or notifyChannelId); otherwise it belongs to you, runs with your own rights, and reports here in your own conversation.',
       'The schedule takes either a plain form — "every 15m", "every 2h", "daily 07:30", "weekly sun 20:00" — or a standard 5-field cron expression ("*/5 * * * *", "0 9 * * 1-5", "0 0 1 * *"). The format is detected automatically; reach for cron only when the plain form cannot express the timing you need.',
       'For polling work, use the `check` guard: a cheap shell command that runs BEFORE the prompt. If it prints nothing (or fails), the scheduled turn is skipped entirely — no model call. If it prints output, the brain runs and receives that output. This is how you poll for new work without paying for a model call on every tick.',
       'Use `hours` ("H-H", e.g. "5-21") to keep a job quiet outside active hours, `enabled: false` to create it paused, and `plain: true` to deliver the reply without the "⏰ job name" header. Returns the job id — pass it to CronRemove to cancel.',
@@ -832,14 +955,14 @@ export function register(ctx) {
       prompt: Type.String({ description: 'The prompt to run on schedule' }),
       check: Type.Optional(Type.String({ description: 'Optional cheap shell guard run BEFORE the prompt. If it prints nothing (or fails), the scheduled brain turn is skipped — no LLM call. If it prints output, the brain runs and receives that output. Use it to poll for new work without paying for a model call each tick, e.g. a collector script that only prints when there is something new.' })),
       hours: Type.Optional(Type.String({ description: 'Active-hours window "H-H" (e.g. "5-21") — outside it the job stays quiet' })),
-      notifyChannelId: Type.Optional(Type.String({ description: 'Deliver results to this channel/thread instead of the default notification channel' })),
+      notifyChannelId: Type.Optional(Type.String({ description: 'Deliver results to this channel/thread instead of the default notification channel. Admin sessions only — your own jobs always report in your own conversation.' })),
       plain: Type.Optional(Type.Boolean({ description: 'true = deliver the reply as-is, without the "⏰ job name" header line — for persona messages in a dedicated channel' })),
       model: Type.Optional(Type.String({ description: 'Run this job on a specific brain model, as "provider/model" (e.g. "anthropic/claude-sonnet-5"). Empty = the server default.' })),
       enabled: Type.Optional(Type.Boolean({ description: 'false = create the job paused' })),
     }),
     execute: async (_id, p) => {
       try {
-        adminOnly();
+        const owner = toolOwner();
         if (!parseSchedule(p.schedule)) return ok('Error: invalid schedule — use "every 15m", "every 2h", "daily 07:30", "weekly sun 20:00", or a 5-field cron expression like "0 9 * * 1-5".');
         const jobs = store.all();
         const id = newId();
@@ -848,9 +971,12 @@ export function register(ctx) {
         const model = slash > 0 ? { provider: p.model.slice(0, slash), model: p.model.slice(slash + 1) } : undefined;
         // lastRun starts at creation time so a fresh job waits for its NEXT natural slot — a
         // "daily 06:00" created at 15:00 must not fire immediately.
-        jobs.push({ id, name: p.name, schedule: p.schedule, prompt: p.prompt, check: p.check, hours: p.hours, notifyChannelId: p.notifyChannelId, plain: p.plain, model, enabled: p.enabled, createdAt: new Date().toISOString(), lastRun: new Date().toISOString() });
+        const job = { id, name: p.name, schedule: p.schedule, prompt: p.prompt, check: p.check, hours: p.hours, notifyChannelId: p.notifyChannelId, plain: p.plain, model, enabled: p.enabled, ...(owner !== null ? { ownerUserId: owner } : {}), createdAt: new Date().toISOString(), lastRun: new Date().toISOString() };
+        const denied = owner !== null ? ownedJobError(job, jobs) : null;
+        if (denied) return ok(`Error: ${denied}.`);
+        jobs.push(job);
         store.save(jobs);
-        return ok(`Scheduled "${p.name}" (${p.schedule}) — id ${id}. Results accumulate in its own conversation.`);
+        return ok(`Scheduled "${p.name}" (${p.schedule}) — id ${id}. ${owner === null ? 'Results accumulate in its own conversation.' : 'It will report here, in your own conversation.'}`);
       } catch (e) { return fail(e); }
     },
   }));
@@ -858,7 +984,7 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'ScheduleWakeup', label: 'Schedule wake-up',
     description: [
-      'Schedule a ONE-SHOT wake-up for yourself after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. Strictly one-shot — the job removes itself after firing. Scheduled from a user conversation, the wake-up resumes THAT conversation with its full existing context and replies there, so the follow-up lands where it was promised. Admin only.',
+      'Schedule a ONE-SHOT wake-up for yourself after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. Strictly one-shot — the job removes itself after firing. Scheduled from a user conversation, the wake-up resumes THAT conversation with its full existing context and replies there, so the follow-up lands where it was promised.',
       'Use it to check back on / verify something that changes over time but does not notify you — a CI run, a deploy, an external queue — in the same conversation. Do NOT use it to poll background work you started here: a background sub-agent and a background command both wake you on their own when they finish, so a wake-up on top of them only fires redundantly. If you want a safety net for work that might hang, set a LONG fallback ("in 30m") rather than a short poll.',
       'Pick the delay from how fast the watched thing actually changes, not from round numbers: a CI run that takes ~8 minutes deserves one "in 5m" check, not ten at 30s. For an idle tick with no specific signal, 20-30 minutes is the sane default.',
     ].join(' '),
@@ -869,7 +995,7 @@ export function register(ctx) {
     }),
     execute: async (_id, p) => {
       try {
-        adminOnly();
+        const owner = toolOwner();
         const runAt = parseOneShot(p.when, Date.now(), ctx.timezone());
         if (!runAt) return ok('Error: invalid time — use "in 30s", "in 20m", "in 2h" or "at 18:30".');
         const jobs = store.all();
@@ -882,7 +1008,10 @@ export function register(ctx) {
         const uid = ctx.currentIdentity()?.elowenUserId;
         const origin = sid && uid != null && !sid.startsWith('brain-ch-') && !sid.startsWith('brain-task-')
           ? { originSessionId: sid, originUserId: uid } : undefined;
-        jobs.push({ id, name: p.name, schedule: p.when, prompt: p.prompt, runAt: new Date(runAt).toISOString(), createdAt: new Date().toISOString(), ...origin });
+        const job = { id, name: p.name, schedule: p.when, prompt: p.prompt, runAt: new Date(runAt).toISOString(), ...(owner !== null ? { ownerUserId: owner } : {}), createdAt: new Date().toISOString(), ...origin };
+        const denied = owner !== null ? ownedJobError(job, jobs) : null;
+        if (denied) return ok(`Error: ${denied}.`);
+        jobs.push(job);
         store.save(jobs);
         return ok(`Wake-up "${p.name}" set for ${new Date(runAt).toISOString()} — id ${id}.${origin ? ' It will reply in this conversation.' : ''}`);
       } catch (e) { return fail(e); }
@@ -891,13 +1020,12 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'CronList', label: 'List jobs',
-    description: 'List scheduled jobs with their id, name, schedule, last run and last result. Admin only. '
+    description: 'List scheduled jobs with their id, name, schedule, last run and last result — your own, or every job from an admin session. '
       + 'Use it to see what is active, when each job last fired and what it produced — and to get the id you need for CronRemove.',
     parameters: Type.Object({}),
     execute: async () => {
       try {
-        adminOnly();
-        const jobs = store.all();
+        const jobs = visibleJobs(store.all());
         if (jobs.length === 0) return ok('No scheduled jobs.');
         return ok(jobs.map((j) =>
           `- ${j.id} "${j.name}" ${j.schedule}${j.runAt ? ` (one-shot @ ${j.runAt})` : ''}\n  last run: ${j.lastRun ?? 'never'}\n  last result: ${j.lastResult ?? '—'}`
@@ -908,14 +1036,14 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'CronRemove', label: 'Remove job',
-    description: 'Remove a scheduled job by id. It stops firing immediately. Admin only. '
+    description: 'Remove a scheduled job by id (one of yours; any job from an admin session). It stops firing immediately. '
       + 'Get the id from CronList, or from what CronAdd returned.',
     parameters: Type.Object({ id: Type.String({ description: 'Job id, from CronList or CronAdd' }) }),
     execute: async (_id, p) => {
       try {
-        adminOnly();
         const jobs = store.all();
-        if (!jobs.some((j) => j.id === p.id)) return ok(`Error: no job with id ${p.id}.`);
+        // Unknown and not-yours read the same, so this can never be used to probe what else is scheduled.
+        if (!visibleJobs(jobs).some((j) => j.id === p.id)) return ok(`Error: no job with id ${p.id}.`);
         store.save(jobs.filter((j) => j.id !== p.id));
         return ok(`Removed job ${p.id}.`);
       } catch (e) { return fail(e); }
@@ -933,6 +1061,6 @@ export function register(ctx) {
       .map((j) => j.originSessionId),
   });
 
-  ctx.registerPlatform(new CronAdapter(store, deliveryStore, ctx.logger, ctx.notify, ctx.config, () => ctx.timezone()));
+  ctx.registerPlatform(new CronAdapter(store, deliveryStore, ctx.logger, ctx.notify, ctx.config, () => ctx.timezone(), ownerIsAdmin));
   ctx.logger.info('cron tools + scheduler registered');
 }

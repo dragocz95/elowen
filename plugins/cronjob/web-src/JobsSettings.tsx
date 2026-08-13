@@ -70,9 +70,11 @@ function ChannelField({ value, onChange, channels }: { value: string; onChange: 
  *  last result); `draft` holds what the user is typing. When the server's copy changes and the row has no
  *  unsaved edit, the draft adopts it — otherwise a job the brain's cron tools changed behind this page's
  *  back would be shown stale and overwritten by the row's next save. */
-function CronJobRow({ job, persisted, channels, models, selected, onSelect, onClose, onRemoved }: {
+function CronJobRow({ job, persisted, ownerLabel, channels, models, selected, onSelect, onClose, onRemoved }: {
   job: CronJob;
   persisted: boolean;
+  /** Who owns the job, for the admin's owner column; null hides the column (everyone else sees only their own). */
+  ownerLabel: string | null;
   channels: DiscordChannelOption[];
   models: BrainModelOption[];
   selected: boolean;
@@ -181,6 +183,9 @@ function CronJobRow({ job, persisted, channels, models, selected, onSelect, onCl
             {draft.schedule}
           </C.Badge>
         </C.DataTableCell>
+        {ownerLabel !== null ? (
+          <C.DataTableCell priority="wide" title={ownerLabel} className="truncate text-xs text-text-muted">{ownerLabel}</C.DataTableCell>
+        ) : null}
         {/* Destination: one line that truncates, full name on hover. A channel or thread title can be far
             longer than the column, and wrapping it pushed every other row out of alignment. */}
         <C.DataTableCell priority="wide" title={dest ?? s.channelDefault} className="truncate text-xs text-text-muted">
@@ -305,12 +310,17 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
   const s = hooks.usePluginStrings('cronjob');
   const { t } = hooks.useTranslation();
   const { data, isLoading, isError, refetch } = hooks.useCronJobs();
+  const me = hooks.useMe();
+  const myId = me.data?.user?.id ?? null;
+  const isAdmin = me.data?.user?.is_admin === true;
   const channels = hooks.useDiscordChannels();
   const models = hooks.useBrainModels();
   const [drafts, setDrafts] = useState<CronJob[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  // Only an admin sees more than one owner's jobs, so only he is offered the scope filter.
+  const [scope, setScope] = useState<'all' | 'mine' | 'instance'>('all');
   const [page, setPage] = useState(0);
 
   // A draft the server has taken is the server's now. Keeping it would resurrect the job as an unsaved
@@ -334,13 +344,15 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     return rows.filter((j) => {
       if (filter === 'active' && j.enabled === false) return false;
       if (filter === 'paused' && j.enabled !== false) return false;
+      if (scope === 'mine' && !(j.ownerUserId != null && j.ownerUserId === myId)) return false;
+      if (scope === 'instance' && j.ownerUserId != null) return false;
       if (needle === '') return true;
       return j.name.toLowerCase().includes(needle) || j.schedule.toLowerCase().includes(needle) || j.prompt.toLowerCase().includes(needle);
     });
-  }, [rows, query, filter]);
+  }, [rows, query, filter, scope, myId]);
   // A narrowed list can be shorter than the page the user is on; landing on an empty page reads as
   // "nothing matches" when the matches are simply on page 1.
-  useEffect(() => { setPage(0); }, [query, filter]);
+  useEffect(() => { setPage(0); }, [query, filter, scope]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
   const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
@@ -360,11 +372,16 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   const table = (
     <div className="flex min-w-0 flex-col gap-3">
-      <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem" compactColumns="2rem minmax(0,1fr) 5.5rem">
+      <C.DataTable
+        ariaLabel={s.title}
+        columns={isAdmin ? '2rem minmax(0,1fr) 9.5rem 7rem minmax(0,12rem) 7rem 5.5rem' : '2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem'}
+        compactColumns="2rem minmax(0,1fr) 5.5rem"
+      >
         <C.DataTableRow header>
           <C.DataTableCell header><span className="sr-only">{s.enabled}</span></C.DataTableCell>
           <C.DataTableCell header>{s.name}</C.DataTableCell>
           <C.DataTableCell header priority="wide">{s.schedule}</C.DataTableCell>
+          {isAdmin ? <C.DataTableCell header priority="wide">{s.ownerColumn}</C.DataTableCell> : null}
           <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell>
           <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colLastRun}</C.DataTableCell>
           <C.DataTableCell header role="presentation" aria-hidden>{null}</C.DataTableCell>
@@ -374,6 +391,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
             key={job.id}
             job={job}
             persisted={saved.has(job.id)}
+            ownerLabel={isAdmin ? (job.ownerUserId == null ? s.ownerInstance : job.ownerUserId === myId ? s.ownerMine : `#${job.ownerUserId}`) : null}
             channels={channels.data ?? []}
             models={models.data ?? []}
             selected={selectedId === job.id}
@@ -421,6 +439,15 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
                   aria-label={s.enabled}
                   nowrap
                 />
+                {isAdmin ? (
+                  <C.Segmented
+                    value={scope}
+                    onChange={(v: string) => setScope(v as 'all' | 'mine' | 'instance')}
+                    options={[{ value: 'all', label: s.filterAll }, { value: 'mine', label: s.filterMine }, { value: 'instance', label: s.filterInstance }]}
+                    aria-label={s.ownerColumn}
+                    nowrap
+                  />
+                ) : null}
                 {surface === 'deck' ? addButton : null}
               </div>
             </C.ControlSurfaceToolbar>

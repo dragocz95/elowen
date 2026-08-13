@@ -176,8 +176,12 @@ export interface SessionSource {
    *  the host then routes the turn as a BOUND send into that conversation — the reply lands (and
    *  streams) exactly where the schedule was created — instead of the platform's own channel session.
    *  The host verifies the session still exists and belongs to `userId`; on a mismatch it falls back
-   *  to the normal channel path. */
-  origin?: { sessionId: string; userId: number };
+   *  to the normal channel path.
+   *
+   *  With no `sessionId` the target is that account's DEFAULT conversation — the shape a scheduled job
+   *  somebody OWNS uses: it was never created from a particular conversation, but its result still
+   *  belongs in its owner's own chat rather than in a channel session only the admin can read. */
+  origin?: { sessionId?: string; userId: number };
   /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation,
    *  so the brain can see what was said in the channel before it joined. Returns a ready context
    *  block (or '' when nothing is available). */
@@ -192,6 +196,12 @@ export interface SessionSource {
     /** True only when the ORIGINAL delegating turn belongs to the instance operator. `admin` is project
      *  scope and is deliberately insufficient: a foreign platform role may be admin without being owner. */
     owner?: boolean;
+    /** The Elowen account this automation turn acts FOR (a scheduled job somebody owns). The host
+     *  resolves it exactly like a linked platform sender, so the turn gets that account's project
+     *  policy, tool deny-list, plugin grants and memory scope — never the instance operator's. Ignored
+     *  when the sender is already linked to an account, and never a way to gain rights: a plugin that
+     *  wanted more could simply set `admin` instead, which is why this narrows rather than widens. */
+    actAsUserId?: number;
     /** Exact execute-time plugin-tool policy inherited by a delegated child. Arrays preserve an empty
     *  allow-list (deny everything), unlike a platform role's legacy `tools: []` = unrestricted convention. */
     toolPolicy?: { allow?: string[]; deny?: string[] };

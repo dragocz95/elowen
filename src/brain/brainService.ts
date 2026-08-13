@@ -350,11 +350,16 @@ export class BrainService {
       // event is emitted only AFTER the send succeeded, so the caller (cron) can tell origin delivery
       // apart from a failed attempt and still deliver errors through its notify fallback.
       originSend: async (userId, sessionId, text, onEvent) => {
-        const row = this.d.store.getSession(sessionId);
-        if (!isOwnedUserSession(row, userId, sessionId)) return null;
-        await this.send({ userId, text, mode: 'build', session: sessionId });
-        onEvent?.({ type: 'session', sessionId });
-        return lastAssistantText(this.d.store, sessionId);
+        // No session named → the account's own default conversation. A scheduled job somebody owns has
+        // no originating conversation, but its result belongs to that person, not to a channel session
+        // anchored on the instance admin. An account that has never chatted has no row yet, so this
+        // degrades to the caller's own fallback exactly like a vanished origin does.
+        const target = sessionId ?? defaultUserSessionId(userId);
+        const row = this.d.store.getSession(target);
+        if (!isOwnedUserSession(row, userId, target)) return null;
+        await this.send({ userId, text, mode: 'build', session: target });
+        onEvent?.({ type: 'session', sessionId: target });
+        return lastAssistantText(this.d.store, target);
       },
       // /context picker (all three platform surfaces): resolve the platform sender to their linked Elowen
       // account, then reach the SAME BrainService methods the web endpoint uses — one implementation, not

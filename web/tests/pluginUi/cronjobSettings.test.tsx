@@ -20,6 +20,8 @@ const strings = (manifest as { web: { strings: Record<string, string> } }).web.s
 
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'cronjob', url: '/plugins/cronjob/web/index.js', apiVersion: 1, nav: [], settings: [], strings }])),
+  // The owner column is the admin's view of who scheduled what, so the page reads the signed-in account.
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 7, username: 'filip', is_admin: true } })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -48,6 +50,27 @@ async function mountWith(jobs: CronJob[]) {
 }
 
 describe('cronjob JobsSettings — error state', () => {
+  // An admin is the one person who sees more than his own jobs, so he gets the owner column and the scope
+  // filter; everyone else's list is already only theirs and the column would say the same thing on every row.
+  it('shows the admin who owns each job and filters by scope', async () => {
+    server.use(http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json([
+      job({ id: 'shared', name: 'instance digest' }),
+      job({ id: 'mine', name: 'my digest', ownerUserId: 7 }),
+      job({ id: 'hers', name: 'her digest', ownerUserId: 9 }),
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
+    await screen.findByText('instance digest');
+    expect(screen.getAllByText(strings.ownerInstance).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(strings.ownerMine).length).toBeGreaterThan(0);
+    expect(screen.getByText('#9')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: strings.filterInstance }));
+    await waitFor(() => expect(screen.queryByText('my digest')).toBeNull());
+    expect(screen.getByText('instance digest')).toBeInTheDocument();
+    expect(screen.queryByText('her digest')).toBeNull();
+  });
+
   it('shows a retryable error instead of an infinite skeleton', async () => {
     let attempts = 0;
     server.use(

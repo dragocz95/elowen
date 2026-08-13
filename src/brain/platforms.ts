@@ -49,7 +49,7 @@ export interface PlatformOrchestratorDeps {
    *  Resolves with the reply text, or null when the session no longer exists / isn't owned by that
    *  user — the orchestrator then falls back to the normal channel path. Emits a `session` event
    *  carrying the origin session id on success, so the caller can tell origin delivery happened. */
-  originSend?: (userId: number, sessionId: string, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
+  originSend?: (userId: number, sessionId: string | undefined, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
   /** The caller's OWN conversations eligible to bind into a channel (the /context picker), resolved from
    *  the platform sender id to their linked Elowen account. Null when that sender is not linked to any
    *  account (they have no bindable sessions). Paginated for the surface pickers. */
