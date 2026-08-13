@@ -12,6 +12,32 @@ export function bodyLimitBytes(maxSize: number): MiddlewareHandler {
   return bodyLimit({ maxSize, onError: (c) => c.json({ error: 'payload too large' }, 413) });
 }
 
+/** Read a request body into memory with a HARD cap, for a dispatcher that cannot be fronted by
+ *  {@link bodyLimitBytes} middleware — the root plugin-API catch-all resolves its route from the live
+ *  registry, so there is no path pattern to hang a middleware on that would not also cap every core
+ *  route. Returns null when the body is (or claims to be) larger than the cap, so the caller answers
+ *  413. Buffering first and measuring afterwards is what this replaces: the cap then bounds the ANSWER
+ *  while the allocation is already made. `content-length` is checked before a byte is read; a chunked
+ *  body with no such header is bounded by the running total, and the stream is cancelled the moment it
+ *  crosses the cap. */
+export async function readBoundedBody(c: Context, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(c.req.header('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  const body = c.req.raw.body;
+  if (!body) return Buffer.alloc(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** Parse and validate a JSON request body against a zod schema. A malformed/empty body throws a
  *  SyntaxError (which `onError` maps to a clean `invalid JSON body` 400), and a well-formed body of the
  *  wrong shape throws a {@link ZodError} (mapped to a 400 listing the offending fields). Single source

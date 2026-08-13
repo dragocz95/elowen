@@ -81,6 +81,28 @@ describe('root-mounted plugin API routes', () => {
     expect((await (await app.request('/plugins/rooty/api/ns-ping', auth(token))).json())).toEqual({ ns: true });
   });
 
+  // The dispatcher caps plugin API bodies at 4 MiB. The namespaced surface enforces that cap as
+  // streaming middleware, but the ROOT dispatcher used to buffer the entire body into memory FIRST and
+  // measure it afterwards — so the cap bounded the answer, not the allocation, and any authenticated
+  // caller could make the daemon hold an arbitrarily large upload on a path like POST /tasks. Enforcing
+  // it on the declared size is what proves the body is no longer read before the limit is applied.
+  it('refuses an oversize body before reading it', async () => {
+    const { provider } = rootPluginProvider();
+    const { app, token } = await makeTestApp({ extra: { plugins: provider } });
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': String(64 * 1024 * 1024) };
+    const res = await app.request('/rooty', { method: 'POST', headers, body: '{"a":1}' });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'payload too large' });
+    // A body within the cap is unaffected — including an honestly declared content-length.
+    const ok = await app.request('/rooty', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': '7' },
+      body: '{"a":1}',
+    });
+    expect(ok.status).toBe(201);
+    expect(await ok.json()).toEqual({ created: { a: 1 } });
+  });
+
   it('enforces declared access levels on root mounts (agent / admin)', async () => {
     const { provider } = rootPluginProvider();
     const { app, token, deps } = await makeTestApp({ extra: { plugins: provider } });

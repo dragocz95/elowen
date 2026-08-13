@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { ZodError } from 'zod';
 import { logger } from '../../shared/logger.js';
 import { discoverPlugins } from '../../plugins/loader.js';
-import { bodyLimitBytes, formatZodError } from '../validation.js';
+import { bodyLimitBytes, formatZodError, readBoundedBody } from '../validation.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 import type { PluginApiAccess, PluginApiRequest, PluginApiRoute } from '../../plugins/api.js';
@@ -29,8 +29,11 @@ async function dispatchPluginApi(
   if (scope === 'agent' && match.access !== 'agent') return c.json({ error: 'forbidden' }, 403);
   if (scope === 'user' && match.access === 'admin' && ctx.notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
 
-  const raw = Buffer.from(await c.req.arrayBuffer());
-  if (raw.length > MAX_API_BODY_BYTES) return c.json({ error: 'payload too large' }, 413);
+  // Bounded read, not "buffer then measure": the root dispatcher below is a catch-all with no path
+  // pattern to front with bodyLimit middleware (one would cap every core route too), so the cap has to
+  // bound the ALLOCATION here. The namespaced surface keeps its streaming middleware as well.
+  const raw = await readBoundedBody(c, MAX_API_BODY_BYTES);
+  if (raw === null) return c.json({ error: 'payload too large' }, 413);
   const headers: Record<string, string> = {};
   c.req.raw.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
   const projects = ctx.accessibleProjects(c);
