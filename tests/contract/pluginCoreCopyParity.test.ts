@@ -86,13 +86,21 @@ describe('plugin copies of core runtime code', () => {
     expect(isGitSha('--all')).toBe(false);
   });
 
-  // The work plugin's tools were MOVED out of the core, and the promise made when they moved was that
-  // they keep producing byte-identical requests and error text. That promise lives entirely in this
-  // copied forward: the headers, the GET/HEAD body rule, and the defensive parse that must never throw
-  // on a non-JSON body.
-  it('forwards HTTP exactly like the daemon client the moved tools used to call', () => {
+  // Tools MOVED out of core promised to keep producing byte-identical requests and error text, and
+  // that promise lives entirely in this copied-forward client: the headers, the GET/HEAD body rule and
+  // the defensive parse that must never throw on a non-JSON body. DISCOVERED, not named — pinning one
+  // plugin by hand is the exact mistake this file exists to end, and the next plugin to move a
+  // REST-calling tool would otherwise inherit a copy nobody compares.
+  const apiCopies = pluginSources().filter((f) => /export async function callElowenApi\(/.test(readFileSync(f, 'utf8')));
+
+  it('finds the api-client copies it is meant to guard', () => {
+    expect(apiCopies.map((f) => relative(repoRoot, f)).sort()).toEqual([
+      'plugins/work/src/lib/apiClient.ts',
+    ]);
+  });
+
+  it.each(apiCopies.map((f) => [relative(repoRoot, f), f]))('%s forwards HTTP exactly like the daemon client', (_name, file) => {
     const host = readFileSync(resolve(repoRoot, 'src/shared/apiClient.ts'), 'utf8');
-    const copy = readFileSync(resolve(repoRoot, 'plugins/work/src/lib/apiClient.ts'), 'utf8');
-    expect(fn(copy, 'callElowenApi')).toBe(fn(host, 'callElowenApi'));
+    expect(fn(readFileSync(file, 'utf8'), 'callElowenApi')).toBe(fn(host, 'callElowenApi'));
   });
 });
