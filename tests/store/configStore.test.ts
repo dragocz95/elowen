@@ -574,6 +574,8 @@ describe('ConfigStore work plugin migration', () => {
   it('is a no-op on a fresh install (no settings row → the defaults already carry the marker)', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     cs.migrateWorkPlugin();
-    expect(cs.get().plugins.enabled).toContain('work'); // from the fresh-install defaults, not the migration
+    // A fresh install is a bare assistant: task tracking is a domain vertical its owner opts into, and
+    // this continuity sweep must never hand it to an install that never had it.
+    expect(cs.get().plugins.enabled).not.toContain('work');
   });
 });

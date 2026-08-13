@@ -5,7 +5,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
 describe('ConfigStore plugins', () => {
   it('defaults to the safe fresh-install tool set', () => {
     const cs = new ConfigStore(openDb(':memory:'));
-    expect(cs.get().plugins.enabled).toEqual(['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor', 'work']);
+    expect(cs.get().plugins.enabled).toEqual(['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'lsp']);
   });
 
   it('round-trips plugins.enabled in the public view', () => {

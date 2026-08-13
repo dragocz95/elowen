@@ -4,19 +4,25 @@ import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 
-/** The fresh-install default tool plugins — a SAFE set that needs no config to load (files, terminal,
- *  askuser, runtime-context, skills, subagent, elowen-docs). Verified against each plugin's own manifest
- *  below so this list can never silently drift from what actually loads with zero config.
+/** The fresh-install default plugin set — a BARE ASSISTANT: tools that need no configuration to be
+ *  useful (files, terminal, askuser, runtime-context, skills, subagent, elowen-docs, cronjob,
+ *  security-scan, statusline, codebase, mcp, lsp). Every entry is checked against its own manifest
+ *  below, so this list can never silently drift from what actually ships on.
  *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
  *  with no embedding model configured it ranks by keyword instead of failing — so it still answers "how
- *  do I set this up?" on the fresh install where nothing is set up yet.
- *
- *  agents qualifies too: it replaces the formerly-core tmux-agent/mission subsystem, needs no config
- *  field to load, and every optional capability (relay, PR mode) degrades the same way it did in core.
- *  So does lsp, the formerly-core language-server subsystem: no config field, and a language whose
- *  server is not installed degrades to an honest "not installed" exactly as it did in core. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor', 'work'];
+ *  do I set this up?" on the fresh install where nothing is set up yet. lsp qualifies the same way: a
+ *  language whose server is not installed degrades to an honest "not installed". */
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'lsp'];
+
+interface Manifest {
+  configSchema?: { key: string; required?: boolean }[];
+  web?: { label?: string; nav?: { label: string; route?: string }[] };
+}
+
+function manifest(name: string): Manifest {
+  return JSON.parse(readFileSync(join(process.cwd(), 'plugins', name, 'elowen-plugin.json'), 'utf-8')) as Manifest;
+}
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {
@@ -49,10 +55,64 @@ describe('ConfigStore fresh-install defaults', () => {
 describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {
   for (const name of SAFE_DEFAULT_PLUGINS) {
     it(`${name}: no configSchema field is required`, () => {
-      const manifestPath = join(process.cwd(), 'plugins', name, 'elowen-plugin.json');
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { configSchema?: { key: string; required?: boolean }[] };
-      const required = (manifest.configSchema ?? []).filter((f) => f.required);
+      const required = (manifest(name).configSchema ?? []).filter((f) => f.required);
       expect(required).toEqual([]);
     });
   }
+});
+
+/** The rule a fresh install must satisfy, derived MECHANICALLY from each manifest rather than from a
+ *  name list somebody has to remember to update: a plugin that contributes its own pages to the main
+ *  navigation (`web.nav`) owns a domain vertical — its own world in the dashboard, its own objects, its
+ *  own lifecycle (agents → Sessions/Escalations, work → Tasks/Kanban/Timeline/Stats, editor → Editor).
+ *  Elowen out of the box is an assistant, not somebody else's product, so none of those ship enabled;
+ *  the owner installs them from Settings → Plugins. A plugin contributing only a SETTINGS section
+ *  (skills, subagent, cronjob) configures the assistant itself and is fine. */
+describe('a fresh install enables no plugin that owns a domain vertical', () => {
+  const cfg = new ConfigStore(openDb(':memory:'));
+  const enabled = cfg.get().plugins.enabled;
+
+  for (const name of enabled) {
+    it(`${name}: contributes no top-level navigation of its own`, () => {
+      const web = manifest(name).web;
+      expect(web?.nav ?? []).toEqual([]);
+      expect(web?.label ?? null).toBeNull(); // `label` names a plugin's nav WORLD — same signal
+    });
+  }
+
+  it('the plugins that do own one are absent from the fresh set (and are the ones the rule catches)', () => {
+    const vertical = ['agents', 'work', 'editor'].filter((n) => (manifest(n).web?.nav ?? []).length > 0);
+    expect(vertical).toEqual(['agents', 'work', 'editor']); // guard: they still declare nav
+    for (const name of vertical) expect(enabled).not.toContain(name);
+  });
+});
+
+/** The other half of the promise: trimming the fresh defaults must not take anything away from an
+ *  install that already has it. Those installs keep their subsystems through the one-shot migrations,
+ *  which run only when a settings row already exists. */
+describe('existing installs keep their domain plugins across the upgrade', () => {
+  it('a pre-existing row that predates the extraction still gets agents/work/editor enabled', () => {
+    const db = openDb(':memory:');
+    // A settings row written before the subsystems were extracted: no migration markers at all.
+    db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
+      allowedExecs: ['sonnet'],
+      plugins: { enabled: ['files', 'terminal'], removed: [], config: {} },
+    }));
+
+    const upgraded = new ConfigStore(db);
+    upgraded.migrateAgentsEnabled();
+    upgraded.migrateEditorPlugin();
+    upgraded.migrateWorkPlugin();
+
+    expect(upgraded.get().plugins.enabled).toEqual(['files', 'terminal', 'agents', 'editor', 'work']);
+  });
+
+  it('a FRESH install is never handed one by those same sweeps (the markers ship set)', () => {
+    const cfg = new ConfigStore(openDb(':memory:'));
+    cfg.update({ autoUpdate: true }); // materialise the fresh row exactly as a first boot does
+    cfg.migrateAgentsEnabled();
+    cfg.migrateEditorPlugin();
+    cfg.migrateWorkPlugin();
+    expect(cfg.get().plugins.enabled).toEqual(SAFE_DEFAULT_PLUGINS);
+  });
 });

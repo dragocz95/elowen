@@ -580,19 +580,27 @@ const DEFAULT_CONFIG: ElowenConfig = {
   autoUpdate: false,
   webPush: { publicKey: '', publicKeySet: false },
   webPushContact: '',
-  // Everything that works without being configured first ships on, so a fresh install behaves like a
-  // tuned one instead of like a stripped one. elowen-docs is how the agent answers questions about
-  // Elowen itself and looks a setting up before changing it; codebase and mcp stay inert until an
-  // embedding provider resp. a server is configured; agents is the extracted tmux-agent/mission
-  // subsystem and lsp the extracted language-server subsystem (both previously core — a fresh install
-  // must behave like the pre-extraction daemon). The chat
-  // platforms stay OFF because each declares a required credential, and a plugin that ships on may not
-  // open by asking for one — the fresh-default suite enforces exactly that. Also off: dev-commands and
-  // formatters, which act on the repo unasked.
+  // A fresh install is a BARE ASSISTANT: everything that makes the agent capable without being
+  // configured first ships on (read/write files, run commands, search the codebase, ask the user,
+  // delegate, schedule, answer questions about Elowen itself), and nothing else. elowen-docs is how it
+  // looks a setting up before changing it; codebase and mcp stay inert until an embedding provider
+  // resp. a server is configured; lsp degrades to an honest "not installed" per language.
+  //
+  // What is deliberately NOT here: a plugin that owns a DOMAIN VERTICAL — its own pages in the main
+  // navigation, its own tables, its own object lifecycle (agents = missions/sessions/autopilot,
+  // work = tasks/kanban, editor = the code workspace). A new install must not open onto someone else's
+  // product; the owner installs those from Settings → Plugins when they actually want them. The
+  // fresh-default suite derives that rule from the manifests (`web.nav`), so it cannot rot into a
+  // name list nobody updates. Existing installs are untouched: migrateAgentsEnabled/migrateWorkPlugin/
+  // migrateEditorPlugin keep the subsystems those installs already had.
+  //
+  // The chat platforms stay OFF because each declares a required credential, and a plugin that ships on
+  // may not open by asking for one — also enforced by the fresh-default suite. Also off: dev-commands
+  // and formatters, which act on the repo unasked.
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'agents', 'lsp', 'editor', 'work',
+      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'lsp',
     ],
     removed: [],
   },
@@ -721,8 +729,10 @@ const defaultStored = (): Stored => ({
   webPush: null,
   webPushContact: '',
   plugins: { enabled: [...DEFAULT_CONFIG.plugins.enabled], removed: [], config: {} },
-  // A fresh row already enables `agents` via the defaults above — mark it migrated so a later boot's
-  // one-shot sweep never re-adds the plugin after an admin deliberately disables it.
+  // Every one-shot "preserve the previously-core subsystem" sweep is marked DONE on a fresh row. Those
+  // sweeps exist to keep an EXISTING install's missions/tasks/editor working across the extraction; a
+  // brand-new install never had them, so it must not be handed a domain vertical by an upgrade path it
+  // was never part of. The markers are what makes that permanent (a later boot cannot re-add them).
   agentsConfigMigrated: true,
   // Fresh installs need no autopilot→plugin config copy: the plugin's own defaults apply.
   agentsPluginConfigMigrated: true,
@@ -730,7 +740,6 @@ const defaultStored = (): Stored => ({
   // A fresh row already enables `lsp` and needs no toggle copy: the plugin's own default (on) applies.
   lspPluginMigrated: true,
   editorPluginMigrated: true,
-  // A fresh row already enables `work` via the defaults above.
   workPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, memoryRetention: defaultMemoryRetention() },
@@ -938,8 +947,9 @@ export class ConfigStore {
    *  tmux-agent/mission subsystem — without this, upgrading a daemon with running missions would
    *  silently stop every engine tick, scheduler spawn and overseer, i.e. the upgrade would break
    *  behaviour the install already had. Runs once per install (the persisted marker), so an admin who
-   *  later disables the plugin stays disabled; a fresh install never gets here (no settings row — the
-   *  defaults already enable it and defaultStored() carries the marker). Daemon-only (the sub-agent
+   *  later disables the plugin stays disabled; a fresh install never gets here (no settings row — and
+   *  defaultStored() carries the marker, so the sweep can never hand a domain vertical to an install
+   *  that never had one; see DEFAULT_CONFIG.plugins). Daemon-only (the sub-agent
    *  runner opens the DB read-only for schema and must not race a second writer). */
   migrateAgentsEnabled(): void {
     if (!this.hasSettings()) return;

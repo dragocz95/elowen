@@ -5,13 +5,27 @@ import { join } from 'node:path';
 import { buildApp } from '../../src/daemon/bootstrap.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { openDb } from '../../src/store/db.js';
+import { dbWithPlugins } from '../helpers/bootstrapDb.js';
 
 describe('buildApp', () => {
   it('wires a healthy app with an injected tmux fake', async () => {
-    // /sessions lives on the agents plugin's root mount now, so point the loader at the repo plugins.
+    // /sessions lives on the agents plugin's root mount now, and a fresh install no longer enables that
+    // plugin — so boot against a database whose owner installed it (with `work`, since the mission
+    // subsystem stands on task tracking), and point the loader at the repo plugins. /health is core.
+    const { dbPath, cleanup } = dbWithPlugins(['agents', 'work']);
+    try {
+      const { app } = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
+      expect((await app.request('/health')).status).toBe(200);
+      expect((await app.request('/sessions')).status).toBe(200);
+    } finally { cleanup(); }
+  });
+
+  it('a fresh install serves core but answers 503 on a domain plugin\'s root mount (nothing 404s)', async () => {
+    // The bare-assistant default: /sessions is still MOUNTED (the daemon knows the route belongs to a
+    // plugin) and reports the plugin as inactive, rather than looking like a missing endpoint.
     const { app } = await buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
     expect((await app.request('/health')).status).toBe(200);
-    expect((await app.request('/sessions')).status).toBe(200);
+    expect((await app.request('/sessions')).status).toBe(503);
   });
 
   it('resolves the daemon home project by path instead of locking id 1', async () => {
