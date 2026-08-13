@@ -28,11 +28,12 @@ interface CronAdapterUnderTest {
 
 /** The plugin reads the account view through `ctx.host.stores().usersRead`: `isAdmin` decides whether a
  *  job's shell guard may run, `mayUsePlugin` whether its owner may still schedule at all. */
-const hostWith = (admins: number[], scheduling: { denied?: number[] } = {}): PluginHostWiring => ({
+const hostWith = (admins: number[], scheduling: { denied?: number[]; accounts?: number[] } = {}): PluginHostWiring => ({
   stores: {
     usersRead: {
       isAdmin: (id: number) => admins.includes(id),
       mayUsePlugin: (id: number) => !(scheduling.denied ?? []).includes(id),
+      list: () => (scheduling.accounts ?? [4, 7, 9]).map((id) => ({ id })),
     },
   },
 } as unknown as PluginHostWiring);
@@ -208,6 +209,31 @@ describe('cron tick — the shell guard is re-authorised at every fire', () => {
 
     expect(ran).toBe(false);
     expect(readJobs(dataRoot)[0]!.lastResult).toMatch(/admin-owned/);
+  });
+});
+
+describe('cron load — jobs of accounts that no longer exist', () => {
+  it('drops them at load, because the delete-time teardown only runs when the plugin is loaded', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [
+      dueJob({ id: 'gone', ownerUserId: 77 }),
+      dueJob({ id: 'kept', ownerUserId: 4 }),
+      dueJob({ id: 'instance' }),
+    ]);
+    // Disable cronjob, delete the account, enable it again: nothing ever told the plugin, and the job
+    // would otherwise keep firing paid turns for a person who does not exist.
+    const { reg } = await loadCron(dataRoot, { admins: [4] });
+    for (const { fn } of reg.bootReconciles) await fn(); // what PluginServiceRunner does at boot
+    expect(readJobs(dataRoot).map((j) => j.id).sort()).toEqual(['instance', 'kept']);
+  });
+
+  it('leaves the file alone when it cannot read the account list', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob({ id: 'owned', ownerUserId: 77 })]);
+    // An unreadable user table is not "nobody exists" — deleting on that reading would be unrecoverable.
+    const { reg } = await loadCron(dataRoot, { host: null });
+    for (const { fn } of reg.bootReconciles) await fn();
+    expect(readJobs(dataRoot).map((j) => j.id)).toEqual(['owned']);
   });
 });
 

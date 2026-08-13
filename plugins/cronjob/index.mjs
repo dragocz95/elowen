@@ -821,6 +821,23 @@ export function register(ctx) {
     if (rest.length !== jobs.length) store.save(rest);
   });
 
+  // The teardown above only runs when THIS plugin happens to be loaded at the moment the account is
+  // deleted. Disable cronjob, delete an account, enable it again and its jobs are still in the file —
+  // firing forever for a person who no longer exists. So the same rule is re-applied at every load, from
+  // the account list rather than from an event. A list read that throws leaves the file untouched: an
+  // unreadable user table must never be read as "nobody exists".
+  ctx.registerBootReconcile(() => {
+    let ids;
+    try { ids = new Set(ctx.host.stores().usersRead.list().map((u) => u.id)); }
+    catch { return; }
+    if (ids.size === 0) return;
+    const jobs = store.all();
+    const rest = jobs.filter((j) => ownerOf(j) === null || ids.has(ownerOf(j)));
+    if (rest.length === jobs.length) return;
+    ctx.logger.info(`dropped ${jobs.length - rest.length} scheduled job(s) whose owning account no longer exists`);
+    store.save(rest);
+  });
+
   // ── Admin jobs API (root mounts, grandfathered core URLs): jobs.json is a SHARED list — the
   // scheduler stamps runs into it, CronAdd/CronRemove write it, and the settings deck edits it here.
   // So a write names exactly ONE job and the file is read-modify-written around it: taking the whole
@@ -956,6 +973,10 @@ export function register(ctx) {
       const id = decodeURIComponent(segs[0]);
       const target = jobs.find((j) => j.id === id);
       // Deleting is idempotent (a job already gone is a success), but deleting SOMEONE ELSE'S never is.
+      // The `userId === null` clause is not redundant with the comparison below: an INSTANCE job also has
+      // no owner, so an unidentified caller would otherwise match one and delete it (the PUT route refuses
+      // the same caller, so accepting the delete would leave onboarding able to destroy but not create).
+      if (!req.auth.admin && req.auth.userId === null) return jsonRes({ error: 'forbidden' }, 403);
       if (target && !req.auth.admin && ownerOf(target) !== req.auth.userId) return jsonRes({ error: 'forbidden' }, 403);
       const rest = jobs.filter((j) => j.id !== id);
       if (rest.length !== jobs.length) store.save(rest);

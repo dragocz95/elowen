@@ -53,6 +53,10 @@ export interface BrainWorkerDeps {
   /** The task owner's auto-compact settings — a worker runs on THEIR account, so it compacts at their
    *  threshold (global percentage plus any per-model override) instead of a fixed default. */
   userSettings?: (userId: number) => { autoCompactAt?: number; autoCompactAtByModel?: Record<string, number> };
+  /** Tool names the task owner must not reach (their admin-set deny-list plus the tools of any
+   *  grant-gated plugin they hold no grant for). A worker runs unattended ON that account, so it gets
+   *  the same answer chat does — the same seam, so the two cannot drift into different rules. */
+  deniedTools?: (userId: number) => string[];
   now?: () => number;
   idleMs?: number;
   createSession?: typeof createAgentSession;
@@ -199,8 +203,12 @@ export class BrainWorkerService {
     const toolHookBus = plugins && plugins.hooks.length > 0
       ? new PluginHookBus({ hooks: plugins.hooks, hookOwners: plugins.hookOwners, capabilities: plugins.pluginCapabilities, logger: log })
       : undefined;
+    // Applied by NAME rather than as a policy: this factory takes no ToolPolicy, and a tool the owner
+    // may not reach must not merely fail at execute time — its schema would still sit in their prompt.
+    // An ownerless task keeps the full set: there is no account whose grants could withhold anything.
+    const denied = new Set(input.ownerId ? this.d.deniedTools?.(input.ownerId) ?? [] : []);
     const pluginTools = composeSessionTools({
-      kind: 'task-worker', pluginTools: plugins?.tools ?? [],
+      kind: 'task-worker', pluginTools: (plugins?.tools ?? []).filter((t) => !denied.has(t.name)),
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
       // Task workers take the same veto gate. Wiring only the chat path would leave every guard a user
       // installs silently unenforced for exactly the sessions that run unattended.

@@ -33,7 +33,12 @@ describe('brain session id conventions', () => {
   it('skillOwnerForSession: own conversations and sub-agents keep the owner, a shared channel does not', () => {
     expect(skillOwnerForSession(defaultUserSessionId(7), 7)).toBe(7);
     expect(skillOwnerForSession(taskSessionId('t1'), 7)).toBe(7);
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7)).toBe(7);
+    // A sub-agent inherits from the turn that delegated it: yes out of an owner conversation, never out
+    // of a shared channel (there the row owner is the operator, not the person who asked).
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, defaultUserSessionId(7))).toBe(7);
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, channelSessionId('discord-1'))).toBe(null);
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, 'brain-ch-subagent-parent')).toBe(null);
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7)).toBe(null);
     expect(skillOwnerForSession(channelSessionId('discord-1'), 7)).toBe(null);
     // No account behind the turn (an unlinked sender, a cron job) → the instance set.
     expect(skillOwnerForSession(defaultUserSessionId(7), null)).toBe(null);

@@ -22,13 +22,14 @@ afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true
 
 const pluginsDir = join(process.cwd(), 'plugins');
 
-function setup(opts: { enabled?: string[]; config?: Record<string, Record<string, unknown>> } = {}) {
+function setup(opts: { enabled?: string[]; config?: Record<string, Record<string, unknown>>; noUsers?: boolean } = {}) {
   const dataRoot = tmpDir('cronjobs');
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
-  const admin = users.create('admin', 'pw');
-  const amy = users.create('amy', 'pw');
+  // `noUsers` is SETUP MODE: before the first account exists the API is unauthenticated by design.
+  const admin = opts.noUsers ? { id: 0 } : users.create('admin', 'pw');
+  const amy = opts.noUsers ? { id: 0 } : users.create('amy', 'pw');
   // The '/plugins/cronjob/jobs' surface is served by the REAL cronjob plugin (root mounts) now.
   const provider = new PluginRegistryProvider(() => loadPlugins({
     dirs: [pluginsDir], enabled: opts.enabled ?? ['cronjob'], dataRoot, config: opts.config,
@@ -42,7 +43,11 @@ function setup(opts: { enabled?: string[]; config?: Record<string, Record<string
     pluginDataRoot: dataRoot, pluginDirs: [pluginsDir],
     plugins: provider,
   });
-  return { app, dataRoot, users, amy, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  return {
+    app, dataRoot, users, amy,
+    adminTok: opts.noUsers ? '' : users.issueToken(admin.id),
+    amyTok: opts.noUsers ? '' : users.issueToken(amy.id),
+  };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -161,6 +166,18 @@ describe('cron jobs routes', () => {
 
   // A write that read the file at the wrong moment (truncated, or not a list) and saw "no jobs" would
   // put ONE job back where twelve were — the very loss this endpoint exists to stop.
+  it('lets an unidentified caller (setup mode) neither create nor DELETE a job', async () => {
+    const { app, dataRoot } = setup({ noUsers: true });
+    seed(dataRoot, [job({ id: 'instance-job' })]);
+    // An instance job has no owner, so an owner comparison alone would read `null === null` as "mine"
+    // and let onboarding destroy jobs it is not even allowed to create.
+    expect((await app.request('/plugins/cronjob/jobs/instance-job', { method: 'DELETE' })).status).toBe(403);
+    expect((await app.request('/plugins/cronjob/jobs/j1', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(job()),
+    })).status).toBe(403);
+    expect(onDisk(dataRoot).map((j: { id: string }) => j.id)).toEqual(['instance-job']);
+  });
+
   it('refuses to write over a jobs file it could not read, and leaves it untouched', async () => {
     const { app, dataRoot, adminTok } = setup();
     const file = join(dataRoot, 'cronjob', 'jobs.json');

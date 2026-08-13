@@ -181,17 +181,21 @@ export function createHttpClient({
     let lastError = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       // The caller's abort and our own deadline are ONE signal, so a tool the user cancelled stops
-      // immediately instead of finishing its timeout first.
-      const timeout = AbortSignal.timeout(perAttemptTimeout);
-      const signal = outer ? AbortSignal.any([outer, timeout]) : timeout;
+      // immediately instead of finishing its timeout first. The deadline starts INSIDE the concurrency
+      // slot: it is a per-attempt budget for the request, and queue wait is not the server being slow.
+      let timeout = null;
       let res = null;
       try {
-        res = await limit(() => fetchImpl(url, { method, headers, body, signal }));
+        res = await limit(() => {
+          timeout = AbortSignal.timeout(perAttemptTimeout);
+          return fetchImpl(url, { method, headers, body, signal: outer ? AbortSignal.any([outer, timeout]) : timeout });
+        });
       } catch (e) {
         // An abort the CALLER asked for is final — it is not a failure to retry, it is the answer.
         if (outer?.aborted) throw new HttpError('request aborted', { url, method, cause: e, aborted: true });
-        lastError = new HttpError(timeout.aborted ? `request timed out after ${perAttemptTimeout} ms` : `request failed: ${e instanceof Error ? e.message : String(e)}`, {
-          url, method, cause: e, timedOut: timeout.aborted,
+        const timedOut = timeout?.aborted === true;
+        lastError = new HttpError(timedOut ? `request timed out after ${perAttemptTimeout} ms` : `request failed: ${e instanceof Error ? e.message : String(e)}`, {
+          url, method, cause: e, timedOut,
         });
       }
 

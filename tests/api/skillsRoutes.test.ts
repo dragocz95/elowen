@@ -15,6 +15,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
+import type { PluginHostWiring } from '../../src/plugins/api.js';
 
 let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -39,6 +40,9 @@ function setup(opts: { enabled?: string[] } = {}) {
   const provider = new PluginRegistryProvider(() => loadPlugins({
     dirs: [pluginsDir], enabled: opts.enabled ?? ['skills'], dataRoot,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
+    // The plugin refuses to mint a personal folder for an id that names no account, so it needs the same
+    // account list the daemon wires in production.
+    host: { stores: { usersRead: { list: () => users.list() } } } as unknown as PluginHostWiring,
   }));
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),

@@ -205,9 +205,20 @@ export function register(ctx) {
       if (!/^[0-9]+$/.test(raw)) return { ok: false, invalid: true };
       const id = Number(raw);
       if (id !== me && !req.auth.admin) return { ok: false };
+      // The id has to name a REAL account. Otherwise a typo mints a folder for a person who does not
+      // exist, and every later load enumerates it as somebody's skill set. Refused exactly like another
+      // account's set, so a probe cannot tell a missing account from one it may not touch.
+      if (id !== me && !accountExists(id)) return { ok: false };
       return { ok: true, owner: id, dir: userSkillsDir(id) };
     }
     return legacyTarget(req.auth.admin, me);
+  };
+
+  /** Whether an account id still exists. A failing read answers "no": minting a personal folder needs a
+   *  positive answer, and an unreadable user table is not one. */
+  const accountExists = (id) => {
+    try { return ctx.host.stores().usersRead.list().some((u) => u.id === id); }
+    catch { return false; }
   };
 
   const describeSkill = (name, file, source, owner, canWrite = true) => {

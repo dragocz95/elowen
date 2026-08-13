@@ -28,6 +28,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { systemctl } from '../cli/systemd.js';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
+import { deniedToolsForUser } from '../brain/brainDeps.js';
 import { buildBrainCore } from './brainCore.js';
 import { SubagentRunnerPool } from '../subagent/pool.js';
 import { resolvePoolMax } from '../subagent/sizing.js';
@@ -418,6 +419,7 @@ export async function buildApp(opts: BuildOpts) {
     url: elowenCli.url, token: elowenCli.token,
     plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
     userSettings: (userId) => userSettings.cliSettings(userId), // the task owner's auto-compact threshold
+    deniedTools: (userId) => deniedToolsForUser({ users, plugins: pluginProvider }, userId),
   });
   // The plugin host's late binding, so ctx.host.brainWorker() resolves from now on — the agents
   // plugin's spawn attaches through this accessor (its stuck detector and startup reconcile also read

@@ -15,6 +15,11 @@
     ]
   },
   "userGrantable": true,
+  "capabilities": {
+    "reads": [
+      "stores"
+    ]
+  },
   "deferLoading": [
     "CreateSkill",
     "DeleteSkill"
@@ -72,7 +77,7 @@
       "scopeFieldLabel": "Visible to",
       "scopeFieldPersonal": "Only me",
       "scopeFieldInstance": "Everyone",
-      "scopeFieldHint": "A personal skill is loaded only into your own conversations. An instance skill is loaded into everyone\u2019s.",
+      "scopeFieldHint": "A personal skill is loaded only into your own conversations. An instance skill is loaded into everyone’s.",
       "workspaceEyebrow": "Skills",
       "workspaceReady": "Skills loaded"
     }

@@ -68,10 +68,25 @@ export function isSubagentSession(id: string): boolean {
 }
 
 /** WHOSE personal skills a session may load. A skill set is fixed at spawn, so a SHARED channel — where
- *  the sender changes from turn to turn — can only carry the instance-wide ones; a sub-agent is
- *  channel-keyed too but serves exactly ONE owner, so it inherits that owner's set. */
-export function skillOwnerForSession(sessionId: string, ownerUserId: number | null | undefined): number | null {
-  if (isChannelSession(sessionId) && !isSubagentSession(sessionId)) return null;
+ *  the sender changes from turn to turn — can only carry the instance-wide ones.
+ *
+ *  A sub-agent serves exactly one turn, so it may inherit personal skills — but from the turn that
+ *  DELEGATED it, never from the account that happens to own its session row. Those differ precisely in
+ *  the dangerous case: a child spawned out of a shared channel is owned by the row owner (the operator),
+ *  so inheriting on the row would hand the operator's private skill names, descriptions and file paths to
+ *  whichever channel member triggered the delegation. The parent session id is the only thing that
+ *  distinguishes them here, so an unknown or channel-keyed parent (including another sub-agent, whose own
+ *  answer this level cannot re-derive) resolves to the instance set. Same rule `liveRecallUserId` applies
+ *  to memories one screen up, and for the same reason. */
+export function skillOwnerForSession(
+  sessionId: string,
+  ownerUserId: number | null | undefined,
+  parentSessionId?: string,
+): number | null {
+  if (isSubagentSession(sessionId)) {
+    return parentSessionId && !isChannelSession(parentSessionId) ? ownerUserId ?? null : null;
+  }
+  if (isChannelSession(sessionId)) return null;
   return ownerUserId ?? null;
 }
 

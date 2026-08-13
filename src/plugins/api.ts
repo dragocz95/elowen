@@ -1435,6 +1435,10 @@ export interface PluginContext {
    *  deliberately no fallback to the instance-wide config, because a per-account credential that silently
    *  becomes the operator's would act on the wrong person's behalf. */
   userConfig(): Record<string, unknown> | null;
+  /* Read it AT THE TOP of the work that needs it. The account is carried on the async context of the
+   * turn or HTTP request, so anything the handler starts and does not await (a lazily created poller, a
+   * subscription) keeps whichever account happened to trigger it — and would keep answering with that
+   * person's values, secrets included, long after their request ended. */
   readonly logger: PluginLogger;
 }
 

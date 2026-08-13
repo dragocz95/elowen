@@ -144,12 +144,11 @@ export class UserStore {
     // One transaction so a mid-way failure can't leave orphan tokens/assignments (consistent with
     // ProjectStore.remove and TaskStore.delete). The schema has no FK cascade, so order is explicit.
     //
-    // `users.id` is a plain SQLite rowid, not AUTOINCREMENT (schema.sql:56-57), so deleting the
-    // highest-numbered user and creating a new one typically REUSES that exact id. Without nulling
-    // `created_by` here, the new account would silently inherit the old tasks' prompt attribution
-    // (prompts/owner.ts) and the old missions' replan/notification ownership — data belonging to a
-    // person who no longer has the account. Nulling is correct even independent of id reuse: a
-    // `created_by` pointing at a user that no longer exists is already a dangling reference.
+    // `created_by` is nulled rather than left behind because a reference to a user row that no longer
+    // exists is a dangling one: prompt attribution (prompts/owner.ts) and mission replan/notification
+    // ownership both resolve it, and both would then answer "nobody" in some places and throw in others.
+    // Ids themselves are never handed out twice — `seedUserSequenceAboveEveryReference` (store/db.ts)
+    // keeps the counter above every reference — so this is about dangling references, not impersonation.
     this.db.transaction(() => {
       // `tasks` is a WORK-PLUGIN table (as `missions` is an agents one) — null the attribution when
       // present, tolerate a fresh install where the plugin never created it.
