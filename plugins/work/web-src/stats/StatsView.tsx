@@ -90,8 +90,8 @@ export function StatsView() {
                               </DataTableCell>
                               <DataTableCell className="truncate font-mono text-xs text-text" title={row.exec}>{row.exec}</DataTableCell>
                               <DataTableCell className="col-start-2 col-end-4 row-start-2 h-px bg-border @4xl:col-start-3 @4xl:col-end-4 @4xl:row-start-1">
-                                <div aria-hidden className="relative h-px bg-gradient-to-r from-accent via-[#ff955f] to-[#ffd09a] shadow-[0_0_9px_rgb(255_82_54_/_0.35)]" style={{ width: `${row.pct}%` }}>
-                                  <span className="absolute -right-0.5 -top-0.5 h-1 w-1 rounded-full bg-[#ffd09a] shadow-[0_0_8px_rgb(255_160_105_/_0.85)]" />
+                                <div aria-hidden className="relative h-px bg-gradient-to-r from-accent via-ember to-ember-bright shadow-[0_0_9px_rgb(var(--accent-rgb)/0.35)]" style={{ width: `${row.pct}%` }}>
+                                  <span className="absolute -right-0.5 -top-0.5 h-1 w-1 rounded-full bg-ember-bright shadow-[0_0_8px_rgb(var(--accent-rgb)/0.5)]" />
                                 </div>
                               </DataTableCell>
                               <DataTableCell

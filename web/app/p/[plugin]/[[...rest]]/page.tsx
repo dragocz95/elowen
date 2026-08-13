@@ -2,10 +2,13 @@
 export const dynamic = 'force-dynamic';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { Blocks, Settings2 } from 'lucide-react';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
 import { WorkspacePage } from '../../../../components/ui/WorkspacePrimitives';
 import { ModuleHeader } from '../../../../components/ui/ModuleHeader';
 import { MotionReveal } from '../../../../components/ui/Motion';
+import { Button } from '../../../../components/ui/Button';
+import { EmptyState } from '../../../../components/ui/states';
 import { pluginLucideIcon } from '../../../../lib/pluginIcons';
 import { PluginErrorBoundary, PluginPlaceholder as Placeholder } from '../../../../components/plugin/PluginUiGuards';
 import { usePluginUi } from '../../../../lib/queries';
@@ -41,12 +44,29 @@ export default function PluginHostPage() {
   }, [entry, compatible]);
 
   const strings = t.pluginUi;
+  // A plugin that is off is a page the operator can still land on — from a bookmark, from the address
+  // bar, or from a link that predates the switch. It gets the chrome of a page (masthead, tab title)
+  // and the one action that resolves it, instead of a bare sentence on an empty screen.
+  const notice = (text: string, withAction = false) => (
+    <WorkspacePage>
+      <ModuleHeader title={entry?.label ?? plugin} icon={Blocks} />
+      <EmptyState
+        title={strings.unavailableTitle}
+        description={text}
+        icon={Blocks}
+        action={withAction
+          ? <Button variant="accent" icon={Settings2} onClick={() => router.push('/settings?cat=plugins')}>{strings.manage}</Button>
+          : undefined}
+      />
+    </WorkspacePage>
+  );
+
   let body: ReactNode;
   if (listing.isLoading) body = null;
-  else if (!entry) body = <Placeholder text={strings.unavailable} />;
-  else if (!compatible) body = <Placeholder text={strings.incompatible} />;
+  else if (!entry) body = notice(strings.unavailable, true);
+  else if (!compatible) body = notice(strings.incompatible);
   else if (registration === undefined) body = null; // bundle loading
-  else if (registration === null) body = <Placeholder text={strings.loadFailed} />;
+  else if (registration === null) body = notice(strings.loadFailed, true);
   else {
     const page = matchPluginPage(registration.pages, rest);
     // `/p/<plugin>` also resolves to the only settings section of a plugin that has nothing else, so its

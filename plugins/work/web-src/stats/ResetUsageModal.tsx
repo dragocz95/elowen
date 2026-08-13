@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { runtime } from '../runtime';
 
-const { Button, Modal, ModalBody, ModalFooter } = runtime().components;
+const { Button, Input, Modal, ModalBody, ModalFooter } = runtime().components;
 const { useResetUsage, useToast, useTranslation } = runtime().hooks;
 
 /** Confirmation for resetting the usage stats. Requires the operator to type the sentinel word so it
@@ -29,12 +29,15 @@ export function ResetUsageModal({ onClose }: { onClose: () => void }) {
         <p className="text-sm leading-relaxed text-text-muted">{t.stats.resetBody}</p>
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-text-muted">{t.stats.resetConfirmHint.replace('{word}', t.stats.resetConfirmWord)}</label>
-          <input
+          {/* The shared control, not a hand-rolled copy of it: a second input styled by hand drifts —
+              this one had its own background and its own focus colour, so the same modal answered a
+              focus differently than every other field in the app. */}
+          <Input
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             autoFocus
             spellCheck={false}
-            className="h-9 rounded-md border border-border bg-bg px-3 font-mono text-sm text-text outline-none transition-colors focus:border-border-strong"
+            className="font-mono"
           />
         </div>
       </ModalBody>

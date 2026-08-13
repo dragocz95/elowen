@@ -17,7 +17,7 @@ export class PluginErrorBoundary extends ReactComponent<{ children: ReactNode; n
 
 export function PluginPlaceholder({ text }: { text: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-6 text-sm text-muted-foreground">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-6 text-sm text-text-muted">
       <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
       <span>{text}</span>
     </div>

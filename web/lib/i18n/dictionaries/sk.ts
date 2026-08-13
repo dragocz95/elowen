@@ -1894,6 +1894,8 @@ export const sk = {
   },
   pluginUi: {
     eyebrow: 'Rozšírenie',
+    unavailableTitle: 'Rozhranie nie je k dispozícii',
+    manage: 'Spravovať pluginy',
     unavailable: 'Tento plugin nie je zapnutý, alebo nemá žiadne rozhranie.',
     incompatible: 'Tento plugin vyžaduje novšiu verziu aplikácie. Na použitie jeho rozhrania aktualizujte server.',
     loadFailed: 'Rozhranie pluginu sa nepodarilo načítať. Skontrolujte záznamy pluginu v Nastavenia → Pluginy.',

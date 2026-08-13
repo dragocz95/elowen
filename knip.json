@@ -4,10 +4,7 @@
     ".": {
       "entry": [
         "plugins/**/index.mjs",
-        "plugins/agents/src/index.ts",
-        "plugins/lsp/src/index.ts",
-        "plugins/editor/src/index.ts",
-        "plugins/work/src/index.ts",
+        "plugins/*/src/index.ts",
         "plugins/*/web-src/index.tsx"
       ],
       "project": [

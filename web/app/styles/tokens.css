@@ -10,6 +10,9 @@
   --color-accent: #ff5236;
   --color-accent-hot: #ff735c;
   --color-ember: #ff9a62;
+  /* The pale end of the ember ramp — the far stop of a heat gradient, where the accent is the near one.
+     It is a token so a repaint moves the whole ramp; a literal in a chart would stay orange. */
+  --color-ember-bright: #ffd09a;
 
   --color-text: #f7f3f0;
   --color-text-muted: #9d948e;

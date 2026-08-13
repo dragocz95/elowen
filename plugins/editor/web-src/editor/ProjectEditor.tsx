@@ -248,7 +248,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
     <div
       className={fullscreen
         ? 'fixed inset-0 z-50 flex h-screen flex-col overflow-hidden bg-surface'
-        : 'flex flex-col overflow-hidden border-y border-border bg-[#030303]'}
+        : 'flex flex-col overflow-hidden border-y border-border bg-document'}
       style={fullscreen ? undefined : { height: fill ? '100%' : editorH }}
     >
       {/* toolbar */}
@@ -307,7 +307,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
             overlay (default hidden) so it never eats the narrow viewport. */}
         {(mobile && fullscreen && !showTree) ? null : (
           <div
-            className={`flex shrink-0 flex-col border-r border-border ${(mobile && fullscreen) ? 'absolute inset-y-0 left-0 z-10 w-[80%] max-w-72 bg-surface shadow-lg' : 'w-64 bg-bg/40'}`}
+            className={`flex shrink-0 flex-col border-r border-border ${(mobile && fullscreen) ? 'absolute inset-y-0 left-0 z-10 w-[80%] max-w-72 bg-surface shadow-[var(--shadow-raised)]' : 'w-64 bg-bg/40'}`}
           >
             <div className="min-h-0 flex-1 overflow-auto p-1.5">
               {files.isLoading ? <LoadingState />
