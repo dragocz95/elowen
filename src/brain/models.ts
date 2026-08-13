@@ -117,7 +117,9 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
       // empty list means the whole account catalog, and a non-empty one means those models and no others.
       if (entries.length === 0) {
         const builtin = registryProviderName(p);
-        entries = registry.getAll().filter((m) => m.provider === builtin).map((m) => ({ id: m.id }));
+        // Carry the catalog's own window across: dropping it left every model of an unlisted OAuth account
+        // showing the generic placeholder instead of what it actually serves.
+        entries = registry.getAll().filter((m) => m.provider === builtin).map((m) => ({ id: m.id, contextWindow: m.contextWindow }));
       }
     }
     const toOption = (e: FetchedModel): BrainModelOption => {

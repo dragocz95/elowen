@@ -494,3 +494,36 @@ describe('brain providers', () => {
     });
   });
 });
+
+describe('pinned context windows', () => {
+  const oauthCfg = (contextWindows?: Record<string, number>): BrainRuntimeConfig => ({
+    providers: [{
+      id: 'openai-codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
+      models: ['gpt-5.5', 'gpt-5.6-sol'], apiKey: null,
+    }],
+    ...(contextWindows ? { contextWindows } : {}),
+  });
+
+  // An OAuth entry registers no provider of its own — PI owns the catalog — so the operator's pin used to
+  // reach the settings picker (which applies it while rendering) but never the runtime. The window shown
+  // in Settings and the one every session actually ran on silently disagreed.
+  it('reaches the runtime descriptor of an OAuth built-in model, not just the picker', () => {
+    const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-5.6-sol': 372_000 }), runtime);
+    expect(registry.find('openai-codex', 'gpt-5.6-sol')?.contextWindow).toBe(372_000);
+  });
+
+  it('leaves an unpinned model of the same provider on the catalog window', async () => {
+    // A separate runtime for the baseline: building twice over one runtime copies descriptors this file's
+    // header warns are already consumed, which would compare a pinned build against a degraded reading.
+    const baseline = buildBrainRegistry(oauthCfg(), await inMemoryModelRuntime());
+    const catalogWindow = baseline.find('openai-codex', 'gpt-5.5')?.contextWindow;
+    expect(catalogWindow).toBeGreaterThan(0);
+
+    const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-5.6-sol': 372_000 }), runtime);
+
+    // Re-registering replaces the provider's whole model list, so the models NOT pinned have to survive
+    // the round trip intact — otherwise one pin would quietly flatten the rest of the catalog.
+    expect(registry.find('openai-codex', 'gpt-5.5')?.contextWindow).toBe(catalogWindow);
+    expect(registry.find('openai-codex', 'gpt-5.5')?.api).toBe(registry.find('openai-codex', 'gpt-5.6-sol')?.api);
+  });
+});

@@ -302,8 +302,34 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
       });
     }
     // oauth-* types: built-in providers already carry their model catalogs; auth comes from AuthStorage.
+    // Their PINNED context windows still have to be applied — see applyPinnedWindows below.
   }
+  applyPinnedWindows(registry, cfg);
   return registry;
+}
+
+/** Apply operator-pinned context windows to the OAUTH built-in providers.
+ *
+ *  A custom endpoint carries its pin in through `modelEntry`, but an OAuth entry registers no provider at
+ *  all — PI owns its catalog and its auth — so the pin had nowhere to land and the runtime kept the
+ *  catalog's own number. The settings list applies the pin when it RENDERS (models.ts), which made the
+ *  mismatch invisible: the picker showed the operator's value while every session ran on the catalog's,
+ *  and the chat meter kept reporting the old window no matter how often it was set.
+ *
+ *  Re-registering an extension config over a built-in COMPOSES onto it, and each model definition carries
+ *  its own `api`/`baseUrl`, so passing models alone preserves the provider's name, endpoint and native
+ *  OAuth. Providers with no pin are left untouched rather than re-registered for nothing. */
+function applyPinnedWindows(registry: ModelRegistry, cfg: BrainRuntimeConfig): void {
+  for (const p of cfg.providers) {
+    if (!(p.type in OAUTH_BUILTIN)) continue;
+    const providerName = registryProviderName(p);
+    const models = registry.getAll().filter((m) => m.provider === providerName);
+    const pinned = models.map((m) => ({ def: catalogDefinition(m), window: windowFor(cfg, p.id, m.id) }));
+    if (!pinned.some((m) => m.window && m.window > 0)) continue;
+    registry.registerProvider(providerName, {
+      models: pinned.map(({ def, window }) => (window && window > 0 ? { ...def, contextWindow: window } : def)),
+    });
+  }
 }
 
 /** What a user (or a channel) selected: a provider entry id + a model id, both optional — absent parts
