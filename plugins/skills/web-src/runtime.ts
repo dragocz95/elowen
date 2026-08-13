@@ -27,7 +27,11 @@ interface MutationResult<TVars> {
   variables?: TVars;
 }
 
+/** The host dictionary, narrowed to what this bundle reads (nested string maps). */
+type Dict = Record<string, Record<string, string>>;
+
 interface SkillsHooks {
+  useTranslation(): { t: Dict; locale: string };
   useToast(): { toast: (msg: string, tone?: 'ok' | 'error') => void };
   usePluginSkills(): QueryResult<PluginSkill[]>;
   useCreatePluginSkill(): MutationResult<{ name: string; description: string; content: string; disableModelInvocation?: boolean }>;
@@ -42,7 +46,9 @@ type AnyComponent = ComponentType<any>;
 
 interface SkillsComponents {
   Badge: AnyComponent; Toggle: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
-  MarkdownAssetEditor: AnyComponent;
+  MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
+  ControlSurfaceDocument: AnyComponent;
+  SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent;
 }
 
 interface SkillsRuntime {

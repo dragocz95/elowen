@@ -60,7 +60,9 @@
       "manualOnlyBadge": "manual only",
       "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “deploy-checklist”).",
       "helpDescription": "One line: when the assistant should use this skill.",
-      "helpContent": "The skill body — markdown instructions for the assistant."
+      "helpContent": "The skill body — markdown instructions for the assistant.",
+      "workspaceEyebrow": "Skills",
+      "workspaceReady": "Skills loaded"
     }
   }
 }

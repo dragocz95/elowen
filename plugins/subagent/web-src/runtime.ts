@@ -26,7 +26,11 @@ interface MutationResult<TVars> {
   variables?: TVars;
 }
 
+/** The host dictionary, narrowed to what this bundle reads (nested string maps). */
+type Dict = Record<string, Record<string, string>>;
+
 interface SubagentHooks {
+  useTranslation(): { t: Dict; locale: string };
   usePluginSubagents(): QueryResult<PluginSubagent[]>;
   useSavePluginSubagent(): MutationResult<{ name: string; def: { description: string; tools: PluginSubagent['tools']; body: string } }>;
   useDeletePluginSubagent(): MutationResult<string>;
@@ -39,7 +43,9 @@ type AnyComponent = ComponentType<any>;
 
 interface SubagentComponents {
   Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
-  MarkdownAssetEditor: AnyComponent;
+  MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
+  ControlSurfaceDocument: AnyComponent;
+  SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent;
 }
 
 interface SubagentRuntime {

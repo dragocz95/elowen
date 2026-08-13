@@ -28,7 +28,9 @@
       "manualOnlyBadge": "jen ručně",
       "helpName": "kebab-case: malá písmena, číslice a pomlčky (např. „deploy-checklist“).",
       "helpDescription": "Jedna věta: kdy má asistent tento skill použít.",
-      "helpContent": "Tělo skillu — markdown instrukce pro asistenta."
+      "helpContent": "Tělo skillu — markdown instrukce pro asistenta.",
+      "workspaceEyebrow": "Skilly",
+      "workspaceReady": "Skilly načteny"
     }
   }
 }

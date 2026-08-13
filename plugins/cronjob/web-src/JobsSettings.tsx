@@ -279,7 +279,7 @@ function CronJobRow({ job, persisted, channels, models, selected, onSelect, onCl
               </C.Field>
             ) : null}
             <div className="flex justify-end border-t border-border pt-3">
-              <C.Button variant="ghost" icon={Trash2} onClick={() => setConfirming(true)}>{s.removeJob}</C.Button>
+              <C.Button variant="ghost-danger" icon={Trash2} onClick={() => setConfirming(true)}>{s.removeJob}</C.Button>
             </div>
           </div>
         </C.WorkspaceDetailRail>
@@ -356,6 +356,8 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     setSelectedId((cur) => (cur === id ? null : cur));
   };
 
+  const addButton = <C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>;
+
   const table = (
     <div className="flex min-w-0 flex-col gap-3">
       <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem" compactColumns="2rem minmax(0,1fr) 5.5rem">
@@ -365,7 +367,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
           <C.DataTableCell header priority="wide">{s.schedule}</C.DataTableCell>
           <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell>
           <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colLastRun}</C.DataTableCell>
-          <C.DataTableCell header />
+          <C.DataTableCell header role="presentation" aria-hidden>{null}</C.DataTableCell>
         </C.DataTableRow>
         {pageItems.map((job) => (
           <CronJobRow
@@ -402,8 +404,8 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
 
   const surfaceDocument = (
     <C.ControlSurfaceDocument>
-      {isLoading || !data ? <C.ControlSurfaceState><C.LoadingState variant="cards" /></C.ControlSurfaceState>
-        : isError ? <C.ControlSurfaceState tone="danger"><C.ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} /></C.ControlSurfaceState>
+      {isError ? <C.ControlSurfaceState tone="danger"><C.ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} /></C.ControlSurfaceState>
+        : isLoading || !data ? <C.ControlSurfaceState><C.LoadingState variant="cards" /></C.ControlSurfaceState>
         : (
           <div className="flex min-w-0 flex-col gap-4">
             <C.ControlSurfaceToolbar className="flex-col items-stretch">
@@ -419,12 +421,13 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
                   aria-label={s.enabled}
                   nowrap
                 />
+                {surface === 'deck' ? addButton : null}
               </div>
             </C.ControlSurfaceToolbar>
 
             <C.ControlSurfaceRegister className="flex flex-col gap-4">
               {rows.length === 0
-                ? <C.EmptyState title={s.empty} icon={Clock} action={<C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>} />
+                ? <C.EmptyState title={s.empty} icon={Clock} action={addButton} />
                 : filtered.length === 0
                   ? <C.EmptyState title={s.emptySearch} icon={Search} />
                   : table}
@@ -446,7 +449,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
         description: s.sectionHint,
         mascotState: isLoading ? 'saving' : isError ? 'error' : 'idle',
         status: !isLoading && !isError ? <span className="workspace-status">{s.workspaceReady}</span> : undefined,
-        action: <C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>,
+        action: addButton,
         metrics: <>
           <C.WorkspaceMetric label={s.metricActive} value={active} icon={Activity} />
           <C.WorkspaceMetric label={s.metricPaused} value={rows.length - active} icon={PauseCircle} />

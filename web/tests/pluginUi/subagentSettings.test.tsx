@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -50,14 +50,15 @@ describe('subagent SubagentsSettings', () => {
       }),
     );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: strings.add }));
-    fireEvent.change(screen.getByPlaceholderText('reviewer'), { target: { value: 'reviewer' } });
-    const inputs = screen.getAllByRole('textbox');
-    fireEvent.change(inputs[1]!, { target: { value: 'Reviews diffs.' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
-    fireEvent.change(screen.getByPlaceholderText('Read, Search, Bash'), { target: { value: 'Read, Grep' } });
-    fireEvent.change(screen.getByPlaceholderText(strings.bodyPlaceholder!), { target: { value: 'Be thorough.' } });
-    fireEvent.click(screen.getByRole('button', { name: strings.save }));
+    fireEvent.click((await screen.findAllByRole('button', { name: strings.add }))[0]!);
+    // The form lives in the workspace detail drawer; the page behind it has a search box of its own.
+    const form = within(await screen.findByRole('dialog'));
+    fireEvent.change(form.getByPlaceholderText('reviewer'), { target: { value: 'reviewer' } });
+    fireEvent.change(form.getAllByRole('textbox')[1]!, { target: { value: 'Reviews diffs.' } });
+    fireEvent.change(form.getByRole('combobox'), { target: { value: 'custom' } });
+    fireEvent.change(form.getByPlaceholderText('Read, Search, Bash'), { target: { value: 'Read, Grep' } });
+    fireEvent.change(form.getByPlaceholderText(strings.bodyPlaceholder!), { target: { value: 'Be thorough.' } });
+    fireEvent.click(form.getByRole('button', { name: strings.save }));
     await waitFor(() => expect(saved).toBeTruthy());
     expect(savedName).toBe('reviewer');
     expect(saved).toEqual({ description: 'Reviews diffs.', tools: ['Read', 'Grep'], body: 'Be thorough.' });

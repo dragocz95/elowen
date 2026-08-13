@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -43,7 +43,7 @@ async function mountWith(jobs: CronJob[]) {
   );
   const { wrapper: Wrapper } = createWrapper();
   render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
-  // Expand the job row so the channel/model fields render.
+  // Open the job's drawer so the channel/model fields render.
   fireEvent.click(await screen.findByText('digest'));
 }
 
@@ -91,9 +91,11 @@ describe('cronjob JobsSettings — error state', () => {
   });
 });
 
-/** The trash icon of row `index`, then the dialog's confirm (both are labelled "Delete job"). */
-const deleteRow = async (index: number) => {
-  fireEvent.click(screen.getAllByRole('button', { name: 'Delete job' })[index]!);
+/** Open the named job's drawer, hit its Delete, then the dialog's confirm (both are labelled
+ *  "Delete job"). Deleting lives in the drawer, so the row it belongs to has to be opened first. */
+const deleteJob = async (name: string) => {
+  fireEvent.click((await screen.findAllByText(name))[0]!);
+  fireEvent.click((await screen.findAllByRole('button', { name: 'Delete job' }))[0]!);
   const buttons = await screen.findAllByRole('button', { name: 'Delete job' });
   fireEvent.click(buttons[buttons.length - 1]!);
 };
@@ -134,7 +136,7 @@ describe('cronjob JobsSettings destination channel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
     // No channel chip anymore — the summary shows the "—" default marker.
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog', { name: 'digest' })).getByText('—')).toBeInTheDocument();
   });
 });
 
@@ -174,7 +176,7 @@ describe('cronjob JobsSettings writes', () => {
     const deletes: string[] = [];
     mount([job({}), job({ id: 'j2', name: 'other' })], [], deletes);
     await screen.findByText('digest');
-    await deleteRow(0);
+    await deleteJob('digest');
     await waitFor(() => expect(deletes).toEqual(['j1']));
   });
 
@@ -220,16 +222,16 @@ describe('a cron job row', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
   };
-  /** The name input / prompt textarea of the Nth expanded row. */
-  const nameBox = (row = 0) => screen.getAllByPlaceholderText('morning-digest')[row]!;
-  const promptBox = (row = 0) => document.querySelectorAll<HTMLTextAreaElement>('textarea[rows="5"]')[row]!;
+  /** The name input / prompt textarea of the open drawer — one job is editable at a time. */
+  const nameBox = () => screen.getByPlaceholderText('morning-digest');
+  const promptBox = () => document.querySelector<HTMLTextAreaElement>('textarea[rows="8"]')!;
 
   // A new row is invalid until it has both a name and a prompt, so the edit that finally makes it valid is
   // the one that must be saved — and it was the one being eaten.
   it('saves a newly added job once the user has filled it in', async () => {
     const calls = { writes: [] as { id: string; body: unknown }[], deletes: [] as string[] };
     mount([], calls);
-    fireEvent.click(await screen.findByText('Add job'));
+    fireEvent.click((await screen.findAllByText('Add job'))[0]!);
     fireEvent.change(nameBox(), { target: { value: 'nightly' } });
     fireEvent.change(promptBox(), { target: { value: 'Summarize the day.' } });
     await waitFor(() => expect(calls.writes).toHaveLength(1), { timeout: 3000 });
@@ -240,11 +242,11 @@ describe('a cron job row', () => {
     const calls = { writes: [] as { id: string; body: unknown }[], deletes: [] as string[] };
     mount([job({})], calls);
     await screen.findByText('digest');
-    fireEvent.click(screen.getByText('Add job'));
+    fireEvent.click(screen.getAllByText('Add job')[0]!);
     fireEvent.change(nameBox(), { target: { value: 'oops' } }); // the added row is the only expanded one
     fireEvent.change(promptBox(), { target: { value: 'created by mistake' } });
     await waitFor(() => expect(calls.writes).toHaveLength(1), { timeout: 3000 }); // it reached the server…
-    await deleteRow(1);
+    await deleteJob('oops');
     // …so it must be deleted there too, or the refetch brings it back and it starts running on schedule.
     await waitFor(() => expect(calls.deletes).toEqual([calls.writes[0]?.id]));
     await waitFor(() => expect(screen.queryByDisplayValue('oops')).toBeNull());
@@ -253,10 +255,10 @@ describe('a cron job row', () => {
   it('keeps saving a job whose delete failed, instead of silently dropping every later edit', async () => {
     const calls = { writes: [] as { id: string; body: unknown }[], deletes: [] as string[] };
     mount([job({})], calls, 500);
-    fireEvent.click(await screen.findByText('digest'));
-    await deleteRow(0);
+    await deleteJob('digest');
     await waitFor(() => expect(calls.deletes).toEqual(['j1']));
     // The job is still there. An edit to it must still be persisted — not swallowed under a "saved" chip.
+    fireEvent.click(await screen.findByText('digest'));
     fireEvent.change(nameBox(), { target: { value: 'still here' } });
     await waitFor(() => expect(calls.writes).toHaveLength(1), { timeout: 3000 });
     expect(calls.writes[0]?.body).toMatchObject({ id: 'j1', name: 'still here' });
@@ -266,14 +268,14 @@ describe('a cron job row', () => {
     const calls = { writes: [] as { id: string; body: unknown }[], deletes: [] as string[] };
     const jobs = [job({}), job({ id: 'j2', name: 'other' })];
     mount(jobs, calls);
-    fireEvent.click(await screen.findByText('digest')); // expand the row we are NOT going to touch
-    fireEvent.click(screen.getByText('other'));
+    fireEvent.click(await screen.findByText('other')); // edit the row we are NOT watching
     // The brain's cron tooling rewrites the first job's prompt while the page sits open…
     jobs[0] = job({ prompt: 'Rewritten by the agent.' });
     // …and an edit to the OTHER row refreshes the list.
-    fireEvent.change(nameBox(1), { target: { value: 'other renamed' } });
+    fireEvent.change(nameBox(), { target: { value: 'other renamed' } });
     await waitFor(() => expect(calls.writes.map((w) => w.id)).toEqual(['j2']), { timeout: 3000 });
-    // The untouched row shows what the server actually holds — the next save cannot revert it.
+    // The untouched row adopted what the server actually holds — the next save cannot revert it.
+    fireEvent.click(screen.getByText('digest'));
     await waitFor(() => expect(screen.getByDisplayValue('Rewritten by the agent.')).toBeInTheDocument());
   });
 });

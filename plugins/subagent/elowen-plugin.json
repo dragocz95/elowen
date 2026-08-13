@@ -135,7 +135,9 @@
       "deleted": "Sub-agent deleted",
       "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “code-reviewer”).",
       "helpDescription": "One line: when to delegate to this sub-agent (the assistant reads it to choose).",
-      "helpBody": "The sub-agent’s system prompt — its role, constraints and how to report back."
+      "helpBody": "The sub-agent’s system prompt — its role, constraints and how to report back.",
+      "workspaceEyebrow": "Sub-agents",
+      "workspaceReady": "Sub-agents loaded"
     }
   }
 }

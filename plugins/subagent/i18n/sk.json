@@ -52,7 +52,9 @@
       "deleted": "Sub-agent vymazaný",
       "helpName": "kebab-case: malé písmená, číslice a pomlčky (napr. „code-reviewer“).",
       "helpDescription": "Jedna veta: kedy delegovať tomuto sub-agentovi (podľa nej volí asistent).",
-      "helpBody": "Systémový prompt sub-agenta — jeho rola, mantinely a ako má reportovať."
+      "helpBody": "Systémový prompt sub-agenta — jeho rola, mantinely a ako má reportovať.",
+      "workspaceEyebrow": "Sub-agenti",
+      "workspaceReady": "Sub-agenti načítaní"
     }
   }
 }
