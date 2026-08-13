@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Check, ChevronDown, ChevronRight, Clock, Hash, MessageSquare, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, CalendarClock, Check, Clock, Hash, MessageSquare, PauseCircle, Plus, Timer, Trash2, X } from 'lucide-react';
 import { runtime, type BrainModelOption, type CronJob, type DiscordChannelOption, type ManageSelectionItem } from './runtime';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
@@ -54,28 +54,35 @@ function ChannelField({ value, onChange, channels }: { value: string; onChange: 
   );
 }
 
-/** One job: a collapsible row — status dot, name, schedule/destination badges and last run in the
- *  header; editable fields when expanded. The row edits and persists ITSELF (one PUT of this job), so a
- *  page that has not seen a job someone else just added can never write it away.
+/** One job: a table row, plus its editor in the workspace's detail drawer while the row is the selected
+ *  one. The component stays mounted whether or not the drawer is open — the drawer portals out of this
+ *  subtree — so a save that fails after the user closed the editor still shows itself, and still offers
+ *  Retry, on the row it belongs to. Unmounting it on close would have thrown the unsaved draft away.
+ *
+ *  The row edits and persists ITSELF (one PUT of this job), so a page that has not seen a job someone
+ *  else just added can never write it away.
  *
  *  `job` is the server's copy and stays the source of truth for the scheduler-owned fields (last run,
  *  last result); `draft` holds what the user is typing. When the server's copy changes and the row has no
  *  unsaved edit, the draft adopts it — otherwise a job the brain's cron tools changed behind this page's
  *  back would be shown stale and overwritten by the row's next save. */
-function CronJobRow({ job, persisted, channels, models, onRemoved }: {
+function CronJobRow({ job, persisted, channels, models, selected, onSelect, onClose, onRemoved }: {
   job: CronJob;
   persisted: boolean;
   channels: DiscordChannelOption[];
   models: BrainModelOption[];
+  selected: boolean;
+  onSelect: () => void;
+  onClose: () => void;
   onRemoved: (id: string) => void;
 }) {
   const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('cronjob');
+  const { t } = hooks.useTranslation();
   const { toast } = hooks.useToast();
   const save = hooks.useSaveCronJob();
   const del = hooks.useDeleteCronJob();
   const [draft, setDraft] = useState<CronJob>(job);
-  const [open, setOpen] = useState(!persisted); // a row the user just added opens straight into its fields
   const [confirming, setConfirming] = useState(false);
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -145,140 +152,149 @@ function CronJobRow({ job, persisted, channels, models, onRemoved }: {
   const validSchedule = draft.runAt ? true : utils.isValidSchedule(draft.schedule);
   const lastRunMs = utils.parseTs(job.lastRun);
   const dest = draft.notifyChannelId ? channels.find((ch) => ch.id === draft.notifyChannelId)?.name ?? draft.notifyChannelId : null;
+  const name = draft.name || s.jobNew;
 
   return (
-    <div className="@container rounded-lg border border-border bg-elevated/40">
-      <div className="flex items-center gap-2 p-3">
-        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          {open ? <ChevronDown size={15} className="shrink-0 text-text-muted" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-text-muted" aria-hidden />}
+    <>
+      <C.DataTableRow interactive selected={selected} aria-selected={selected} className="group">
+        <C.DataTableCell className="flex items-center justify-center">
           <span
-            className={`h-2 w-2 shrink-0 rounded-full ${enabled ? 'bg-success' : 'bg-text-muted/50'}`}
+            className={`h-2 w-2 rounded-full ${enabled ? 'bg-success' : 'bg-text-muted/50'}`}
             title={enabled ? s.enabled : s.paused}
             aria-hidden
           />
-          <span className="truncate text-sm font-medium text-text">{draft.name || s.jobNew}</span>
-          {/* The badges are shrink-0 and would crowd the name off a narrow (mobile) row — the
-              destination badge and last-run hide on mobile; only the compact schedule stays. */}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {lastRunMs != null ? (
-              <span className="hidden text-tiny text-text-muted @sm:inline" title={new Date(lastRunMs).toLocaleString()}>
-                {s.lastRun.replace('{t}', utils.compactElapsed(Date.now() - lastRunMs))}
-              </span>
-            ) : null}
-            <C.Badge tone={validSchedule ? 'default' : 'danger'}>
-              {draft.runAt ? <CalendarClock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden /> : <Clock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />}
-              {draft.schedule}
-            </C.Badge>
-            <span className="hidden @sm:inline-flex">
-              <C.Badge>
-                <Hash size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />
-                {dest ?? s.channelDefault}
-              </C.Badge>
-            </span>
-          </span>
-        </button>
-        {/* In the header, not in the expanded body: a save that fails while the row is collapsed still has
-            to show itself — and still has to offer Retry. */}
-        <C.AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
-        <C.Button variant="ghost" icon={Trash2} aria-label={s.removeJob} onClick={() => setConfirming(true)} />
-      </div>
-      {open ? (
-        <div className="flex flex-col gap-3 border-t border-border p-3">
-          <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-            <C.Field label={s.name}>
-              <C.Input value={draft.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ name: e.target.value })} placeholder="morning-digest" />
-            </C.Field>
-            <C.Field label={s.schedule} hint={s.helpSchedule}>
-              <div className="relative">
-                <C.Input value={draft.schedule} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ schedule: e.target.value })} className="pr-8 font-mono" placeholder="daily 06:00" />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2" title={validSchedule ? s.scheduleValid : s.scheduleInvalid}>
-                  {validSchedule
-                    ? <Check size={14} className="text-success" aria-label={s.scheduleValid} />
-                    : <X size={14} className="text-danger" aria-label={s.scheduleInvalid} />}
+        </C.DataTableCell>
+        <C.DataTableCell>
+          <button type="button" onClick={onSelect} className="block w-full truncate text-left text-sm font-medium text-text">
+            {name}
+          </button>
+        </C.DataTableCell>
+        <C.DataTableCell>
+          <C.Badge tone={validSchedule ? 'default' : 'danger'}>
+            {draft.runAt ? <CalendarClock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden /> : <Clock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />}
+            {draft.schedule}
+          </C.Badge>
+        </C.DataTableCell>
+        <C.DataTableCell priority="wide">
+          <C.Badge>
+            <Hash size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />
+            {dest ?? s.channelDefault}
+          </C.Badge>
+        </C.DataTableCell>
+        <C.DataTableCell priority="wide" className="text-tiny text-text-muted">
+          {lastRunMs != null ? (
+            <span title={new Date(lastRunMs).toLocaleString()}>{utils.compactElapsed(Date.now() - lastRunMs)}</span>
+          ) : '—'}
+        </C.DataTableCell>
+        <C.DataTableCell className="flex items-center justify-end">
+          {/* On the row, not only in the drawer: a save that fails after the user closed the editor still
+              has to show itself — and still has to offer Retry. */}
+          <C.AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
+        </C.DataTableCell>
+      </C.DataTableRow>
+
+      {selected ? (
+        <C.WorkspaceDetailRail label={name} closeLabel={t.common.close} onClose={onClose}>
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <C.Field label={s.name}>
+                <C.Input value={draft.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ name: e.target.value })} placeholder="morning-digest" />
+              </C.Field>
+              <C.Field label={s.schedule} hint={s.helpSchedule}>
+                <div className="relative">
+                  <C.Input value={draft.schedule} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ schedule: e.target.value })} className="pr-8 font-mono" placeholder="daily 06:00" />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2" title={validSchedule ? s.scheduleValid : s.scheduleInvalid}>
+                    {validSchedule
+                      ? <Check size={14} className="text-success" aria-label={s.scheduleValid} />
+                      : <X size={14} className="text-danger" aria-label={s.scheduleInvalid} />}
+                  </span>
+                </div>
+              </C.Field>
+              <C.Field label={s.hours} hint={s.helpHours}>
+                <C.Input value={draft.hours ?? ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ hours: e.target.value || undefined })} className="font-mono" placeholder="5-21" />
+              </C.Field>
+              <C.Field label={s.enabled}>
+                <span className="flex h-9 items-center gap-2 text-sm text-text-muted">
+                  <C.Toggle checked={enabled} onChange={(v: boolean) => patch({ enabled: v })} label={`${name}: ${s.enabled}`} />
+                  {enabled ? s.enabled : s.paused}
                 </span>
-              </div>
+              </C.Field>
+              {/* Positive toggle over the stored `plain` flag: checked = header shown (plain unset). */}
+              <C.Field label={s.header} hint={s.helpHeader}>
+                <span className="flex h-9 items-center text-sm text-text-muted">
+                  <C.Toggle checked={draft.plain !== true} onChange={(v: boolean) => patch({ plain: v ? undefined : true })} label={`${name}: ${s.header}`} />
+                </span>
+              </C.Field>
+            </div>
+            <C.Field label={s.check} hint={s.helpCheck}>
+              <textarea
+                value={draft.check ?? ''}
+                onChange={(e) => patch({ check: e.target.value || undefined })}
+                rows={2}
+                className={textareaClass}
+                placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
+              />
             </C.Field>
-            <C.Field label={s.hours} hint={s.helpHours}>
-              <C.Input value={draft.hours ?? ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => patch({ hours: e.target.value || undefined })} className="font-mono" placeholder="5-21" />
+            <C.Field label={s.prompt} hint={s.helpPrompt}>
+              <textarea value={draft.prompt} onChange={(e) => patch({ prompt: e.target.value })} rows={8} className={textareaClass} />
             </C.Field>
-            <C.Field label={s.enabled}>
-              <span className="flex h-9 items-center gap-2 text-sm text-text-muted">
-                <C.Toggle checked={enabled} onChange={(v: boolean) => patch({ enabled: v })} label={`${draft.name || s.jobNew}: ${s.enabled}`} />
-                {enabled ? s.enabled : s.paused}
-              </span>
+            <C.Field label={s.channel} hint={s.helpChannel}>
+              <ChannelField
+                value={draft.notifyChannelId ?? ''}
+                onChange={(v) => patch({ notifyChannelId: v || undefined })}
+                channels={channels}
+              />
             </C.Field>
-            {/* Positive toggle over the stored `plain` flag: checked = header shown (plain unset). */}
-            <C.Field label={s.header} hint={s.helpHeader}>
-              <span className="flex h-9 items-center text-sm text-text-muted">
-                <C.Toggle checked={draft.plain !== true} onChange={(v: boolean) => patch({ plain: v ? undefined : true })} label={`${draft.name || s.jobNew}: ${s.header}`} />
-              </span>
+            <C.Field label={s.model} hint={s.helpModel}>
+              <C.BrainModelField
+                value={draft.model ? `${draft.model.provider}/${draft.model.model}` : ''}
+                onChange={(v: string) => {
+                  const slash = v.indexOf('/');
+                  patch({ model: slash > 0 ? { provider: v.slice(0, slash), model: v.slice(slash + 1) } : undefined });
+                }}
+                models={models}
+                title={s.model}
+                subtitle={s.helpModel}
+                defaultLabel={s.modelDefault}
+                keyOf={(m: BrainModelOption) => `${m.provider}/${m.model}`}
+              />
             </C.Field>
+            {job.lastResult ? (
+              <C.Field label={s.lastResult}>
+                <p className="whitespace-pre-wrap rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-muted">{job.lastResult}</p>
+              </C.Field>
+            ) : null}
+            <div className="flex justify-end border-t border-border pt-3">
+              <C.Button variant="ghost" icon={Trash2} onClick={() => setConfirming(true)}>{s.removeJob}</C.Button>
+            </div>
           </div>
-          <C.Field label={s.check} hint={s.helpCheck}>
-            <textarea
-              value={draft.check ?? ''}
-              onChange={(e) => patch({ check: e.target.value || undefined })}
-              rows={2}
-              className={textareaClass}
-              placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
-            />
-          </C.Field>
-          <C.Field label={s.prompt} hint={s.helpPrompt}>
-            <textarea value={draft.prompt} onChange={(e) => patch({ prompt: e.target.value })} rows={5} className={textareaClass} />
-          </C.Field>
-          <C.Field label={s.channel} hint={s.helpChannel}>
-            <ChannelField
-              value={draft.notifyChannelId ?? ''}
-              onChange={(v) => patch({ notifyChannelId: v || undefined })}
-              channels={channels}
-            />
-          </C.Field>
-          <C.Field label={s.model} hint={s.helpModel}>
-            <C.BrainModelField
-              value={draft.model ? `${draft.model.provider}/${draft.model.model}` : ''}
-              onChange={(v: string) => {
-                const slash = v.indexOf('/');
-                patch({ model: slash > 0 ? { provider: v.slice(0, slash), model: v.slice(slash + 1) } : undefined });
-              }}
-              models={models}
-              title={s.model}
-              subtitle={s.helpModel}
-              defaultLabel={s.modelDefault}
-              keyOf={(m: BrainModelOption) => `${m.provider}/${m.model}`}
-            />
-          </C.Field>
-          {job.lastResult ? (
-            <C.Field label={s.lastResult}>
-              <p className="whitespace-pre-wrap rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-muted">{job.lastResult}</p>
-            </C.Field>
-          ) : null}
-        </div>
+        </C.WorkspaceDetailRail>
       ) : null}
 
       <C.ConfirmDialog
         open={confirming}
         title={s.deleteTitle}
-        description={s.deleteDesc.replace('{name}', draft.name || s.jobNew)}
+        description={s.deleteDesc.replace('{name}', name)}
         confirmLabel={s.removeJob}
         onConfirm={remove}
         onClose={() => setConfirming(false)}
       />
-    </div>
+    </>
   );
 }
 
-/** Cron jobs manager (the cronjob plugin's settings-deck section). The list is the SERVER's — a job
- *  the scheduler or the brain's CronAdd tool creates shows up on the next refetch — and each row
- *  persists itself. A row added here lives locally only until the server has it; from then on the
- *  server's copy is the row. */
+/** Cron jobs manager (the cronjob plugin's own page). The list is the SERVER's — a job the scheduler or
+ *  the brain's CronAdd tool creates shows up on the next refetch — and each row persists itself. A row
+ *  added here lives locally only until the server has it; from then on the server's copy is the row. */
 export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
-  const { components: C, hooks } = runtime();
+  const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('cronjob');
   const { t } = hooks.useTranslation();
   const { data, isLoading, isError, refetch } = hooks.useCronJobs();
   const channels = hooks.useDiscordChannels();
   const models = hooks.useBrainModels();
   const [drafts, setDrafts] = useState<CronJob[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // A draft the server has taken is the server's now. Keeping it would resurrect the job as an unsaved
   // row the moment anything else deletes it — and one keystroke there would write it straight back.
@@ -288,23 +304,39 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     setDrafts((cur) => (cur.some((j) => ids.has(j.id)) ? cur.filter((j) => !ids.has(j.id)) : cur));
   }, [data]);
 
+  const saved = useMemo(() => new Set((data ?? []).map((j) => j.id)), [data]);
+  const rows = useMemo(() => [...(data ?? []), ...drafts.filter((j) => !saved.has(j.id))], [data, drafts, saved]);
+  const active = rows.filter((j) => j.enabled !== false).length;
+  const lastRun = rows.reduce<number | null>((newest, j) => {
+    const ms = utils.parseTs(j.lastRun);
+    return ms != null && (newest == null || ms > newest) ? ms : newest;
+  }, null);
+
+  const addJob = () => {
+    // Same id shape the plugin's own CronAdd tool generates.
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    setDrafts((cur) => [...cur, { id, name: '', schedule: 'every 1h', prompt: '', enabled: false, createdAt: new Date().toISOString() }]);
+    setSelectedId(id); // a job the user just added opens straight into its fields
+  };
+  const dropDraft = (id: string) => {
+    setDrafts((cur) => cur.filter((j) => j.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+  };
+
   const body = () => {
     if (isError) return <C.ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} />;
     if (isLoading || !data) return <C.LoadingState />;
-
-    const saved = new Set(data.map((j) => j.id));
-    const rows = [...data, ...drafts.filter((j) => !saved.has(j.id))];
-
-    const addJob = () => {
-      // Same id shape the plugin's own CronAdd tool generates.
-      const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-      setDrafts((cur) => [...cur, { id, name: '', schedule: 'every 1h', prompt: '', enabled: false, createdAt: new Date().toISOString() }]);
-    };
-    const dropDraft = (id: string) => setDrafts((cur) => cur.filter((j) => j.id !== id));
-
+    if (rows.length === 0) return <C.EmptyState title={s.empty} icon={Clock} />;
     return (
-      <div className="flex flex-col gap-3">
-        {rows.length === 0 ? <p className="text-xs italic text-text-muted">{s.empty}</p> : null}
+      <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 10rem 10rem 4rem 2rem" compactColumns="2rem minmax(0,1fr) 2rem">
+        <C.DataTableRow header>
+          <C.DataTableCell header><span className="sr-only">{s.enabled}</span></C.DataTableCell>
+          <C.DataTableCell header>{s.name}</C.DataTableCell>
+          <C.DataTableCell header>{s.schedule}</C.DataTableCell>
+          <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell>
+          <C.DataTableCell header priority="wide">{s.colLastRun}</C.DataTableCell>
+          <C.DataTableCell header />
+        </C.DataTableRow>
         {rows.map((job) => (
           <CronJobRow
             key={job.id}
@@ -312,19 +344,32 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
             persisted={saved.has(job.id)}
             channels={channels.data ?? []}
             models={models.data ?? []}
+            selected={selectedId === job.id}
+            onSelect={() => setSelectedId(job.id)}
+            onClose={() => setSelectedId(null)}
             onRemoved={dropDraft}
           />
         ))}
-        <div className="flex items-center justify-between gap-3">
-          <button type="button" className="spatial-inline-action" onClick={addJob}><Plus size={14} aria-hidden />{s.addJob}</button>
-        </div>
-      </div>
+      </C.DataTable>
     );
   };
 
   return (
-    <C.PluginSection surface={surface} className="plugin-card" icon={Clock} title={s.title} description={s.sectionHint}>
-      <div className="settings-group__panel">{body()}</div>
-    </C.PluginSection>
+    <C.PluginWorkspace
+      surface={surface}
+      plugin="cronjob"
+      section="jobs"
+      description={s.sectionHint}
+      count={rows.length}
+      state={{ isLoading, isError }}
+      action={<C.Button variant="accent" icon={Plus} onClick={addJob}>{s.addJob}</C.Button>}
+      metrics={<>
+        <C.WorkspaceMetric label={s.metricActive} value={active} icon={Activity} />
+        <C.WorkspaceMetric label={s.metricPaused} value={rows.length - active} icon={PauseCircle} />
+        <C.WorkspaceMetric label={s.colLastRun} value={lastRun != null ? utils.compactElapsed(Date.now() - lastRun) : '—'} icon={Timer} />
+      </>}
+    >
+      {body()}
+    </C.PluginWorkspace>
   );
 }

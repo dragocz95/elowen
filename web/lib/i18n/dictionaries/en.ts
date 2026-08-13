@@ -1813,6 +1813,7 @@ export const en = {
     unknown: 'working',
   },
   pluginUi: {
+    ready: 'Extension active',
     eyebrow: 'Extension',
     unavailableTitle: 'Interface unavailable',
     manage: 'Manage plugins',

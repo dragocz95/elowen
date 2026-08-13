@@ -72,7 +72,10 @@
       "helpCheck": "Levná shell kontrola před promptem. Prázdný výstup = AI se nespustí (šetří model); výstup se předá asistentovi.",
       "helpPrompt": "Co má asistent při každém spuštění udělat.",
       "helpChannel": "Kam se na Discordu doručí výsledek. Výchozí = notifikační kanál pluginu discord.",
-      "helpModel": "Na kterém modelu úloha poběží. Výchozí = výchozí model serveru."
+      "helpModel": "Na kterém modelu úloha poběží. Výchozí = výchozí model serveru.",
+      "metricActive": "Aktivní",
+      "metricPaused": "Pozastavené",
+      "colLastRun": "Poslední běh"
     }
   }
 }

@@ -155,7 +155,10 @@
       "helpCheck": "Cheap shell guard before the prompt. No output = AI turn is skipped (saves a model call); output is passed to the assistant.",
       "helpPrompt": "What the assistant does on each run.",
       "helpChannel": "Where the result is delivered on Discord. Default = the discord plugin’s notification channel.",
-      "helpModel": "Which model the job runs on. Default = the server default model."
+      "helpModel": "Which model the job runs on. Default = the server default model.",
+      "metricActive": "Active",
+      "metricPaused": "Paused",
+      "colLastRun": "Last run"
     }
   }
 }

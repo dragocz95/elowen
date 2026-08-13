@@ -72,7 +72,10 @@
       "helpCheck": "Lacná shell kontrola pred promptom. Prázdny výstup = AI sa nespustí (šetrí model); výstup sa odovzdá asistentovi.",
       "helpPrompt": "Čo má asistent pri každom spustení urobiť.",
       "helpChannel": "Kam sa na Discorde doručí výsledok. Predvolené = notifikačný kanál pluginu discord.",
-      "helpModel": "Na ktorom modeli úloha pobeží. Predvolené = predvolený model servera."
+      "helpModel": "Na ktorom modeli úloha pobeží. Predvolené = predvolený model servera.",
+      "metricActive": "Aktívne",
+      "metricPaused": "Pozastavené",
+      "colLastRun": "Posledný beh"
     }
   }
 }
