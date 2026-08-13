@@ -15,6 +15,27 @@ export { makeTokenVerifier } from './lib/auth.mjs';
 export { ConnectorClient } from './lib/connector.mjs';
 
 export function register(ctx) {
+  // The sideloadable app package (manifest + icons) an admin uploads to the org's Teams app catalog,
+  // built by the live adapter from the current config. Registered UP FRONT and reporting 503 while no
+  // adapter exists — precisely what this answered as a core route, which looked the adapter up among
+  // the registered platforms and 503'd when it found none. Registering it after the credential check
+  // would turn that into a 404 on an enabled-but-unconfigured instance.
+  let adapter = null;
+  ctx.registerApiRoute({
+    rootMount: '/plugins/msteams/app-package', path: '', method: 'GET', access: 'admin',
+    handler: async (req) => {
+      if (req.path !== '') return { status: 404, body: { error: 'not found' } };
+      if (!adapter?.appPackage) return { status: 503, body: { error: 'msteams plugin not enabled' } };
+      return {
+        body: new Uint8Array(adapter.appPackage()),
+        headers: {
+          'content-type': 'application/zip',
+          'content-disposition': 'attachment; filename="elowen-teams-app.zip"',
+        },
+      };
+    },
+  });
+
   const appId = typeof ctx.config.appId === 'string' ? ctx.config.appId.trim() : '';
   const appPassword = typeof ctx.config.appPassword === 'string' ? ctx.config.appPassword.trim() : '';
   const tenantId = typeof ctx.config.tenantId === 'string' ? ctx.config.tenantId.trim() : '';
@@ -27,7 +48,7 @@ export function register(ctx) {
   const imageDirs = platformImageDirs(dataDir);
   // chatCommands passes LAZILY (a function) so a plugin registered after msteams — or a live reload —
   // is always reflected in /help and dispatch.
-  const adapter = new MsTeamsAdapter(
+  adapter = new MsTeamsAdapter(
     { ...ctx.config, appId, appPassword, tenantId },
     ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider, ctx.answerQuestion,
     () => ctx.chatCommands('msteams'),

@@ -8,6 +8,9 @@
     "platforms": [
       "discord"
     ],
+    "apiRoutes": [
+      "/plugins/discord/channels"
+    ],
     "tools": [
       "DiscordApi",
       "DiscordListChannels",

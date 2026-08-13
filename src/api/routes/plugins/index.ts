@@ -24,8 +24,6 @@ function applied(c: Context, body: Record<string, unknown>, swapped: boolean | u
   return c.json(body);
 }
 
-/** One text-capable Discord destination for the cron-job channel picker. */
-type DiscordChannelOption = { id: string; name: string; type: 'channel' | 'thread'; parentName?: string };
 type McpControl = {
   listServers?: () => unknown[];
   reconnectServer?: (name: string) => Promise<unknown>;
@@ -337,62 +335,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       swapped = await d.brain?.reloadPlugins();
     }
     return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, swapped);
-  });
-
-
-  // ── Discord destinations (discord plugin): text channels + active threads of the configured guild,
-  // for the cron-job channel picker. The bot token never leaves (or logs from) the daemon; a missing
-  // config or an upstream failure degrades to an empty list. Cached briefly — the picker refetches
-  // per detail view and Discord rate-limits the guild routes. ──
-  let channelCache: { at: number; data: DiscordChannelOption[] } | null = null;
-
-  app.get('/plugins/discord/channels', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const cfg = d.config.pluginConfig('discord');
-    const token = typeof cfg.botToken === 'string' ? cfg.botToken : '';
-    const guildId = typeof cfg.guildId === 'string' ? cfg.guildId.trim() : '';
-    if (!token || !guildId) return c.json([]);
-    if (channelCache && Date.now() - channelCache.at < 60_000) return c.json(channelCache.data);
-    try {
-      const headers = { authorization: `Bot ${token}` };
-      const base = `https://discord.com/api/v10/guilds/${encodeURIComponent(guildId)}`;
-      const [chRes, thRes] = await Promise.all([
-        fetch(`${base}/channels`, { headers }),
-        fetch(`${base}/threads/active`, { headers }),
-      ]);
-      if (!chRes.ok) return c.json([]);
-      const channels = (await chRes.json()) as { id: string; name: string; type: number }[];
-      const nameById = new Map(channels.map((ch) => [ch.id, ch.name]));
-      const typeById = new Map(channels.map((ch) => [ch.id, ch.type]));
-      // Text-capable only: type 0 = guild text channel, 11/12 = public/private thread.
-      const out: DiscordChannelOption[] = channels.filter((ch) => ch.type === 0).map((ch) => ({ id: ch.id, name: ch.name, type: 'channel' as const }));
-      if (thRes.ok) {
-        const { threads } = (await thRes.json()) as { threads?: { id: string; name: string; type: number; parent_id?: string }[] };
-        for (const th of threads ?? []) {
-          if (th.type !== 11 && th.type !== 12) continue;
-          // Skip forum/media posts: they're type-11 threads too, but their parent is a forum (15) or
-          // media (16) channel — the picker wants real text-channel threads, not forum posts.
-          const parentType = typeById.get(th.parent_id ?? '');
-          if (parentType === 15 || parentType === 16) continue;
-          out.push({ id: th.id, name: th.name, type: 'thread', parentName: nameById.get(th.parent_id ?? '') });
-        }
-      }
-      channelCache = { at: Date.now(), data: out };
-      return c.json(out);
-    } catch { return c.json([]); } // network failure → empty picker, never a leaked error detail
-  });
-
-  // ── Teams app package (msteams plugin): the sideloadable ZIP (manifest + icons) the admin uploads
-  // to the org's Teams app catalog. Built by the live adapter from the current config. ──
-  app.get('/plugins/msteams/app-package', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const registry = await d.plugins?.get();
-    const adapter = registry?.platforms.find((p) => p.name === 'msteams') as { appPackage?(): Buffer } | undefined;
-    if (!adapter?.appPackage) return c.json({ error: 'msteams plugin not enabled' }, 503);
-    return c.body(new Uint8Array(adapter.appPackage()), 200, {
-      'content-type': 'application/zip',
-      'content-disposition': 'attachment; filename="elowen-teams-app.zip"',
-    });
   });
 
   registerBrainOAuthRoutes(app, ctx);

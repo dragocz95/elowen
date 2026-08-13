@@ -245,16 +245,51 @@ describe('cron jobs routes', () => {
   });
 });
 
+// The channel picker's destinations are served by the REAL discord plugin now (a root mount), the
+// same way the cron jobs above are served by the cronjob plugin.
 describe('discord channels route', () => {
   it('returns [] when the discord plugin has no token/guild configured', async () => {
-    const { app, adminTok } = setup();
+    const { app, adminTok } = setup({ enabled: ['cronjob', 'discord'] });
     const res = await app.request('/plugins/discord/channels', auth(adminTok));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
 
   it('rejects a non-admin (403)', async () => {
-    const { app, amyTok } = setup();
+    const { app, amyTok } = setup({ enabled: ['cronjob', 'discord'] });
     expect((await app.request('/plugins/discord/channels', auth(amyTok))).status).toBe(403);
+  });
+
+  // An unconfigured plugin still answers (an empty picker); a DISABLED one is the platform's 503, and
+  // the distinction matters — the route lives inside `register`, ahead of the bail-out an unset bot
+  // token takes, precisely so the two do not collapse into one another.
+  it('answers 503 "discord plugin is disabled" when the plugin is off', async () => {
+    const { app, adminTok } = setup({ enabled: ['cronjob'] });
+    const res = await app.request('/plugins/discord/channels', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'discord plugin is disabled' });
+  });
+});
+
+describe('msteams app-package route', () => {
+  // Enabled but unconfigured: no adapter is built, so the package cannot be, and the plugin answers
+  // the same 503 the core route did when it could not find the adapter among the platforms.
+  it('answers 503 while the plugin has no adapter', async () => {
+    const { app, adminTok } = setup({ enabled: ['cronjob', 'msteams'] });
+    const res = await app.request('/plugins/msteams/app-package', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'msteams plugin not enabled' });
+  });
+
+  it('rejects a non-admin (403)', async () => {
+    const { app, amyTok } = setup({ enabled: ['cronjob', 'msteams'] });
+    expect((await app.request('/plugins/msteams/app-package', auth(amyTok))).status).toBe(403);
+  });
+
+  it('answers the platform 503 when the plugin is off', async () => {
+    const { app, adminTok } = setup({ enabled: ['cronjob'] });
+    const res = await app.request('/plugins/msteams/app-package', auth(adminTok));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'msteams plugin is disabled' });
   });
 });
