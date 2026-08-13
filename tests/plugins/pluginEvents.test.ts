@@ -30,6 +30,26 @@ describe('ctx.publishEvent', () => {
     ]);
   });
 
+  it('deleteEventsForTarget rides the same grant, and no-ops where there is no log', () => {
+    // The purge verb is what a plugin owes the feed when it deletes the row that history describes. It
+    // must not be reachable on a weaker grant than publishing — a plugin able to erase another tenant's
+    // activity without declaring an event mutation would be a silent hole — but an absent event store
+    // is not a failure: there is simply nothing to purge.
+    const purged: string[] = [];
+    const reg = new PluginRegistry();
+    const wire = (caps?: { mutates?: ('events')[] }, sink?: (target: string) => void) => reg.contextFor(
+      'demo', {}, noopLog, undefined, undefined, undefined, undefined, caps, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      sink,
+    );
+    expect(() => wire(undefined, (t) => { purged.push(t); }).deleteEventsForTarget('t1')).toThrow("mutates:['events']");
+    expect(purged).toEqual([]);
+    wire({ mutates: ['events'] }, (t) => { purged.push(t); }).deleteEventsForTarget('t1');
+    expect(purged).toEqual(['t1']);
+    expect(() => wire({ mutates: ['events'] }).deleteEventsForTarget('t2')).not.toThrow();
+  });
+
   it('registerEventProjectResolver is capability-gated and merge preserves ownership', () => {
     const reg = new PluginRegistry();
     const warn = vi.fn();

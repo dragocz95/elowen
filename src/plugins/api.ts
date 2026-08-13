@@ -17,7 +17,8 @@ import type { Project } from '../store/projectStore.js';
 import type { ReadinessContract, TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
 import type { ElowenConfig } from '../store/configStore.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
-import type { CommitFileChange } from '../integrations/projectFiles.js';
+import type { CommitFileChange, CommitLogEntry } from '../integrations/projectFiles.js';
+import type { BrainMessageView } from '../brain/messageView.js';
 import type { PushPayload } from '../push/messages.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
@@ -428,6 +429,12 @@ export interface PluginHostStores {
    *  the daemon's bus recorder). Optional — absent in a process without an EventStore (:memory: tests),
    *  where the ask history degrades to empty exactly as the core service did. */
   eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
+  /** The transcript of a task's EMBEDDED (elowen:) worker run, already shaped for a client — the daemon
+   *  owns both halves it is built from: the `brain-task-<id>` session-naming convention and the message
+   *  view renderer shared with chat. Optional: a process without a brain store (the :memory: test wiring,
+   *  the sub-agent runner) has no transcript to serve, which reads as an empty conversation — the same
+   *  answer a CLI-run task has always given. */
+  taskConversation?(taskId: string): BrainMessageView[];
 }
 
 /** The embedded (Elowen AI) worker executor as the agents subsystem needs it: launching, plus the
@@ -452,6 +459,11 @@ export interface PluginBrainWorker extends BrainWorkerLauncher {
 export interface PluginHostPrompts {
   render(name: string, vars?: Record<string, string>, userId?: number | null): string;
   rawTemplate(name: string): string;
+  /** A user's SAVED override of a template, or null when they never edited it. Distinct from `render`,
+   *  which resolves the override against the shipped default and substitutes vars: a caller that layers
+   *  its own fallback chain (the planner prompt falls back to the workspace autopilot template, not to
+   *  the file default) needs to see the override itself, or the absence of one. */
+  userOverride(userId: number, name: string): string | null;
 }
 
 /** The workspace-config slice the agents subsystem reads, plus its secret accessors. The `get()` view
@@ -496,6 +508,12 @@ export interface PluginHost {
   git(): {
     projectHead(root: string): Promise<string>;
     projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]>;
+    /** The commits of `base..head` in that checkout (the per-commit history of a task's change list). */
+    projectRangeLog(root: string, base: string, head: string): Promise<CommitLogEntry[]>;
+    /** Diff of ONE file across `base..head` — the click-through of a frozen change list. */
+    projectRangeFileDiff(root: string, base: string, head: string, rel: string): Promise<string>;
+    /** Diff of ONE file as introduced by a single commit (`git show <hash> -- <path>`). */
+    projectCommitFileDiff(root: string, hash: string, rel: string): Promise<string>;
   };
   /** The web-push transport (send only — recipients are the plugin's own concern via usersRead).
    *  Gated by `reads:['push']`; wired late by bootstrap like the brain worker. */
@@ -1139,6 +1157,12 @@ export interface PluginContext {
    *  event carries its own tenancy in `projectId` (null = admins only) and its `plugin` field is
    *  overwritten with the publishing plugin's name. Gated by `mutates:['events']`; throws unwired. */
   publishEvent(event: ElowenEvent): void;
+  /** Purge the activity-log rows of one target (a task id, a mission id) — what a plugin owes the feed
+   *  when it deletes the thing those rows describe, so a removed row leaves no history pointing at
+   *  nothing. The write twin of `host.stores().eventsRead`, and gated by the same `mutates:['events']`
+   *  grant as publishing: both decide what a tenant sees in the feed. A no-op in a process without an
+   *  event store. */
+  deleteEventsForTarget(target: string): void;
   /** Contribute a resolver mapping a core-shaped event to its owning project when the CORE lookups
    *  cannot (the data moved into this plugin). Consulted after core, first non-null wins, exceptions
    *  fail closed. Gated by `mutates:['events']` — resolution decides tenant visibility. */

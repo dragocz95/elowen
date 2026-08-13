@@ -18,7 +18,7 @@ import { UserSettingStore } from '../store/userSettingStore.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
-import { projectHead, projectRangeDiff, safeProjectPath } from '../integrations/projectFiles.js';
+import { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff, safeProjectPath } from '../integrations/projectFiles.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
@@ -42,7 +42,8 @@ import { brainConfigFromElowen } from '../brain/config.js';
 import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
 import { makeAgentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
-import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
+import { setToolOutputCaps, setToolOutputPolicy, shapeBrainMessages } from '../brain/messageView.js';
+import { taskSessionId } from '../brain/sessionId.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
@@ -498,6 +499,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: opts.migrate !== false }),
       // ctx.publishEvent(): the daemon's ONE bus (SSE + activity log). Capability-gated in the registry.
       publishEvent: (e) => bus.publish(e),
+      // ctx.deleteEventsForTarget(): the feed's purge verb, for a plugin deleting the row its activity
+      // history describes. Same store the recorder writes to, same capability gate as publishing.
+      deleteEvents: (target) => events.deleteForTarget(target),
       // ctx.host.*: the core-owned machinery an extracted subsystem (agents) builds on. The brain
       // worker resolves LIVE — bootstrap constructs it after this load (setPluginHostBrainWorker).
       host: {
@@ -522,10 +526,16 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
           },
           ...(events ? { eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) } } : {}),
+          // The task transcript, shaped HERE: the `brain-task-<id>` session name and the message view are
+          // both core conventions shared with chat, so the plugin serving the route asks for a task's
+          // conversation and never for a session id it would have to spell itself.
+          taskConversation: (taskId: string) => shapeBrainMessages(
+            brainStore.getMessages(taskSessionId(taskId)), brainStore.getSubagentRuns(taskSessionId(taskId))),
         },
         prompts: {
           render: (name, vars, userId) => prompts.render(name, vars ?? {}, userId),
           rawTemplate,
+          userOverride: (userId, name) => userPrompts.get(userId, name),
         },
         config: {
           get: () => {
@@ -536,7 +546,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           ghToken: () => config.ghToken(),
         },
         relayClient: (cfg) => new RelayClient(cfg),
-        git: { projectHead, projectRangeDiff },
+        git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
         push: () => hostPush,
         terminals: () => hostTerminals,
         advisor: () => hostAdvisor,

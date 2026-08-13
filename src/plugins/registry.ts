@@ -431,7 +431,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void, resolveControl?: <K extends keyof KnownControls>(name: K) => KnownControls[K] | undefined): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void, resolveControl?: <K extends keyof KnownControls>(name: K) => KnownControls[K] | undefined, deleteEvents?: (target: string) => void): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -627,6 +627,13 @@ export class PluginRegistry {
         if (!publishEvent) throw new Error('no event bus wired for plugins in this process');
         // Stamp the publisher on a plugin-shaped event — a plugin never publishes as another plugin.
         publishEvent(event.type === 'plugin' ? { ...event, plugin: name } : event);
+      },
+      // The feed's delete verb. Same grant as publishing (both decide what a tenant sees), but absence
+      // degrades instead of throwing: the rows are a log, and a process without one simply has nothing
+      // to purge — unlike publishing, where silence would lose the event itself.
+      deleteEventsForTarget: (target) => {
+        if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);
+        deleteEvents?.(target);
       },
       registerEventProjectResolver: (fn) => {
         if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventProjectResolver refused: missing mutates:['events'] capability`); return; }

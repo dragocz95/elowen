@@ -100,12 +100,15 @@ describe('ctx.host capability gates', () => {
     expect(ctx.host.brainWorker()).toBe(fakeWorker);
   });
 
-  it('extraction seams (prompts/config/relayClient/git) carry their own grants', () => {
+  it('extraction seams (prompts/config/relayClient/git) carry their own grants', async () => {
     const seams: PluginHostWiring = {
-      prompts: { render: (n) => `P:${n}`, rawTemplate: (n) => `T:${n}` },
+      prompts: { render: (n) => `P:${n}`, rawTemplate: (n) => `T:${n}`, userOverride: (id, n) => (id === 1 ? `O:${n}` : null) },
       config: { get: () => ({ autopilot: {} }) as never, autopilotRelay: () => ({ baseUrl: 'b', apiKey: 'k' }), ghToken: () => null },
       relayClient: (cfg) => ({ model: cfg.model, decide: async () => ({ text: 'ok' }) }),
-      git: { projectHead: async () => 'sha', projectRangeDiff: async () => [] },
+      git: {
+        projectHead: async () => 'sha', projectRangeDiff: async () => [],
+        projectRangeLog: async () => [], projectRangeFileDiff: async () => 'range-diff', projectCommitFileDiff: async () => 'commit-diff',
+      },
     };
     const denied = wire({ reads: [] }, seams);
     expect(() => denied.host.prompts()).toThrow("reads:['prompts']");
@@ -116,6 +119,15 @@ describe('ctx.host capability gates', () => {
     expect(granted.host.prompts().render('x')).toBe('P:x');
     expect(granted.host.config().autopilotRelay()).toEqual({ baseUrl: 'b', apiKey: 'k' });
     expect(granted.host.relayClient({ baseUrl: 'b', apiKey: 'k', model: 'm' }).model).toBe('m');
+    // A saved override is a DIFFERENT question from "render this template": a caller with its own
+    // fallback chain (the planner prompt falls back to the workspace template, not to the file default)
+    // must be able to see that a user never edited it.
+    expect(granted.host.prompts().userOverride(1, 'planner')).toBe('O:planner');
+    expect(granted.host.prompts().userOverride(2, 'planner')).toBeNull();
+    // The git reader carries the whole read-only set an extracted change-list surface needs, not just
+    // the two the first extraction happened to use.
+    expect(await granted.host.git().projectRangeFileDiff('/r', 'a', 'b', 'f.ts')).toBe('range-diff');
+    expect(await granted.host.git().projectCommitFileDiff('/r', 'abc', 'f.ts')).toBe('commit-diff');
   });
 });
 

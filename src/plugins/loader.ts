@@ -147,6 +147,9 @@ export interface LoadPluginsOptions {
   /** Event-bus SUBSCRIBE sink exposed as ctx.subscribeEvents() — gated by `mutates:['events']`. The
    *  registry tracks the subscriptions so a reload detaches the whole old generation. */
   subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void;
+  /** Activity-log purge sink exposed as ctx.deleteEventsForTarget() — gated by `mutates:['events']`,
+   *  like the two above. Absent in a process without an event store; the verb then no-ops. */
+  deleteEvents?: (target: string) => void;
   logger: PluginLogger;
 }
 
@@ -206,7 +209,8 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // loaded name-sorted, so a consumer ('agents') can easily register BEFORE the owner ('work')
           // exists. Resolving at call time — long after every plugin has merged — makes the dependency
           // work in either order, and makes a reload swap the owner underneath the caller for free.
-          (name) => registry.control(name));
+          (name) => registry.control(name),
+          opts.deleteEvents);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
