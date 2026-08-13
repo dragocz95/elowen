@@ -63,11 +63,6 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
   .data-table-wide { display: block; }
 }
 
-.adaptive-split { grid-template-columns: minmax(0, 1fr); }
-@container (min-width: 64rem) {
-  .adaptive-split { grid-template-columns: minmax(0, 1fr) var(--adaptive-aside, 19rem); align-items: start; }
-}
-
 /* Spatial control deck ----------------------------------------------------- */
 .spatial-control-deck { container-type: inline-size; width: 100%; max-width: var(--content-max); margin-inline: auto; padding: 0 var(--shell-gutter) 3rem; }
 .spatial-deck-heading { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 1rem; min-height: 4.6rem; padding: 0.7rem 0; }
