@@ -85,11 +85,11 @@ describe('a control that declares the domain it is built on', () => {
   /** Stage + merge a dependent control the way the loader does. */
   const ownerMergesDependent = (merged: PluginRegistry, requires: string) => {
     const staging = new PluginRegistry();
-    staging.contextFor('agents', {}, noopLog).registerControl('agents', fakeAgentsControl(), { requires });
+    staging.contextFor('agents', {}, noopLog).registerControl('missions', fakeMissionsControl(), { requires });
     merged.merge(staging);
   };
-  /** Every method KNOWN_CONTROL_METHODS.agents demands — the shape check must not be what fails here. */
-  const fakeAgentsControl = (): PluginControl => Object.fromEntries(
+  /** Every method KNOWN_CONTROL_METHODS.missions demands — the shape check must not be what fails here. */
+  const fakeMissionsControl = (): PluginControl => Object.fromEntries(
     ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock',
       'missions', 'liveTaskUsage', 'detectClis', 'advisor', 'onTaskClosed'].map((m) => [m, () => ({})]),
   ) as PluginControl;
@@ -97,18 +97,18 @@ describe('a control that declares the domain it is built on', () => {
   it('does not resolve while that domain has no owner', () => {
     const merged = new PluginRegistry();
     ownerMergesDependent(merged, 'tasks');
-    expect(merged.control('agents')).toBeUndefined();
+    expect(merged.control('missions')).toBeUndefined();
   });
 
   it('resolves once the domain has one, and stops again if it goes away', () => {
     const merged = new PluginRegistry();
     ownerMergesDependent(merged, 'tasks');
     ownerMerges(merged, 'work', 'tasks', fakeTasksDomain());
-    expect(merged.control('agents')).toBeDefined();
+    expect(merged.control('missions')).toBeDefined();
     // A reload that drops the owner must take the dependent with it — resolution is live, not a snapshot
     // taken when the dependency happened to be there.
     merged.controls.delete('tasks');
-    expect(merged.control('agents')).toBeUndefined();
+    expect(merged.control('missions')).toBeUndefined();
   });
 
   it('is not satisfied by an owner that only half implements the domain', () => {
@@ -117,15 +117,15 @@ describe('a control that declares the domain it is built on', () => {
     ownerMerges(merged, 'work', 'tasks', { store: () => ({}) } as unknown as PluginControl);
     // The dependent would be handed a domain whose readiness()/usage() are missing — the same "blows up
     // at an arbitrary later call site" the shape check exists to prevent, one level removed.
-    expect(merged.control('agents')).toBeUndefined();
+    expect(merged.control('missions')).toBeUndefined();
   });
 
   it('leaves a control that declares nothing alone', () => {
     const merged = new PluginRegistry();
     const staging = new PluginRegistry();
-    staging.contextFor('agents', {}, noopLog).registerControl('agents', fakeAgentsControl());
+    staging.contextFor('agents', {}, noopLog).registerControl('missions', fakeMissionsControl());
     merged.merge(staging);
-    expect(merged.control('agents')).toBeDefined(); // no dependency declared, no gate
+    expect(merged.control('missions')).toBeDefined(); // no dependency declared, no gate
   });
 });
 

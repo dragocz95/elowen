@@ -37,7 +37,7 @@ export interface ReviewService {
   /** Release the dependents a phase's review gate was holding; returns the ids actually re-opened. */
   releaseGatedDependents(phaseId: string): string[];
   /** Drive the post-done overseer review gate for a MISSION PHASE's close (gate → verdict → commit/
-   *  self-heal/escalate). Called by the core close path through the 'agents' control AFTER the status
+   *  self-heal/escalate). Called by the core close path through the 'missions' control AFTER the status
    *  flip + SSE publish; a standalone task (no parent) is core's business (snapshot) and no-ops here. */
   onTaskClosed(id: string, existing: Task, opts: { outcome?: string; summary?: string }): Promise<void>;
 }

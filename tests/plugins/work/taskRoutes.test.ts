@@ -215,7 +215,7 @@ describe('plan and replan', () => {
     const { app, provider } = makeApp({ apiKey: 'k', fakePlan: '[{"title":"Only phase"}]' });
     // Capture the engage the REAL plan flow performs, on the very engine instance it reaches through
     // the agents control — without letting it spawn anything.
-    const control = (await provider.get()).control('agents')!;
+    const control = (await provider.get()).control('missions')!;
     let engagedEpic = '';
     (control.engine() as { engage: (input: { epicId: string }) => Promise<unknown> }).engage = async (input) => {
       engagedEpic = input.epicId;
@@ -276,7 +276,7 @@ describe('plan and replan', () => {
 
   it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new phase', async () => {
     const { app, tasks, provider } = makeApp();
-    const control = (await provider.get()).control('agents')!;
+    const control = (await provider.get()).control('missions')!;
     let ticked = '';
     const engine = control.engine() as { isActive: (id: string) => boolean; tick: (id: string) => Promise<void> };
     engine.isActive = (id) => id === 'm-E';

@@ -2,7 +2,7 @@
  *
  *  The entry composes buildAgentsRuntime (runtime.ts) from the ctx seams and registers the host
  *  lifecycle: boot reconciles, the deriver service, the interval sweeps (original core periods) and
- *  the 'agents' control the daemon routes/services/advisor drive. Runtime reach comes exclusively
+ *  the 'missions' control the daemon routes/services/advisor drive. Runtime reach comes exclusively
  *  through the PluginContext (ctx.host.*, ctx.db(), ctx.publishEvent(), …); imports from the daemon's
  *  src/ are TYPE-ONLY and erase at compile time, so the built plugin has no runtime dependency on the
  *  daemon's module graph.
@@ -12,7 +12,7 @@
  *  plugin services and never calls the control, so it never assembles a second mission engine or
  *  attaches the push/usage bus subscribers beside the daemon's.
  */
-import type { AgentsControl, PluginContext } from '../../../src/plugins/api.js';
+import type { MissionsDomainControl, PluginContext } from '../../../src/plugins/api.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import { AGENTS_MIGRATIONS } from './store/migrations.js';
 import { agentsEventRow } from './events/rows.js';
@@ -218,9 +218,10 @@ export function register(ctx: PluginContext): void {
   for (const tool of AGENTS_MCP_TOOLS) ctx.registerMcpTool(tool);
 
   // The control surface the daemon routes/services/advisor drive (deps getters resolve it live from
-  // the loaded registry). Accessor methods so the registry's function-shape narrowing applies and so
-  // the first call is what builds the runtime.
-  ctx.registerControl('agents', {
+  // the loaded registry). Keyed by the DOMAIN it implements, never by this plugin's name: consumers ask
+  // for `missions` and stay correct if the implementing plugin is renamed or replaced. Accessor methods
+  // so the registry's function-shape narrowing applies and so the first call is what builds the runtime.
+  ctx.registerControl('missions', {
     engine: () => rt().engine,
     spawn: () => rt().spawn,
     planFlow: () => rt().planFlow,
@@ -246,7 +247,7 @@ export function register(ctx: PluginContext): void {
     // so core sees exactly what it sees when this plugin is disabled — mission reads degrade, mission
     // routes answer 503, the login advisor hook is skipped — instead of every accessor throwing into a
     // caller that was never taught a second failure mode.
-  } satisfies AgentsControl, { requires: 'tasks' });
+  } satisfies MissionsDomainControl, { requires: 'tasks' });
 
   ctx.logger.info('agents plugin loaded (runtime lazy; engine/scheduler/deriver via host services)');
 }

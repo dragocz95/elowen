@@ -40,7 +40,7 @@ export interface ServerDeps {
    *  the plugin's own store instance in tests). Reads degrade to empty while the plugin is disabled —
    *  every mission WRITE goes through `engine` and answers 503 without it. */
   missions: AgentsMissions;
-  /** The agents plugin's mission engine (structural — see AgentsControl). Absent while the plugin is
+  /** The agents plugin's mission engine (structural — see MissionsDomainControl). Absent while the plugin is
    *  disabled/not yet loaded: engage/pause/resume/disengage and plan-engage answer 503. */
   engine?: AgentsMissionEngine;
   tmux: TmuxDriver; bus: EventBus;

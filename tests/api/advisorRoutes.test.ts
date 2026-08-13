@@ -37,7 +37,7 @@ async function setup() {
     clock: new FakeClock(0), config, users, projects, userProjects: new UserProjectStore(db),
     plugins: provider,
     // Mirror bootstrap: login autostart resolves the plugin's advisor through the control.
-    advisor: registry.control('agents')!.advisor(),
+    advisor: registry.control('missions')!.advisor(),
   });
   return { app, users, amy, amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent') };
 }

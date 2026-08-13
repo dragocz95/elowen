@@ -366,7 +366,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
   });
   const scheduler = new Scheduler({ tasks, spawn, bus, missions, users, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(), gitLock, git: deps.git, worktreeFor: (id) => missionGit.worktreeFor(id) });
   // The post-done review gate (gate → verdict → commit/self-heal/escalate) the core close path drives
-  // through the 'agents' control (onTaskClosed), plus the human approve-gate release. Shares the
+  // through the 'missions' control (onTaskClosed), plus the human approve-gate release. Shares the
   // per-checkout git lock with the scheduler/engine so a phase commit never interleaves with a
   // baseline read on the same checkout.
   const review = createReviewService({
@@ -375,7 +375,7 @@ export function buildAgentsRuntime(deps: AgentsRuntimeDeps) {
     pathFor: (pid) => projects.get(pid)?.path ?? deps.homeProjectPath,
   });
   // The agents half of the core plan/replan routes (exec-override validation, PR mode, backend
-  // choice, mission labels, post-persist engage/tick) — reached through the 'agents' control.
+  // choice, mission labels, post-persist engage/tick) — reached through the 'missions' control.
   const planFlow = createPlanFlow({ tasks, missions, config: deps.config, pluginConfig: deps.pluginConfig, projects, users, engine, pilot });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,

@@ -46,7 +46,7 @@ async function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   // so a test's engine/missionGit doubles have to be patched onto the very instances the registry
   // hands those routes (own-property assignment over the class method), keeping the core-facing deps
   // above (admin cleanup) in sync.
-  const control = (await provider.get()).control('agents');
+  const control = (await provider.get()).control('missions');
   if (!control) throw new Error('agents plugin failed to load in setup()');
   const engineDouble = extra.engine as { disengage?: (id: string) => Promise<void> } | undefined;
   if (engineDouble?.disengage) (control.engine() as { disengage: (id: string) => Promise<void> }).disengage = engineDouble.disengage;

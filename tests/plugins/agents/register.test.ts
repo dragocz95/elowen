@@ -89,10 +89,16 @@ describe('agents plugin register() (B2b activation)', () => {
     expect(rowResolver({ type: 'task', taskId: 't1', status: 'open' } as ElowenEvent)).toBeUndefined(); // core's
   });
 
-  it("control('agents') passes the registry's typed narrowing and exposes every accessor", async () => {
+  it("control('missions') passes the registry's typed narrowing and exposes every accessor", async () => {
     const { registry } = await loadAgentsPlugin();
-    const control = registry.control('agents');
+    const control = registry.control('missions');
     expect(control).toBeDefined();
+    // The control is keyed by the DOMAIN it implements, never by the plugin that happens to implement it:
+    // a consumer asking for a capability must not have to know the package's name (and must keep working
+    // if this plugin is renamed or replaced). The registry must therefore hold NO 'agents' key at all.
+    expect(registry.controls.has('missions')).toBe(true);
+    expect(registry.controls.has('agents')).toBe(false);
+    expect(registry.controlOwner.get('missions')).toBe('agents');
     // Accessors build the runtime lazily and return the live services.
     expect(typeof control!.engine().tick).toBe('function');
     expect(typeof control!.spawn().launch).toBe('function');
@@ -110,7 +116,7 @@ describe('agents plugin register() (B2b activation)', () => {
     const { registry, tasks, tmux, published } = await loadAgentsPlugin();
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
     tasks.create({ id: 't1', project_id: 1, title: 'phase one', parent_id: 'epic' });
-    const control = registry.control('agents')!;
+    const control = registry.control('missions')!;
     const mission = await control.engine().engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(mission.state).toBe('active');
     expect(control.engine().isActive(mission.id)).toBe(true);
@@ -144,7 +150,7 @@ describe('agents plugin register() (B2b activation)', () => {
       const { registry, tasks } = await loadAgentsPlugin(coreLogger('daemon'));
       tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
       tasks.create({ id: 't1', project_id: 1, title: 'phase one', parent_id: 'epic' });
-      await registry.control('agents')!.engine().engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+      await registry.control('missions')!.engine().engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
       const lines = buffer.forPlugin('agents').map((e) => e.message);
       // A runtime-service line, with the subsystem scope tag preserved inside the plugin prefix.
       expect(lines.some((m) => m.includes('[spawn] spawned '))).toBe(true);
@@ -156,7 +162,7 @@ describe('agents plugin register() (B2b activation)', () => {
 
   it('plugin stores land in the shared DB via the plugin db seam (missions table usable through the control)', async () => {
     const { registry } = await loadAgentsPlugin();
-    const control = registry.control('agents')!;
+    const control = registry.control('missions')!;
     control.agents().upsert({ project_id: 1, name: 'Nova', program: 'claude', model: 'opus' });
     expect(control.agents().programFor('Nova')).toBe('claude');
   });

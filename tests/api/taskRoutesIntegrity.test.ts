@@ -38,7 +38,7 @@ class GhostTmux extends FakeTmuxDriver {
 /** An in-memory daemon app with no user store (open mode → no auth), so these tests exercise the route
  *  logic itself. The task HTTP surface lives in the `work` plugin now, so the REAL plugins are loaded
  *  over these stores — `tmux` is injectable (the routes kill through `ctx.host.tmux()`), and the loaded
- *  'agents' control is returned so a test can make a teardown fail on the very instance the routes use. */
+ *  'missions' control is returned so a test can make a teardown fail on the very instance the routes use. */
 async function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -54,7 +54,7 @@ async function makeApp(opts: { engine?: MissionEngine; tmux?: FakeTmuxDriver } =
   const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, bus, tmux });
   // Awaited before the first request so a test's patch on a live control instance is already in place.
   const registry = await provider.get();
-  const control = registry.control('agents');
+  const control = registry.control('missions');
   if (!control) throw new Error('agents plugin failed to load in makeApp');
   // The store the routes actually write through: the work plugin owns the domain and builds its OWN
   // store over the same database, so a test that has to make a write FAIL patches this instance (reads

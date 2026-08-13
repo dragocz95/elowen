@@ -290,20 +290,20 @@ export async function buildApp(opts: BuildOpts) {
   ensureVapidKeys(config); // generate the web-push VAPID keypair on first boot (idempotent thereafter)
   // The tmux-agent/mission subsystem (spawn, mission engine, scheduler, deriver, overseers, PR git,
   // push dispatch, usage recorder, all its sweeps and boot reconciles) lives in the `agents` PLUGIN
-  // now. The daemon reaches it through the typed 'agents' control, resolved LIVE from the loaded
+  // now. The daemon reaches it through the typed 'missions' control, resolved LIVE from the loaded
   // registry on every access: undefined until the plugin loads, swapped by a plugin reload, absent
   // for good when the operator disables the plugin (routes answer 503, the CLI/web degrade).
-  const agentsControl = () => loadedPlugins()?.control('agents');
+  const missionsControl = () => loadedPlugins()?.control('missions');
 
   // The missions/notes TABLES belong to the agents plugin now (part 2 of the extraction deleted the
   // core store classes). Core routes/tenancy read them through these live facades: each call resolves
   // the control fresh (a plugin reload swaps the store instance), and with the plugin disabled reads
   // degrade to empty — every mission WRITE already flows through the engine and answers 503 without it.
   const missions: import('../plugins/api.js').AgentsMissions = {
-    get: (id) => agentsControl()?.missions().get(id) ?? null,
-    active: () => agentsControl()?.missions().active() ?? [],
-    live: () => agentsControl()?.missions().live() ?? [],
-    activeForEpic: (epicId) => agentsControl()?.missions().activeForEpic(epicId) ?? null,
+    get: (id) => missionsControl()?.missions().get(id) ?? null,
+    active: () => missionsControl()?.missions().active() ?? [],
+    live: () => missionsControl()?.missions().live() ?? [],
+    activeForEpic: (epicId) => missionsControl()?.missions().activeForEpic(epicId) ?? null,
   };
 
   // Phone push TRANSPORT stays core: the sender owns the device subscriptions + VAPID keys. The agents
@@ -510,10 +510,10 @@ export async function buildApp(opts: BuildOpts) {
     taskRefs,
     missions, tmux, bus, events,
     eventProjectResolvers: pluginEventResolvers,
-    get engine() { return agentsControl()?.engine(); },
-    get missionGit() { return agentsControl()?.missionGit(); },
-    get detectClis() { return agentsControl()?.detectClis(); },
-    get advisor() { return agentsControl()?.advisor(); },
+    get engine() { return missionsControl()?.engine(); },
+    get missionGit() { return missionsControl()?.missionGit(); },
+    get detectClis() { return missionsControl()?.detectClis(); },
+    get advisor() { return missionsControl()?.advisor(); },
     project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 

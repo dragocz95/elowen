@@ -235,7 +235,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     users.get(userId) ? users.ensureAdvisorToken(userId) : undefined;
   const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken, tokenForTask };
   // NOTE: the SpawnService (and the AgentStore it records into) is owned by the agents plugin now —
-  // the daemon reaches it through the 'agents' control; nothing here launches agent sessions.
+  // the daemon reaches it through the 'missions' control; nothing here launches agent sessions.
   const bus = new EventBus();
   // The activity-log recorder resolves plugin-owned event shapes (mission/review/decision/message/
   // signal → the agents plugin) through the LIVE registry — a reload swaps the resolver set, and with

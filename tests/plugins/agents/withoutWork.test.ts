@@ -66,19 +66,19 @@ async function makeInstanceWithoutWork(enabled: string[] = ['agents']) {
   // bootstrap.ts's own mission facade, copied in shape: every read resolves the control LIVE and
   // degrades when it is absent. This is the code path that turns an unresolvable subsystem into an
   // honest core degradation instead of an exception inside a core route.
-  const agentsControl = () => registry.control('agents');
+  const missionsControl = () => registry.control('missions');
   const missions: AgentsMissions = {
-    get: (id) => agentsControl()?.missions().get(id) ?? null,
-    active: () => agentsControl()?.missions().active() ?? [],
-    live: () => agentsControl()?.missions().live() ?? [],
-    activeForEpic: (epicId) => agentsControl()?.missions().activeForEpic(epicId) ?? null,
+    get: (id) => missionsControl()?.missions().get(id) ?? null,
+    active: () => missionsControl()?.missions().active() ?? [],
+    live: () => missionsControl()?.missions().live() ?? [],
+    activeForEpic: (epicId) => missionsControl()?.missions().activeForEpic(epicId) ?? null,
   };
   const app = createServer({
     taskRefs: new TaskRefs(db), missions, bus, tmux: new FakeTmuxDriver(),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects, plugins: provider,
-    get engine() { return agentsControl()?.engine(); },
-    get advisor() { return agentsControl()?.advisor(); },
+    get engine() { return missionsControl()?.engine(); },
+    get advisor() { return missionsControl()?.advisor(); },
   });
   return { app, db, registry, missions, token, auth: { headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } } };
 }
@@ -92,7 +92,7 @@ describe('the agents plugin without the plugin that owns tasks', () => {
       // …but the control it registered declares the domain it is built on, so it does not resolve while
       // that domain has no owner. Every bootstrap getter (engine, missionGit, planFlow, onTaskClosed,
       // advisor, …) hangs off this one call.
-      expect(registry.control('agents')).toBeUndefined();
+      expect(registry.control('missions')).toBeUndefined();
       // Which means core's own facades answer instead of throwing halfway through a request. The login
       // hook is the sharpest one: `void d.advisor?.ensureOnLogin(id)` is fire-and-forget, so a rejected
       // promise there is an unhandled rejection on every single login.
@@ -106,7 +106,7 @@ describe('the agents plugin without the plugin that owns tasks', () => {
     const { registry, db } = await makeInstanceWithoutWork(['agents', 'work']);
     try {
       expect(registry.control('tasks')).toBeDefined();
-      expect(registry.control('agents')).toBeDefined();
+      expect(registry.control('missions')).toBeDefined();
     } finally { db.close(); }
   });
 

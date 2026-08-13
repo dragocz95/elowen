@@ -987,12 +987,14 @@ export interface AgentsMissions {
  *  mission engine use, so an API-side phase commit can't interleave with an agent's baseline read. */
 export interface AgentsGitLock { run<T>(key: string, fn: () => Promise<T>): Promise<T> }
 
-/** The agents plugin's control: the whole tmux-agent/mission subsystem surface the core API routes,
- *  services and the advisor reach after the extraction. Accessor methods (not plain fields) so the
- *  registry's function-shape narrowing applies, and so the plugin can build its runtime lazily — the
- *  first accessor call constructs it, which keeps a sub-agent runner (register-only, no services)
- *  from ever building a second mission engine. */
-export interface AgentsControl {
+/** The MISSIONS DOMAIN: the whole tmux-agent/mission subsystem surface the core API routes, services and
+ *  the advisor reach after the extraction. Like `tasks`, the key it is registered under is the DOMAIN
+ *  (`missions`), never the implementing plugin's name — core and its sibling plugins ask for the
+ *  capability, so the owner can be renamed, replaced or switched off without a consumer knowing who it is.
+ *  Accessor methods (not plain fields) so the registry's function-shape narrowing applies, and so the
+ *  plugin can build its runtime lazily — the first accessor call constructs it, which keeps a sub-agent
+ *  runner (register-only, no services) from ever building a second mission engine. */
+export interface MissionsDomainControl {
   engine(): AgentsMissionEngine;
   spawn(): AgentsSpawn;
   /** The agents half of the plan/replan flow (validation, PR mode, backend, labels, engage). */
@@ -1022,7 +1024,7 @@ export interface AgentsControl {
   onTaskClosed(id: string, existing: Task, opts: { outcome?: string; summary?: string }): Promise<void>;
 }
 
-/** Core-facing slice of the plugin's advisor service (see AgentsControl.advisor). */
+/** Core-facing slice of the plugin's advisor service (see MissionsDomainControl.advisor). */
 export interface AgentsAdvisorHooks {
   /** Bring the user's advisor back up after login when autostart is armed. Never throws. */
   ensureOnLogin(userId: number): Promise<void>;
@@ -1059,7 +1061,7 @@ export interface KnownControls {
   cron: PendingWakeupControl;
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl;
   mcp: McpListControl;
-  agents: AgentsControl;
+  missions: MissionsDomainControl;
   lsp: LspStateControl;
   tasks: TasksDomainControl;
 }

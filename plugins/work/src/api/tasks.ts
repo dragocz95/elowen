@@ -7,7 +7,7 @@ import { snapshotTaskChanges } from './taskSnapshot.js';
 import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from './planner.js';
 import { createTaskSchema, patchTaskSchema, planSchema, insertPhasesSchema } from './schemas.js';
 import { json, canProject, unknownSubPath, type ApiAuth } from './http.js';
-import type { AgentsControl, PluginBrainWorker, PluginContext, TasksDomainControl } from '../../../../src/plugins/api.js';
+import type { MissionsDomainControl, PluginBrainWorker, PluginContext, TasksDomainControl } from '../../../../src/plugins/api.js';
 import type { Project } from '../../../../src/store/projectStore.js';
 
 /** A patch the store refused mid-write (a dangling/cyclic dependency edge, an illegal reparent). It
@@ -30,7 +30,7 @@ export function registerTaskApi(ctx: PluginContext, domain: TasksDomainControl, 
   // Everything below resolves LIVE on every request: a plugin reload swaps the agents control (and can
   // take it away), and the workspace config is edited in Settings. A captured value would strand a
   // request on a dead generation — the exact failure the core route context was written to avoid.
-  const agents = (): AgentsControl | undefined => ctx.control('agents');
+  const agents = (): MissionsDomainControl | undefined => ctx.control('missions');
   const stores = () => ctx.host.stores();
   const config = () => ctx.host.config();
   const home = (): Project => stores().homeProject();

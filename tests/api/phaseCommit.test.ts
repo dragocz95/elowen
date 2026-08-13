@@ -36,11 +36,11 @@ async function build(prEnabled: boolean) {
   const prs = new MissionPrStore(db);
   const bus = new EventBus();
   // The close route is the work plugin's, and the phase commit hangs off the agents plugin's review
-  // service (ctx.control('agents').onTaskClosed) — so load BOTH for real over these stores, exactly
+  // service (ctx.control('missions').onTaskClosed) — so load BOTH for real over these stores, exactly
   // like the daemon, and drive the mission worktree through the runtime's own MissionGit.
   const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, bus });
   const registry = await provider.get();
-  const control = registry.control('agents');
+  const control = registry.control('missions');
   if (!control) throw new Error('agents plugin failed to load in build');
   const missionGit = control.missionGit();
   const app = createServer({

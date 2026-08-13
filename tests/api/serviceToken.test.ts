@@ -29,7 +29,7 @@ async function setup() {
   // '/sessions', the whole /tasks family and /plan/* are plugin-served now (same fake tmux).
   const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux });
   const registry = await provider.get();
-  const control = registry.control('agents');
+  const control = registry.control('missions');
   if (!control) throw new Error('agents plugin failed to load in setup');
   // The plan jobs the routes resolve live through the agents control — the same store the plan submit
   // route reads, so a job arranged here is the one it finds.

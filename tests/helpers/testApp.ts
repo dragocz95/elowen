@@ -170,7 +170,7 @@ export interface TestAppOpts {
 
 /** Wire a real in-memory daemon app with a bootstrapped admin token, composed EXACTLY like the daemon:
  *  the REAL agents plugin is loaded from disk (its dist build) over the shared in-memory DB, and the
- *  server reaches the subsystem through the loaded registry's 'agents' control — the same instances the
+ *  server reaches the subsystem through the loaded registry's 'missions' control — the same instances the
  *  plugin's root-mounted routes use. Exposes the live stores/queues so tests can arrange state and
  *  assert side effects. */
 export async function makeTestApp(opts: TestAppOpts = {}) {
@@ -192,7 +192,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   // runtime generation over its own :memory: DB.
   const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, bus, tmux, ...(opts.fakePlan ? { fakePlan: opts.fakePlan } : {}), ...(opts.deleteEvents ? { deleteEvents: opts.deleteEvents } : {}) });
   const registry = await provider.get();
-  const control = registry.control('agents');
+  const control = registry.control('missions');
   if (!control) throw new Error('agents plugin failed to load in makeTestApp');
 
   // The ONE subsystem instance set — server deps and the plugin's root-mounted routes share it, exactly
