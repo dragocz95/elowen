@@ -47,8 +47,9 @@ interface AppConfig {
   brain?: { providers?: { id: string; label: string; apiKeySet?: boolean }[] };
 }
 
-/** The core translation catalog: section → key → string. Deliberately loose — the strings the moved
- *  views read (t.sessions.*, t.escalations.*, t.page.*, …) stay in the core dictionaries. */
+/** The core translation catalog: section → key → string. Deliberately loose — it carries only copy
+ *  SHARED with core surfaces (t.sessions.*, t.page.*, …). Copy that nothing outside this plugin
+ *  renders lives in its own manifest `web.strings`, read through `usePluginStrings`. */
 type Dict = Record<string, Record<string, string>>;
 
 interface AgentsHooks {

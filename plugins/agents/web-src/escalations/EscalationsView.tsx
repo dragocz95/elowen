@@ -7,7 +7,8 @@ import { runtime, type Escalation, type PendingAsk } from '../runtime';
  *  just a free-text answer the agent is blocking on. */
 function PendingAskCard({ ask }: { ask: PendingAsk }) {
   const { components: C, hooks, utils } = runtime();
-  const { t, locale } = hooks.useTranslation();
+  const { locale } = hooks.useTranslation();
+  const s = hooks.usePluginStrings('agents');
   const reply = hooks.useReplyAsk();
   const { toast } = hooks.useToast();
   const [text, setText] = useState('');
@@ -16,8 +17,8 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
     const v = text.trim();
     if (!v) return;
     reply.mutate({ taskId: ask.taskId, askId: ask.askId, text: v }, {
-      onSuccess: () => { toast(t.escalations.askReplied); setText(''); },
-      onError: (e) => toast(utils.apiErrorMessage(e) || t.escalations.askReplyError, 'error'),
+      onSuccess: () => { toast(s.escAskReplied); setText(''); },
+      onError: (e) => toast(utils.apiErrorMessage(e) || s.escAskReplyError, 'error'),
     });
   };
   return (
@@ -27,7 +28,7 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
           <MessagesSquare size={20} className="text-accent" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-text">{t.escalations.askTitle}{ask.title ? ` · ${ask.title}` : ''}</h2>
+          <h2 className="truncate text-sm font-semibold text-text">{s.escAskTitle}{ask.title ? ` · ${ask.title}` : ''}</h2>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-text-muted">
             {ask.epicId ? <><Rocket size={11} className="shrink-0" aria-hidden /><span className="truncate">{ask.epicId}</span></> : null}
             {when.label ? <><span aria-hidden className="opacity-50">·</span><Clock size={11} className="shrink-0" aria-hidden /><span title={when.title}>{when.label}</span></> : null}
@@ -37,10 +38,10 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
       <div className="border-l border-accent/35 py-1 pl-4">
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{ask.question}</p>
       </div>
-      <p className="text-xs text-text-muted">{t.escalations.askDesc}</p>
+      <p className="text-xs text-text-muted">{s.escAskDesc}</p>
       <div className="flex items-center gap-2">
-        <C.Input value={text} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)} onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }} placeholder={t.escalations.askReplyPlaceholder} className="flex-1" />
-        <C.Button variant="accent" icon={Play} onClick={send} disabled={!text.trim() || reply.isPending}>{t.escalations.askSend}</C.Button>
+        <C.Input value={text} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value)} onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }} placeholder={s.escAskReplyPlaceholder} className="flex-1" />
+        <C.Button variant="accent" icon={Play} onClick={send} disabled={!text.trim() || reply.isPending}>{s.escAskSend}</C.Button>
       </div>
     </article>
   );
@@ -51,7 +52,8 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
  *  continue, or re-run the rejected phase. Items self-clear once their gated phases are released. */
 export function EscalationsView() {
   const { components: C, hooks, utils } = runtime();
-  const { t, locale } = hooks.useTranslation();
+  const { locale } = hooks.useTranslation();
+  const s = hooks.usePluginStrings('agents');
   const escalations = hooks.useEscalations();
   const pendingAsks = hooks.usePendingAsks().data ?? [];
   const setStatus = hooks.useSetTaskStatus();
@@ -70,9 +72,9 @@ export function EscalationsView() {
     approveGate.mutate(e.taskId, {
       onSuccess: () => {
         if (e.epicId) resume.mutate(`m-${e.epicId}`, { onError: () => { /* mission may be idle — released phases still get picked up on a later tick */ } });
-        toast(t.escalations.approved);
+        toast(s.escApproved);
       },
-      onError: (err) => toast(utils.apiErrorMessage(err) || t.escalations.actionError, 'error'),
+      onError: (err) => toast(utils.apiErrorMessage(err) || s.escActionError, 'error'),
     });
   };
   // Re-run the rejected phase itself: re-open it so the engine re-spawns its agent.
@@ -80,40 +82,40 @@ export function EscalationsView() {
     setStatus.mutate({ id: e.taskId, status: 'open' }, {
       onSuccess: () => {
         if (e.epicId) resume.mutate(`m-${e.epicId}`, { onError: () => { /* idle mission — a later tick re-spawns it */ } });
-        toast(t.escalations.rerunning);
+        toast(s.escRerunning);
       },
-      onError: (err) => toast(utils.apiErrorMessage(err) || t.escalations.actionError, 'error'),
+      onError: (err) => toast(utils.apiErrorMessage(err) || s.escActionError, 'error'),
     });
   };
 
   return (
     <>
-      <C.ModuleHeader title={t.escalations.title} count={escalations.length + pendingAsks.length} icon={ShieldAlert} />
+      <C.ModuleHeader title={s.escTitle} count={escalations.length + pendingAsks.length} icon={ShieldAlert} />
       <C.SpatialWorkspaceLayout
         hero={{
-          eyebrow: t.escalations.workspaceEyebrow,
-          title: t.escalations.title,
+          eyebrow: s.escWorkspaceEyebrow,
+          title: s.escTitle,
           count: total,
-          description: t.escalations.workspaceIntro,
-          status: <span className="workspace-status">{total > 0 ? t.escalations.workspaceWaiting : t.escalations.workspaceReady}</span>,
+          description: s.escWorkspaceIntro,
+          status: <span className="workspace-status">{total > 0 ? s.escWorkspaceWaiting : s.escWorkspaceReady}</span>,
           metrics: <>
-            <C.WorkspaceMetric label={t.escalations.metricTotal} value={total} icon={Inbox} />
-            <C.WorkspaceMetric label={t.escalations.metricQuestions} value={pendingAsks.length} icon={MessagesSquare} />
-            <C.WorkspaceMetric label={t.escalations.metricReviews} value={escalations.length} icon={ShieldAlert} />
-            <C.WorkspaceMetric label={t.escalations.metricBlocked} value={blockedCount} icon={GitBranch} />
+            <C.WorkspaceMetric label={s.escMetricTotal} value={total} icon={Inbox} />
+            <C.WorkspaceMetric label={s.escMetricQuestions} value={pendingAsks.length} icon={MessagesSquare} />
+            <C.WorkspaceMetric label={s.escMetricReviews} value={escalations.length} icon={ShieldAlert} />
+            <C.WorkspaceMetric label={s.escMetricBlocked} value={blockedCount} icon={GitBranch} />
           </>,
         }}
       >
       <C.ControlSurfaceDocument>
 
       {total === 0 ? (
-        <C.ControlSurfaceState><C.EmptyState title={t.escalations.empty} description={t.escalations.emptyDesc} icon={ShieldCheck} /></C.ControlSurfaceState>
+        <C.ControlSurfaceState><C.EmptyState title={s.escEmpty} description={s.escEmptyDesc} icon={ShieldCheck} /></C.ControlSurfaceState>
       ) : (
         <C.ControlSurfaceRegister>
           {/* Agent questions waiting on a human come first — an agent is actively blocked on each. */}
-          {pendingAsks.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-accent">{t.escalations.questionsSection}</h2> : null}
+          {pendingAsks.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-accent">{s.escQuestionsSection}</h2> : null}
           {pendingAsks.map((a) => <PendingAskCard key={a.askId} ask={a} />)}
-          {escalations.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 pt-7 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-warning">{t.escalations.reviewsSection}</h2> : null}
+          {escalations.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 pt-7 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-warning">{s.escReviewsSection}</h2> : null}
           {escalations.map((e) => {
             const when = utils.formatTaskTime(e.ts, Date.now(), locale);
             return (
@@ -133,13 +135,13 @@ export function EscalationsView() {
 
                 {/* The overseer's verdict — the long text that used to be a toast, now readable. */}
                 <div className="border-l border-warning/35 py-1 pl-4">
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.escalations.rationale}</div>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{e.rationale || t.escalations.noReason}</p>
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">{s.escRationale}</div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{e.rationale || s.escNoReason}</p>
                 </div>
 
                 {e.blocked.length > 0 ? (
                   <div className="flex flex-col gap-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.escalations.blockedBy}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{s.escBlockedBy}</span>
                     <ul className="flex flex-col gap-1">
                       {e.blocked.map((b) => (
                         <li key={b.id} className="flex items-center gap-2 text-xs text-text">
@@ -152,8 +154,8 @@ export function EscalationsView() {
                 ) : null}
 
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <button type="button" onClick={() => rerun(e)} disabled={setStatus.isPending} className="inline-flex items-center gap-1.5 px-1 py-2 text-xs text-text-muted transition-colors hover:text-warning disabled:opacity-40"><RotateCcw size={13} aria-hidden />{t.escalations.rerun}</button>
-                  <C.Button variant="accent" icon={Play} onClick={() => approve(e)} disabled={e.blocked.length === 0 || approveGate.isPending}>{t.escalations.approve}</C.Button>
+                  <button type="button" onClick={() => rerun(e)} disabled={setStatus.isPending} className="inline-flex items-center gap-1.5 px-1 py-2 text-xs text-text-muted transition-colors hover:text-warning disabled:opacity-40"><RotateCcw size={13} aria-hidden />{s.escRerun}</button>
+                  <C.Button variant="accent" icon={Play} onClick={() => approve(e)} disabled={e.blocked.length === 0 || approveGate.isPending}>{s.escApprove}</C.Button>
                 </div>
               </article>
             );
