@@ -36,12 +36,29 @@ describe('AccountView', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Account sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal', 'Plugins',
+      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
+    // No plugin asks this account for details of its own, so it is not offered an empty section.
+    expect(screen.queryByRole('radio', { name: 'Plugins' })).toBeNull();
     // PROTOTYPE(constellation): the hero band is gone — the mascot lives inside the cosmos cores
     // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
+  });
+
+  it('offers the Plugins section as soon as a plugin asks this account for details of its own', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '' })),
+      http.get('*/api/plugins/user-config', () => HttpResponse.json([
+        { name: 'crmdemo', description: 'CRM', userConfigSchema: [{ key: 'apiKey', label: 'API key', type: 'secret' }], config: {}, secretsSet: [] },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+    expect(await screen.findByRole('radio', { name: 'Plugins' })).toBeInTheDocument();
   });
 
   it('shows the user identity, and saves a default worker picked in the manage modal', async () => {

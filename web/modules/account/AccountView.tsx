@@ -4,7 +4,7 @@ import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, Zo
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { ProfilePatch } from '../../lib/types';
-import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
+import { useMe, useConfig, useMyCliSettings, useBrainModels, useMyPluginConfigs } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { execProvider, type ProviderId } from '../../lib/modelProvider';
@@ -119,6 +119,9 @@ function WorkerField({ value, onChange, execs, labelOf, defaultLabel, title }: {
 
 export function AccountView() {
   const me = useMe();
+  // Drives whether the Plugins section is offered at all — an account nothing asks anything of should not
+  // carry an empty tab.
+  const { data: myPluginConfigs } = useMyPluginConfigs();
   const { data: config } = useConfig();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
@@ -336,7 +339,7 @@ export function AccountView() {
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
     { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
     { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal },
-    { id: 'plugins', icon: Blocks, label: t.account.tabPlugins },
+    ...(myPluginConfigs?.length ? [{ id: 'plugins' as const, icon: Blocks, label: t.account.tabPlugins }] : []),
   ];
   const spatialSections = sections.map((item) => ({
     ...item,

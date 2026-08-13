@@ -32,8 +32,9 @@ export class PluginRegistryProvider {
 
   /** The last successfully loaded registry, without awaiting one. For the few callers that must answer
    *  SYNCHRONOUSLY inside a turn (resolving which plugin owns a tool while a tool policy is minted) and
-   *  can only ever run after a registry has loaded. Undefined before the first load — a caller that gets
-   *  undefined must fall back to the answer that grants nothing new. */
+   *  can only ever run after a registry has loaded. Undefined before the first load: no plugin has
+   *  contributed anything yet, so a caller that gets undefined must fall back to the answer that says
+   *  nothing about plugins at all (an empty deny-list denies nothing, because there is nothing to deny). */
   peek(): PluginRegistry | undefined {
     return this.lastGood;
   }

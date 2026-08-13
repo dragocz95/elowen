@@ -37,14 +37,6 @@ describe('UserPluginConfigStore', () => {
     expect((db.prepare('SELECT COUNT(*) c FROM user_plugin_config').get() as { c: number }).c).toBe(0);
   });
 
-  it('merges key by key, and an undefined removes the key', () => {
-    const { store, amy } = setup();
-    store.set(amy.id, 'crm', { key: 'amy', region: 'cz' });
-    expect(store.merge(amy.id, 'crm', { region: 'sk' })).toEqual({ key: 'amy', region: 'sk' });
-    expect(store.merge(amy.id, 'crm', { key: undefined })).toEqual({ region: 'sk' });
-    expect(store.get(amy.id, 'crm')).toEqual({ region: 'sk' });
-  });
-
   it('goes with the account when it is deleted', () => {
     const { users, store, amy, ben } = setup();
     store.set(amy.id, 'crm', { key: 'amy' });

@@ -36,6 +36,10 @@ export interface MarkdownAsset {
    *  `null`/absent = instance-wide. Two accounts may hold the same NAME, so rows are keyed and selected
    *  by name AND owner — keying on the name alone would make one row highlight (and delete) another. */
   owner?: number | null;
+  /** Whether THIS caller may write it. The daemon decides (it owns the rule); absent means yes, so an
+   *  asset type without per-user ownership behaves exactly as before. A row the caller cannot write
+   *  renders read-only rather than offering controls whose request would be refused. */
+  canDelete?: boolean;
 }
 
 /** Identity of a row. Not the name: with per-user assets the same name legitimately exists twice. */
@@ -237,7 +241,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
                 </DataTableRow>
                 {pageItems.map((item) => {
-                  const editable = item.source === 'user';
+                  const editable = item.source === 'user' && item.canDelete !== false;
                   const open = () => { if (editable) { setForm(formFromItem(item)); setEditing(item); } };
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   return (

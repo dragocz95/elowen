@@ -36,21 +36,6 @@ export class UserPluginConfigStore {
     ).run({ user_id: userId, plugin, data: JSON.stringify(data) });
   }
 
-  /** Apply a partial patch: read, merge key-by-key, persist. Transactional so two concurrent saves cannot
-   *  interleave into a blob that holds neither one's values. A key set to `undefined` is REMOVED, which is
-   *  how the form clears a field back to "not configured". */
-  merge(userId: number, plugin: string, patch: UserPluginConfig): UserPluginConfig {
-    return this.db.transaction(() => {
-      const next: UserPluginConfig = { ...this.get(userId, plugin) };
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === undefined) delete next[key];
-        else next[key] = value;
-      }
-      this.set(userId, plugin, next);
-      return next;
-    })();
-  }
-
   remove(userId: number, plugin: string): void {
     this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ? AND plugin = ?').run(userId, plugin);
   }

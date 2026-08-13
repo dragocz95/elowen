@@ -250,6 +250,49 @@ describe('skills routes', () => {
     expect(existsSync(join(dataRoot, 'skills', 'sneaky.md'))).toBe(false);
   });
 
+  it('sends an admin\'s unspecified write to the shared set, and only an explicit "me" to his own', async () => {
+    const { app, dataRoot, users, adminTok } = setup();
+    const admin = users.list()[0]!;
+    // What this endpoint did before ownership existed, and what a client written back then still expects.
+    expect((await app.request('/plugins/skills', post(adminTok, skill({ name: 'ops-runbook' })))).status).toBe(201);
+    expect(existsSync(join(dataRoot, 'skills', 'ops-runbook.md'))).toBe(true);
+
+    expect((await app.request('/plugins/skills?owner=me', post(adminTok, skill({ name: 'my-notes' })))).status).toBe(201);
+    expect(existsSync(join(dataRoot, 'skills', 'users', String(admin.id), 'my-notes.md'))).toBe(true);
+    expect(existsSync(join(dataRoot, 'skills', 'my-notes.md'))).toBe(false);
+  });
+
+  it('refuses a name that already exists in the other set, in BOTH directions', async () => {
+    const { app, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['skills']);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ name: 'deploy' })))).status).toBe(201);
+    // Personal shadowing instance: two files, one name, fighting over one slot in her prompt.
+    expect((await app.request('/plugins/skills?owner=me', post(amyTok, skill({ name: 'deploy' })))).status).toBe(400);
+
+    expect((await app.request('/plugins/skills?owner=me', post(amyTok, skill({ name: 'her-own' })))).status).toBe(201);
+    // And the same collision the other way round: an instance skill lands in HER sessions too.
+    const res = await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ name: 'her-own' })));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/personal skill/);
+  });
+
+  it('does not offer a non-admin controls for a skill she cannot write', async () => {
+    const { app, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['skills']);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ name: 'shared-one' })))).status).toBe(201);
+    expect((await app.request('/plugins/skills?owner=me', post(amyTok, skill({ name: 'mine' })))).status).toBe(201);
+
+    const list = (await (await app.request('/plugins/skills/list', auth(amyTok))).json()) as { name: string; canDelete: boolean }[];
+    // The UI hides its edit/delete controls on this flag, so it has to match what the write routes do —
+    // a button whose request is always refused is worse than no button.
+    expect(list.find((x) => x.name === 'shared-one')!.canDelete).toBe(false);
+    expect(list.find((x) => x.name === 'mine')!.canDelete).toBe(true);
+
+    const adminList = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; canDelete: boolean }[];
+    expect(adminList.find((x) => x.name === 'shared-one')!.canDelete).toBe(true);
+    expect(adminList.find((x) => x.name === 'mine')!.canDelete).toBe(true);
+  });
+
   it('shows the admin every account\'s skills and lets him clean one up', async () => {
     const { app, dataRoot, users, amy, amyTok, adminTok } = setup();
     users.setGrantedPlugins(amy.id, ['skills']);

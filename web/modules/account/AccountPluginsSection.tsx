@@ -62,6 +62,8 @@ export function AccountPluginsSection({ onSaveState }: { onSaveState?: (section:
 
   if (isError) return <ErrorState message={t.common.daemonUnreachable} onRetry={() => refetch()} />;
   if (isLoading || !data) return <LoadingState />;
+  // Reachable only if a plugin's fields disappear while the section is open (a disable, a revoked grant):
+  // the section itself is not offered for an empty list.
   if (data.length === 0) return <SpatialGroup><p className="text-sm text-text-muted">{t.account.pluginsEmpty}</p></SpatialGroup>;
 
   return (

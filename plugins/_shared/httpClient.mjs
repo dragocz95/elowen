@@ -125,6 +125,8 @@ function createLimiter(max) {
 }
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  // Already cancelled: do not park for the full delay first.
+  if (signal?.aborted) return reject(signal.reason ?? new Error('aborted'));
   if (ms <= 0) return resolve();
   const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
   const onAbort = () => { clearTimeout(timer); reject(signal.reason ?? new Error('aborted')); };
@@ -207,7 +209,11 @@ export function createHttpClient({
       const backoff = Math.min(maxBackoffMs, 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250));
       const delayMs = Math.min(maxBackoffMs, serverDelay ?? backoff);
       onRetry?.({ attempt, delayMs, status: res?.status ?? null, method });
-      await sleep(delayMs, outer);
+      // A cancel that lands while we are WAITING is the same answer as one that lands mid-request, so it
+      // has to arrive in the same shape — a caller branching on `err.aborted` must not read it as one
+      // more retryable failure.
+      try { await sleep(delayMs, outer); }
+      catch (e) { throw new HttpError('request aborted', { url, method, cause: e, aborted: true }); }
     }
     throw lastError ?? new HttpError('request failed', { url, method });
   }

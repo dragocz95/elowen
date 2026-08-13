@@ -438,8 +438,10 @@ export class TurnContextBuilder {
    *  as safe. Undeclared means refused, so an unknown tool costs the model some reach in plan mode
    *  rather than costing the user a mutation they were promised could not happen. */
   private applyOwnerToolPolicy(userId: number, live: LiveBrain, mode: TurnMode): ToolPolicy | undefined {
-    // The user's own disabled tools are a STABLE property of the conversation, so hiding them costs
-    // nothing: the set is the same on every turn and the cached prefix holds.
+    // The user's own denied tools change only when an admin edits that account (a disabled tool, a
+    // revoked plugin grant) — never with the turn, the mode or the message. Hiding them therefore costs
+    // nothing in the normal case: the set is identical turn after turn and the cached prefix holds. An
+    // admin edit does rewrite the prefix once, which is the correct price for a permission change.
     const disabled = new Set(this.d.deniedTools?.(userId) ?? this.d.users.get(userId)?.disabled_tools ?? []);
     const visibility = disabled.size ? { deny: disabled } : undefined;
     // Plan mode's denials are ENFORCEMENT ONLY, deliberately kept out of the visible set. Tool schemas sit

@@ -105,6 +105,17 @@ describe('shared plugin HTTP client', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('reports a cancel that lands during the backoff wait the same way as one during the request', async () => {
+    const controller = new AbortController();
+    const { impl, calls } = stubFetch(() => json({}, 503));
+    const api = createHttpClient({ fetchImpl: impl, maxRetries: 3, maxBackoffMs: 50, onRetry: () => controller.abort() });
+    const err = await api.get('https://x.test/slow', { signal: controller.signal }).catch((e: unknown) => e) as HttpError;
+    // Not a fourth retryable failure: a caller branching on `aborted` must see the cancel it asked for.
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.aborted).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
   it('reports a timeout as a failure with no status, and retries it for a read', async () => {
     const { impl, calls } = stubFetch(async (n, init) => (n < 3 ? slowly(50, init, json({}, 200)) : json({ ok: true })));
     const api = createHttpClient({ fetchImpl: impl, timeoutMs: 5, maxRetries: 3, maxBackoffMs: 1 });

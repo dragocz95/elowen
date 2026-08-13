@@ -104,6 +104,21 @@ export function register(ctx) {
     const nested = join(dir, name, 'SKILL.md');
     return existsSync(nested) ? nested : null;
   };
+  /** Why this name may not be written into `target`, or null when it may. A name must be unique across
+   *  the sets a single session sees, in BOTH directions: a personal skill may not shadow an instance one,
+   *  and an instance skill may not shadow somebody's personal one — either way two files would register
+   *  under one name and fight over the same slot in that person's prompt. */
+  const nameCollision = (name, targetOwner) => {
+    if (skillFileIn(bundledDir, name)) return `a bundled skill named "${name}" already exists`;
+    if (targetOwner !== null) {
+      return skillFileIn(instanceDir, name) ? `an instance-wide skill named "${name}" already exists` : null;
+    }
+    // Writing the instance set: it lands in EVERY session, including the sessions of the people who
+    // already own a personal skill by that name.
+    const clash = skillOwnerIds().find((id) => skillFileIn(userSkillsDir(id), name));
+    return clash === undefined ? null : `an account already has a personal skill named "${name}" — pick another name`;
+  };
+
   // Every skill file in a dir, from both layouts. A folder only counts when it carries a SKILL.md —
   // support dirs (references/, scripts/) never appear as skills on their own.
   const enumerateSkills = (dir) => {
@@ -195,7 +210,7 @@ export function register(ctx) {
     return legacyTarget(req.auth.admin, me);
   };
 
-  const describeSkill = (name, file, source, owner) => {
+  const describeSkill = (name, file, source, owner, canWrite = true) => {
     const parsed = readSkillFile(file);
     return {
       name,
@@ -207,7 +222,9 @@ export function register(ctx) {
       owner,
       location: file,
       active: true, // this plugin is serving the request, so it is enabled by definition
-      canDelete: source === 'user',
+      // Whether THIS caller may edit or delete it. The UI hides its controls on this, so it must carry the
+      // same rule the write routes enforce — offering a button that always 403s is worse than no button.
+      canDelete: source === 'user' && canWrite,
       disableModelInvocation: parsed.disableModelInvocation,
       version: parsed.version,
       // Editable skills carry their body so the web editor can prefill an edit; bundled skills are
@@ -226,7 +243,7 @@ export function register(ctx) {
       }
       for (const { name, file } of existsSync(instanceDir) ? enumerateSkills(instanceDir) : []) {
         if (isPersonalPath(file)) continue; // enumerated per account below
-        out.push(describeSkill(name, file, 'user', null));
+        out.push(describeSkill(name, file, 'user', null, req.auth.admin));
       }
       // Own skills always; everyone else's only for an admin, who is the one person who has to be able to
       // see (and clean up) what the instance actually loads.
@@ -234,7 +251,9 @@ export function register(ctx) {
       for (const ownerUserId of owners) {
         const dir = userSkillsDir(ownerUserId);
         if (!existsSync(dir)) continue;
-        for (const { name, file } of enumerateSkills(dir)) out.push(describeSkill(name, file, 'user', ownerUserId));
+        for (const { name, file } of enumerateSkills(dir)) {
+          out.push(describeSkill(name, file, 'user', ownerUserId, req.auth.admin || ownerUserId === req.auth.userId));
+        }
       }
       return jsonRes(out);
     },
@@ -258,10 +277,8 @@ export function register(ctx) {
       if (!NAME_RE.test(name)) return jsonRes({ error: 'name must be kebab-case (a-z, 0-9, dashes), max 64 chars' }, 400);
       if (RESERVED_NAMES.has(name)) return jsonRes({ error: `"${name}" is reserved (it collides with a core /plugins route)` }, 400);
       if (description === '' || content.trim() === '') return jsonRes({ error: 'description and content must be non-empty' }, 400);
-      if (skillFileIn(bundledDir, name)) return jsonRes({ error: `a bundled skill named "${name}" already exists` }, 400);
-      if (target.owner !== null && skillFileIn(instanceDir, name)) {
-        return jsonRes({ error: `an instance-wide skill named "${name}" already exists` }, 400);
-      }
+      const collision = nameCollision(name, target.owner);
+      if (collision) return jsonRes({ error: collision }, 400);
       mkdirSync(target.dir, { recursive: true });
       writeFileSync(join(target.dir, `${name}.md`), buildSkillBody(applyManagedFields({}, name, description, disableModelInvocation), content), 'utf-8');
       ctx.requestReload?.(); // skills feed the brain's system prompt — apply live
@@ -347,10 +364,8 @@ export function register(ctx) {
         if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
         // Refuse rather than shadow: a personal skill with an instance skill's name would register twice
         // and the two would fight over the same slot in the prompt.
-        if (!wantsInstance && skillFileIn(instanceDir, p.name)) {
-          return ok(`Error: an instance-wide skill named "${p.name}" already exists — edit that one, or pick another name.`);
-        }
-        if (skillFileIn(bundledDir, p.name)) return ok(`Error: a bundled skill named "${p.name}" already exists.`);
+        const collision = nameCollision(p.name, wantsInstance ? null : me);
+        if (collision) return ok(`Error: ${collision}.`);
         const body = `---\nname: ${p.name}\ndescription: ${p.description.replaceAll('\n', ' ')}\n---\n\n${p.content}\n`;
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, `${p.name}.md`), body, 'utf-8');

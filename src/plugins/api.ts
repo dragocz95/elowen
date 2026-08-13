@@ -1235,9 +1235,10 @@ export interface PluginContext {
    *  files under `dataDir()`, its rows. Called with the account's id while the user row still exists,
    *  so a handler may still read it; a throw is logged and the remaining handlers still run.
    *
-   *  Registering this is mandatory for any plugin that stores per-user state, and not merely for
-   *  tidiness: `users.id` is handed back out to the next account created, so a leftover row or folder
-   *  is not orphaned data — it is another person's data, silently attached to a stranger. */
+   *  Registering this is mandatory for any plugin that stores per-user state. Nothing else ever reaps it:
+   *  the id is never handed out twice (see the user-sequence guard in store/db.ts), so a leftover folder
+   *  or row is unreachable rather than misattributed — it simply keeps that person's files, secrets and
+   *  schedules on the operator's machine forever, and a schedule keeps costing model calls. */
   registerUserRemoved(fn: (userId: number) => void | Promise<void>): void;
   /** Sugar over {@link registerService} for the common periodic-tick shape: the host owns a real timer
    *  (unref'd — a plugin tick must not keep the process alive), starts it with the services and clears

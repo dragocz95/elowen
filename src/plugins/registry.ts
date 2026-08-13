@@ -116,9 +116,9 @@ export class PluginRegistry {
   readonly services: { plugin: string; service: PluginService }[] = [];
   readonly bootReconciles: { plugin: string; fn: () => void | Promise<void> }[] = [];
   /** Per-user teardown handlers (see PluginContext.registerUserRemoved). A plugin that keeps per-user
-   *  state OUTSIDE the core database — a data-dir folder, a JSON store — has no other way to hear that
-   *  an account is gone, and `users.id` is handed out again after a delete, so leftovers would attach
-   *  to whoever gets that id next. Run by the delete route before the user row disappears. */
+   *  state OUTSIDE the core database — a data-dir folder, a JSON store — has no other way to hear that an
+   *  account is gone, and nothing else reaps it: the leftovers keep that person's files and schedules on
+   *  disk indefinitely. Run by the delete route before the user row disappears. */
   readonly userRemovedHandlers: { plugin: string; fn: (userId: number) => void | Promise<void> }[] = [];
   /** Plugin-contributed editable prompt templates: catalog entries (merged into the account UI catalog)
    *  and template sources keyed by BARE template name — bare so existing per-user overrides in

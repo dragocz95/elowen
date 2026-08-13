@@ -218,6 +218,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
         registry.setCapabilities(name, manifest.capabilities ?? {});
         registry.setUserGrantable(name, manifest.userGrantable);
+        // A plugin that keeps state PER ACCOUNT has to be told when an account goes away — nothing else
+        // reaps its folders or rows. The two manifest flags that mean "this plugin is per-account" are the
+        // only signal the host has, so say it out loud at load time rather than discovering the leftovers
+        // months later. Not fatal: the plugin is otherwise fine, and refusing to load it would be worse.
+        if ((manifest.userGrantable === true || (manifest.userConfigSchema?.length ?? 0) > 0)
+          && !staging.userRemovedHandlers.some((h) => h.plugin === name)) {
+          opts.logger.warn(`[plugin:${name}] keeps per-account state but registers no registerUserRemoved handler — a deleted account's data will be left behind`);
+        }
         registry.setIcons(manifest.icons);
         registry.setShowOutput(manifest.showOutput);
         registry.setPlanSafe(manifest.planSafe, manifest.provides, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));

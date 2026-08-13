@@ -12,6 +12,27 @@ import type { Context } from 'hono';
 import type { ElowenApp, RouteContext } from '../../context.js';
 import { registerBrainOAuthRoutes } from './oauth.js';
 
+/** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
+ *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
+ *  arriving empty keeps whatever is stored (the forms round-trip secrets write-only, so "empty" means
+ *  "unchanged", never "erase it"). Shared by the instance-wide config route and the per-account one —
+ *  two copies of this would drift the first time one of them learned something the other did not. */
+function applyConfigPatch(
+  schema: PluginConfigField[],
+  stored: Record<string, unknown>,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...stored };
+  for (const f of schema) {
+    const v = values[f.key];
+    if (v === undefined) continue;
+    if (f.type === 'secret' && (v === '' || v === null)) continue;
+    if (v === null) { delete next[f.key]; continue; }
+    next[f.key] = v;
+  }
+  return next;
+}
+
 /** Map a marketplace service error to its HTTP status; unknown errors become a 500. */
 function marketplaceFail(c: Context, e: unknown) {
   const status: ContentfulStatusCode = e instanceof MarketplaceError ? (e.status as ContentfulStatusCode) : 500;
@@ -267,15 +288,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
     const schema = plugin.manifest.userConfigSchema ?? [];
-    const stored = { ...store.get(user.id, name) };
-    for (const f of schema) {
-      const v = b.values[f.key];
-      if (v === undefined) continue;
-      if (f.type === 'secret' && (v === '' || v === null)) continue; // keep the stored secret
-      if (v === null) { delete stored[f.key]; continue; }
-      stored[f.key] = v;
-    }
-    store.set(user.id, name, stored);
+    store.set(user.id, name, applyConfigPatch(schema, store.get(user.id, name), b.values));
     return c.json(userConfigView(name, schema, store.get(user.id, name)));
   });
 
@@ -383,17 +396,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
     const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
     if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
-    const schema = manifest.configSchema ?? [];
-    const stored = { ...d.config.pluginConfig(name) };
-    for (const f of schema) {
-      const v = b.values[f.key];
-      if (v === undefined) continue;
-      if (f.type === 'secret' && (v === '' || v === null)) continue; // keep the stored secret
-      // `null` is an explicit clear for non-secret overrides. Omitting a key still means "leave it
-      // alone", while clearing a number in the UI can now return it to the manifest/host default.
-      if (v === null) { delete stored[f.key]; continue; }
-      stored[f.key] = v;
-    }
+    const stored = applyConfigPatch(manifest.configSchema ?? [], d.config.pluginConfig(name), b.values);
     d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });
     return applied(c, { ok: true }, await d.brain?.reloadPlugins());
   });
