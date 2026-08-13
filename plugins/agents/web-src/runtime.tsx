@@ -78,6 +78,9 @@ interface AgentsHooks {
     opts?: { ready?: boolean; savable?: boolean; delay?: number },
   ): { status: 'idle' | 'saving' | 'saved' | 'error'; retry: () => void; flush: () => void };
   usePluginStrings(plugin: string): Record<string, string>;
+  /** Whether a plugin serving the task pages is installed. Agent sessions are named after tasks and
+   *  link to them, and that link exists only while some plugin owns those pages. */
+  useWorkPlugin(): boolean;
 }
 
 interface AgentsUtils {

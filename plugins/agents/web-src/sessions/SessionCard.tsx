@@ -99,7 +99,10 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
           ) : (
             <>
               <span className="truncate text-xs font-semibold text-text" title={task?.title}>{info.agent}</span>
-              {task ? <Link href={`/tasks?select=${encodeURIComponent(task.id)}`} className="truncate text-[11px] text-text-muted transition-colors hover:text-accent" title={task.title}>{task.title}</Link> : null}
+              {/* The task pages live in the plugin that owns the task domain. No gate is needed here:
+                  there is a task to link to only because the task READ was answered, which that same
+                  plugin is what answers. */}
+              {task ? <Link href={`/p/work/tasks?select=${encodeURIComponent(task.id)}`} className="truncate text-[11px] text-text-muted transition-colors hover:text-accent" title={task.title}>{task.title}</Link> : null}
             </>
           )}
         </div>

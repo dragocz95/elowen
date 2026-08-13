@@ -97,7 +97,7 @@ import {
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
   useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
   useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
-  useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin,
+  useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin, useWorkPlugin,
 } from './queries';
 import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
@@ -296,7 +296,10 @@ export function ensurePluginUiRuntime(): void {
       // shared with the core surfaces that still read tasks (dashboard tiles, the notification bell).
       useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
       useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
-      useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin,
+      // `useWorkPlugin` is here for the same reason the core surfaces use it: a bundle that links to a
+      // task page must not offer that link when no plugin serves one (the address would land on the
+      // "this plugin is not installed" placeholder).
+      useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin, useWorkPlugin,
       useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
       useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
       useOpenMissionPr, useMergeMissionPr, useResetUsage,

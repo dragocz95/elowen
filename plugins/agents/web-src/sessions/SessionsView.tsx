@@ -15,6 +15,7 @@ export function SessionsView() {
   const sessions = hooks.useSessionInfos();
   const signals = hooks.useSessionSignals();
   const { t } = hooks.useTranslation();
+  const workPages = hooks.useWorkPlugin();
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [filter, setFilterState] = useState<'all' | 'needs_input'>(initialFilter);
 
@@ -107,7 +108,10 @@ export function SessionsView() {
                       <span className="text-xs text-text-muted">{t.sessions.emptyDescription}</span>
                     </div>
                   </div>
-                  <C.Button variant="accent" icon={ArrowRight} onClick={() => navigate('/tasks')}>{t.sessions.emptyAction}</C.Button>
+                  {/* "Go to tasks" only when a plugin actually serves that page — otherwise the empty
+                      state keeps its explanation and drops the affordance, rather than offering a button
+                      that lands on the not-installed placeholder. */}
+                  {workPages ? <C.Button variant="accent" icon={ArrowRight} onClick={() => navigate('/p/work/tasks')}>{t.sessions.emptyAction}</C.Button> : null}
                 </div>
               )}
           </C.ControlSurfaceRegister>

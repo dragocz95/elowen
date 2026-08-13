@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
@@ -37,7 +37,11 @@ vi.mock('next/dynamic', () => ({
 }));
 
 let killed = false;
+/** Which plugins the instance lists a browser UI for. The sessions view links to the TASK pages, which
+ *  another plugin owns, so this is what decides whether that link may be offered at all. */
+let uiPlugins: { name: string; nav?: unknown[] }[] = [];
 const server = setupServer(
+  http.get('*/api/plugins/ui', () => HttpResponse.json(uiPlugins)),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: false } })),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/config', () => HttpResponse.json({ autopilot: {} })),
@@ -47,8 +51,8 @@ const server = setupServer(
   http.get('*/api/sessions/elowen-SwiftLake/pane', () => HttpResponse.json({ pane: 'line a\nline b' })),
   http.delete('*/api/sessions/elowen-SwiftLake', () => { killed = true; return HttpResponse.json({ ok: true }); }),
 );
-beforeEach(() => { killed = false; });
-beforeAll(() => server.listen()); afterAll(() => server.close());
+beforeEach(() => { killed = false; uiPlugins = [{ name: 'agents' }, { name: 'work' }]; });
+beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('agents plugin SessionsView', () => {
   it('uses the spatial workspace shell with one mascot and primary rail navigation', async () => {
@@ -85,6 +89,36 @@ describe('agents plugin SessionsView', () => {
     expect(screen.queryByRole('radio', { name: 'Conversations' })).toBeNull();
     expect(screen.queryByTestId('brain-sessions-list')).toBeNull();
     expect(screen.getByRole('button', { name: 'Conversation history' })).toBeInTheDocument();
+  });
+
+  // A session is named after the task it works on, and both the card and the empty state point at that
+  // task's page — a page ANOTHER plugin owns. So the address has to be that plugin's, and the affordance
+  // has to disappear with it: an instance that does not track work would otherwise offer a button that
+  // lands on the "plugin not installed" placeholder.
+  it('points its task affordances at the plugin that owns those pages', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    server.use(http.get('*/api/tasks', () => HttpResponse.json([
+      { id: 'elowen-9', project_id: 1, title: 'Wire the thing', status: 'in_progress', type: 'task', labels: ['agent:SwiftLake'], created_at: '', updated_at: '' },
+    ])));
+    render(<Wrapper><ToastProvider><SessionsView /></ToastProvider></Wrapper>);
+    const link = await screen.findByRole('link', { name: 'Wire the thing' });
+    expect(link).toHaveAttribute('href', '/p/work/tasks?select=elowen-9');
+  });
+
+  it('offers the empty state’s "go to tasks" only while that page exists', async () => {
+    server.use(http.get('*/api/sessions', () => HttpResponse.json([])));
+    const { wrapper: Wrapper } = createWrapper();
+    const { unmount } = render(<Wrapper><ToastProvider><SessionsView /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('button', { name: 'Go to Tasks' })).toBeInTheDocument();
+    unmount();
+
+    uiPlugins = [{ name: 'agents' }];
+    const { wrapper: Wrapper2 } = createWrapper();
+    render(<Wrapper2><ToastProvider><SessionsView /></ToastProvider></Wrapper2>);
+    await waitFor(() => expect(screen.getByText('No live sessions')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Go to Tasks' })).toBeNull();
+    // The explanation stays: the empty state loses the shortcut, not its meaning.
+    expect(screen.getByText('Launch a task to spawn one.')).toBeInTheDocument();
   });
 
   it('opens terminal in modal and closes via modal close button', async () => {
