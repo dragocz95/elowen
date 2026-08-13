@@ -71,11 +71,13 @@ function beacon(url: string, payload: unknown): void {
   void fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, credentials: 'same-origin', keepalive: true }).catch(() => undefined);
 }
 
-/** Which skills set a write addresses: an account id, the shared instance set, or (undefined) the
- *  caller's own. Sent as a query param because it selects the TARGET, not part of the payload. */
+/** Which skills set a write addresses: an account id, the shared instance set, or `null` for the caller's
+ *  own. Sent as a query param because it selects the TARGET, not part of the payload. "Mine" travels as the
+ *  explicit `me`, never as an absent param: the daemon reads an absent one as the pre-ownership default
+ *  (instance-wide for an admin), which is not what this UI means by "mine". */
 export type SkillOwner = number | 'instance' | null;
 const ownerQuery = (owner?: SkillOwner): string =>
-  (owner === undefined || owner === null ? '' : `?owner=${encodeURIComponent(String(owner))}`);
+  (owner === undefined ? '' : `?owner=${encodeURIComponent(owner === null ? 'me' : String(owner))}`);
 
 export const elowenClient = {
   tasks: (projectId?: number) => req<Task[]>(projectId != null ? `/tasks?project_id=${projectId}` : '/tasks'),

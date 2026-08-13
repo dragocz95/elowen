@@ -16,6 +16,9 @@ import { join } from 'node:path';
 import { runtimeFooter } from '../_shared/format.mjs';
 import { readJsonSafe, writeJsonAtomic } from '../_shared/atomicJson.mjs';
 
+/** This plugin's own manifest name — the key an account's grant is stored under. */
+const PLUGIN_NAME = 'cronjob';
+
 // `exec` runs the command through the PLATFORM default shell (/bin/sh -c on POSIX, cmd.exe /d /s /c on
 // Windows), so a job's check collector works cross-platform — hardcoding /bin/sh broke every cron on
 // Windows, which has no /bin/sh. Jobs are admin-only, so the shell command is trusted (as it always was).
@@ -396,11 +399,14 @@ class CronAdapter {
   // multiplying every cron echo into dozens of Discord messages.
   // `timezone` is a LIVE getter, not a captured string: the operator can change the zone in Settings and
   // the very next tick must schedule against it, without a plugin reload.
-  constructor(store, deliveryStore, logger, deliver, config = {}, timezone = systemZone, ownerIsAdmin = () => true) {
+  constructor(store, deliveryStore, logger, deliver, config = {}, timezone = systemZone, ownerIsAdmin = () => true, ownerMaySchedule = () => true) {
     this.store = store; this.deliveryStore = deliveryStore; this.log = logger; this.deliver = deliver;
     // Re-asked at every fire, never captured: a job's shell guard is allowed by WHO owns it, and rights
     // can be taken away between the write that stored the guard and the tick that would run it.
     this.ownerIsAdmin = ownerIsAdmin;
+    // Asked at every fire for the same reason: scheduling is a granted capability, and taking the grant
+    // away has to actually stop the schedules it allowed.
+    this.ownerMaySchedule = ownerMaySchedule;
     this.handler = null; this.running = false;
     // Set by disconnect(): this adapter generation has been torn down (a plugin reload) and must not
     // start any further work — see disconnect() and the tick loop.
@@ -462,6 +468,14 @@ class CronAdapter {
       // WHOSE job this is. No owner = an instance job: admin powers, notification-channel delivery —
       // exactly the behaviour every job had before ownership existed.
       const owner = typeof job.ownerUserId === 'number' ? job.ownerUserId : null;
+      // An owned job exists only because its owner was allowed to schedule. Revoking that grant has to
+      // stop the schedule too — otherwise the one lever an operator would reach for leaves the jobs
+      // running (as that person, spending model budget) with nothing to show for it. Skipped, never
+      // deleted: re-granting brings the schedule back untouched.
+      if (owner !== null && !this.ownerMaySchedule(owner)) {
+        this.store.patch(job.id, { lastResult: '⏭️ skipped: the owner is no longer allowed to schedule jobs' });
+        continue;
+      }
       let checkOutput = null;
       if (typeof job.check === 'string' && job.check.trim()) {
         // A shell guard runs on the daemon host with the daemon's rights, so only an admin's job may carry
@@ -764,6 +778,14 @@ export function register(ctx) {
     if (userId === null || userId === undefined) return true;
     try { return ctx.host.stores().usersRead.isAdmin(userId) === true; } catch { return false; }
   };
+  /** Whether the account owning a job may still schedule at all — i.e. still holds this plugin's grant.
+   *  Fail CLOSED like the shell guard: a host that cannot answer must not keep running somebody's
+   *  unattended automation on an assumption. */
+  const ownerMaySchedule = (userId) => {
+    if (userId === null || userId === undefined) return true;
+    try { return ctx.host.stores().usersRead.mayUsePlugin(userId, PLUGIN_NAME) === true; } catch { return false; }
+  };
+
   /** WHO owns a job: an account id, or null for an instance job. */
   const ownerOf = (job) => (typeof job?.ownerUserId === 'number' ? job.ownerUserId : null);
   /** The account behind the current turn, or null (an unlinked sender, a cron-of-cron turn). */
@@ -1061,6 +1083,6 @@ export function register(ctx) {
       .map((j) => j.originSessionId),
   });
 
-  ctx.registerPlatform(new CronAdapter(store, deliveryStore, ctx.logger, ctx.notify, ctx.config, () => ctx.timezone(), ownerIsAdmin));
+  ctx.registerPlatform(new CronAdapter(store, deliveryStore, ctx.logger, ctx.notify, ctx.config, () => ctx.timezone(), ownerIsAdmin, ownerMaySchedule));
   ctx.logger.info('cron tools + scheduler registered');
 }

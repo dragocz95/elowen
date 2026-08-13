@@ -35,6 +35,9 @@ async function dispatchPluginApi(
   // plugin cannot grow an ungated endpoint by forgetting one. An agent token is out of scope: it already
   // passed the stricter `access: 'agent'` gate and acts for a task, not for an account.
   if (scope === 'user' && match.userGrantable && !isPluginAllowedForUser(c.get('user'), { name: match.plugin, userGrantable: true })) {
+    // Say it in the log. From the user's seat a missing grant looks exactly like a broken feature, and an
+    // operator debugging that has nothing else to go on — the response is a bare 403 by design.
+    log.info(`plugin ${match.plugin} refused for user ${c.get('user')?.id ?? 'anonymous'}: not granted`);
     return c.json({ error: 'forbidden' }, 403);
   }
 

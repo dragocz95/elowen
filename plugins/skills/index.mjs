@@ -38,7 +38,12 @@ export function register(ctx) {
   const USERS_SUBDIR = 'users';
   const usersRoot = join(instanceDir, USERS_SUBDIR);
   const userSkillsDir = (userId) => join(usersRoot, String(userId));
+  // An instance skill in directory form could already be called `users` (a `users/SKILL.md` written before
+  // personal sets existed). That folder is a SKILL, not the personal root, and treating it as the root
+  // would delete it from every prompt on upgrade — so the reservation only applies when it is not one.
+  const usersRootIsPersonalStore = () => !existsSync(join(usersRoot, 'SKILL.md'));
   const isPersonalPath = (file) => {
+    if (!usersRootIsPersonalStore()) return false;
     const abs = resolve(file);
     return abs === resolve(usersRoot) || abs.startsWith(resolve(usersRoot) + sep);
   };
@@ -49,7 +54,7 @@ export function register(ctx) {
   // Account ids that currently own a personal skills folder. Read from disk rather than from the user
   // store: the plugin has no reach into it, and a folder whose account is gone is dropped by the
   // user-removed handler below, not by guessing here.
-  const skillOwnerIds = () => (existsSync(usersRoot)
+  const skillOwnerIds = () => (existsSync(usersRoot) && usersRootIsPersonalStore()
     ? readdirSync(usersRoot, { withFileTypes: true })
         .filter((e) => e.isDirectory() && /^[0-9]+$/.test(e.name))
         .map((e) => Number(e.name))
@@ -157,15 +162,29 @@ export function register(ctx) {
   const buildSkillBody = (front, content) => `---\n${stringifyYaml(front).trimEnd()}\n---\n\n${content}\n`;
   const jsonRes = (body, status = 200) => ({ status, body });
 
-  // WHICH skills dir a request targets. `owner` is absent for "mine" (the caller's own personal skills,
-  // or the instance set for a caller with no account), the literal 'instance' for the shared set, or an
-  // account id. Reaching another account's skills — or writing the instance set — is admin-only, and the
-  // refusal is the same shape either way so a non-admin cannot probe which accounts exist.
+  // Where a write goes when the caller did NOT say: exactly where it went before personal sets existed —
+  // an admin's skill is instance-wide (their Discord channels and every other session still see it), and
+  // anyone else has only their own set. Shared by the API and the CreateSkill tool so the two can never
+  // answer "unspecified" differently.
+  const legacyTarget = (isAdmin, me) => {
+    if (isAdmin) return { ok: true, owner: null, dir: instanceDir };
+    if (me === null) return { ok: false };
+    return { ok: true, owner: me, dir: userSkillsDir(me) };
+  };
+
+  // WHICH skills dir a request targets. `owner` is the literal 'me' for the caller's own personal set,
+  // 'instance' for the shared one, an account id for somebody else's, or absent — which means the legacy
+  // target above, so a client written before ownership keeps writing where it always did. Reaching
+  // another account's skills — or writing the instance set — is admin-only, and the refusal is the same
+  // shape either way so a non-admin cannot probe which accounts exist.
   const resolveTarget = (req) => {
     const raw = typeof req.query?.owner === 'string' ? req.query.owner.trim() : '';
     const me = req.auth.userId;
     if (raw === 'instance') {
       return req.auth.admin ? { ok: true, owner: null, dir: instanceDir } : { ok: false };
+    }
+    if (raw === 'me') {
+      return me === null ? { ok: false } : { ok: true, owner: me, dir: userSkillsDir(me) };
     }
     if (raw !== '') {
       if (!/^[0-9]+$/.test(raw)) return { ok: false, invalid: true };
@@ -173,8 +192,7 @@ export function register(ctx) {
       if (id !== me && !req.auth.admin) return { ok: false };
       return { ok: true, owner: id, dir: userSkillsDir(id) };
     }
-    if (me === null) return req.auth.admin ? { ok: true, owner: null, dir: instanceDir } : { ok: false };
-    return { ok: true, owner: me, dir: userSkillsDir(me) };
+    return legacyTarget(req.auth.admin, me);
   };
 
   const describeSkill = (name, file, source, owner) => {
@@ -308,20 +326,23 @@ export function register(ctx) {
   // `/skill:name` on its own. This plugin only LOADS skills and offers the admin write tools below.
   ctx.registerTool(defineTool({
     name: 'CreateSkill', label: 'Create skill',
-    description: 'Create (or overwrite) a reusable markdown skill. It is applied live: available in your system prompt from the next message onward. Personal by default (only you see it); scope "instance" shares it with every session and is admin only.',
+    description: 'Create (or overwrite) a reusable markdown skill. It is applied live: available in your system prompt from the next message onward. An admin writes an instance-wide skill (every session sees it) unless scope is "personal"; everyone else writes their own.',
     parameters: Type.Object({
       name: Type.String({ description: 'kebab-case identifier, e.g. deploy-checklist' }),
       description: Type.String({ description: 'One line: when to use this skill' }),
       content: Type.String({ description: 'The skill body (markdown instructions)' }),
-      scope: Type.Optional(Type.String({ description: '"personal" (default, yours only) or "instance" (everyone, admin only)' })),
+      scope: Type.Optional(Type.String({ description: '"instance" (everyone, admin only) or "personal" (yours only). Default: instance for an admin, personal otherwise.' })),
     }),
     execute: async (_id, p) => {
       try {
         const me = callerId();
-        // A turn with no account behind it (cron, an unlinked sender) has no personal set to write to, so
-        // it can only mean the instance one — which is admin-only, exactly as this tool has always been.
-        const wantsInstance = p.scope === 'instance' || me === null;
+        // Unspecified means what this tool always did: an admin's skill is instance-wide, so the operator's
+        // channels and sub-agents keep seeing it. A turn with no account behind it has no personal set at
+        // all, so that too can only mean the instance one — which `adminOnly` then refuses for a non-admin.
+        const explicit = p.scope === 'instance' || p.scope === 'personal' ? p.scope : null;
+        const wantsInstance = explicit ? explicit === 'instance' : (ctx.isAdminSession() || me === null);
         if (wantsInstance) adminOnly();
+        if (!wantsInstance && me === null) return ok('Error: this turn has no account behind it, so there is no personal skill set to write to.');
         const dir = wantsInstance ? instanceDir : userSkillsDir(me);
         if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
         // Refuse rather than shadow: a personal skill with an instance skill's name would register twice

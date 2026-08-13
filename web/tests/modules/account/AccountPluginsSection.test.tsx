@@ -4,7 +4,7 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import type { PluginUserConfig } from '../../../lib/types';
 
-const save = vi.fn(async () => ({}));
+const save = vi.fn(async (_v: { name: string; values: Record<string, unknown> }) => ({}));
 vi.mock('../../../lib/mutations', () => ({
   useSaveMyPluginConfig: () => ({ mutateAsync: save }),
   useSavePluginConfig: () => ({ mutateAsync: vi.fn() }),

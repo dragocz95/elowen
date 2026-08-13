@@ -16,6 +16,7 @@ import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import { UserPromptStore } from '../store/userPromptStore.js';
 import { UserSettingStore } from '../store/userSettingStore.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
+import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
@@ -531,6 +532,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             list: () => users.list().map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
             isAdmin: (id) => users.isAdmin(id),
             allowedExecs: (id) => users.list().find((u) => u.id === id)?.allowed_execs ?? null,
+            // Read the row LIVE and answer through the shared predicate: a grant revoked a minute ago has
+            // to be visible to the next tick of whatever is acting for that account.
+            mayUsePlugin: (id, plugin) => {
+              const user = users.list().find((u) => u.id === id);
+              if (!user) return false;
+              return isPluginAllowedForUser(user, { name: plugin, userGrantable: loadedPluginRegistry?.userGrantable.has(plugin) });
+            },
           },
           ...(events ? { eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) } } : {}),
           // The task transcript, shaped HERE: the `brain-task-<id>` session name and the message view are

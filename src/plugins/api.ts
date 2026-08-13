@@ -447,6 +447,11 @@ export interface PluginHostStores {
     /** The user's personal exec whitelist (empty = everything the global list allows), or null for an
      *  unknown user. Read-only — the identity view stays immutable by construction. */
     allowedExecs(userId: number): readonly string[] | null;
+    /** Whether this account may use `plugin` right now — the DECISION, resolved by the core predicate, not
+     *  the raw grant list. A subsystem that acts for an ABSENT account (a scheduler firing that person's
+     *  job) has to re-ask, because a grant can be taken away between the write and the run; handing out the
+     *  list instead would mean every caller re-implementing the rule, and one of them getting it backwards. */
+    mayUsePlugin(userId: number, plugin: string): boolean;
   };
   /** Dependency-cleared open tasks (the mission engine / scheduler working set). Same live resolution
    *  and same absent-owner rule as `tasks`. */

@@ -26,10 +26,15 @@ interface CronAdapterUnderTest {
   tick(): Promise<void>;
 }
 
-/** The plugin reads the account view through `ctx.host.stores().usersRead` — only `isAdmin` matters here,
- *  and only for deciding whether a job's shell guard may run. */
-const hostWith = (admins: number[]): PluginHostWiring => ({
-  stores: { usersRead: { isAdmin: (id: number) => admins.includes(id) } },
+/** The plugin reads the account view through `ctx.host.stores().usersRead`: `isAdmin` decides whether a
+ *  job's shell guard may run, `mayUsePlugin` whether its owner may still schedule at all. */
+const hostWith = (admins: number[], scheduling: { denied?: number[] } = {}): PluginHostWiring => ({
+  stores: {
+    usersRead: {
+      isAdmin: (id: number) => admins.includes(id),
+      mayUsePlugin: (id: number) => !(scheduling.denied ?? []).includes(id),
+    },
+  },
 } as unknown as PluginHostWiring);
 
 async function loadCron(dataRoot: string, opts: { admins?: number[]; notify?: (t: string, c?: string) => Promise<void>; host?: PluginHostWiring | null } = {}) {
@@ -112,6 +117,54 @@ describe('cron tick — a job that belongs to an account', () => {
   });
 });
 
+describe('cron tick — scheduling itself is re-authorised at every fire', () => {
+  it('skips an owned job once its owner loses the grant, and runs it again when it comes back', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob({ ownerUserId: 4 })]);
+    let denied = [4];
+    const { adapter } = await loadCron(dataRoot, {
+      host: { stores: { usersRead: { isAdmin: () => false, mayUsePlugin: (id: number) => !denied.includes(id) } } } as unknown as PluginHostWiring,
+    });
+    let turns = 0;
+    adapter.listen(async () => { turns += 1; return 'done'; });
+
+    await adapter.tick();
+    // Revoking the grant is the one lever an operator reaches for to stop somebody's automation. If the
+    // schedule kept firing anyway it would keep spending model budget as that person, with nothing shown.
+    expect(turns).toBe(0);
+    expect(String(readJobs(dataRoot)[0]!.lastResult)).toContain('no longer allowed');
+
+    // Skipped, never deleted: the schedule comes back untouched.
+    denied = [];
+    writeJobs(dataRoot, [dueJob({ ownerUserId: 4 })]);
+    await adapter.tick();
+    expect(turns).toBe(1);
+  });
+
+  it('keeps firing an INSTANCE job, which has no owner whose grant could be revoked', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob()]);
+    const { adapter } = await loadCron(dataRoot, {
+      host: { stores: { usersRead: { isAdmin: () => true, mayUsePlugin: () => false } } } as unknown as PluginHostWiring,
+    });
+    let turns = 0;
+    adapter.listen(async () => { turns += 1; return 'done'; });
+    await adapter.tick();
+    expect(turns).toBe(1);
+  });
+
+  it('fails CLOSED when the host cannot answer whether the owner may still schedule', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob({ ownerUserId: 4 })]);
+    const { adapter } = await loadCron(dataRoot, { host: null });
+    let turns = 0;
+    adapter.listen(async () => { turns += 1; return 'done'; });
+    await adapter.tick();
+    // Unattended automation running for an account nobody can vouch for is exactly what must not happen.
+    expect(turns).toBe(0);
+  });
+});
+
 describe('cron tick — the shell guard is re-authorised at every fire', () => {
   const guarded = (extra: Record<string, unknown>) => dueJob({ check: 'echo something-new', ...extra });
 
@@ -145,7 +198,10 @@ describe('cron tick — the shell guard is re-authorised at every fire', () => {
   it('fails CLOSED when the host cannot answer who the owner is', async () => {
     const dataRoot = freshDataRoot();
     writeJobs(dataRoot, [dueJob({ ownerUserId: 4, check: 'echo new' })]);
-    const { adapter } = await loadCron(dataRoot, { host: null }); // no store seam wired in this process
+    // Scheduling is allowed, but the host cannot say who is an admin — the guard alone must fail closed.
+    const { adapter } = await loadCron(dataRoot, {
+      host: { stores: { usersRead: { mayUsePlugin: () => true } } } as unknown as PluginHostWiring,
+    });
     let ran = false;
     adapter.listen(async () => { ran = true; return 'ok'; });
     await adapter.tick();
