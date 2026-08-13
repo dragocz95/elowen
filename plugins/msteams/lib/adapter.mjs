@@ -8,7 +8,7 @@ import { ConnectorClient } from './connector.mjs';
 import { GraphClient } from './graph.mjs';
 import { PeopleDirectory, personLine } from './directory.mjs';
 import { makeTokenVerifier } from './auth.mjs';
-import { matchesId, senderIds, senderIsAdmin, displayNameOf } from './ids.mjs';
+import { matchesId, senderIds, senderIsAdmin, displayNameOf, ownerKey, isOwner } from './ids.mjs';
 import { parseModelExec, splitContent } from './format.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
@@ -416,12 +416,12 @@ export class MsTeamsAdapter {
     const convoKey = `${conv.id}#${gen}`;
 
     const display = resolveDisplaySettings(this.cfg, this.state.get(String(conv.id)));
-    const stream = observesLiveEvents(display, this.cfg) ? new LiveMessage(this, conv.id, m.id, from.id, display) : null;
+    const stream = observesLiveEvents(display, this.cfg) ? new LiveMessage(this, conv.id, m.id, ownerKey(from), display) : null;
     // Even with live streaming OFF, AskUserQuestion must still render its card — otherwise the parked
     // turn hangs until the timeout. Route events through the stream when present, else handle only `ask`.
     const onEvent = stream
       ? (e) => stream.onEvent(e)
-      : (e) => { if (e.type === 'ask' && Array.isArray(e.questions)) void this.postAsk(conv.id, m.id, from.id, e.id, e.questions).catch(() => {}); };
+      : (e) => { if (e.type === 'ask' && Array.isArray(e.questions)) void this.postAsk(conv.id, m.id, ownerKey(from), e.id, e.questions).catch(() => {}); };
 
     const typing = setInterval(() => void this.connector.typing(m.serviceUrl, conv.id).catch(() => {}), TYPING_INTERVAL_MS);
     void this.connector.typing(m.serviceUrl, conv.id).catch(() => {});
@@ -869,8 +869,7 @@ export class MsTeamsAdapter {
     // Only the person the question was routed to (or an operator) may answer.
     const upn = await this.resolveUpn(m.serviceUrl, conv.id, from);
     const ids = senderIds(from, conv.id, upn);
-    const senderKey = String(from.aadObjectId || from.id);
-    if (senderKey !== String(pend.askerId) && !this.isAdmin(ids)) {
+    if (!isOwner(pend.askerId, from) && !this.isAdmin(ids)) {
       await this.tmSend(conv.id, this.msg.askForSomeoneElse, { replyToId: m.id });
       return;
     }
@@ -961,7 +960,7 @@ export class MsTeamsAdapter {
         const current = this.modelForChannel(conv.id, models);
         const options = models.map((mo) => ({ label: `${mo.model} (${mo.providerLabel ?? mo.provider})`, value: `${mo.provider} ${mo.model}` }));
         const activityId = await this.tmSend(conv.id, '', { replyToId: m.id, card: buildPickerCard('model', this.msg.pickModel, options, { cs, current: current ? `${current.provider} ${current.model}` : undefined }) });
-        this.pendingPickers.set(String(conv.id), { kind: 'model', options, activityId, page: 0, senderId: String(from.aadObjectId || from.id), createdAt: Date.now() });
+        this.pendingPickers.set(String(conv.id), { kind: 'model', options, activityId, page: 0, senderId: ownerKey(from), createdAt: Date.now() });
         return true;
       }
       case 'reasoning': {
@@ -974,7 +973,7 @@ export class MsTeamsAdapter {
         const current = this.state.get(String(conv.id)).thinkingLevel ?? '';
         const options = [{ label: this.msg.reasoningDefault, value: '' }, ...levels.map((l) => ({ label: l, value: l }))];
         const activityId = await this.tmSend(conv.id, '', { replyToId: m.id, card: buildPickerCard('reasoning', this.msg.pickThinking, options, { cs, current }) });
-        this.pendingPickers.set(String(conv.id), { kind: 'reasoning', options, activityId, page: 0, senderId: String(from.aadObjectId || from.id), createdAt: Date.now() });
+        this.pendingPickers.set(String(conv.id), { kind: 'reasoning', options, activityId, page: 0, senderId: ownerKey(from), createdAt: Date.now() });
         return true;
       }
       case 'display': {
@@ -988,7 +987,7 @@ export class MsTeamsAdapter {
         if (!listing || !listing.items.length) { await reply(this.msg.noContextSessions); return true; }
         const options = listing.items.map((s) => ({ label: `${s.title || s.id} · ${s.model}`, value: s.id }));
         const activityId = await this.tmSend(conv.id, '', { replyToId: m.id, card: buildPickerCard('context', this.msg.pickContext, options, { cs }) });
-        this.pendingPickers.set(String(conv.id), { kind: 'context', options, activityId, page: 0, senderId: String(from.aadObjectId || from.id), createdAt: Date.now() });
+        this.pendingPickers.set(String(conv.id), { kind: 'context', options, activityId, page: 0, senderId: ownerKey(from), createdAt: Date.now() });
         return true;
       }
       default:
@@ -1008,7 +1007,7 @@ export class MsTeamsAdapter {
     }
     const marked = Object.entries(current).map(([axis, v]) => `${axis} ${v}`);
     const activityId = await this.tmSend(conversationId, '', { replyToId, card: buildPickerCard('display', this.msg.pickDisplay, options, { cs, current: marked[0] }) });
-    this.pendingPickers.set(String(conversationId), { kind: 'display', options, activityId, page: 0, senderId: String(from.aadObjectId || from.id), createdAt: Date.now() });
+    this.pendingPickers.set(String(conversationId), { kind: 'display', options, activityId, page: 0, senderId: ownerKey(from), createdAt: Date.now() });
   }
 
   async onPickerAction(m, conv, from, value) {
@@ -1016,7 +1015,7 @@ export class MsTeamsAdapter {
     if (!pend || pend.kind !== value.ep) return;
     const upn = await this.resolveUpn(m.serviceUrl, conv.id, from);
     const ids = senderIds(from, conv.id, upn);
-    if (!this.isAdmin(ids) && String(from.aadObjectId || from.id) !== pend.senderId) return;
+    if (!this.isAdmin(ids) && !isOwner(pend.senderId, from)) return;
     const cs = this.cfg.language === 'cs';
 
     if (value.p !== undefined) { // page turn — re-render the same card window

@@ -32,6 +32,23 @@ export function senderIds(from, conversationId, upn) {
   return ids;
 }
 
+/** The key a pending question or picker remembers its owner by. Entra's object ID first — it is the
+ *  identifier that stays the same across chats — with the channel account id as the fallback for a
+ *  sender Teams gave no aadObjectId. */
+export function ownerKey(from) {
+  return String(from?.aadObjectId || from?.id || '');
+}
+
+/** Whether a stored `ownerKey` names this sender. BOTH identifiers are accepted rather than the key
+ *  being re-derived and compared: the activity that opens a card and the card action that answers it
+ *  do not have to carry the same fields, and comparing one derived form against another is exactly
+ *  how the person a question was asked of ended up locked out of answering it. */
+export function isOwner(key, from) {
+  const k = String(key ?? '');
+  if (!k) return false;
+  return k === String(from?.aadObjectId ?? '') || k === String(from?.id ?? '');
+}
+
 /** Whether any of the sender's identifiers maps to a policy flagged `admin: true` — the operator. */
 export function senderIsAdmin(ids, policies) {
   const list = Array.isArray(policies) ? policies : [];

@@ -262,6 +262,40 @@ describe('msteams live trace + cards + commands', () => {
     expect(adapter.pendingAsks.size).toBe(1);
   });
 
+  // Regression: the asker key was stored from the inbound activity but compared against a DIFFERENT
+  // derived form on the way back, so a real Teams user — who always has an aadObjectId — could not
+  // answer the question the turn had just asked THEM. Driving the whole path is the point of these
+  // two: calling postAsk directly with a key of the test's choosing is what hid the bug.
+  it('lets the asker answer the card their own turn opened (live stream on)', async () => {
+    const answers: { id: string; answers: unknown[] }[] = [];
+    const { adapter } = await makeAdapter(
+      { toolActivity: 'status', rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] }, { answers },
+    );
+    adapter.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'ask', id: 'ask-live', questions: [{ header: 'Q', question: '?', options: [{ label: 'A' }] }] });
+      return 'done';
+    });
+    await adapter.onActivity(activity());
+    const token = [...adapter.pendingAsks.keys()][0]!;
+    await adapter.onCardAction(activity({ id: 'in-2', value: { ea: token, q: 0, o: 0 } }));
+    expect(answers).toEqual([{ id: 'ask-live', answers: [{ header: 'Q', selected: ['A'] }] }]);
+  });
+
+  it('lets the asker answer the card their own turn opened (live stream off)', async () => {
+    const answers: { id: string; answers: unknown[] }[] = [];
+    const { adapter } = await makeAdapter(
+      { toolActivity: 'off', answerMode: 'final', rolePolicies: [{ roleId: 'aad-1', projectIds: [] }] }, { answers },
+    );
+    adapter.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'ask', id: 'ask-plain', questions: [{ header: 'Q', question: '?', options: [{ label: 'A' }] }] });
+      return 'done';
+    });
+    await adapter.onActivity(activity());
+    const token = [...adapter.pendingAsks.keys()][0]!;
+    await adapter.onCardAction(activity({ id: 'in-2', value: { ea: token, q: 0, o: 0 } }));
+    expect(answers).toEqual([{ id: 'ask-plain', answers: [{ header: 'Q', selected: ['A'] }] }]);
+  });
+
   it('handles /new and /status via the shared control core and /help locally', async () => {
     const { adapter, state, calls } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', admin: true, projectIds: [] }] });
     adapter.listen(async () => 'unused');
