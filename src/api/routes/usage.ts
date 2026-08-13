@@ -115,7 +115,9 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.post('/usage/reset', c => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const userId = c.get('user')?.id;
-    const cleared = d.taskUsage?.deleteAll() ?? 0;
+    // With an owner the wipe goes through its store; with none, through core's tolerant handle on the
+    // same table — disabling a plugin drops no rows, and reporting zero would call that cleared.
+    const cleared = d.taskUsage?.deleteAll() ?? d.taskRefs?.sweepUsage() ?? 0;
     const chat = userId != null ? d.brainStore?.clearUsage(userId) ?? 0 : 0;
     return c.json({ ok: true, cleared, chatCleared: chat });
   });

@@ -54,4 +54,12 @@ export class TaskRefs {
   sweepAll(): { tasks: number; missions: number } {
     return deleteAllTaskRows(this.db);
   }
+
+  /** The same tolerant WRITE for the usage snapshots alone, behind the stats reset. Disabling the owning
+   *  plugin drops no table, so without this the reset would report a cheerful zero over rows that come
+   *  straight back when the plugin returns — the dishonest success `sweepAll` exists to prevent, just on
+   *  a different table. */
+  sweepUsage(): number {
+    return tolerateMissingPluginTables(() => this.db.prepare('DELETE FROM task_usage').run().changes, 0);
+  }
 }

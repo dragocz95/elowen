@@ -15,6 +15,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { TaskRefs } from '../../src/store/taskRefs.js';
 
 const usage = { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165, reasoning: 0, costUsd: 0.5, currency: 'USD', costSource: 'provider_reported' as const };
 
@@ -102,7 +103,41 @@ describe('GET /usage/by-day', () => {
   });
 });
 
+/** The same server with NO owner for the usage snapshots — the shape of an instance whose work plugin is
+ *  switched off. Disabling drops no table, so the rows are still there and a reset must still clear them.
+ *  `taskRefs` is core's tolerant handle on those grandfathered tables. */
+function setupWithoutOwner() {
+  const db = openPluginTablesDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const users = new UserStore(db);
+  const admin = users.create('admin', 'pw');
+  const taskUsage = new TaskUsageStore(db);
+  const tmux = new FakeTmuxDriver();
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: { disengage: async () => {} } as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+    clock: new FakeClock(0), config: new ConfigStore(db),
+    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    taskRefs: new TaskRefs(db), brainStore: new BrainStore(db),
+  });
+  // Rows written through a store the SERVER does not hold: exactly what a disabled plugin leaves behind.
+  return { app, db, taskUsage, adminTok: users.issueToken(admin.id) };
+}
+
 describe('POST /usage/reset', () => {
+  it('clears the snapshots left behind by a disabled owner instead of reporting a cheerful zero', async () => {
+    const { app, db, taskUsage, adminTok } = setupWithoutOwner();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+
+    const res = await app.request('/usage/reset', post(adminTok));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, cleared: 1 });
+    // The real proof: the rows are gone from the DB, not just absent from a store nobody was holding.
+    expect((db.prepare('SELECT COUNT(*) AS n FROM task_usage').get() as { n: number }).n).toBe(0);
+  });
+
   it('forbids a non-admin (403)', async () => {
     const { app, bobTok } = setup();
     expect((await app.request('/usage/reset', post(bobTok))).status).toBe(403);
