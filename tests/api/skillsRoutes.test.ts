@@ -48,7 +48,7 @@ function setup(opts: { enabled?: string[] } = {}) {
     pluginDirs: [pluginsDir], pluginDataRoot: dataRoot,
     plugins: provider,
   });
-  return { app, userDir: join(dataRoot, 'skills'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  return { app, dataRoot, users, amy, userDir: join(dataRoot, 'skills'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -80,7 +80,7 @@ describe('skills routes', () => {
 
   it('POST creates the user skill file in the CreateSkill format and GET lists it', async () => {
     const { app, userDir, adminTok } = setup();
-    const res = await app.request('/plugins/skills', post(adminTok, skill()));
+    const res = await app.request('/plugins/skills?owner=instance', post(adminTok, skill()));
     expect(res.status).toBe(201);
     expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8'))
       .toBe('---\nname: deploy-checklist\ndescription: When deploying.\n---\n\nCheck twice.\n');
@@ -90,14 +90,14 @@ describe('skills routes', () => {
 
   it('POST flattens newlines in the description (frontmatter stays one line)', async () => {
     const { app, userDir, adminTok } = setup();
-    await app.request('/plugins/skills', post(adminTok, skill({ description: 'line one\nline two' })));
+    await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ description: 'line one\nline two' })));
     expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8')).toContain('description: line one line two\n');
   });
 
   it('POST rejects a bad name, empty description/content and a non-JSON body (400)', async () => {
     const { app, adminTok } = setup();
     for (const bad of [skill({ name: 'Bad Name' }), skill({ name: 'x' }), skill({ description: '' }), skill({ content: '  ' }), skill({ content: undefined })]) {
-      expect((await app.request('/plugins/skills', post(adminTok, bad))).status, JSON.stringify(bad)).toBe(400);
+      expect((await app.request('/plugins/skills?owner=instance', post(adminTok, bad))).status, JSON.stringify(bad)).toBe(400);
     }
     const raw = await app.request('/plugins/skills', { method: 'POST', headers: { authorization: `Bearer ${adminTok}`, 'content-type': 'application/json' }, body: '{not json' });
     expect(raw.status).toBe(400);
@@ -105,14 +105,14 @@ describe('skills routes', () => {
 
   it('POST refuses a name colliding with a bundled skill (400) but overwrites a user skill', async () => {
     const { app, adminTok } = setup();
-    expect((await app.request('/plugins/skills', post(adminTok, skill({ name: BUNDLED })))).status).toBe(400);
-    expect((await app.request('/plugins/skills', post(adminTok, skill()))).status).toBe(201);
-    expect((await app.request('/plugins/skills', post(adminTok, skill({ content: 'v2' })))).status).toBe(201);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ name: BUNDLED })))).status).toBe(400);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill()))).status).toBe(201);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ content: 'v2' })))).status).toBe(201);
   });
 
   it('POST writes the disable-model-invocation flag and GET reports it', async () => {
     const { app, userDir, adminTok } = setup();
-    await app.request('/plugins/skills', post(adminTok, skill({ disableModelInvocation: true })));
+    await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ disableModelInvocation: true })));
     expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8')).toContain('disable-model-invocation: true\n');
     const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; disableModelInvocation: boolean; content?: string }[];
     const row = list.find((s) => s.name === 'deploy-checklist');
@@ -122,13 +122,13 @@ describe('skills routes', () => {
 
   it('PATCH edits a user skill in place; partial fields keep their current value', async () => {
     const { app, userDir, adminTok } = setup();
-    await app.request('/plugins/skills', post(adminTok, skill()));
+    await app.request('/plugins/skills?owner=instance', post(adminTok, skill()));
     // Toggle the flag only — description/content are preserved.
-    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { disableModelInvocation: true }))).status).toBe(200);
+    expect((await app.request('/plugins/skills/deploy-checklist?owner=instance', patch(adminTok, { disableModelInvocation: true }))).status).toBe(200);
     expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8'))
       .toBe('---\nname: deploy-checklist\ndescription: When deploying.\ndisable-model-invocation: true\n---\n\nCheck twice.\n');
     // Edit body + description, and clear the flag. A content edit bumps metadata.version (absent → 1).
-    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { description: 'Updated.', content: 'New body.', disableModelInvocation: false }))).status).toBe(200);
+    expect((await app.request('/plugins/skills/deploy-checklist?owner=instance', patch(adminTok, { description: 'Updated.', content: 'New body.', disableModelInvocation: false }))).status).toBe(200);
     expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8'))
       .toBe('---\nname: deploy-checklist\ndescription: Updated.\nmetadata:\n  version: 1\n---\n\nNew body.\n');
   });
@@ -139,7 +139,7 @@ describe('skills routes', () => {
     writeFileSync(join(userDir, 'claude-skill.md'),
       '---\nname: claude-skill\ndescription: "Quoted: with a colon"\nlicense: MIT\nallowed-tools:\n  - Read\n  - Grep\ncompatibility: pi>=1\nmetadata:\n  version: 3\n  author: sam\n---\n\nOriginal body.\n');
     // Toggle the disclosure flag only — nothing else may be lost, and the version must NOT bump.
-    expect((await app.request('/plugins/skills/claude-skill', patch(adminTok, { disableModelInvocation: true }))).status).toBe(200);
+    expect((await app.request('/plugins/skills/claude-skill?owner=instance', patch(adminTok, { disableModelInvocation: true }))).status).toBe(200);
     const raw = readFileSync(join(userDir, 'claude-skill.md'), 'utf-8');
     expect(raw).toContain('license: MIT\n');
     expect(raw).toContain('allowed-tools:\n  - Read\n  - Grep\n');
@@ -159,10 +159,10 @@ describe('skills routes', () => {
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, 'versioned.md'), '---\nname: versioned\ndescription: D.\nmetadata:\n  version: 5\n---\n\nBody.\n');
     // Flag-only toggle: version stays 5.
-    await app.request('/plugins/skills/versioned', patch(adminTok, { disableModelInvocation: true }));
+    await app.request('/plugins/skills/versioned?owner=instance', patch(adminTok, { disableModelInvocation: true }));
     expect(readFileSync(join(userDir, 'versioned.md'), 'utf-8')).toContain('version: 5\n');
     // Content edit: 5 → 6.
-    await app.request('/plugins/skills/versioned', patch(adminTok, { content: 'Changed.' }));
+    await app.request('/plugins/skills/versioned?owner=instance', patch(adminTok, { content: 'Changed.' }));
     expect(readFileSync(join(userDir, 'versioned.md'), 'utf-8')).toContain('version: 6\n');
   });
 
@@ -178,10 +178,10 @@ describe('skills routes', () => {
     const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; content?: string }[];
     expect(list).toContainEqual(expect.objectContaining({ name: 'nested-skill', content: 'Nested body.' }));
 
-    expect((await app.request('/plugins/skills/nested-skill', patch(adminTok, { content: 'Edited.' }))).status).toBe(200);
+    expect((await app.request('/plugins/skills/nested-skill?owner=instance', patch(adminTok, { content: 'Edited.' }))).status).toBe(200);
     expect(readFileSync(join(skillDir, 'SKILL.md'), 'utf-8')).toContain('Edited.\n');
 
-    expect((await app.request('/plugins/skills/nested-skill', del(adminTok))).status).toBe(200);
+    expect((await app.request('/plugins/skills/nested-skill?owner=instance', del(adminTok))).status).toBe(200);
     expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(false);
     // Support files remain, so the folder is kept.
     expect(existsSync(join(skillDir, 'references', 'notes.md'))).toBe(true);
@@ -192,35 +192,87 @@ describe('skills routes', () => {
     const skillDir = join(userDir, 'bare-skill');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: bare-skill\ndescription: Bare.\n---\n\nBody.\n');
-    expect((await app.request('/plugins/skills/bare-skill', del(adminTok))).status).toBe(200);
+    expect((await app.request('/plugins/skills/bare-skill?owner=instance', del(adminTok))).status).toBe(200);
     expect(existsSync(skillDir)).toBe(false);
   });
 
   it('PATCH rejects a bundled skill (400), a missing skill (404) and empty content (400)', async () => {
     const { app, adminTok } = setup();
-    await app.request('/plugins/skills', post(adminTok, skill()));
+    await app.request('/plugins/skills?owner=instance', post(adminTok, skill()));
     expect((await app.request(`/plugins/skills/${BUNDLED}`, patch(adminTok, { content: 'x' }))).status).toBe(400);
-    expect((await app.request('/plugins/skills/nope', patch(adminTok, { content: 'x' }))).status).toBe(404);
-    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { content: '  ' }))).status).toBe(400);
+    expect((await app.request('/plugins/skills/nope?owner=instance', patch(adminTok, { content: 'x' }))).status).toBe(404);
+    expect((await app.request('/plugins/skills/deploy-checklist?owner=instance', patch(adminTok, { content: '  ' }))).status).toBe(400);
   });
 
   it('DELETE removes a user skill; bundled → 400, missing → 404, bad name → 400', async () => {
     const { app, userDir, adminTok } = setup();
-    await app.request('/plugins/skills', post(adminTok, skill()));
+    await app.request('/plugins/skills?owner=instance', post(adminTok, skill()));
     expect((await app.request(`/plugins/skills/${BUNDLED}`, del(adminTok))).status).toBe(400);
-    expect((await app.request('/plugins/skills/nope', del(adminTok))).status).toBe(404);
-    expect((await app.request('/plugins/skills/Bad%20Name', del(adminTok))).status).toBe(400);
-    const res = await app.request('/plugins/skills/deploy-checklist', del(adminTok));
+    expect((await app.request('/plugins/skills/nope?owner=instance', del(adminTok))).status).toBe(404);
+    expect((await app.request('/plugins/skills/Bad%20Name?owner=instance', del(adminTok))).status).toBe(400);
+    const res = await app.request('/plugins/skills/deploy-checklist?owner=instance', del(adminTok));
     expect(res.status).toBe(200);
     expect(existsSync(join(userDir, 'deploy-checklist.md'))).toBe(false);
   });
 
-  it('rejects a non-admin (403) on list, create and delete', async () => {
+  // Skills is a user-grantable plugin: an account the admin has not granted it reaches nothing at all,
+  // not even its own set. The refusal happens in the core HTTP gate, before the plugin sees the request.
+  it('rejects an ungranted non-admin (403) on list, create and delete', async () => {
     const { app, amyTok } = setup();
     expect((await app.request('/plugins/skills/list', auth(amyTok))).status).toBe(403);
     expect((await app.request('/plugins/skills', post(amyTok, skill()))).status).toBe(403);
     expect((await app.request('/plugins/skills/x', patch(amyTok, { content: 'y' }))).status).toBe(403);
     expect((await app.request('/plugins/skills/x', del(amyTok))).status).toBe(403);
+  });
+
+  it('gives a granted non-admin her OWN skills set, and nobody else\'s', async () => {
+    const { app, dataRoot, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['skills']);
+    // An instance-wide skill everyone sees, written by the admin.
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill({ name: 'shared-one' })))).status).toBe(201);
+
+    // Her ownerless write lands in her own folder, not the shared dir.
+    expect((await app.request('/plugins/skills', post(amyTok, skill({ name: 'amy-skill' })))).status).toBe(201);
+    expect(existsSync(join(dataRoot, 'skills', 'users', String(amy.id), 'amy-skill.md'))).toBe(true);
+    expect(existsSync(join(dataRoot, 'skills', 'amy-skill.md'))).toBe(false);
+
+    // She sees bundled + instance-wide + her own, with the owner column filled in.
+    const list = (await (await app.request('/plugins/skills/list', auth(amyTok))).json()) as { name: string; owner: number | null }[];
+    expect(list).toContainEqual(expect.objectContaining({ name: 'amy-skill', owner: amy.id }));
+    expect(list).toContainEqual(expect.objectContaining({ name: 'shared-one', owner: null }));
+    expect(list).toContainEqual(expect.objectContaining({ name: BUNDLED, owner: null }));
+
+    // She may not write the shared set, nor reach another account's.
+    expect((await app.request('/plugins/skills?owner=instance', post(amyTok, skill({ name: 'sneaky' })))).status).toBe(403);
+    expect((await app.request('/plugins/skills/shared-one?owner=instance', del(amyTok))).status).toBe(403);
+    expect((await app.request(`/plugins/skills?owner=${amy.id + 99}`, post(amyTok, skill({ name: 'sneaky' })))).status).toBe(403);
+    expect((await app.request('/plugins/skills?owner=abc', post(amyTok, skill({ name: 'sneaky' })))).status).toBe(400);
+    expect(existsSync(join(dataRoot, 'skills', 'sneaky.md'))).toBe(false);
+  });
+
+  it('shows the admin every account\'s skills and lets him clean one up', async () => {
+    const { app, dataRoot, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['skills']);
+    await app.request('/plugins/skills', post(amyTok, skill({ name: 'amy-skill' })));
+
+    const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; owner: number | null }[];
+    expect(list).toContainEqual(expect.objectContaining({ name: 'amy-skill', owner: amy.id }));
+
+    expect((await app.request(`/plugins/skills/amy-skill?owner=${amy.id}`, del(adminTok))).status).toBe(200);
+    expect(existsSync(join(dataRoot, 'skills', 'users', String(amy.id), 'amy-skill.md'))).toBe(false);
+  });
+
+  // `users.id` is recycled by the next account, so a personal folder left behind would hand a stranger
+  // someone else's private instructions.
+  it('drops an account\'s personal skills when the account is deleted', async () => {
+    const { app, dataRoot, users, amy, amyTok, adminTok } = setup();
+    users.setGrantedPlugins(amy.id, ['skills']);
+    await app.request('/plugins/skills', post(amyTok, skill({ name: 'amy-skill' })));
+    const dir = join(dataRoot, 'skills', 'users', String(amy.id));
+    expect(existsSync(dir)).toBe(true);
+
+    expect((await app.request(`/users/${amy.id}`, del(adminTok))).status).toBe(200);
+    expect(existsSync(dir)).toBe(false);
   });
 
   it('keeps a --- line in the body as body, not a second frontmatter delimiter', async () => {
@@ -237,7 +289,7 @@ describe('skills routes', () => {
     const res = await app.request('/plugins/skills/list', auth(adminTok));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'skills plugin is disabled' });
-    expect((await app.request('/plugins/skills', post(adminTok, skill()))).status).toBe(503);
+    expect((await app.request('/plugins/skills?owner=instance', post(adminTok, skill()))).status).toBe(503);
   });
 
   it('parses a BOM-prefixed user skill and keeps its frontmatter through an edit', async () => {
@@ -247,7 +299,7 @@ describe('skills routes', () => {
     const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; description: string; content?: string }[];
     expect(list.find((s) => s.name === 'bom-skill')).toMatchObject({ description: 'B.', content: 'Body.' });
     // PATCH keeps the unknown license field — the frontmatter was actually parsed, not treated as body.
-    expect((await app.request('/plugins/skills/bom-skill', patch(adminTok, { content: 'v2' }))).status).toBe(200);
+    expect((await app.request('/plugins/skills/bom-skill?owner=instance', patch(adminTok, { content: 'v2' }))).status).toBe(200);
     expect(readFileSync(join(userDir, 'bom-skill.md'), 'utf-8')).toContain('license: MIT\n');
   });
 });

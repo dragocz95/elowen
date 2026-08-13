@@ -1,4 +1,4 @@
-import { isChannelSession, isSubagentSession } from '../sessionId.js';
+import { isChannelSession, isSubagentSession, skillOwnerForSession } from '../sessionId.js';
 import { DEFAULT_BRAND } from '../../shared/brand.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
@@ -212,7 +212,10 @@ export class LiveSessionSpawner {
         ? async (e) => (await toolHookBus.emitBlocking('tools.call.before', e)).deny
         : undefined,
     });
-    const skills = plugins?.skills ?? [];
+    // WHOSE skills this session may see. The SAME list has to reach both the awareness block and the
+    // factory's skillsOverride below: feeding the model one set and PI another would either advertise a
+    // skill `/skill:` cannot expand, or hide one it still can.
+    const skills = plugins?.skillsFor(skillOwnerForSession(sessionId, ownerUserId)) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
     // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).

@@ -117,10 +117,34 @@ describe('skills plugin creator tools', () => {
       expect(asText(await create.execute('t', { name: 'deploy-checklist', description: 'Kdy nasazovat', content: 'Kroky…' }, undefined as never, undefined as never))).toMatch(/saved/);
       const file = join(dataRoot, 'skills/deploy-checklist.md');
       expect(readFileSync(file, 'utf-8')).toContain('name: deploy-checklist');
-      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain('deploy-checklist (user)');
+      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain('deploy-checklist (instance)');
       expect(asText(await del.execute('t', { name: 'deploy-checklist' }, undefined as never, undefined as never))).toMatch(/deleted/);
       expect(existsSync(file)).toBe(false);
     });
+  });
+
+  // A turn that belongs to an account writes into THAT account's set by default; the instance set stays
+  // admin-only. Without this, one person's CreateSkill would edit everyone's system prompt.
+  it('writes a personal skill for the account behind the turn, and hides it from other accounts', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
+    const create = reg.tools.find((t) => t.name === 'CreateSkill')!;
+    const list = reg.tools.find((t) => t.name === 'ListSkills')!;
+    const amy: TurnIdentity = { platform: 'elowen', userId: '4', elowenUserId: 4, admin: false, owner: false };
+    const bob: TurnIdentity = { platform: 'elowen', userId: '5', elowenUserId: 5, admin: false, owner: false };
+
+    await runWithPolicy(LIMITED, async () => {
+      expect(asText(await create.execute('t', { name: 'amy-skill', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/personal/);
+      expect(existsSync(join(dataRoot, 'skills/users/4/amy-skill.md'))).toBe(true);
+      expect(existsSync(join(dataRoot, 'skills/amy-skill.md'))).toBe(false);
+      // A non-admin cannot promote it to the shared set.
+      expect(asText(await create.execute('t', { name: 'amy-shared', description: 'd', content: 'c', scope: 'instance' }, undefined as never, undefined as never))).toMatch(/admin session/);
+      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain('amy-skill (personal)');
+    }, { identity: amy });
+
+    await runWithPolicy(LIMITED, async () => {
+      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).not.toContain('amy-skill');
+    }, { identity: bob });
   });
 
   it('user-created skills register on the next plugin load', async () => {

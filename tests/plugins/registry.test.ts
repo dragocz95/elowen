@@ -20,6 +20,45 @@ describe('PluginRegistry', () => {
     expect(ctx.config).toEqual({ k: 1 });
   });
 
+  describe('skillsFor (per-account skill sets)', () => {
+    // The prompt cache is instance-wide: the system prompt of a user with no personal skills must stay
+    // BYTE-identical to what it was before per-user skills existed, so the shared prefix keeps hitting.
+    it('returns the very same array when nothing is owned by an account', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('skills', {}, noopLog);
+      ctx.registerSkill(fakeSkill('shared'));
+      expect(reg.skillsFor(7)).toBe(reg.skills);
+      expect(reg.skillsFor(null)).toBe(reg.skills);
+    });
+
+    it('gives each account the instance-wide skills plus only its own', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('skills', {}, noopLog);
+      ctx.registerSkill(fakeSkill('shared'));
+      ctx.registerSkill(fakeSkill('amy-only'), { ownerUserId: 4 });
+      ctx.registerSkill(fakeSkill('bob-only'), { ownerUserId: 5 });
+
+      expect(reg.skillsFor(4).map((s) => s.name)).toEqual(['shared', 'amy-only']);
+      expect(reg.skillsFor(5).map((s) => s.name)).toEqual(['shared', 'bob-only']);
+      // A shared channel (no single owner) and an unlinked sender see the instance set only — a set
+      // fixed at spawn cannot follow a sender who changes from turn to turn.
+      expect(reg.skillsFor(null).map((s) => s.name)).toEqual(['shared']);
+      expect(reg.skillsFor(undefined).map((s) => s.name)).toEqual(['shared']);
+      // `skills` stays the full catalogue for the surfaces that manage it.
+      expect(reg.skills).toHaveLength(3);
+    });
+
+    it('carries ownership through a merge of two registries', () => {
+      const a = new PluginRegistry();
+      a.contextFor('skills', {}, noopLog).registerSkill(fakeSkill('shared'));
+      const b = new PluginRegistry();
+      b.contextFor('skills', {}, noopLog).registerSkill(fakeSkill('amy-only'), { ownerUserId: 4 });
+      a.merge(b);
+      expect(a.skillsFor(4).map((s) => s.name)).toEqual(['shared', 'amy-only']);
+      expect(a.skillsFor(5).map((s) => s.name)).toEqual(['shared']);
+    });
+  });
+
   it('isolates each plugin config slice', () => {
     const reg = new PluginRegistry();
     const a = reg.contextFor('a', { v: 'a' }, noopLog);

@@ -67,6 +67,14 @@ export function isSubagentSession(id: string): boolean {
   return id.startsWith(SUBAGENT_PREFIX);
 }
 
+/** WHOSE personal skills a session may load. A skill set is fixed at spawn, so a SHARED channel — where
+ *  the sender changes from turn to turn — can only carry the instance-wide ones; a sub-agent is
+ *  channel-keyed too but serves exactly ONE owner, so it inherits that owner's set. */
+export function skillOwnerForSession(sessionId: string, ownerUserId: number | null | undefined): number | null {
+  if (isChannelSession(sessionId) && !isSubagentSession(sessionId)) return null;
+  return ownerUserId ?? null;
+}
+
 /** Recover the channel id from a `brain-ch-*` session id (inverse of {@link channelSessionId}). */
 export function channelIdOf(id: string): string {
   return id.slice(CHANNEL_PREFIX.length);

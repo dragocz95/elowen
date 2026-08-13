@@ -30,7 +30,18 @@
       "helpDescription": "Jedna věta: kdy má asistent tento skill použít.",
       "helpContent": "Tělo skillu — markdown instrukce pro asistenta.",
       "workspaceEyebrow": "Skilly",
-      "workspaceReady": "Skilly načteny"
+      "workspaceReady": "Skilly načteny",
+      "ownerColumn": "Vlastník",
+      "ownerInstance": "Všichni",
+      "ownerMine": "Moje",
+      "scopeAll": "Vše",
+      "scopeMine": "Moje",
+      "scopeInstance": "Instanční",
+      "scopeBundled": "Vestavěné",
+      "scopeFieldLabel": "Viditelné pro",
+      "scopeFieldPersonal": "Jen pro mě",
+      "scopeFieldInstance": "Pro všechny",
+      "scopeFieldHint": "Osobní dovednost se načítá jen do vašich konverzací. Instanční se načítá všem."
     }
   }
 }

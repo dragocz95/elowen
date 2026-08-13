@@ -14,6 +14,7 @@
       "/plugins/skills/:name"
     ]
   },
+  "userGrantable": true,
   "deferLoading": [
     "CreateSkill",
     "DeleteSkill"
@@ -61,6 +62,17 @@
       "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “deploy-checklist”).",
       "helpDescription": "One line: when the assistant should use this skill.",
       "helpContent": "The skill body — markdown instructions for the assistant.",
+      "ownerColumn": "Owner",
+      "ownerInstance": "Everyone",
+      "ownerMine": "Mine",
+      "scopeAll": "All",
+      "scopeMine": "Mine",
+      "scopeInstance": "Instance",
+      "scopeBundled": "Bundled",
+      "scopeFieldLabel": "Visible to",
+      "scopeFieldPersonal": "Only me",
+      "scopeFieldInstance": "Everyone",
+      "scopeFieldHint": "A personal skill is loaded only into your own conversations. An instance skill is loaded into everyone\u2019s.",
       "workspaceEyebrow": "Skills",
       "workspaceReady": "Skills loaded"
     }

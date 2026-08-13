@@ -1105,7 +1105,9 @@ export interface TurnContextContribution {
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
   registerTool(tool: ToolDefinition): void;
-  registerSkill(skill: PluginSkill): void;
+  /** Contribute a skill. `ownerUserId` scopes it to ONE Elowen account: it is then advertised (and
+   *  `/skill:` expandable) only in that user's own sessions. Omitted → instance-wide, as before. */
+  registerSkill(skill: PluginSkill, opts?: { ownerUserId?: number }): void;
   /** Ask the host to reload the plugin set so a runtime change a tool just made to disk (e.g. the skills
    *  plugin's CreateSkill/DeleteSkill writing to its data dir) is applied live. Deferred + coalesced: the
    *  host re-scans and respawns sessions once the current turn settles, so the new/removed skill is in

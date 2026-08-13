@@ -71,6 +71,12 @@ function beacon(url: string, payload: unknown): void {
   void fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, credentials: 'same-origin', keepalive: true }).catch(() => undefined);
 }
 
+/** Which skills set a write addresses: an account id, the shared instance set, or (undefined) the
+ *  caller's own. Sent as a query param because it selects the TARGET, not part of the payload. */
+export type SkillOwner = number | 'instance' | null;
+const ownerQuery = (owner?: SkillOwner): string =>
+  (owner === undefined || owner === null ? '' : `?owner=${encodeURIComponent(String(owner))}`);
+
 export const elowenClient = {
   tasks: (projectId?: number) => req<Task[]>(projectId != null ? `/tasks?project_id=${projectId}` : '/tasks'),
   sessions: () => req<SessionInfo[]>('/sessions'),
@@ -213,10 +219,12 @@ export const elowenClient = {
   deleteCronJob: (id: string) => req<{ ok: boolean }>(`/plugins/cronjob/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** The skills plugin's markdown skills (bundled + user); user skills are created/deleted per file. */
   pluginSkills: () => req<PluginSkill[]>('/plugins/skills/list'),
-  createPluginSkill: (skill: { name: string; description: string; content: string; disableModelInvocation?: boolean }) => req<{ ok: boolean }>('/plugins/skills', json(skill)),
-  updatePluginSkill: (name: string, patch: { description?: string; content?: string; disableModelInvocation?: boolean }) =>
-    req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}`, json(patch, 'PATCH')),
-  deletePluginSkill: (name: string) => req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  createPluginSkill: ({ owner, ...skill }: { name: string; description: string; content: string; disableModelInvocation?: boolean; owner?: SkillOwner }) =>
+    req<{ ok: boolean }>(`/plugins/skills${ownerQuery(owner)}`, json(skill)),
+  updatePluginSkill: (name: string, patch: { description?: string; content?: string; disableModelInvocation?: boolean }, owner?: SkillOwner) =>
+    req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}${ownerQuery(owner)}`, json(patch, 'PATCH')),
+  deletePluginSkill: (name: string, owner?: SkillOwner) =>
+    req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}${ownerQuery(owner)}`, { method: 'DELETE' }),
   /** The subagent plugin's typed sub-agents (built-in + user); user agents are created/edited/deleted per file. */
   pluginSubagents: () => req<PluginSubagent[]>('/plugins/agents/list'),
   savePluginSubagent: (name: string, def: { description: string; tools: 'read-only' | 'all' | 'inherit' | string[]; body: string }) =>

@@ -11,11 +11,16 @@ export interface PluginSkill {
   name: string;
   description: string;
   source: 'bundled' | 'user';
+  /** The account this skill belongs to; null for bundled and instance-wide ones. */
+  owner: number | null;
   canDelete: boolean;
   disableModelInvocation: boolean;
   version: number | null;
   content?: string;
 }
+
+/** Which set a write addresses: an account id, the shared instance set, or the caller's own. */
+export type SkillOwner = number | 'instance' | null;
 
 // ---- hook shapes --------------------------------------------------------------------------------
 
@@ -34,9 +39,10 @@ interface SkillsHooks {
   useTranslation(): { t: Dict; locale: string };
   useToast(): { toast: (msg: string, tone?: 'ok' | 'error') => void };
   usePluginSkills(): QueryResult<PluginSkill[]>;
-  useCreatePluginSkill(): MutationResult<{ name: string; description: string; content: string; disableModelInvocation?: boolean }>;
-  useUpdatePluginSkill(): MutationResult<{ name: string; patch: { description?: string; content?: string; disableModelInvocation?: boolean } }>;
-  useDeletePluginSkill(): MutationResult<string>;
+  useCreatePluginSkill(): MutationResult<{ name: string; description: string; content: string; disableModelInvocation?: boolean; owner?: SkillOwner }>;
+  useUpdatePluginSkill(): MutationResult<{ name: string; owner?: SkillOwner; patch: { description?: string; content?: string; disableModelInvocation?: boolean } }>;
+  useDeletePluginSkill(): MutationResult<{ name: string; owner?: SkillOwner }>;
+  useMe(): QueryResult<{ user?: { id: number; is_admin: boolean; username: string } }>;
   usePluginStrings(plugin: string): Record<string, string>;
 }
 
@@ -46,7 +52,7 @@ type AnyComponent = ComponentType<any>;
 
 interface SkillsComponents {
   Badge: AnyComponent; Toggle: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
-  MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
+  MarkdownAssetEditor: AnyComponent; Button: AnyComponent; Field: AnyComponent; Segmented: AnyComponent;
   ControlSurfaceDocument: AnyComponent;
   SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent;
 }

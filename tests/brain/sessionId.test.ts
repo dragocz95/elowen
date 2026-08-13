@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, channelIdOf, isOwnedUserSession } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, channelIdOf, isOwnedUserSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the four id shapes', () => {
@@ -26,6 +26,18 @@ describe('brain session id conventions', () => {
     expect(isSubagentSession(channelSessionId('discord-1'))).toBe(false);
     expect(channelIdOf('brain-ch-subagent-abc')).toBe('subagent-abc');
     expect(channelIdOf(channelSessionId('discord-1'))).toBe('discord-1');
+  });
+
+  // A personal skill is a briefing its owner asked for. A shared channel serves whoever writes next, so
+  // it may only ever load the instance-wide set; a sub-agent serves exactly one owner, so it keeps his.
+  it('skillOwnerForSession: own conversations and sub-agents keep the owner, a shared channel does not', () => {
+    expect(skillOwnerForSession(defaultUserSessionId(7), 7)).toBe(7);
+    expect(skillOwnerForSession(taskSessionId('t1'), 7)).toBe(7);
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7)).toBe(7);
+    expect(skillOwnerForSession(channelSessionId('discord-1'), 7)).toBe(null);
+    // No account behind the turn (an unlinked sender, a cron job) → the instance set.
+    expect(skillOwnerForSession(defaultUserSessionId(7), null)).toBe(null);
+    expect(skillOwnerForSession(defaultUserSessionId(7), undefined)).toBe(null);
   });
 
   it('isOwnedUserSession: owner AND a real conversation AND the row exists (and narrows the row type)', () => {

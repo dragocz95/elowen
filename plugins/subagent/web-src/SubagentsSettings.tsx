@@ -99,7 +99,7 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
           );
         }}
         saving={save.isPending}
-        onDelete={(name: string, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(name, callbacks)}
+        onDelete={(agent: PluginSubagent, callbacks: { onSuccess: () => void; onError: (e: unknown) => void }) => remove.mutate(agent.name, callbacks)}
       />
     </C.ControlSurfaceDocument>
   );

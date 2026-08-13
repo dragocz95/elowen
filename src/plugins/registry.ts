@@ -151,6 +151,11 @@ export class PluginRegistry {
   // are unique and drive per-role filtering); these lists allow duplicates (two plugins can register the
   // same hook name), so a Map would lose entries. Feeds the runtime plugin-contribution report.
   readonly skillOwners: string[] = [];
+  /** For each entry of `skills`, the Elowen ACCOUNT it belongs to, or null for an instance-wide skill
+   *  every session sees. Index-aligned with `skills` exactly as `skillOwners` is. A per-user skill is
+   *  loaded into this one shared registry like any other and filtered at SPAWN, because the registry is a
+   *  single memoized object for the whole daemon — there is no per-user generation of it to load into. */
+  readonly skillOwnerUsers: (number | null)[] = [];
   readonly promptFragmentOwners: string[] = [];
   readonly hookOwners: string[] = [];
   readonly turnContextOwners: string[] = [];
@@ -250,6 +255,7 @@ export class PluginRegistry {
       if (src) this.promptSources.set(p.entry.name, src);
     }
     this.skillOwners.push(...other.skillOwners);
+    this.skillOwnerUsers.push(...other.skillOwnerUsers);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
     this.turnContextOwners.push(...other.turnContextOwners);
@@ -361,6 +367,18 @@ export class PluginRegistry {
    *  clean register+merge so the hook bus can gate that plugin's mutations. */
   setCapabilities(name: string, caps: PluginCapabilities): void {
     this.pluginCapabilities.set(name, caps);
+  }
+
+  /** The skills ONE session may see: every instance-wide skill, plus those owned by `userId`. Pass null
+   *  for a session that serves nobody in particular (a shared channel, a task worker) — it then sees only
+   *  the instance-wide set. The identical array is returned when no per-user skill exists at all, so an
+   *  instance that never uses them renders a byte-identical system prompt. */
+  skillsFor(userId: number | null | undefined): PluginSkill[] {
+    if (!this.skillOwnerUsers.some((o) => o !== null)) return this.skills;
+    return this.skills.filter((_, i) => {
+      const owner = this.skillOwnerUsers[i] ?? null;
+      return owner === null || (userId != null && owner === userId);
+    });
   }
 
   /** Record whether a plugin opted into per-user grants (manifest `userGrantable`). Called by the
@@ -507,7 +525,11 @@ export class PluginRegistry {
         }
         this.tools.push(t); this.toolOwner.set(t.name, name);
       },
-      registerSkill: (s) => { this.skills.push(s); this.skillOwners.push(name); },
+      registerSkill: (s, opts) => {
+        this.skills.push(s);
+        this.skillOwners.push(name);
+        this.skillOwnerUsers.push(opts?.ownerUserId ?? null);
+      },
       registerControl: (key, control, opts) => {
         const clean = key.trim();
         if (!clean) { scoped.warn('registerControl refused: empty name'); return; }

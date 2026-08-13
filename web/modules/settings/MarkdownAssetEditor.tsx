@@ -32,7 +32,14 @@ export interface MarkdownAsset {
   name: string;
   description: string;
   source: string;
+  /** The account this entry belongs to, for assets that can be owned per user (per-user skills).
+   *  `null`/absent = instance-wide. Two accounts may hold the same NAME, so rows are keyed and selected
+   *  by name AND owner — keying on the name alone would make one row highlight (and delete) another. */
+  owner?: number | null;
 }
+
+/** Identity of a row. Not the name: with per-user assets the same name legitimately exists twice. */
+const assetKey = (item: MarkdownAsset): string => `${item.source}:${item.owner ?? 'instance'}:${item.name}`;
 
 /** The editor's form: the fields both editors share plus the caller's divergent extra fields `E`
  *  (`body` is the primary markdown textarea — the skill's content or the sub-agent's prompt). */
@@ -77,6 +84,13 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
   renderBadges?: (item: T) => ReactNode;
   /** Extra per-row control for user entries, placed before the delete button (e.g. a toggle). */
   renderRowControl?: (item: T) => ReactNode;
+  /** Ownership column + scope filter, for assets that can belong to one account. Omitted → the register
+   *  looks exactly as it did before ownership existed (no extra column, one filter). */
+  ownership?: {
+    header: string;
+    label: (item: T) => string;
+    scopes: { value: string; label: string; matches: (item: T) => boolean }[];
+  };
   /** Extra form fields rendered between the name/description grid and the body textarea. */
   renderFieldsBeforeBody?: (form: AssetForm<E>, patch: (p: Partial<AssetForm<E>>) => void) => ReactNode;
   /** Extra form fields rendered after the body textarea. */
@@ -85,8 +99,8 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
   onSave: (form: AssetForm<E>, callbacks: SaveCallbacks) => void;
   /** True while a create/update is in flight (disables the save button). */
   saving: boolean;
-  /** Delete a user entry by name; wire the callbacks into the caller's mutation. */
-  onDelete: (name: string, callbacks: SaveCallbacks) => void;
+  /** Delete a user entry; the whole item is passed because a name alone no longer identifies one. */
+  onDelete: (item: T, callbacks: SaveCallbacks) => void;
   /** The page's hero owns the primary "add" action, so the button lives outside this component and
    *  drives the create drawer through this pair. */
   creating: boolean;
@@ -105,16 +119,19 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
  *  injected by the caller. Built-in entries ship read-only: their rows carry no controls and do not
  *  open. */
 export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
-  query, labels, emptyForm, formFromItem, extraValid, renderBadges, renderRowControl,
+  query, labels, emptyForm, formFromItem, extraValid, renderBadges, renderRowControl, ownership,
   renderFieldsBeforeBody, renderFieldsAfterBody, onSave, saving, onDelete, creating, onCreatingChange,
   addAction,
 }: MarkdownAssetEditorProps<T, E>) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [form, setForm] = useState<AssetForm<E> | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // The item behind the open form / the pending delete, not just its name — see `assetKey`.
+  const [editing, setEditing] = useState<T | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<T | null>(null);
   const [search, setSearch] = useState('');
   const [source, setSource] = useState<SourceFilter>('all');
+  const [scope, setScope] = useState('all');
   const [page, setPage] = useState(0);
 
   // The hero's add button only flips a flag; the blank form is this component's to own, and an edit
@@ -122,19 +139,21 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
   useEffect(() => { if (creating) setForm((cur) => cur ?? emptyForm); }, [creating, emptyForm]);
   // A narrowed list can be shorter than the page the user is on; landing on an empty page reads as
   // "nothing matches" when the matches are simply on page 1.
-  useEffect(() => { setPage(0); }, [search, source]);
+  useEffect(() => { setPage(0); }, [search, source, scope]);
 
   const { data, isLoading, isError } = query;
   const items = useMemo(() => data ?? [], [data]);
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const scopeRule = ownership?.scopes.find((sc) => sc.value === scope);
     return items.filter((item) => {
       if (source === 'user' && item.source !== 'user') return false;
       if (source === 'builtin' && item.source === 'user') return false;
+      if (scopeRule && !scopeRule.matches(item)) return false;
       if (needle === '') return true;
       return item.name.toLowerCase().includes(needle) || item.description.toLowerCase().includes(needle);
     });
-  }, [items, search, source]);
+  }, [items, search, source, scope, ownership]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
   const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
@@ -143,7 +162,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
   if (isLoading || !data) return <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>;
 
   const patch = (p: Partial<AssetForm<E>>) => setForm((cur) => (cur ? { ...cur, ...p } : cur));
-  const closeForm = () => { setForm(null); onCreatingChange(false); };
+  const closeForm = () => { setForm(null); setEditing(null); onCreatingChange(false); };
   const nameValid = form !== null && NAME_RE.test(form.name.trim());
   const savable = form !== null && (form.editing !== null || nameValid)
     && form.description.trim() !== '' && form.body.trim() !== '' && (extraValid?.(form) ?? true);
@@ -163,7 +182,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
       onError: (e) => toast(apiErrorMessage(e), 'error'),
     });
     // The open drawer belongs to the row that is going away.
-    if (form?.editing === pendingDelete) closeForm();
+    if (editing && assetKey(editing) === assetKey(pendingDelete)) closeForm();
     setPendingDelete(null);
   };
 
@@ -186,6 +205,15 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             aria-label={t.assetEditor.filterAll}
             nowrap
           />
+          {ownership ? (
+            <Segmented
+              value={scope}
+              onChange={setScope}
+              options={[{ value: 'all', label: t.assetEditor.filterAll }, ...ownership.scopes.map((sc) => ({ value: sc.value, label: sc.label }))]}
+              aria-label={ownership.header}
+              nowrap
+            />
+          ) : null}
           {addAction}
         </div>
       </ControlSurfaceToolbar>
@@ -197,25 +225,27 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <div className="flex min-w-0 flex-col gap-3">
               <DataTable
                 ariaLabel={t.assetEditor.colName}
-                columns="minmax(0,14rem) minmax(0,1fr) 8rem 6rem 3.5rem"
+                columns={ownership ? 'minmax(0,14rem) minmax(0,1fr) 7rem 8rem 6rem 3.5rem' : 'minmax(0,14rem) minmax(0,1fr) 8rem 6rem 3.5rem'}
                 compactColumns="minmax(0,1fr) 3.5rem"
               >
                 <DataTableRow header>
                   <DataTableCell header>{t.assetEditor.colName}</DataTableCell>
                   <DataTableCell header priority="wide">{t.assetEditor.colDescription}</DataTableCell>
+                  {ownership ? <DataTableCell header priority="wide">{ownership.header}</DataTableCell> : null}
                   <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
                   <DataTableCell header priority="wide" role="presentation" aria-hidden>{null}</DataTableCell>
                   <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
                 </DataTableRow>
                 {pageItems.map((item) => {
                   const editable = item.source === 'user';
-                  const open = () => { if (editable) setForm(formFromItem(item)); };
+                  const open = () => { if (editable) { setForm(formFromItem(item)); setEditing(item); } };
+                  const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   return (
                     <DataTableRow
-                      key={`${item.source}:${item.name}`}
+                      key={assetKey(item)}
                       interactive={editable}
-                      selected={form?.editing === item.name}
-                      aria-selected={form?.editing === item.name}
+                      selected={isOpen}
+                      aria-selected={isOpen}
                       className="group"
                     >
                       <DataTableCell>
@@ -230,6 +260,11 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                       <DataTableCell priority="wide" title={item.description} className="truncate text-xs text-text-muted">
                         {item.description || '—'}
                       </DataTableCell>
+                      {ownership ? (
+                        <DataTableCell priority="wide" title={ownership.label(item)} className="truncate text-xs text-text-muted">
+                          {ownership.label(item)}
+                        </DataTableCell>
+                      ) : null}
                       <DataTableCell priority="wide" className="flex flex-wrap items-center gap-1.5">
                         <Badge tone={editable ? 'accent' : 'default'}>{editable ? labels.badgeUser : labels.badgeBuiltin}</Badge>
                         {renderBadges?.(item)}
@@ -240,7 +275,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                       <DataTableCell className="flex items-center justify-end gap-1">
                         {editable ? (
                           <>
-                            <Button variant="ghost-danger" icon={Trash2} aria-label={labels.remove} onClick={() => setPendingDelete(item.name)} />
+                            <Button variant="ghost-danger" icon={Trash2} aria-label={labels.remove} onClick={() => setPendingDelete(item)} />
                             <ChevronRight size={15} aria-hidden className="shrink-0 text-text-muted/50 transition-colors group-hover:text-text" />
                           </>
                         ) : null}
@@ -298,8 +333,8 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <div className="flex items-center gap-2 border-t border-border pt-3">
               <Button onClick={submit} disabled={!savable || saving}>{labels.save}</Button>
               <Button variant="ghost" onClick={closeForm}>{labels.cancel}</Button>
-              {form.editing !== null ? (
-                <Button variant="ghost-danger" icon={Trash2} className="ml-auto" onClick={() => setPendingDelete(form.editing)}>{labels.remove}</Button>
+              {editing !== null ? (
+                <Button variant="ghost-danger" icon={Trash2} className="ml-auto" onClick={() => setPendingDelete(editing)}>{labels.remove}</Button>
               ) : null}
             </div>
           </div>
@@ -309,7 +344,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
       <ConfirmDialog
         open={pendingDelete !== null}
         title={labels.deleteTitle}
-        description={pendingDelete ? labels.deleteDesc.replace('{name}', pendingDelete) : undefined}
+        description={pendingDelete ? labels.deleteDesc.replace('{name}', pendingDelete.name) : undefined}
         confirmLabel={labels.remove}
         onConfirm={confirmDelete}
         onClose={() => setPendingDelete(null)}

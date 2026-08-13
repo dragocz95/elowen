@@ -19,11 +19,13 @@ const strings = (manifest as { web: { strings: Record<string, string> } }).web.s
 
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'skills', url: '/plugins/skills/web/index.js', apiVersion: 1, nav: [], settings: [], strings }])),
+  // The register labels the owner column against the signed-in account, so the page reads /auth/me.
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 7, username: 'filip', is_admin: true } })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
-const skillRow = (name: string, disableModelInvocation: boolean) =>
-  ({ name, description: `${name} desc`, source: 'user', disableModelInvocation, version: null, content: `Body ${name}.` });
+const skillRow = (name: string, disableModelInvocation: boolean, owner: number | null = null) =>
+  ({ name, description: `${name} desc`, source: 'user', owner, disableModelInvocation, version: null, content: `Body ${name}.` });
 const list = [skillRow('alpha', false), skillRow('beta', false)];
 const toggles = () => screen.getAllByRole('switch', { name: strings.disableModelInvocation });
 
@@ -94,7 +96,37 @@ describe('skills SkillsSettings (optimistic disclosure toggle)', () => {
     fireEvent.change(inputs[2]!, { target: { value: 'Do the thing.' } });
     fireEvent.click(form.getByRole('button', { name: strings.save }));
     await waitFor(() => expect(created).toBeTruthy());
+    // `owner` is a query param selecting the target set, never part of the written skill.
     expect(created).toEqual({ name: 'my-skill', description: 'When to use it.', content: 'Do the thing.', disableModelInvocation: false });
+  });
+
+  // Per-user skills make the NAME ambiguous: an account's own skill and an instance-wide one may both
+  // be called "alpha". The register keys rows by name AND owner — keying on the name alone made one row
+  // highlight (and offer to delete) the other.
+  it('separates same-named skills by owner and filters by scope', async () => {
+    server.use(http.get('*/api/plugins/skills/list', () => HttpResponse.json([
+      skillRow('alpha', false, null), // instance-wide
+      skillRow('alpha', false, 7),    // mine
+      skillRow('gamma', false, 9),    // someone else's (admin sees it)
+    ])));
+    const mounted = mount();
+
+    await waitFor(() => expect(screen.getAllByText('alpha')).toHaveLength(2));
+    expect(screen.getAllByText(strings.ownerInstance).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(strings.ownerMine).length).toBeGreaterThan(0);
+    expect(screen.getByText('#9')).toBeInTheDocument();
+
+    // Opening MY alpha must select exactly one row, not both.
+    fireEvent.click(screen.getByRole('radio', { name: strings.scopeMine }));
+    await waitFor(() => expect(screen.getAllByText('alpha')).toHaveLength(1));
+    expect(screen.queryByText('gamma')).toBeNull();
+
+    // Back to everything, then open MY alpha: exactly one row may light up, not both namesakes.
+    fireEvent.click(screen.getAllByRole('radio', { name: strings.scopeAll })[1]!);
+    await waitFor(() => expect(screen.getAllByText('alpha')).toHaveLength(2));
+    fireEvent.click(screen.getAllByText('alpha')[1]!);
+    await screen.findByRole('dialog');
+    expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
   });
 
   // The same component serves the Settings deck and its own page. On a page it wears the SAME spatial

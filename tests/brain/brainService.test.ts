@@ -600,6 +600,37 @@ describe('BrainService', () => {
     expect(seenSkills?.find((s) => s.name === 'deploy-checklist')?.filePath).toBe('/plugins/skills/skills/deploy-checklist.md');
   });
 
+  // A personal skill is a briefing only its owner asked for. It has to reach that owner's session and no
+  // one else's — and a SHARED channel, where the sender changes from turn to turn, can only carry the
+  // instance-wide set, because the set is fixed at spawn.
+  it('feeds an account its own skills in its own session, and only the shared ones in a channel', async () => {
+    const skillFor = (name: string) => ({
+      name, description: `Use ${name}.`, filePath: `/s/${name}.md`, baseDir: '/s',
+      sourceInfo: { path: `/s/${name}.md`, source: 'elowen-user:skills', scope: 'user', origin: 'package' },
+      disableModelInvocation: false,
+    });
+    const registry = () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} });
+      ctx.registerSkill(skillFor('shared-one'));
+      ctx.registerSkill(skillFor('mine-only'), { ownerUserId: 1 });
+      ctx.registerSkill(skillFor('theirs-only'), { ownerUserId: 2 });
+      return reg;
+    };
+    const seenFor = async (userId: number, session?: string) => {
+      const d = fakeDeps();
+      (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => registry());
+      let seen: { name: string }[] | undefined;
+      d.resourceLoaderFactory = (o: { skills?: { name: string }[] }) => { seen = o.skills; return undefined; };
+      const svc = new BrainService(d as never);
+      await svc.start(userId, session ? { session } : undefined);
+      return (seen ?? []).map((sk) => sk.name);
+    };
+
+    expect(await seenFor(1)).toEqual(['shared-one', 'mine-only']);
+    expect(await seenFor(2)).toEqual(['shared-one', 'theirs-only']);
+  });
+
   it('feeds registered plugin prompt commands to the resource loader as PI prompt templates', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();

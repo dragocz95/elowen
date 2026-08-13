@@ -31,23 +31,58 @@ function splitFrontmatter(source) {
 export function register(ctx) {
   const here = dirname(fileURLToPath(import.meta.url));
   const bundledDir = join(here, 'skills');
-  const userDir = ctx.dataDir(); // instance-local skills created at runtime
+  const instanceDir = ctx.dataDir(); // instance-wide skills every session sees
+  // PERSONAL skills live under `<dataDir>/users/<accountId>/`. They sit INSIDE the instance dir (so one
+  // data dir still holds everything the plugin owns) but must never be loaded as instance-wide ones — PI's
+  // loader recurses into subdirectories, so the instance scan below explicitly drops anything under here.
+  const USERS_SUBDIR = 'users';
+  const usersRoot = join(instanceDir, USERS_SUBDIR);
+  const userSkillsDir = (userId) => join(usersRoot, String(userId));
+  const isPersonalPath = (file) => {
+    const abs = resolve(file);
+    return abs === resolve(usersRoot) || abs.startsWith(resolve(usersRoot) + sep);
+  };
   // Both catalog surfaces (list/delete) go through PI's loader, not a raw `*.md` readdir, so they see
   // EVERY skill PI actually loads — including the `<name>/SKILL.md` directory form (PI treats a dir with a
   // SKILL.md as a skill root). A flat readdir would silently miss those.
   const loadSkills = (dir, source) => (existsSync(dir) ? loadSkillsFromDir({ dir, source }).skills : []);
+  // Account ids that currently own a personal skills folder. Read from disk rather than from the user
+  // store: the plugin has no reach into it, and a folder whose account is gone is dropped by the
+  // user-removed handler below, not by guessing here.
+  const skillOwnerIds = () => (existsSync(usersRoot)
+    ? readdirSync(usersRoot, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && /^[0-9]+$/.test(e.name))
+        .map((e) => Number(e.name))
+    : []);
 
   let count = 0;
   for (const { dir, source } of [
     { dir: bundledDir, source: 'elowen-plugin:skills' },
-    { dir: userDir, source: 'elowen-user:skills' },
+    { dir: instanceDir, source: 'elowen-user:skills' },
   ]) {
-    const skills = loadSkills(dir, source);
-    for (const skill of skills) ctx.registerSkill(skill);
-    count += skills.length;
+    for (const skill of loadSkills(dir, source)) {
+      if (dir === instanceDir && isPersonalPath(skill.filePath)) continue; // owned by one account, registered below
+      ctx.registerSkill(skill);
+      count += 1;
+    }
+  }
+  for (const ownerUserId of skillOwnerIds()) {
+    for (const skill of loadSkills(userSkillsDir(ownerUserId), 'elowen-user:skills')) {
+      ctx.registerSkill(skill, { ownerUserId });
+      count += 1;
+    }
   }
 
-  const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('skills can only be managed from an admin session'); };
+  // An account is gone: drop its personal skills with it. `users.id` is reused by the next account, so
+  // leaving the folder would silently hand a stranger someone else's private instructions.
+  ctx.registerUserRemoved((userId) => {
+    const dir = userSkillsDir(userId);
+    if (existsSync(dir)) { rmSync(dir, { recursive: true, force: true }); ctx.requestReload?.(); }
+  });
+
+  /** The account behind the current request/turn, or null when there is none (cron, an unlinked sender). */
+  const callerId = () => ctx.currentIdentity()?.elowenUserId ?? null;
+  const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('instance-wide skills can only be managed from an admin session'); };
 
   // ── Admin skills API (root mounts, grandfathered core URLs): bundled .md skills ship inside this
   // plugin folder (read-only), user skills live in the plugin's writable data dir — the same files
@@ -121,45 +156,80 @@ export function register(ctx) {
   const buildSkillBody = (front, content) => `---\n${stringifyYaml(front).trimEnd()}\n---\n\n${content}\n`;
   const jsonRes = (body, status = 200) => ({ status, body });
 
+  // WHICH skills dir a request targets. `owner` is absent for "mine" (the caller's own personal skills,
+  // or the instance set for a caller with no account), the literal 'instance' for the shared set, or an
+  // account id. Reaching another account's skills — or writing the instance set — is admin-only, and the
+  // refusal is the same shape either way so a non-admin cannot probe which accounts exist.
+  const resolveTarget = (req) => {
+    const raw = typeof req.query?.owner === 'string' ? req.query.owner.trim() : '';
+    const me = req.auth.userId;
+    if (raw === 'instance') {
+      return req.auth.admin ? { ok: true, owner: null, dir: instanceDir } : { ok: false };
+    }
+    if (raw !== '') {
+      if (!/^[0-9]+$/.test(raw)) return { ok: false, invalid: true };
+      const id = Number(raw);
+      if (id !== me && !req.auth.admin) return { ok: false };
+      return { ok: true, owner: id, dir: userSkillsDir(id) };
+    }
+    if (me === null) return req.auth.admin ? { ok: true, owner: null, dir: instanceDir } : { ok: false };
+    return { ok: true, owner: me, dir: userSkillsDir(me) };
+  };
+
+  const describeSkill = (name, file, source, owner) => {
+    const parsed = readSkillFile(file);
+    return {
+      name,
+      description: parsed.description,
+      source,
+      scope: source === 'bundled' ? 'bundled/system' : 'user-defined',
+      // The account this skill belongs to; null for bundled and instance-wide skills. The catalog UI
+      // renders it as the owner column, and it is the value a write passes back as `?owner=`.
+      owner,
+      location: file,
+      active: true, // this plugin is serving the request, so it is enabled by definition
+      canDelete: source === 'user',
+      disableModelInvocation: parsed.disableModelInvocation,
+      version: parsed.version,
+      // Editable skills carry their body so the web editor can prefill an edit; bundled skills are
+      // read-only, so their (larger) content is left off the list payload.
+      ...(source === 'user' ? { content: parsed.content } : {}),
+    };
+  };
+
   ctx.registerApiRoute({
-    rootMount: '/plugins/skills/list', path: '', method: 'GET', access: 'admin',
+    rootMount: '/plugins/skills/list', path: '', method: 'GET', access: 'user',
     handler: async (req) => {
       if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
       const out = [];
-      for (const { dir, source } of [
-        { dir: bundledDir, source: 'bundled' },
-        { dir: userDir, source: 'user' },
-      ]) {
-        if (!dir || !existsSync(dir)) continue;
-        for (const { name, file } of enumerateSkills(dir)) {
-          const parsed = readSkillFile(file);
-          out.push({
-            name,
-            description: parsed.description,
-            source,
-            scope: source === 'bundled' ? 'bundled/system' : 'user-defined',
-            location: file,
-            active: true, // this plugin is serving the request, so it is enabled by definition
-            canDelete: source === 'user',
-            disableModelInvocation: parsed.disableModelInvocation,
-            version: parsed.version,
-            // User skills carry their body so the web editor can prefill an edit; bundled skills are
-            // read-only, so their (larger) content is left off the list payload.
-            ...(source === 'user' ? { content: parsed.content } : {}),
-          });
-        }
+      for (const { name, file } of existsSync(bundledDir) ? enumerateSkills(bundledDir) : []) {
+        out.push(describeSkill(name, file, 'bundled', null));
+      }
+      for (const { name, file } of existsSync(instanceDir) ? enumerateSkills(instanceDir) : []) {
+        if (isPersonalPath(file)) continue; // enumerated per account below
+        out.push(describeSkill(name, file, 'user', null));
+      }
+      // Own skills always; everyone else's only for an admin, who is the one person who has to be able to
+      // see (and clean up) what the instance actually loads.
+      const owners = req.auth.admin ? skillOwnerIds() : (req.auth.userId === null ? [] : [req.auth.userId]);
+      for (const ownerUserId of owners) {
+        const dir = userSkillsDir(ownerUserId);
+        if (!existsSync(dir)) continue;
+        for (const { name, file } of enumerateSkills(dir)) out.push(describeSkill(name, file, 'user', ownerUserId));
       }
       return jsonRes(out);
     },
   });
 
-  // Create (or overwrite) a user skill — the same file format CreateSkill writes. A name shadowing a
-  // bundled skill is refused: the plugin registers both copies and the duplicate would silently fight
-  // over the system prompt.
+  // Create (or overwrite) a skill in the caller's own set (or, for an admin, the instance set / another
+  // account's). A name shadowing a bundled or instance-wide skill is refused: both copies would register
+  // and silently fight over the same slot in the system prompt.
   ctx.registerApiRoute({
-    rootMount: '/plugins/skills', path: '', method: 'POST', access: 'admin',
+    rootMount: '/plugins/skills', path: '', method: 'POST', access: 'user',
     handler: async (req) => {
       if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
+      const target = resolveTarget(req);
+      if (!target.ok) return jsonRes({ error: target.invalid ? 'invalid owner' : 'forbidden' }, target.invalid ? 400 : 403);
       let b;
       try { b = await req.json(); } catch { b = null; }
       const name = typeof b?.name === 'string' ? b.name.trim() : '';
@@ -170,24 +240,29 @@ export function register(ctx) {
       if (RESERVED_NAMES.has(name)) return jsonRes({ error: `"${name}" is reserved (it collides with a core /plugins route)` }, 400);
       if (description === '' || content.trim() === '') return jsonRes({ error: 'description and content must be non-empty' }, 400);
       if (skillFileIn(bundledDir, name)) return jsonRes({ error: `a bundled skill named "${name}" already exists` }, 400);
-      mkdirSync(userDir, { recursive: true });
-      writeFileSync(join(userDir, `${name}.md`), buildSkillBody(applyManagedFields({}, name, description, disableModelInvocation), content), 'utf-8');
+      if (target.owner !== null && skillFileIn(instanceDir, name)) {
+        return jsonRes({ error: `an instance-wide skill named "${name}" already exists` }, 400);
+      }
+      mkdirSync(target.dir, { recursive: true });
+      writeFileSync(join(target.dir, `${name}.md`), buildSkillBody(applyManagedFields({}, name, description, disableModelInvocation), content), 'utf-8');
       ctx.requestReload?.(); // skills feed the brain's system prompt — apply live
       return jsonRes({ ok: true }, 201);
     },
   });
 
-  // Edit a user skill (bundled skills are read-only). Partial: any of description/content/the
+  // Edit a skill (bundled skills are read-only). Partial: any of description/content/the
   // disable-model-invocation flag may be omitted to keep its current value. The flag toggle lets an
   // operator hide a skill from progressive disclosure while leaving `/skill:name` invocation intact.
   ctx.registerApiRoute({
-    rootMount: '/plugins/skills/:name', path: '', method: 'PATCH', access: 'admin',
+    rootMount: '/plugins/skills/:name', path: '', method: 'PATCH', access: 'user',
     handler: async (req) => {
       if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
       const name = req.params.name ?? '';
       if (!NAME_RE.test(name)) return jsonRes({ error: 'invalid skill name' }, 400);
       if (skillFileIn(bundledDir, name)) return jsonRes({ error: 'bundled skills cannot be edited' }, 400);
-      const file = skillFileIn(userDir, name);
+      const target = resolveTarget(req);
+      if (!target.ok) return jsonRes({ error: target.invalid ? 'invalid owner' : 'forbidden' }, target.invalid ? 400 : 403);
+      const file = skillFileIn(target.dir, name);
       if (!file) return jsonRes({ error: 'unknown skill' }, 404);
       let b;
       try { b = await req.json(); } catch { b = null; }
@@ -207,19 +282,21 @@ export function register(ctx) {
   });
 
   ctx.registerApiRoute({
-    rootMount: '/plugins/skills/:name', path: '', method: 'DELETE', access: 'admin',
+    rootMount: '/plugins/skills/:name', path: '', method: 'DELETE', access: 'user',
     handler: async (req) => {
       if (req.path !== '') return jsonRes({ error: 'not found' }, 404);
       const name = req.params.name ?? '';
       if (!NAME_RE.test(name)) return jsonRes({ error: 'invalid skill name' }, 400);
       if (skillFileIn(bundledDir, name)) return jsonRes({ error: 'bundled skills cannot be deleted' }, 400);
-      const file = skillFileIn(userDir, name);
+      const target = resolveTarget(req);
+      if (!target.ok) return jsonRes({ error: target.invalid ? 'invalid owner' : 'forbidden' }, target.invalid ? 400 : 403);
+      const file = skillFileIn(target.dir, name);
       if (!file) return jsonRes({ error: 'unknown skill' }, 404);
       unlinkSync(file);
       // A directory-form skill leaves its folder behind; drop it if now empty, but keep it (with any
       // references/scripts support files) if something remains.
       const parent = dirname(file);
-      if (parent !== userDir) { try { rmdirSync(parent); } catch { /* not empty → keep */ } }
+      if (parent !== target.dir) { try { rmdirSync(parent); } catch { /* not empty → keep */ } }
       ctx.requestReload?.();
       return jsonRes({ ok: true });
     },
@@ -230,42 +307,58 @@ export function register(ctx) {
   // `/skill:name` on its own. This plugin only LOADS skills and offers the admin write tools below.
   ctx.registerTool(defineTool({
     name: 'CreateSkill', label: 'Create skill',
-    description: 'Create (or overwrite) a reusable markdown skill. It is applied live: available in your system prompt from the next message onward. Admin only.',
+    description: 'Create (or overwrite) a reusable markdown skill. It is applied live: available in your system prompt from the next message onward. Personal by default (only you see it); scope "instance" shares it with every session and is admin only.',
     parameters: Type.Object({
       name: Type.String({ description: 'kebab-case identifier, e.g. deploy-checklist' }),
       description: Type.String({ description: 'One line: when to use this skill' }),
       content: Type.String({ description: 'The skill body (markdown instructions)' }),
+      scope: Type.Optional(Type.String({ description: '"personal" (default, yours only) or "instance" (everyone, admin only)' })),
     }),
     execute: async (_id, p) => {
       try {
-        adminOnly();
+        const me = callerId();
+        // A turn with no account behind it (cron, an unlinked sender) has no personal set to write to, so
+        // it can only mean the instance one — which is admin-only, exactly as this tool has always been.
+        const wantsInstance = p.scope === 'instance' || me === null;
+        if (wantsInstance) adminOnly();
+        const dir = wantsInstance ? instanceDir : userSkillsDir(me);
         if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
+        // Refuse rather than shadow: a personal skill with an instance skill's name would register twice
+        // and the two would fight over the same slot in the prompt.
+        if (!wantsInstance && skillFileIn(instanceDir, p.name)) {
+          return ok(`Error: an instance-wide skill named "${p.name}" already exists — edit that one, or pick another name.`);
+        }
+        if (skillFileIn(bundledDir, p.name)) return ok(`Error: a bundled skill named "${p.name}" already exists.`);
         const body = `---\nname: ${p.name}\ndescription: ${p.description.replaceAll('\n', ' ')}\n---\n\n${p.content}\n`;
-        writeFileSync(join(userDir, `${p.name}.md`), body, 'utf-8');
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, `${p.name}.md`), body, 'utf-8');
         // Apply live: the host reloads plugins once the current turn settles (respawning the session), so
         // the new skill is in the available-skills block from the next message — no restart needed.
         ctx.requestReload?.();
-        return ok(`Skill "${p.name}" saved. It is available from your next message.`);
+        return ok(`Skill "${p.name}" saved (${wantsInstance ? 'instance-wide' : 'personal'}). It is available from your next message.`);
       } catch (e) { return fail(e); }
     },
   }));
 
   ctx.registerTool(defineTool({
     name: 'ListSkills', label: 'List skills',
-    description: 'List available skills (bundled + user-created).',
+    description: 'List the skills available to you (bundled, instance-wide, and your own).',
     parameters: Type.Object({}),
     execute: async () => {
       try {
+        const me = callerId();
         const rows = [];
-        for (const { dir, source, tag } of [
-          { dir: bundledDir, source: 'elowen-plugin:skills', tag: 'bundled' },
-          { dir: userDir, source: 'elowen-user:skills', tag: 'user' },
-        ]) {
-          for (const s of loadSkills(dir, source)) {
-            const flags = s.disableModelInvocation ? ', /skill only' : '';
-            rows.push(`- ${s.name} (${tag}${flags}) — ${s.description}`);
+        const add = (skills, tag) => {
+          for (const sk of skills) {
+            const flags = sk.disableModelInvocation ? ', /skill only' : '';
+            rows.push(`- ${sk.name} (${tag}${flags}) — ${sk.description}`);
           }
-        }
+        };
+        add(loadSkills(bundledDir, 'elowen-plugin:skills'), 'bundled');
+        add(loadSkills(instanceDir, 'elowen-user:skills').filter((sk) => !isPersonalPath(sk.filePath)), 'instance');
+        // Only the caller's own personal skills — this tool has no admin gate, so it must not become a
+        // way to enumerate what other people keep.
+        if (me !== null) add(loadSkills(userSkillsDir(me), 'elowen-user:skills'), 'personal');
         return ok(rows.length ? rows.join('\n') : 'No skills found.');
       } catch (e) { return fail(e); }
     },
@@ -273,22 +366,34 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DeleteSkill', label: 'Delete skill',
-    description: 'Delete a user-created skill by name (bundled skills cannot be deleted). Admin only.',
+    description: 'Delete one of your own skills by name (bundled skills cannot be deleted; deleting an instance-wide skill is admin only).',
     parameters: Type.Object({ name: Type.String() }),
     execute: async (_id, p) => {
       try {
-        adminOnly();
         if (!NAME_RE.test(p.name)) return ok('Error: invalid skill name.');
+        const me = callerId();
         // Resolve via the loader so BOTH forms are deletable: a flat `<name>.md` (unlink the file) and a
-        // `<name>/SKILL.md` directory skill (remove the whole skill root). Guard the resolved path stays
-        // inside userDir so a crafted frontmatter name can never point the delete outside it.
-        const skill = loadSkills(userDir, 'elowen-user:skills').find((s) => s.name === p.name);
-        if (!skill) return ok(`Error: no user skill named "${p.name}".`);
+        // `<name>/SKILL.md` directory skill (remove the whole skill root). Personal first — an instance
+        // skill of the same name cannot exist (writes refuse it), so the order only decides which dir is
+        // searched first, not which of two copies is hit.
+        const personalDir = me === null ? null : userSkillsDir(me);
+        let dir = null;
+        let skill = personalDir ? loadSkills(personalDir, 'elowen-user:skills').find((sk) => sk.name === p.name) : undefined;
+        if (skill) dir = personalDir;
+        else {
+          skill = loadSkills(instanceDir, 'elowen-user:skills')
+            .filter((sk) => !isPersonalPath(sk.filePath))
+            .find((sk) => sk.name === p.name);
+          if (skill) { adminOnly(); dir = instanceDir; }
+        }
+        if (!skill || !dir) return ok(`Error: no skill named "${p.name}" that you can delete.`);
         const isDirForm = basename(skill.filePath).toLowerCase() === 'skill.md';
         const target = isDirForm ? dirname(skill.filePath) : skill.filePath;
-        const base = resolve(userDir);
+        // Guard the resolved path stays inside the dir we chose, so a crafted frontmatter name can never
+        // point the delete outside it.
+        const base = resolve(dir);
         const abs = resolve(target);
-        if (abs !== base && !abs.startsWith(base + sep)) return ok('Error: skill path is outside the user skills directory.');
+        if (abs !== base && !abs.startsWith(base + sep)) return ok('Error: skill path is outside the skills directory.');
         if (abs === base) return ok('Error: refusing to delete the skills root.');
         if (isDirForm && statSync(abs).isDirectory()) rmSync(abs, { recursive: true, force: true });
         else unlinkSync(abs);

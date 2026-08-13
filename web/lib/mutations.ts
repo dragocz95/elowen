@@ -329,7 +329,7 @@ export function useDeleteCronJob() {
 export function useCreatePluginSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (skill: { name: string; description: string; content: string; disableModelInvocation?: boolean }) => elowenClient.createPluginSkill(skill),
+    mutationFn: (skill: { name: string; description: string; content: string; disableModelInvocation?: boolean; owner?: number | 'instance' | null }) => elowenClient.createPluginSkill(skill),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plugin-skills'] }),
   });
 }
@@ -340,11 +340,14 @@ export function useCreatePluginSkill() {
 export function useUpdatePluginSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { name: string; patch: { description?: string; content?: string; disableModelInvocation?: boolean } }) => elowenClient.updatePluginSkill(v.name, v.patch),
+    mutationFn: (v: { name: string; owner?: number | 'instance' | null; patch: { description?: string; content?: string; disableModelInvocation?: boolean } }) => elowenClient.updatePluginSkill(v.name, v.patch, v.owner),
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: ['plugin-skills'] });
       const prev = qc.getQueryData<PluginSkill[]>(['plugin-skills']);
-      qc.setQueryData<PluginSkill[]>(['plugin-skills'], (cur) => cur?.map((s) => (s.name === v.name ? { ...s, ...v.patch } : s)));
+      // Match on name AND owner: the same name can legitimately exist for two accounts, and an
+      // optimistic patch keyed on the name alone would flip a row belonging to someone else.
+      const targetOwner = v.owner === 'instance' || v.owner == null ? null : v.owner;
+      qc.setQueryData<PluginSkill[]>(['plugin-skills'], (cur) => cur?.map((s) => (s.name === v.name && (s.owner ?? null) === targetOwner ? { ...s, ...v.patch } : s)));
       return { prev };
     },
     onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['plugin-skills'], ctx.prev); },
@@ -354,7 +357,7 @@ export function useUpdatePluginSkill() {
 export function useDeletePluginSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => elowenClient.deletePluginSkill(name),
+    mutationFn: (v: { name: string; owner?: number | 'instance' | null }) => elowenClient.deletePluginSkill(v.name, v.owner),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plugin-skills'] }),
   });
 }

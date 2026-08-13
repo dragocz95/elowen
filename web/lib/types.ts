@@ -518,7 +518,10 @@ export interface DiscordChannelOption { id: string; name: string; type: 'channel
  *  `disableModelInvocation` mirrors PI's `disable-model-invocation` frontmatter flag — when set the
  *  skill is hidden from progressive disclosure and reachable only via `/skill:name`. `version` mirrors
  *  the optional `metadata.version` frontmatter field (null when the skill carries none). */
-export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user'; disableModelInvocation: boolean; version?: number | null; content?: string }
+/** One skill of the skills plugin. `owner` is the account it belongs to: null for a bundled or an
+ *  instance-wide skill (everyone's), a user id for a personal one. Two accounts may hold the same name,
+ *  so a write addresses a skill by name AND owner. */
+export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user'; owner: number | null; disableModelInvocation: boolean; version?: number | null; content?: string }
 /** One typed sub-agent of the subagent plugin (GET /plugins/agents/list). Built-in explore/plan ship
  *  with the install and are read-only; user agents are one `.md` each and can be edited or deleted.
  *  `tools` is the frontmatter spec: a preset keyword (`read-only`/`all`/`inherit`) or an explicit tool

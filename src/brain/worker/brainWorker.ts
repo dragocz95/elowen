@@ -208,7 +208,7 @@ export class BrainWorkerService {
         ? async (e) => (await toolHookBus.emitBlocking('tools.call.before', e)).deny
         : undefined,
     });
-    const skills = plugins?.skills ?? [];
+    const skills = plugins?.skillsFor(null) ?? [];
     const append = [...(plugins?.promptFragments ?? [])].filter((s) => s.length > 0);
 
     // The one control-plane capability a worker gets: closing ITS OWN task (id baked in) through the
