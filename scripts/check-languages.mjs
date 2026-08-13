@@ -208,6 +208,19 @@ for (const name of pluginNames) {
         errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/fields/web are read)`);
       }
     }
+    // Inside the `web` block only these four are read (pluginUi.ts localized()); anything else is a
+    // typo that silently translates nothing — the same orphan rule the top-level keys get.
+    for (const key of Object.keys(i18n.web ?? {})) {
+      if (!['label', 'nav', 'settings', 'strings'].includes(key)) {
+        errors.push(`plugin ${name} (${locale}): unknown web key "${key}" (only label/nav/settings/strings are read)`);
+      }
+    }
+    // The world's own name in the left menu (manifest `web.label`): coverage BOTH ways, like every other
+    // menu string. A plugin that declares a label and a locale that does not translate it renders the
+    // English word among translated menu entries; a label translated for a manifest that no longer
+    // declares one is an orphan.
+    if (manifest.web?.label && !i18n.web?.label) errors.push(`plugin ${name} (${locale}): missing web.label translation`);
+    if (i18n.web?.label && !manifest.web?.label) errors.push(`plugin ${name} (${locale}): web.label has no matching manifest web.label`);
     // Browser-UI menu labels (manifest `web` block): every override must name a declared nav route /
     // settings id, and every declared entry needs a translation — same rule as fields.
     const webNavRoutes = new Set((manifest.web?.nav ?? []).map((n) => n.route ?? ''));
