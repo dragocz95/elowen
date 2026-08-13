@@ -19,8 +19,12 @@ const DEPARTED = ['tasks', 'kanban', 'timeline', 'stats', 'editor', 'sessions', 
 // Both spellings reach the same place: `../modules/tasks/x` from web/lib, and the sibling-relative
 // `../tasks/x` a file inside web/modules uses. Missing the second one would let exactly the imports
 // this guard exists for pass unnoticed.
+//
+// The path may END at the module too — `from '../../modules/tasks'` resolves through its index, which
+// is how a whole departed module comes back in one line. Requiring the trailing slash matched the deep
+// imports and let that one straight through, so the closing group accepts either.
 const importsDeparted = (src: string) =>
-  DEPARTED.filter((m) => new RegExp(`from '[^']*(?:modules|\\.\\.)/${m}/`).test(src));
+  DEPARTED.filter((m) => new RegExp(`from '[^']*(?:modules|\\.\\.)/${m}(?:/|')`).test(src));
 
 /** The direction the host↔plugin contract fixes: the app hands a bundle a slice of itself through
  *  `web/lib/pluginUi.tsx`, and never reaches back the other way. Core growing an import into a plugin's
