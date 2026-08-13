@@ -37,6 +37,11 @@ export function registerCoreRoutes(app: Hono): void {
   // CLI detection the root page (`app/page.tsx`) reads to decide first-run routing: a fresh install
   // (`freshInstall.noConfigPersisted`) redirects to /onboarding, otherwise to /dash. Tie it to the setup
   // lane so an armed fresh-install run routes to onboarding exactly as the real daemon does.
+  //
+  // The real daemon serves this from the `agents` plugin (a root mount) and answers 503 while that
+  // plugin is off. The fake therefore impersonates an instance with it ON — which is what a fresh
+  // install is. It sits with the core routes because the lane it feeds is core first-run routing, not
+  // because the route is core.
   app.get('/integrations/cli-status', (c) => {
     const fresh = needsSetup();
     const result: CliDetectionResult = {

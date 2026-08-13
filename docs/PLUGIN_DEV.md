@@ -306,8 +306,10 @@ template had before an extraction keeps existing user overrides working.
 ### Controls (`registerControl`)
 
 A control is a typed, live runtime surface other daemon code resolves from the
-registry (e.g. `registry.control('agents')` hands the task routes the mission
-engine). Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
+registry (e.g. `registry.control('missions')` hands the task routes the mission
+engine). A key names the DOMAIN, never the plugin that happens to own it today —
+that is what lets another plugin take the domain over without a caller changing.
+Declare the shape in `KnownControls` (`src/plugins/api.ts`); the
 registry narrows to function-valued members, so accessor methods are the
 idiomatic shape — the first call can lazily build the runtime.
 

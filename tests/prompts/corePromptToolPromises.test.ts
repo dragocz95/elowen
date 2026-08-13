@@ -43,11 +43,21 @@ describe('core prompt templates', () => {
     }
 
     const promised: string[] = [];
+
+    // A promise made in prose ("use ElowenListTasks first") instructs the model exactly as hard as one
+    // in code font, so backticks alone are too narrow a net. But a one-word tool name IS an English
+    // word — "Read the relevant implementation", "Write progress to files", "Delegate to a sub-agent"
+    // open sentences in these very templates — so those count only when the text points at the tool:
+    // in backticks, or spelled out as "the Read tool". A name with a second capital (ElowenListTasks,
+    // AskUserQuestion, WebFetch) is never an English word and counts bare.
+    const referenced = (text: string, tool: string): boolean => {
+      const bare = new RegExp(`\\b${tool}\\b`);
+      const pointed = new RegExp(`\`${tool}\`|\\b${tool} tool\\b`);
+      return /^[A-Z][a-z]+$/.test(tool) ? pointed.test(text) : bare.test(text);
+    };
     for (const name of ALWAYS_RENDERED) {
       const text = readFileSync(join(repoRoot, 'prompts', `${name}.md`), 'utf8');
-      for (const m of text.matchAll(/`([A-Za-z][A-Za-z0-9_]*)`/g)) {
-        if (owned.has(m[1]!)) promised.push(`${name}.md: ${m[1]}`);
-      }
+      for (const tool of owned) if (referenced(text, tool)) promised.push(`${name}.md: ${tool}`);
     }
     expect(promised).toEqual([]);
   });
