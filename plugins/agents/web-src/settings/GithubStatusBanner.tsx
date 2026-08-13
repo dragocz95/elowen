@@ -24,8 +24,9 @@ export function GithubStatusBanner() {
   const { hooks, api } = runtime();
   const s = hooks.usePluginStrings('agents');
   const [data, setData] = useState<GithubAuthStatus | null>(null);
-  const detail = hooks.usePluginDetail('agents');
-  const configReadAt = detail.dataUpdatedAt;
+  // Structural sharing keeps the identity of an unchanged read, so this re-probes exactly when the
+  // stored config actually differs — a saved token — and not on every background refetch.
+  const storedConfig = hooks.usePluginDetail('agents').data;
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +34,7 @@ export function GithubStatusBanner() {
       .then((d) => { if (alive) setData(d as GithubAuthStatus); })
       .catch(() => { /* probe unavailable — the section renders without the banner */ });
     return () => { alive = false; };
-  }, [api, configReadAt]);
+  }, [api, storedConfig]);
 
   if (!data) return null;
 
