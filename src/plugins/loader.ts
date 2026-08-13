@@ -234,6 +234,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
               plugin: name, file: webPath, hash,
               requiresApiVersion: manifest.web.requiresApiVersion ?? 1,
               nav: manifest.web.nav ?? [], settings: manifest.web.settings ?? [],
+              ...(manifest.web.label ? { label: manifest.web.label } : {}),
               ...(manifest.web.strings ? { strings: manifest.web.strings } : {}),
               ...(Object.keys(webI18n).length > 0 ? { i18n: webI18n } : {}),
             });

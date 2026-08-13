@@ -49,6 +49,7 @@
   "web": {
     "entry": "web/index.js",
     "requiresApiVersion": 1,
+    "label": "Work",
     "nav": [
       {
         "label": "Tasks",

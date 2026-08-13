@@ -1,6 +1,7 @@
 {
   "description": "Sledování úkolů: pracovní doména — úkoly, epiky a fáze, jejich graf závislostí, koncové body plánování a přeplánování a snímky spotřeby na úkol, spolu s nástroji řídicí roviny, kterými je agent ovládá. Vyčleněno z jádra Elowenu na platformu pluginů; vypnutím se sledování úkolů vypne úplně (a s ním i mise, které na úkolech stojí), zatímco chat, paměť, projekty a zbytek agenta fungují dál.",
   "web": {
+    "label": "Práce",
     "nav": {
       "tasks": "Úkoly",
       "kanban": "Kanban",

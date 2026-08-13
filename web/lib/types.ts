@@ -281,6 +281,9 @@ export interface PluginUiListing {
   name: string;
   url: string;
   apiVersion: number;
+  /** Name of the plugin's world in the main navigation (manifest `web.label`, localized). Absent = the
+   *  world borrows its first page's name. */
+  label?: string;
   nav: { label: string; icon?: string; route?: string }[];
   settings: { id: string; label: string; icon?: string }[];
   /** Localized flat view strings for the bundle (manifest `web.strings` merged with the locale's

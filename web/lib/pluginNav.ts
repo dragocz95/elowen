@@ -26,7 +26,9 @@ export function pluginNavEntries(listing: PluginUiListing[]): NavEntry[] {
     return [{
       id: `plugin-${p.name}`,
       href: first.href,
-      label: first.label,
+      // A plugin contributing several peer pages names its own world; without a name the world borrows
+      // the first page's, which then reads as if that page stood over its siblings.
+      label: p.label ?? first.label,
       icon: pluginLucideIcon(first.icon),
       activeRoutes: [base],
       subItems: pages.length > 1

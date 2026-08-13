@@ -67,6 +67,25 @@ describe('pluginNavEntries', () => {
     expect(entries[0]!.subItems).toBeUndefined();
   });
 
+  it('lets a plugin name its own world instead of borrowing its first page name', () => {
+    // The work plugin contributes Tasks, Kanban, Timeline and Stats as peers. Without its own name the
+    // rail would file all four under "Úkoly", which reads as if that page stood over its siblings.
+    const [world] = pluginNavEntries([
+      {
+        name: 'work', url: '/plugins/work/web/x.js', apiVersion: 1, label: 'Práce', settings: [],
+        nav: [{ label: 'Úkoly', route: 'tasks' }, { label: 'Kanban', route: 'kanban' }],
+      },
+    ]);
+    expect(world!.label).toBe('Práce');
+    expect(world!.href).toBe('/p/work/tasks');            // the face is still the first page
+    expect(world!.subItems?.map((s) => s.label)).toEqual(['Úkoly', 'Kanban']);
+    // a plugin without a name of its own keeps borrowing the first page's
+    const [borrowed] = pluginNavEntries([
+      { name: 'editor', url: '/plugins/editor/web/x.js', apiVersion: 1, settings: [], nav: [{ label: 'Editor', route: '' }] },
+    ]);
+    expect(borrowed!.label).toBe('Editor');
+  });
+
   it('keeps the explicit settings address when a plugin has more than one section', () => {
     const entries = pluginNavEntries([
       {

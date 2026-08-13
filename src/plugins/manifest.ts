@@ -108,6 +108,10 @@ export interface PluginManifest {
     entry: string;
     /** The window.ElowenUiRuntime major the bundle needs; an unsupported one renders a placeholder. */
     requiresApiVersion?: number;
+    /** Name of the plugin's WORLD in the main navigation — the group its pages hang under. Without it
+     *  the world borrows the first page's name, which reads wrong for a plugin contributing several
+     *  peer pages ("Úkoly" standing over Kanban and Statistics). Overridable per locale like the rest. */
+    label?: string;
     nav?: { label: string; icon?: string; route?: string }[];
     settings?: { id: string; label: string; icon?: string }[];
     /** Flat English view strings for the bundle (labels, hints), keyed freely by the plugin. Locale
@@ -181,6 +185,7 @@ const ManifestSchema = Type.Object({
   web: Type.Optional(Type.Object({
     entry: Type.String({ minLength: 1 }),
     requiresApiVersion: Type.Optional(Type.Number()),
+    label: Type.Optional(Type.String({ minLength: 1 })),
     nav: Type.Optional(Type.Array(Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
