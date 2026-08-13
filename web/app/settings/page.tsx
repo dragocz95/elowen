@@ -22,10 +22,10 @@ import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart } fro
 import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
-import { isPluginSettingsSectionId, pluginSettingsSections } from '../../modules/settings/pluginSections';
-import { PluginSettingsPanel } from '../../modules/settings/PluginSettingsPanel';
+import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
+import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
@@ -73,19 +73,16 @@ const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'br
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
-function SettingsPanel({ id, active, visited, orbital, children }: {
+function SettingsPanel({ id, active, visited, children }: {
   id: string;
   active: string;
   visited: ReadonlySet<string>;
-  /** Force the constellation layout for a section the core category list does not name — a
-   *  plugin-contributed one that declared `layout: 'orbital'` in its manifest. */
-  orbital?: boolean;
   children: ReactNode;
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
     <Activity mode={id === active ? 'visible' : 'hidden'}>
-      <MotionReveal data-settings-panel={id} data-constellation={(orbital ?? ORBITAL_CATEGORIES.has(id)) ? '' : undefined}>
+      <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
         <SettingsDocument>{children}</SettingsDocument>
       </MotionReveal>
     </Activity>
@@ -125,6 +122,7 @@ export default function SettingsPage() {
   // `?cat=<section>`. Switching flips the state directly (so the view changes instantly) AND rewrites
   // the URL (so F5 / share / the sidebar highlight agree).
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [category, setCategoryState] = usePersistentState<string>('elowen.settings.category', 'system', isSectionId);
   const [visitedCategories, setVisitedCategories] = useState<Set<string>>(() => new Set([category]));
   // Keyed by DECK SECTION id, not by core category: a plugin-contributed section renders inside this
@@ -141,13 +139,17 @@ export default function SettingsPage() {
   // daemon from every other settings tab.
   const logFiles = useLogFiles(category === 'data');
   const isValidCat = (c: string | null): c is string => !!c && isSectionId(c);
-  // A remembered/linked plugin section whose plugin is gone (disabled, uninstalled) falls back to
-  // `system` once the listing is loaded — otherwise the deck would render headerless empty space.
-  const pluginSections = pluginSettingsSections(pluginUi.data ?? []);
+  // Settings is core-only: a plugin's settings section is a page of that plugin's world, and showing it
+  // here as well put the same surface in two places at once. Remembered categories and old links still
+  // arrive with a `plugin:` id, so they are forwarded to that page rather than dropped on the floor —
+  // and a section whose plugin is gone (disabled, uninstalled) falls back to `system`.
   useEffect(() => {
     if (!pluginUi.data || !isPluginSettingsSectionId(category)) return;
-    if (!pluginSettingsSections(pluginUi.data).some((s) => s.id === category)) setCategoryState('system');
-  }, [pluginUi.data, category, setCategoryState]);
+    setCategoryState('system'); // never leave the deck remembering a category it can no longer render
+    const parsed = parsePluginSettingsSectionId(category);
+    const entry = parsed && pluginUi.data.find((p) => p.name === parsed.plugin);
+    if (parsed && entry?.settings.some((s) => s.id === parsed.settingId)) router.replace(pluginSectionHref(entry, parsed.settingId));
+  }, [pluginUi.data, category, setCategoryState, router]);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
   const urlCat = searchParams.get('cat');
@@ -363,12 +365,9 @@ export default function SettingsPage() {
     data: t.settings.dataSectionHint,
     system: t.settings.systemSectionHint,
   };
-  // Core sections first, in their fixed order; plugin-contributed sections append after them (labels
-  // arrive localized from the daemon listing, so no `t.settings` entry exists for them).
-  const deckSections = [
-    ...SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] })),
-    ...pluginSections.map(({ id, icon, label }) => ({ id, icon, label })),
-  ];
+  // Core sections, in their fixed order. Plugins do not appear here: each owns a world in the main
+  // navigation and its settings sections are pages of that world.
+  const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] }));
   const diagnostics = system.data?.diagnostics;
 
   return (
@@ -721,12 +720,6 @@ export default function SettingsPage() {
             <SettingsState tone="danger">{t.settings.cleanupConfirmDesc}</SettingsState>
           </SettingsGroup>
         </SettingsPanel>
-
-        {pluginSections.map((section) => (
-          <SettingsPanel key={section.id} id={section.id} active={category} visited={visitedCategories} orbital={section.orbital}>
-            <PluginSettingsPanel plugin={section.plugin} settingId={section.settingId} sectionId={section.id} onSaveState={reportSaveState} />
-          </SettingsPanel>
-        ))}
 
       </SpatialControlDeck>
       </div>

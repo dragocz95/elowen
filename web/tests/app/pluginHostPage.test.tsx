@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { useEffect } from 'react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { createWrapper } from '../test-utils';
 import PluginHostPage from '../../app/p/[plugin]/[[...rest]]/page';
+import { en } from '../../lib/i18n/dictionaries/en';
 import type { PluginUiRegistration } from '../../lib/pluginUi';
 
 const route = vi.hoisted(() => ({ plugin: 'skills', rest: [] as string[] }));
@@ -71,6 +73,27 @@ describe('plugin host route', () => {
     expect(page!.contains(screen.getByTestId('section'))).toBe(true);
     expect(seen).toContain('page');
     expect(global.document.title).toContain('Skills');
+  });
+
+  // Settings is core-only, so a page IS where a section lives now — and a section autosaves. The
+  // indicator (with the Retry a failed save needs) used to come from the Settings deck header; on a page
+  // the route owes it, or a failed save is invisible and unretryable. An orbital section has no header
+  // of its own to fall back on, which is what makes this the only channel.
+  it('renders a section\'s reported save state, retry included', async () => {
+    route.rest = ['settings', 'skills'];
+    const retry = vi.fn();
+    const FailingSection = ({ onSaveState }: { onSaveState?: (s: 'error', r?: () => void) => void }) => {
+      useEffect(() => { onSaveState?.('error', retry); }, [onSaveState]);
+      return <div data-testid="section">section</div>;
+    };
+    registration.value = { pages: {}, settings: { skills: FailingSection } } as unknown as PluginUiRegistration;
+    mount();
+    await waitFor(() => expect(screen.getByTestId('section')).toBeInTheDocument());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(en.common.saveFailed);
+    fireEvent.click(screen.getByRole('button', { name: en.common.retry }));
+    expect(retry).toHaveBeenCalled();
   });
 
   // `/p/skills/settings/skills` repeats the plugin's name back at the reader, so the bare route resolves

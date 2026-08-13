@@ -1,11 +1,13 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Blocks, Settings2 } from 'lucide-react';
 import { ModuleShell } from '../../../../components/shell/ModuleShell';
 import { WorkspacePage } from '../../../../components/ui/WorkspacePrimitives';
 import { ModuleHeader } from '../../../../components/ui/ModuleHeader';
+import { AutoSaveStatus } from '../../../../components/ui/AutoSaveStatus';
+import type { SaveStatus } from '../../../../lib/useAutoSaveStatus';
 import { MotionReveal } from '../../../../components/ui/Motion';
 import { Button } from '../../../../components/ui/Button';
 import { EmptyState } from '../../../../components/ui/states';
@@ -29,6 +31,11 @@ export default function PluginHostPage() {
   const { t, locale } = useTranslation();
   const listing = usePluginUi(locale);
   const [registration, setRegistration] = useState<PluginUiRegistration | null | undefined>(undefined);
+  // A settings section autosaves and reports the outcome to whoever hosts it. In the Settings deck that
+  // was the deck header; a section reached as a page has no other place to say that a save failed — and
+  // an orbital section has no header of its own to fall back on.
+  const [save, setSave] = useState<{ status: SaveStatus; retry?: () => void }>({ status: 'idle' });
+  const reportSaveState = useCallback((status: SaveStatus, retry?: () => void) => { setSave({ status, retry }); }, []);
 
   // Plugin bundles navigate through the host's SPA router while this route is mounted.
   useEffect(() => { setPluginNavigate((href) => router.push(href)); }, [router]);
@@ -82,7 +89,7 @@ export default function PluginHostPage() {
       ? { Component: settingsComponent, params: { id: section.id } }
       : page;
     const rendered = match
-      ? <match.Component plugin={plugin} params={match.params} rest={rest} surface="page" />
+      ? <match.Component plugin={plugin} params={match.params} rest={rest} surface="page" {...(settingsComponent && section ? { onSaveState: reportSaveState } : {})} />
       : <Placeholder text={strings.pageMissing} />;
     // A settings section is written for the Settings deck: the deck's panel supplies the document surface
     // its groups sit on, and the deck page supplies the masthead title and the page column. Reached
@@ -93,7 +100,9 @@ export default function PluginHostPage() {
             section, which on a page heads itself with components.PluginPageHeader above its own
             document surface — the header has to sit ABOVE that surface, so the host cannot supply it
             from out here. In the Settings deck the panel keeps supplying both. */}
-        <ModuleHeader title={section.label} icon={pluginLucideIcon(section.icon)} />
+        <ModuleHeader title={section.label} icon={pluginLucideIcon(section.icon)}>
+          <AutoSaveStatus status={save.status} onRetry={save.retry} />
+        </ModuleHeader>
         <MotionReveal>{rendered}</MotionReveal>
       </WorkspacePage>
     ) : rendered;
