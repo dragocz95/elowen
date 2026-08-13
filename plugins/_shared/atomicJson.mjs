@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, rmSync } from 'node:fs';
 
 /** Read and parse a JSON file. Returns `fallback` when the file does not exist yet (first run). When it
  *  exists but is not valid JSON, calls `onCorrupt(error)` — so the caller can LOG it — and still returns
@@ -22,6 +22,16 @@ export function readJsonSafe(file, fallback, onCorrupt) {
  *  swallowed into a false "saved" result. */
 export function writeJsonAtomic(file, value) {
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2));
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, 2));
+    renameSync(tmp, file);
+  } catch (e) {
+    // The temp name is unique per attempt, so ANY failure after the file appears orphans it forever, and
+    // a writer on a short interval turns one bad minute into a directory full of them. Both halves matter:
+    // a full disk leaves a zero-byte temp from the write (41 such files were found from one incident),
+    // a bad destination leaves a complete one from the rename. The throw still reaches the caller — the
+    // cleanup only stops a failure from accumulating on disk.
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }

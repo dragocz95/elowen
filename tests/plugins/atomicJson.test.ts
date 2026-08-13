@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync, mkdirSync } from 'node:fs';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { readJsonSafe, writeJsonAtomic } from '../../plugins/_shared/atomicJson.mjs';
 
@@ -54,6 +54,19 @@ describe('atomicJson', () => {
     }
     // Neither the destination nor its content changed — the interrupted write left no trace on it.
     expect(readFileSync(file, 'utf-8')).toBe(before);
+    expect(readdirSync(dir)).toEqual(['state.json']);
+  });
+
+  // The other half of a failed write: the temp file EXISTS by the time the rename fails. Its name is
+  // unique per attempt, so nothing ever reclaims it — a writer on a short interval turns one bad minute
+  // into a directory full of orphans (41 of them were found from a single incident).
+  it('a failed rename throws without orphaning the temp file it already wrote', () => {
+    const dir = freshDir();
+    const file = join(dir, 'state.json');
+    mkdirSync(file); // renaming a file ONTO a directory fails, after the temp write succeeded
+
+    expect(() => writeJsonAtomic(file, { bad: 2 })).toThrow();
+
     expect(readdirSync(dir)).toEqual(['state.json']);
   });
 });
