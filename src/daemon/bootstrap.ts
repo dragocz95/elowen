@@ -512,7 +512,6 @@ export async function buildApp(opts: BuildOpts) {
     eventProjectResolvers: pluginEventResolvers,
     get engine() { return missionsControl()?.engine(); },
     get missionGit() { return missionsControl()?.missionGit(); },
-    get detectClis() { return missionsControl()?.detectClis(); },
     get advisor() { return missionsControl()?.advisor(); },
     project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });

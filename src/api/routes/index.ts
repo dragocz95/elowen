@@ -4,7 +4,6 @@ import { registerAuthRoutes } from './auth.js';
 import { registerProjectRoutes } from './projects.js';
 import { registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
-import { registerIntegrationRoutes } from './integrations.js';
 import { registerConfigRoutes } from './config.js';
 import { registerPluginRoutes } from './plugins/index.js';
 import { registerUsageRoutes } from './usage.js';
@@ -25,7 +24,6 @@ export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerProjectRoutes(app, ctx);
   registerActivityRoutes(app, ctx);
   registerBrainRoutes(app, ctx);
-  registerIntegrationRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
   // BEFORE the admin plugin family: `/plugins/ui` must win over its `/plugins/:name` param route (Hono
   // matches in registration order), and the bundle route is user-authed while that family is admin.

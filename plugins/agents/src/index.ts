@@ -23,6 +23,7 @@ import { registerAsksApi } from './api/asks.js';
 import { registerApproveGateApi } from './api/approveGate.js';
 import { registerNotesApi } from './api/notes.js';
 import { registerSkillsApi } from './api/skills.js';
+import { registerIntegrationsApi } from './api/integrations.js';
 import { registerAdvisorApi } from './api/advisor.js';
 import { stripPrefix } from './lib/text.js';
 import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from './promptCatalog.js';
@@ -30,7 +31,6 @@ import { registerAgentsTools } from './tools.js';
 import { AGENTS_MCP_TOOLS } from './mcpTools.js';
 import { agentsPluginConfig } from './config.js';
 import { logger, setBaseLogger } from './lib/logger.js';
-import { detectClis } from './lib/cliDetection.js';
 import { MISSIONS_WITHOUT_TASKS, TaskDomainUnavailableError, gateRoutesOnTaskDomain } from './lib/taskDomain.js';
 
 export function register(ctx: PluginContext): void {
@@ -208,6 +208,9 @@ export function register(ctx: PluginContext): void {
   registerNotesApi(gated, rt);
   registerAdvisorApi(gated, rt);
   registerSkillsApi(ctx);
+  // `/integrations/*` — the agent-CLI probe and the GitHub auth posture. Ungated for the same reason
+  // as `/system/skills`: neither question is made of task rows.
+  registerIntegrationsApi(ctx, () => agentsPluginConfig(ctx.config, ctx.host.config()));
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);
@@ -241,8 +244,6 @@ export function register(ctx: PluginContext): void {
       ensureOnLogin: async (userId: number) => { await rt().advisor()?.ensureOnLogin(userId); },
       stop: async (userId: number) => { await rt().advisor()?.stop(userId); },
     }),
-    // Static — probing the agent CLIs' presence must not construct the runtime.
-    detectClis: () => detectClis,
     // Declared dependency: while no plugin owns the `tasks` domain this control does not resolve at all,
     // so core sees exactly what it sees when this plugin is disabled — mission reads degrade, mission
     // routes answer 503, the login advisor hook is skipped — instead of every accessor throwing into a

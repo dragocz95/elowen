@@ -907,13 +907,14 @@ export class ConfigStore {
     return s.apiKey ? { baseUrl: s.autopilot.apiUrl, apiKey: s.apiKey } : null;
   }
 
-  /** The GitHub token for mission PR automation. The agents plugin's config slice is the writable home
-   *  since config wave 2 (GithubSection saves there); the legacy top-level secret remains the fallback
-   *  for a pre-migration row (read-only runner window) and for rollback. */
-  ghToken(): string | null {
-    const s = this.read();
-    const slice = s.plugins.config['agents']?.['ghToken'];
-    return (typeof slice === 'string' && slice !== '') ? slice : s.ghToken;
+  /** The LEGACY top-level GitHub token — the pre-extraction home of the secret, kept read-only for a
+   *  pre-migration row (a runner opens the DB read-only and can load a plugin before the daemon's
+   *  one-shot copy has run) and for a lossless rollback. Deliberately does NOT consult any plugin's
+   *  config slice: the writable home since config wave 2 is the owning plugin's own slice, and the
+   *  plugin resolves slice-first with THIS as its fallback. Core reading into a named plugin's slice
+   *  would make the core the arbiter of a value it neither owns nor uses. */
+  legacyGhToken(): string | null {
+    return this.read().ghToken;
   }
 
   /** The full VAPID keypair (private included) for the daemon-side push sender — never serialized to

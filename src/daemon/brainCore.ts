@@ -545,10 +545,11 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         config: {
           get: () => {
             const c = config.get();
-            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers, brain: c.brain };
+            return { autopilot: c.autopilot, allowedExecs: c.allowedExecs, customModels: c.customModels, hiddenPresets: c.hiddenPresets, modelNotes: c.modelNotes, defaults: c.defaults, providers: c.providers, brain: c.brain };
           },
           autopilotRelay: () => config.autopilotRelay(),
-          ghToken: () => config.ghToken(),
+          hasSettings: () => config.hasSettings(),
+          legacyGhToken: () => config.legacyGhToken(),
         },
         relayClient: (cfg) => new RelayClient(cfg),
         git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },

@@ -91,7 +91,7 @@ describe('a control that declares the domain it is built on', () => {
   /** Every method KNOWN_CONTROL_METHODS.missions demands — the shape check must not be what fails here. */
   const fakeMissionsControl = (): PluginControl => Object.fromEntries(
     ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock',
-      'missions', 'liveTaskUsage', 'detectClis', 'advisor', 'onTaskClosed'].map((m) => [m, () => ({})]),
+      'missions', 'liveTaskUsage', 'advisor', 'onTaskClosed'].map((m) => [m, () => ({})]),
   ) as PluginControl;
 
   it('does not resolve while that domain has no owner', () => {

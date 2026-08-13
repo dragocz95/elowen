@@ -272,13 +272,13 @@ describe('ConfigStore PR-native config', () => {
     expect(got.autopilot.prVerifyCommand).toBe('npm test');
     expect(got.autopilot.ghTokenSet).toBe(true);
     expect(JSON.stringify(got)).not.toContain('ghp_secret123');
-    expect(c.ghToken()).toBe('ghp_secret123');
+    expect(c.legacyGhToken()).toBe('ghp_secret123');
   });
   it('update without ghToken keeps the existing token', () => {
     const c = new ConfigStore(openDb(':memory:'));
     c.update({ autopilot: { ghToken: 'ghp_keepme' } });
     c.update({ autopilot: { prEnabled: true } });
-    expect(c.ghToken()).toBe('ghp_keepme');
+    expect(c.legacyGhToken()).toBe('ghp_keepme');
     expect(c.get().autopilot.ghTokenSet).toBe(true);
   });
   it('reads a legacy row without PR fields as defaults', () => {
@@ -440,16 +440,17 @@ describe('ConfigStore agents plugin config (F2 step 7)', () => {
     cs.migrateAgentsPluginConfigWave2();
     const slice = cs.pluginConfig('agents');
     expect(slice).toMatchObject({ pilotExec: 'claude:opus', overseerExec: 'claude:sonnet', reviewOnDone: true, tddMode: true, prEnabled: true, ghToken: 'gh-secret' });
-    // Lossless: the originals stay for rollback; the slice-aware ghToken() reads the slice first.
+    // Lossless: the originals stay for rollback, and legacyGhToken() keeps reporting the core row's
+    // own value — resolving the copy in the slice against it is the owning plugin's job.
     expect(cs.get().autopilot.pilotExec).toBe('claude:opus');
-    expect(cs.ghToken()).toBe('gh-secret');
+    expect(cs.legacyGhToken()).toBe('gh-secret');
     // Idempotent: a second run (and one after a slice edit) changes nothing.
     cs.update({ plugins: { config: { agents: { ...slice, pilotExec: 'codex:gpt' } } } });
     cs.migrateAgentsPluginConfigWave2();
     expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt');
   });
 
-  it('wave 2 never overwrites an existing slice value; ghToken() prefers the slice', () => {
+  it('wave 2 never overwrites an existing slice value; the core accessor stays on the core row', () => {
     const db2 = openDb(':memory:');
     const row = JSON.parse(OLD_ROW());
     row.autopilot = { ...row.autopilot, pilotExec: 'claude:opus' };
@@ -460,7 +461,8 @@ describe('ConfigStore agents plugin config (F2 step 7)', () => {
     cs.migrateAgentsPluginConfigWave2();
     expect(cs.pluginConfig('agents')['pilotExec']).toBe('codex:gpt'); // admin's own value wins
     expect(cs.pluginConfig('agents')['reviewOnDone']).toBe(false); // absent key copied (with its value)
-    expect(cs.ghToken()).toBe('slice-token'); // slice-first; legacy stays as fallback only
+    // Core answers with ITS row, not the plugin's slice: the plugin resolves slice-first against this.
+    expect(cs.legacyGhToken()).toBe('legacy-token');
   });
 
   it('an autopilot patch does NOT leak into plugins.config.agents (mirror removed)', () => {

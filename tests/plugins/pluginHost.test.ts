@@ -103,7 +103,7 @@ describe('ctx.host capability gates', () => {
   it('extraction seams (prompts/config/relayClient/git) carry their own grants', async () => {
     const seams: PluginHostWiring = {
       prompts: { render: (n) => `P:${n}`, rawTemplate: (n) => `T:${n}`, userOverride: (id, n) => (id === 1 ? `O:${n}` : null) },
-      config: { get: () => ({ autopilot: {} }) as never, autopilotRelay: () => ({ baseUrl: 'b', apiKey: 'k' }), ghToken: () => null },
+      config: { get: () => ({ autopilot: {} }) as never, autopilotRelay: () => ({ baseUrl: 'b', apiKey: 'k' }), hasSettings: () => true, legacyGhToken: () => null },
       relayClient: (cfg) => ({ model: cfg.model, decide: async () => ({ text: 'ok' }) }),
       git: {
         projectHead: async () => 'sha', projectRangeDiff: async () => [],

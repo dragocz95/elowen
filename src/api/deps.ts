@@ -1,6 +1,6 @@
 import type { TaskStoreContract, TaskUsageContract } from '../store/taskStoreContract.js';
 import type { TaskRefs } from '../store/taskRefs.js';
-import type { AgentsCliDetection, AgentsCliDetectionContext, AgentsExecSpec, AgentsMissionEngine, AgentsMissionGit, AgentsMissions } from '../plugins/api.js';
+import type { AgentsExecSpec, AgentsMissionEngine, AgentsMissionGit, AgentsMissions } from '../plugins/api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { ElowenEvent, EventBus } from './sse.js';
 import type { Clock } from '../shared/clock.js';
@@ -46,8 +46,6 @@ export interface ServerDeps {
   tmux: TmuxDriver; bus: EventBus;
   /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
   missionGit?: AgentsMissionGit;
-  /** Agent-CLI availability probe (agents plugin control). Absent → /integrations/cli-status 503s. */
-  detectClis?: (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
   project: { id: number; path: string };
   fallback: AgentsExecSpec;
   /** How spawned agents invoke the elowen CLI (`elowen` globally, or `node <path>` in a checkout). Same

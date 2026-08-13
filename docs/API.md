@@ -176,12 +176,12 @@ general-purpose public API.
 | Plugins | `/plugins` | Discovery, install/update, configuration, runtime contributions, plugin data, logs, hooks, cron, skills, Discord, WhatsApp, and MCP server controls |
 | Memory | `/memory` | Entries, categories, events, merge/trash/purge, retrieval, categorization, and embedding configuration/test |
 | Activity | `/activity`, `/notes` | Event history and project/mission notes |
-| Integrations | `/integrations/cli-status`, `/integrations/github-status` | Local integration readiness |
+| Integrations | `/integrations/cli-status`, `/integrations/github-status` | Local integration readiness (served by the `agents` plugin; 503 while it is disabled) |
 | OAuth models | `/brain/oauth` | Status, catalog, interactive flow, and disconnect for supported providers |
 
 For exact method/path pairs in these broader families, see the matching route
-modules: `plugins.ts`, `memory.ts`, `activity.ts`, and `integrations.ts` in
-`src/api/routes/`.
+modules: `plugins.ts`, `memory.ts` and `activity.ts` in `src/api/routes/`, and
+`api/integrations.ts` in `plugins/agents/src/`.
 
 There is no separate personality route family: Elowen now stores a single
 global personality body per user (free-form instructions appended to the

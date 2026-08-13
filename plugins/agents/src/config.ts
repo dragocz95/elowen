@@ -64,7 +64,9 @@ export function agentsPluginConfig(slice: Record<string, unknown>, host: PluginH
     reviewOnDone: own.reviewOnDone ?? autopilot.reviewOnDone,
     tddMode: own.tddMode ?? autopilot.tddMode,
     prEnabled: own.prEnabled ?? autopilot.prEnabled,
-    // Optional call: many test stubs satisfy only get() — a missing accessor means no legacy token.
-    ghToken: own.ghToken || (host.ghToken?.() ?? ''),
+    // Slice first, the core's legacy top-level secret only as the fallback — the plugin owns this
+    // choice, core no longer makes it. Optional call: many test stubs satisfy only get(), and a
+    // missing accessor means no legacy token.
+    ghToken: own.ghToken || (host.legacyGhToken?.() ?? ''),
   };
 }

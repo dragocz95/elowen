@@ -34,7 +34,9 @@
       "/tasks/:id/approve-gate",
       "/asks/pending",
       "/system/skills",
-      "/system/skills/install"
+      "/system/skills/install",
+      "/integrations/cli-status",
+      "/integrations/github-status"
     ],
     "tools": [
       "ElowenListMissions",

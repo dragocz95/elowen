@@ -482,11 +482,17 @@ export interface PluginHostPrompts {
  *  is the SANITIZED config (apiKeySet booleans, never key material); the secrets flow only through the
  *  purpose-built accessors, mirroring how the core threads them today. */
 export interface PluginHostConfig {
-  get(): Pick<ElowenConfig, 'autopilot' | 'allowedExecs' | 'modelNotes' | 'defaults' | 'providers' | 'brain'>;
+  get(): Pick<ElowenConfig, 'autopilot' | 'allowedExecs' | 'customModels' | 'hiddenPresets' | 'modelNotes' | 'defaults' | 'providers' | 'brain'>;
   /** The autopilot relay credentials (provider-bound or legacy apiUrl+key), or null when unconfigured. */
   autopilotRelay(): { baseUrl: string; apiKey: string } | null;
-  /** The GitHub token for mission PR automation, or null. */
-  ghToken(): string | null;
+  /** Whether a settings row was ever persisted — the "this install was configured at least once"
+   *  signal a plugin's onboarding surface reports. A neutral fact about the core's own row; what it
+   *  MEANS for a setup flow is the reading plugin's business. */
+  hasSettings(): boolean;
+  /** The LEGACY top-level GitHub token, or null. The value a plugin's own config slice does not carry
+   *  yet — a pre-migration row, or a rollback. A plugin that owns the secret resolves its slice FIRST
+   *  and uses this only as the fallback; core never picks between the two. */
+  legacyGhToken(): string | null;
 }
 
 /** The project-file trust boundary kept in core. Plugins may implement file operations, but every path
@@ -1009,9 +1015,6 @@ export interface MissionsDomainControl {
    *  worktree / project checkout). Null when the task is unknown or nothing is attributable; the core
    *  route then falls back to the recorded task_usage snapshot. */
   liveTaskUsage(): (taskId: string) => TokenUsage | null;
-  /** Agent-CLI availability probe (claude/codex/opencode + optional extras) behind
-   *  /integrations/cli-status — detection of the CLIs this plugin spawns belongs to it. */
-  detectClis(): (context?: AgentsCliDetectionContext) => Promise<AgentsCliDetection>;
   /** The tmux advisor lifecycle hooks core still drives: login autostart (fire-and-forget) and the
    *  user-deletion teardown. The /advisor routes themselves are plugin root mounts. */
   advisor(): AgentsAdvisorHooks;
@@ -1030,15 +1033,6 @@ export interface AgentsAdvisorHooks {
   ensureOnLogin(userId: number): Promise<void>;
   /** Stop the user's advisor AND persist advisor_autostart=false. */
   stop(userId: number): Promise<void>;
-}
-
-/** Setup-progress hints threaded into the CLI detection result (fresh-install signals). */
-export interface AgentsCliDetectionContext { configPersisted: boolean; hasApiKey: boolean; hasCustomSetup: boolean }
-/** Shape of the /integrations/cli-status payload (owned by the agents plugin's detector). */
-export interface AgentsCliDetection {
-  tools: { name: string; installed: boolean; functional: boolean; version: string | null; error: string | null }[];
-  summary: { allInstalled: boolean; allFunctional: boolean };
-  freshInstall: { noConfigPersisted: boolean; noApiKey: boolean; noCustomSetup: boolean };
 }
 
 /** The TASK DOMAIN, offered by whichever plugin owns it. Note the key this is registered under is the

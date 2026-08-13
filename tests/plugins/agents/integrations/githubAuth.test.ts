@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const spawnSync = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({ spawnSync }));
 
-import { detectGithubAuth } from '../../src/integrations/github/auth.js';
+import { detectGithubAuth } from '../../../../plugins/agents/src/integrations/githubAuth.js';
 
 /** Route the two probes (`which gh`, `gh auth status`) to canned results so each posture is isolated.
  *  Anything else (incl. vitest's own worker-pool spawnSync calls, which our module mock also intercepts)

@@ -12,7 +12,8 @@ const AUTOPILOT_DEFAULTS = {
 const hostWith = (autopilot: Partial<typeof AUTOPILOT_DEFAULTS>, ghToken: string | null = null): PluginHostConfig => ({
   get: () => ({ autopilot: { ...AUTOPILOT_DEFAULTS, ...autopilot } }) as never,
   autopilotRelay: () => null,
-  ghToken: () => ghToken,
+  hasSettings: () => true,
+  legacyGhToken: () => ghToken,
 });
 
 describe('agentsPluginConfig resolution', () => {

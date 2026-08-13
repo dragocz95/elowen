@@ -34,7 +34,8 @@ function fakeDeps() {
     config: {
       get: () => ({ autopilot: { overseerExec: '', pilotExec: '', model: 'm', overseerModel: '', tddMode: false, prEnabled: false, prBaseBranch: '', prVerifyCommand: '', prAutoOpen: false, prompt: '' }, allowedExecs: [], modelNotes: {}, defaults: {}, providers: {} }),
       autopilotRelay: () => null,
-      ghToken: () => null,
+      hasSettings: () => true,
+      legacyGhToken: () => null,
     } as unknown as PluginHostConfig,
     pluginConfig: () => ({ overseerModel: '', prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, ghToken: '' }),
     relayClient: () => ({ decide: async () => ({ text: '' }) }),

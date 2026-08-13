@@ -31,7 +31,8 @@ async function loadAgentsPlugin(logger?: PluginLogger) {
   const config = {
     get: () => ({ autopilot: { overseerExec: '', pilotExec: '', model: 'm', overseerModel: '', tddMode: false, prEnabled: false, prBaseBranch: '', prVerifyCommand: '', prAutoOpen: false, prompt: '' }, allowedExecs: [], modelNotes: {}, defaults: {}, providers: {} }),
     autopilotRelay: () => null,
-    ghToken: () => null,
+    hasSettings: () => true,
+    legacyGhToken: () => null,
   } as unknown as PluginHostConfig;
   const registry = await loadPlugins({
     dirs: [join(process.cwd(), 'plugins')],
