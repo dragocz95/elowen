@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, CalendarClock, Check, Clock, Hash, MessageSquare, PauseCircle, Plus, Timer, Trash2, X } from 'lucide-react';
+import { Activity, CalendarClock, Check, ChevronRight, Clock, Hash, MessageSquare, PauseCircle, Plus, Timer, Trash2, X } from 'lucide-react';
 import { runtime, type BrainModelOption, type CronJob, type DiscordChannelOption, type ManageSelectionItem } from './runtime';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
@@ -151,7 +151,8 @@ function CronJobRow({ job, persisted, channels, models, selected, onSelect, onCl
   const enabled = draft.enabled !== false;
   const validSchedule = draft.runAt ? true : utils.isValidSchedule(draft.schedule);
   const lastRunMs = utils.parseTs(job.lastRun);
-  const dest = draft.notifyChannelId ? channels.find((ch) => ch.id === draft.notifyChannelId)?.name ?? draft.notifyChannelId : null;
+  const destChannel = draft.notifyChannelId ? channels.find((ch) => ch.id === draft.notifyChannelId) : undefined;
+  const dest = draft.notifyChannelId ? destChannel?.name ?? draft.notifyChannelId : null;
   const name = draft.name || s.jobNew;
 
   return (
@@ -165,31 +166,40 @@ function CronJobRow({ job, persisted, channels, models, selected, onSelect, onCl
           />
         </C.DataTableCell>
         <C.DataTableCell>
-          <button type="button" onClick={onSelect} className="block w-full truncate text-left text-sm font-medium text-text">
-            {name}
+          <button type="button" onClick={onSelect} className="flex w-full min-w-0 items-center gap-2 text-left">
+            <span className="truncate text-sm text-text">{name}</span>
+            {!enabled ? <C.Badge tone="muted">{s.paused}</C.Badge> : null}
           </button>
         </C.DataTableCell>
-        <C.DataTableCell>
+        <C.DataTableCell priority="wide" className="whitespace-nowrap">
           <C.Badge tone={validSchedule ? 'default' : 'danger'}>
             {draft.runAt ? <CalendarClock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden /> : <Clock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />}
             {draft.schedule}
           </C.Badge>
         </C.DataTableCell>
-        <C.DataTableCell priority="wide">
-          <C.Badge>
-            <Hash size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />
-            {dest ?? s.channelDefault}
-          </C.Badge>
+        {/* Destination: one line that truncates, full name on hover. A channel or thread title can be far
+            longer than the column, and wrapping it pushed every other row out of alignment. */}
+        <C.DataTableCell priority="wide" title={dest ?? s.channelDefault} className="truncate text-xs text-text-muted">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">
+              {destChannel?.type === 'thread' ? <MessageSquare size={12} aria-hidden /> : <Hash size={12} aria-hidden />}
+            </span>
+            <span className={`truncate ${dest ? '' : 'italic text-text-muted/65'}`}>{dest ?? s.channelDefault}</span>
+          </span>
         </C.DataTableCell>
-        <C.DataTableCell priority="wide" className="text-tiny text-text-muted">
-          {lastRunMs != null ? (
-            <span title={new Date(lastRunMs).toLocaleString()}>{utils.compactElapsed(Date.now() - lastRunMs)}</span>
-          ) : '—'}
+        <C.DataTableCell priority="wide" title={lastRunMs != null ? new Date(lastRunMs).toLocaleString() : undefined} className="whitespace-nowrap text-xs text-text-muted">
+          <span className="flex items-center gap-1.5">
+            <Timer size={12} aria-hidden />
+            <span className={lastRunMs == null ? 'text-text-muted/60' : undefined}>
+              {lastRunMs != null ? utils.compactElapsed(Date.now() - lastRunMs) : '—'}
+            </span>
+          </span>
         </C.DataTableCell>
-        <C.DataTableCell className="flex items-center justify-end">
+        <C.DataTableCell className="flex items-center justify-end gap-1.5">
           {/* On the row, not only in the drawer: a save that fails after the user closed the editor still
               has to show itself — and still has to offer Retry. */}
           <C.AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
+          <ChevronRight size={15} aria-hidden className="shrink-0 text-text-muted/50 transition-colors group-hover:text-text" />
         </C.DataTableCell>
       </C.DataTableRow>
 
@@ -328,13 +338,13 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     if (isLoading || !data) return <C.LoadingState />;
     if (rows.length === 0) return <C.EmptyState title={s.empty} icon={Clock} />;
     return (
-      <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 10rem 10rem 4rem 2rem" compactColumns="2rem minmax(0,1fr) 2rem">
+      <C.DataTable ariaLabel={s.title} columns="2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem" compactColumns="2rem minmax(0,1fr) 5.5rem">
         <C.DataTableRow header>
           <C.DataTableCell header><span className="sr-only">{s.enabled}</span></C.DataTableCell>
           <C.DataTableCell header>{s.name}</C.DataTableCell>
-          <C.DataTableCell header>{s.schedule}</C.DataTableCell>
+          <C.DataTableCell header priority="wide">{s.schedule}</C.DataTableCell>
           <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell>
-          <C.DataTableCell header priority="wide">{s.colLastRun}</C.DataTableCell>
+          <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colLastRun}</C.DataTableCell>
           <C.DataTableCell header />
         </C.DataTableRow>
         {rows.map((job) => (
