@@ -281,14 +281,14 @@ export function TimelineView() {
 
   // Summary: count the in-window points by kind, with review split into approved/escalated.
   const stats = useMemo(() => {
-    const s = { task: 0, mission: 0, signal: 0, approved: 0, escalated: 0 };
+    const counts = { task: 0, mission: 0, signal: 0, approved: 0, escalated: 0 };
     for (const p of points) {
-      if (p.type === 'review') p.detail.startsWith('escalated') ? s.escalated++ : s.approved++;
-      else if (p.type === 'task') s.task++;
-      else if (p.type === 'mission') s.mission++;
-      else if (p.type === 'signal') s.signal++;
+      if (p.type === 'review') p.detail.startsWith('escalated') ? counts.escalated++ : counts.approved++;
+      else if (p.type === 'task') counts.task++;
+      else if (p.type === 'mission') counts.mission++;
+      else if (p.type === 'signal') counts.signal++;
     }
-    return s;
+    return counts;
   }, [points]);
 
   // Swimlanes: one track per target (agent/session/task), busiest-recent first.
