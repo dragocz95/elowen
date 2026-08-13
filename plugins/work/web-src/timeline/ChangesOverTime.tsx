@@ -4,7 +4,7 @@ import { runtime } from '../runtime';
 import type { CommitLogEntry } from '../types';
 
 const { Badge, Modal, PatchView, ProjectPill } = runtime().components;
-const { useProjectCommit, useProjectCommitFileDiff, useTranslation } = runtime().hooks;
+const { usePluginStrings, useProjectCommit, useProjectCommitFileDiff, useTranslation } = runtime().hooks;
 const { baseName, dirName, fileIcon } = runtime().utils;
 
 export type TimelineCommit = CommitLogEntry & { projectId: number };
@@ -79,6 +79,7 @@ function CommitRow({ c, multiProject, onOpen }: { c: TimelineCommit; multiProjec
  *  in the window. Each commit opens its full diff; files show how often and how heavily they moved. */
 export function ChangesOverTime({ commits, windowStart, now, multiProject }: { commits: TimelineCommit[]; windowStart: number; now: number; multiProject: boolean }) {
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   const [open, setOpen] = useState<TimelineCommit | null>(null);
   const [openFile, setOpenFile] = useState<{ path: string; hash: string; projectId: number } | null>(null);
   const detail = useProjectCommit(open ? open.projectId : null, open ? open.hash : null);
@@ -100,7 +101,7 @@ export function ChangesOverTime({ commits, windowStart, now, multiProject }: { c
 
   if (!commits.length) {
     return (
-      <div className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-text-muted">{t.timeline.noChangesInWindow}</div>
+      <div className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-text-muted">{s.tlNoChangesInWindow}</div>
     );
   }
 
@@ -109,7 +110,7 @@ export function ChangesOverTime({ commits, windowStart, now, multiProject }: { c
     <div className="grid gap-5 @3xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       {/* commit stream */}
       <section className="flex min-w-0 flex-col gap-2">
-        <h3 className="font-mono text-[11px] uppercase tracking-widest text-text-muted">{t.timeline.changesOverTime}</h3>
+        <h3 className="font-mono text-[11px] uppercase tracking-widest text-text-muted">{s.tlChangesOverTime}</h3>
         <div className="flex flex-col gap-2">
           {commits.map((c) => <CommitRow key={`${c.projectId}-${c.hash}`} c={c} multiProject={multiProject} onOpen={setOpen} />)}
         </div>
@@ -117,7 +118,7 @@ export function ChangesOverTime({ commits, windowStart, now, multiProject }: { c
 
       {/* most active files */}
       <section className="flex min-w-0 flex-col gap-2">
-        <h3 className="font-mono text-[11px] uppercase tracking-widest text-text-muted">{t.timeline.mostActiveFiles}</h3>
+        <h3 className="font-mono text-[11px] uppercase tracking-widest text-text-muted">{s.tlMostActiveFiles}</h3>
         <div className="flex flex-col gap-1.5">
           {topFiles.map((f) => {
             const Icon = fileIcon(f.path);

@@ -7,7 +7,7 @@ import { runtime, Link } from '../runtime';
 import type { RangePreset, SegmentedOption, Task, Tone } from '../types';
 
 const { Badge, ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar, DateRangeFilter, EmptyState, ErrorState, LoadingState, ModuleHeader, MotionLayoutItem, MotionPresence, PatchView, ProjectFilterPills, ProjectPill, Segmented, SpatialWorkspaceLayout, WorkspaceDetailRail, WorkspaceMetric } = runtime().components;
-const { useActivity, useEditorPlugin, usePersistentState, useProjectChanged, useProjectChanges, useProjectFilter, useProjects, useProjectsCommits, useTasks, useTranslation } = runtime().hooks;
+const { useActivity, useEditorPlugin, usePersistentState, usePluginStrings, useProjectChanged, useProjectChanges, useProjectFilter, useProjects, useProjectsCommits, useTasks, useTranslation } = runtime().hooks;
 const { DEFAULT_RANGE, inRange, isStoredRange, parseRange, parseTs, rangeWindowCapHours, serializeRange, TONE_TEXT } = runtime().utils;
 
 /** The Timeline offers only the rolling presets (no Today, no 90d, no custom picker). */
@@ -159,6 +159,7 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
  *  carry a project). Reuses the existing PatchView so diff rendering stays single-source. */
 function EventDetail({ point, display }: { point: AxisPoint; display: Display }) {
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   const Icon = eventIcon(point.type);
   const tone = markerTone(point.type, point.detail);
   const projectId = display.projectId;
@@ -182,7 +183,7 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
           </div>
           {taskId ? (
             <Link href={`/p/work/tasks?select=${encodeURIComponent(taskId)}`} className="inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text transition-colors hover:text-accent @sm:w-auto @sm:justify-start">
-              <ArrowUpRight size={14} aria-hidden />{t.timeline.openTask}
+              <ArrowUpRight size={14} aria-hidden />{s.tlOpenTask}
             </Link>
           ) : null}
         </div>
@@ -199,7 +200,7 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
 
         {editorEnabled && projectId ? (
           <div className="min-h-48 flex-1 overflow-hidden border-y border-border">
-            {changes.isLoading ? <LoadingState /> : <PatchView diff={changes.data?.diff ?? ''} empty={t.timeline.noChanges} />}
+            {changes.isLoading ? <LoadingState /> : <PatchView diff={changes.data?.diff ?? ''} empty={s.tlNoChanges} />}
           </div>
         ) : null}
       </div>
@@ -208,6 +209,7 @@ function EventDetail({ point, display }: { point: AxisPoint; display: Display })
 
 export function TimelineView() {
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   const { selectedProject, setProject } = useProjectFilter('elowen.timeline.project');
   const [filter, setFilter] = usePersistentState<string>('elowen.timeline.filter', 'all', ['all', 'task', 'mission', 'signal', 'review']);
   const [view, setView] = usePersistentState<string>('elowen.timeline.view', 'axis', ['axis', 'lanes']);
@@ -239,11 +241,11 @@ export function TimelineView() {
   const resolve = useMemo(() => (p: { type: string; target: string; projectId?: number | null }) => resolveDisplay(p, byId, byAgent, byLabel), [byId, byAgent, byLabel]);
 
   const FILTER_OPTIONS: SegmentedOption[] = [
-    { label: t.timeline.filterAll, value: 'all' },
-    { label: t.timeline.filterTasks, value: 'task' },
-    { label: t.timeline.filterMissions, value: 'mission' },
-    { label: t.timeline.filterSignals, value: 'signal' },
-    { label: t.timeline.filterReviews, value: 'review' },
+    { label: s.tlFilterAll, value: 'all' },
+    { label: s.tlFilterTasks, value: 'task' },
+    { label: s.tlFilterMissions, value: 'mission' },
+    { label: s.tlFilterSignals, value: 'signal' },
+    { label: s.tlFilterReviews, value: 'review' },
   ];
 
   const rawEvents = useMemo<AxisEvent[]>(
@@ -270,10 +272,10 @@ export function TimelineView() {
     return Math.min(rangeWindowCapHours(range, Date.now()), Math.max(1, Math.ceil(spanH)));
   }, [filteredEvents, range]);
   const windowLabel = windowHours < 36
-    ? t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)))
+    ? s.tlActivityHours.replace('{n}', String(Math.round(windowHours)))
     : range.preset === '7d'
-      ? t.timeline.activityWeek
-      : t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)));
+      ? s.tlActivityWeek
+      : s.tlActivityDays.replace('{n}', String(Math.round(windowHours / 24)));
 
   const { points, ticks } = useMemo(() => plotAxis(filteredEvents, Date.now(), windowHours), [filteredEvents, windowHours]);
 
@@ -318,20 +320,20 @@ export function TimelineView() {
       <ModuleHeader title={t.page.timeline} count={filteredEvents.length} icon={Activity} />
       <SpatialWorkspaceLayout
         hero={{
-          eyebrow: t.timeline.workspaceEyebrow,
+          eyebrow: s.tlWorkspaceEyebrow,
           title: t.page.timeline,
           count: filteredEvents.length,
-          description: t.timeline.workspaceIntro,
+          description: s.tlWorkspaceIntro,
           mascotState: q.isLoading ? 'saving' : q.isError ? 'error' : 'idle',
-          status: !q.isLoading && !q.isError ? <span className="workspace-status">{t.timeline.workspaceReady}</span> : undefined,
+          status: !q.isLoading && !q.isError ? <span className="workspace-status">{s.tlWorkspaceReady}</span> : undefined,
           metrics: <div className="contents" data-testid="timeline-summary">
-            <WorkspaceMetric label={t.timeline.filterTasks} value={stats.task} icon={Activity} />
-            <WorkspaceMetric label={t.timeline.filterMissions} value={stats.mission} icon={Columns3} />
-            <WorkspaceMetric label={t.timeline.approved} value={stats.approved} icon={CheckCircle2} />
-            <WorkspaceMetric label={t.timeline.escalated} value={stats.escalated} icon={AlertTriangle} />
+            <WorkspaceMetric label={s.tlFilterTasks} value={stats.task} icon={Activity} />
+            <WorkspaceMetric label={s.tlFilterMissions} value={stats.mission} icon={Columns3} />
+            <WorkspaceMetric label={s.tlApproved} value={stats.approved} icon={CheckCircle2} />
+            <WorkspaceMetric label={s.tlEscalated} value={stats.escalated} icon={AlertTriangle} />
           </div>,
         }}
-        navigation={{ sections: [{ id: 'axis', label: t.timeline.axis, icon: Activity }, { id: 'lanes', label: t.timeline.lanes, icon: Columns3 }], value: view, onChange: setView, ariaLabel: t.page.timeline }}
+        navigation={{ sections: [{ id: 'axis', label: s.tlAxis, icon: Activity }, { id: 'lanes', label: s.tlLanes, icon: Columns3 }], value: view, onChange: setView, ariaLabel: t.page.timeline }}
       >
         <ControlSurfaceDocument>
           <ControlSurfaceToolbar className="flex-wrap">
@@ -345,11 +347,11 @@ export function TimelineView() {
               <section className="min-w-0 rounded-lg border border-border/80 px-4 py-4">
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0" aria-hidden />{windowLabel}</div>
-                  {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}
+                  {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{s.tlMarkerHint}</span> : null}
                 </div>
                 {q.isLoading ? <ControlSurfaceState><LoadingState /></ControlSurfaceState>
-                  : q.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} /></ControlSurfaceState>
-                  : !hasData ? <ControlSurfaceState><EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} /></ControlSurfaceState>
+                  : q.isError ? <ControlSurfaceState tone="danger"><ErrorState message={s.tlLoadError} onRetry={() => q.refetch()} /></ControlSurfaceState>
+                  : !hasData ? <ControlSurfaceState><EmptyState title={s.tlEmpty} description={s.tlEmptyDescription} icon={Activity} /></ControlSurfaceState>
                   : <MotionPresence mode="wait">{view === 'lanes' ? (
                     <MotionLayoutItem key="lanes">
                       <div className="flex min-w-0 flex-col">
@@ -370,7 +372,7 @@ export function TimelineView() {
             </div>
 
             {picked ? (
-              <WorkspaceDetailRail label={t.timeline.detailTitle} closeLabel={t.common.close} onClose={() => setPicked(null)}>
+              <WorkspaceDetailRail label={s.tlDetailTitle} closeLabel={t.common.close} onClose={() => setPicked(null)}>
                 <EventDetail point={picked} display={resolve(picked)} />
               </WorkspaceDetailRail>
             ) : null}

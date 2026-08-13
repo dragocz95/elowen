@@ -12,7 +12,11 @@ ensurePluginUiRuntime();
 const { KanbanBoard } = await import('./KanbanBoard');
 import { ToastProvider } from '../../../../web/components/ui/Toast';
 import { createWrapper } from '../../../../web/tests/test-utils';
+import manifest from '../../elowen-plugin.json';
 import type { Task } from '../types';
+
+/** The plugin's own view copy, as production serves it through /plugins/ui. */
+const manifestStrings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
 
 const server = setupServer();
 beforeAll(() => server.listen());
@@ -49,6 +53,30 @@ describe('KanbanBoard', () => {
     // The open column header shows its count of 1 (task 'a').
     expect(within(screen.getByTestId('column-open')).getByText('1')).toBeTruthy();
     expect(screen.getByText('Alpha')).toBeTruthy();
+  });
+
+  // The column headers are the one COMPUTED read of the plugin's own strings (`s[col.labelKey]` over
+  // the COLUMNS table), so a labelKey that no manifest key answers renders a blank header and every
+  // assertion above still passes. Serving the REAL manifest strings is what ties the two together.
+  it('labels the columns from the plugin manifest strings', async () => {
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json(
+      [{ name: 'work', url: '/plugins/work/web/index.js', apiVersion: 1, nav: [], settings: [], strings: manifestStrings }],
+    )));
+    const { wrapper: W } = wrap();
+    render(<KanbanBoard tasks={tasks} onMove={() => {}} />, { wrapper: W });
+    // Read the column HEADER, not the column: a card's status badge carries the same word, so a
+    // query scoped only to the column would pass on the badge while the header itself stayed blank.
+    const columns: [string, string][] = [
+      ['open', 'kbColumnOpen'], ['in_progress', 'kbColumnInProgress'], ['blocked', 'kbColumnBlocked'],
+      ['closed', 'kbColumnClosed'], ['cancelled', 'kbColumnCancelled'],
+    ];
+    await waitFor(() => expect(screen.getByTestId('column-open').querySelector('header')?.textContent)
+      .toContain(manifestStrings.kbColumnOpen!));
+    for (const [id, key] of columns) {
+      const label = manifestStrings[key];
+      expect(label, `manifest is missing ${key}`).toBeTruthy();
+      expect(screen.getByTestId(`column-${id}`).querySelector('header')?.textContent).toContain(label!);
+    }
   });
 
   it('opens a regular card from Enter or Space', () => {

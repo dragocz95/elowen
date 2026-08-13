@@ -6,13 +6,14 @@ import { runtime } from '../runtime';
 import type { ContextMenuState, Task, TaskStatus } from '../types';
 
 const { ActionMenu, ConfirmDialog, ContextMenu, ProgressRibbon, ProjectPill } = runtime().components;
-const { useDeleteMission, useSessions, useSessionSignals, useToast, useTranslation } = runtime().hooks;
+const { useDeleteMission, usePluginStrings, useSessions, useSessionSignals, useToast, useTranslation } = runtime().hooks;
 const { epicLive, epicProgress } = runtime().utils;
 
 /** Collapsible epic (autopilot) container on the board — header with progress + aggregate live
  *  state; its phases stay hidden until expanded so the board isn't flooded with sub-tasks. */
 export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStatus, trueStatusLabel, onDropTask, dropTargetValid }: { epic: Task; phases: Task[]; expanded: boolean; onToggle: () => void; effectiveStatus?: TaskStatus; trueStatusLabel?: string; onDropTask?: (e: React.DragEvent) => void; dropTargetValid?: boolean }) {
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   const drop = useDropTarget(onDropTask, dropTargetValid);
   const sessions = useSessions();
   const signals = useSessionSignals();
@@ -29,7 +30,7 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
   // When an active mission virtualizes the epic into the 'In progress' column, surface the
   // true status (which stays 'open') in a title/tooltip so it's never hidden.
   const virtual = effectiveStatus === 'in_progress' && epic.status !== 'in_progress';
-  const titleText = virtual && trueStatusLabel ? t.kanban.trueStatusTooltip.replace('{status}', trueStatusLabel) : undefined;
+  const titleText = virtual && trueStatusLabel ? s.kbTrueStatusTooltip.replace('{status}', trueStatusLabel) : undefined;
 
   return (
     <div

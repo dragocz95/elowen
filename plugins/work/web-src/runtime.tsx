@@ -39,6 +39,10 @@ type TaggedCommit = CommitLogEntry & { projectId: number };
 interface WorkHooks {
   // --- app services -----------------------------------------------------------------------------
   useTranslation(): { t: LocaleDict; locale: string };
+  /** This plugin's own view copy (manifest `web.strings`, localized by the /plugins/ui listing).
+   *  What `useTranslation` returns is the copy SHARED with core surfaces; anything only these pages
+   *  render lives here, so core ships no strings for a page a disabled instance never opens. */
+  usePluginStrings(plugin: string): Record<string, string>;
   useToast(): { toast: (msg: string, tone?: 'ok' | 'error') => void };
   usePersistentState<T extends string>(key: string, initial: T, allowed: readonly T[] | ((raw: string) => boolean)): [T, (v: T) => void];
   /** The persisted project filter the built-in workspaces share, keyed by storage key. */

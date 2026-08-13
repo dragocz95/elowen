@@ -9,7 +9,7 @@ import { runtime } from '../runtime';
 import type { DateRange, Task } from '../types';
 
 const { Button, ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar, DateRangeFilter, ErrorState, LoadingState, ModuleHeader, MotionLayoutItem, MotionPresence, ProjectFilterPills, SpatialWorkspaceLayout, WorkspaceMetric } = runtime().components;
-const { useAllDeps, useMissions, usePersistentState, useProjectFilter, useSetTaskStatus, useTasks, useToast, useTranslation, useUpdateTask } = runtime().hooks;
+const { useAllDeps, useMissions, usePersistentState, usePluginStrings, useProjectFilter, useSetTaskStatus, useTasks, useToast, useTranslation, useUpdateTask } = runtime().hooks;
 const { inRange, isStoredRange, parseRange, serializeRange, taskBlockers } = runtime().utils;
 
 const KANBAN_DEFAULT_RANGE: DateRange = { preset: 'today', from: null, to: null };
@@ -23,6 +23,7 @@ export function KanbanPage() {
   const updateTask = useUpdateTask();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   // Remember board vs calendar across reloads (F5) until the user switches.
   const [view, setView] = usePersistentState<'board' | 'calendar'>('elowen.kanban.view', 'board', ['board', 'calendar']);
   // Date-range window, persisted as one serialized slot. Defaults to today.
@@ -76,12 +77,12 @@ export function KanbanPage() {
       <ModuleHeader title={t.page.kanban} count={filteredTasks.length} icon={KanbanSquare} />
       <SpatialWorkspaceLayout
         hero={{
-          eyebrow: t.kanban.workspaceEyebrow,
+          eyebrow: s.kbWorkspaceEyebrow,
           title: t.page.kanban,
           count: filteredTasks.length,
-          description: t.kanban.workspaceIntro,
+          description: s.kbWorkspaceIntro,
           mascotState: tasks.isLoading ? 'saving' : tasks.isError ? 'error' : 'idle',
-          status: !tasks.isLoading && !tasks.isError ? <span className="workspace-status">{t.kanban.workspaceReady}</span> : undefined,
+          status: !tasks.isLoading && !tasks.isError ? <span className="workspace-status">{s.kbWorkspaceReady}</span> : undefined,
           action: <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>,
           metrics: <>
             <WorkspaceMetric label={t.tasks.filterOpen} value={summary.open} icon={Columns3} />
@@ -90,7 +91,7 @@ export function KanbanPage() {
             <WorkspaceMetric label={t.tasks.filterClosed} value={summary.closed} icon={CheckCircle2} />
           </>,
         }}
-        navigation={{ sections: [{ id: 'board', label: t.kanban.board, icon: Columns3 }, { id: 'calendar', label: t.kanban.calendar, icon: CalendarRange }], value: view, onChange: (id) => setView(id as 'board' | 'calendar'), ariaLabel: t.page.kanban }}
+        navigation={{ sections: [{ id: 'board', label: s.kbBoard, icon: Columns3 }, { id: 'calendar', label: s.kbCalendar, icon: CalendarRange }], value: view, onChange: (id) => setView(id as 'board' | 'calendar'), ariaLabel: t.page.kanban }}
       >
         <ControlSurfaceDocument>
           <ControlSurfaceToolbar className="flex-wrap justify-end">

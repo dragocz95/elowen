@@ -5,7 +5,7 @@ import { runtime } from '../runtime';
 import type { Task } from '../types';
 
 const { AgentIdentityStrip, AgentStatusDot, Badge, ModelIcon, OutcomeBadge, ProjectPill, TaskContextLine } = runtime().components;
-const { useConfig, useSessions, useSessionSignal, useSessionStall, useTranslation } = runtime().hooks;
+const { useConfig, usePluginStrings, useSessions, useSessionSignal, useSessionStall, useTranslation } = runtime().hooks;
 const { formatTaskTime, statusTone, taskExec, taskSessionName } = runtime().utils;
 
 /** Enriched kanban card: model icon, live-state dot, agent identity, context line, outcome. */
@@ -25,7 +25,8 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
   /** Whether dropping the currently-dragged card onto THIS one would be a legal action. */
   dropTargetValid?: boolean;
 }) {
-  const { t, locale } = useTranslation();
+  const { locale } = useTranslation();
+  const s = usePluginStrings('work');
   const drop = useDropTarget(onDropTask, dropTargetValid);
   const { data: config } = useConfig();
   const sessions = useSessions();
@@ -66,7 +67,7 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
         <div className="flex items-start gap-2">
           <span className="min-w-0 flex-1 text-sm text-text">{task.title}</span>
           {blocked
-            ? <span className="live-dot shrink-0 text-danger" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-error) 50%, transparent)' }} title={t.kanban.blockedDeps}><Link2 size={13} aria-hidden /></span>
+            ? <span className="live-dot shrink-0 text-danger" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-error) 50%, transparent)' }} title={s.kbBlockedDeps}><Link2 size={13} aria-hidden /></span>
             : <span className="mt-1.5"><AgentStatusDot signal={signal} live={live} stall={stall.state} silenceSec={stall.silenceSec} /></span>}
         </div>
         <AgentIdentityStrip task={task} />

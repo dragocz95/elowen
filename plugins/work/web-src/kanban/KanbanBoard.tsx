@@ -10,19 +10,20 @@ import { runtime } from '../runtime';
 import type { Mission, Task, TaskStatus } from '../types';
 
 const { MotionLayout, MotionLayoutItem } = runtime().components;
-const { useTranslation } = runtime().hooks;
+const { usePluginStrings, useTranslation } = runtime().hooks;
 const { epicChildren, epicEffectiveStatus, phaseIds } = runtime().utils;
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
-  { status: 'open', labelKey: 'columnOpen', icon: Circle, color: 'var(--color-success)' },
-  { status: 'in_progress', labelKey: 'columnInProgress', icon: LoaderCircle, color: 'var(--color-warning)' },
-  { status: 'blocked', labelKey: 'columnBlocked', icon: Ban, color: 'var(--color-error)' },
-  { status: 'closed', labelKey: 'columnClosed', icon: CheckCircle2, color: 'var(--color-error)' },
-  { status: 'cancelled', labelKey: 'columnCancelled', icon: XCircle, color: 'var(--color-cancelled)' },
+  { status: 'open', labelKey: 'kbColumnOpen', icon: Circle, color: 'var(--color-success)' },
+  { status: 'in_progress', labelKey: 'kbColumnInProgress', icon: LoaderCircle, color: 'var(--color-warning)' },
+  { status: 'blocked', labelKey: 'kbColumnBlocked', icon: Ban, color: 'var(--color-error)' },
+  { status: 'closed', labelKey: 'kbColumnClosed', icon: CheckCircle2, color: 'var(--color-error)' },
+  { status: 'cancelled', labelKey: 'kbColumnCancelled', icon: XCircle, color: 'var(--color-cancelled)' },
 ];
 
 export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blockedBy, missions }: { tasks: Task[]; allTasks?: Task[]; onMove: (taskId: string, status: TaskStatus) => void; onSelect?: (t: Task) => void; onEdit?: (t: Task) => void; blockedBy?: Map<string, Task[]>; missions?: Mission[] }) {
   const { t } = useTranslation();
+  const s = usePluginStrings('work');
   const activeMissions = missions ?? [];
   // Build child map and phase set from the full, unfiltered task list so that epic rollup
   // status and progress are independent of any active date filter. Defaults to tasks so that
@@ -71,7 +72,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
         below render as siblings (outside this container) so their fixed positioning stays correct. */}
     <div className="@container flex gap-3 overflow-x-auto">
       {COLUMNS.map((col) => {
-        const colLabel = t.kanban[col.labelKey as keyof typeof t.kanban] as string;
+        const colLabel = s[col.labelKey] as string;
         const isDropTarget = dragOver === col.status;
         return (
         <div

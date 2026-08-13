@@ -87,6 +87,45 @@
         "icon": "BarChart3",
         "route": "stats"
       }
-    ]
+    ],
+    "strings": {
+      "kbBoard": "Board",
+      "kbCalendar": "Calendar",
+      "kbWorkspaceEyebrow": "Flow control",
+      "kbWorkspaceIntro": "Move work through execution states or schedule it on the shared calendar.",
+      "kbWorkspaceReady": "Board synchronized",
+      "kbColumnOpen": "Open",
+      "kbColumnInProgress": "In progress",
+      "kbColumnBlocked": "Blocked",
+      "kbColumnClosed": "Closed",
+      "kbColumnCancelled": "Cancelled",
+      "kbBlockedDeps": "Blocked by unfinished dependencies",
+      "kbTrueStatusTooltip": "True status: {status}",
+      "tlWorkspaceEyebrow": "Operational history",
+      "tlWorkspaceIntro": "Tasks, missions, reviews and agent signals aligned on one shared time axis.",
+      "tlWorkspaceReady": "Activity synchronized",
+      "tlDetailTitle": "Event detail",
+      "tlActivityWeek": "Activity / last week",
+      "tlActivityDays": "Activity / last {n} days",
+      "tlActivityHours": "Activity / last {n}h",
+      "tlLoadError": "Failed to load activity",
+      "tlEmpty": "No activity yet",
+      "tlEmptyDescription": "Events from the last 12 hours appear here.",
+      "tlFilterAll": "All",
+      "tlFilterTasks": "Tasks",
+      "tlFilterMissions": "Missions",
+      "tlFilterSignals": "Signals",
+      "tlFilterReviews": "Reviews",
+      "tlAxis": "Axis",
+      "tlLanes": "Lanes",
+      "tlApproved": "Approved",
+      "tlEscalated": "Escalated",
+      "tlNoChanges": "No working-tree changes",
+      "tlOpenTask": "Open task",
+      "tlMarkerHint": "Click an event for details and repo changes",
+      "tlChangesOverTime": "Changes over time",
+      "tlMostActiveFiles": "Most active files",
+      "tlNoChangesInWindow": "No commits in this window"
+    }
   }
 }
