@@ -11,6 +11,9 @@
  *  gone. Construction is LAZY: register() only registers, and the stores are built on first use, which
  *  keeps a sub-agent runner (which loads the plugin but never serves a request) from opening anything.
  */
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadSkillsFromDir } from '@earendil-works/pi-coding-agent';
 import type { PluginContext, TasksDomainControl } from '../../../src/plugins/api.js';
 import { WORK_MIGRATIONS } from './store/migrations.js';
 import { TaskStore } from './store/taskStore.js';
@@ -19,6 +22,11 @@ import { TaskUsageStore } from './store/taskUsageStore.js';
 import type { WorkDb } from './store/db.js';
 import { registerWorkTools } from './tools.js';
 import { WORK_MCP_TOOLS } from './mcpTools.js';
+
+/** Absolute path of the plugin's own skills dir. The compiled entry lives at `plugins/work/dist/…`,
+ *  the skill at `plugins/work/skills/` — one level up, so the same resolution works in the repo
+ *  checkout and in the packaged `dist/plugins/work` copy. */
+const WORK_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills');
 
 export function register(ctx: PluginContext): void {
   // Schema first: an ADOPTION of the grandfathered core tables — a no-op on every existing install,
@@ -52,6 +60,13 @@ export function register(ctx: PluginContext): void {
   // routes, so registering them touches no store — safe in the sub-agent runner too.
   registerWorkTools(ctx);
   for (const tool of WORK_MCP_TOOLS) ctx.registerMcpTool(tool);
+
+  // The skill that teaches the model to USE those tools ships with them. Left in the core skills
+  // plugin it would keep telling the model to call ElowenCreateTask on an instance where nothing
+  // answers — and a model that believes a missing tool should be there works around its absence.
+  for (const skill of loadSkillsFromDir({ dir: WORK_SKILLS_DIR, source: 'elowen-plugin:work' }).skills) {
+    ctx.registerSkill(skill);
+  }
 
   ctx.logger.info('work plugin loaded (task domain: tables, stores, Elowen* task tools)');
 }
