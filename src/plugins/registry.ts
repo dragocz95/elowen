@@ -295,9 +295,10 @@ export class PluginRegistry {
     return undefined;
   }
 
-  /** Resolve a ROOT-mounted plugin route for an absolute request path — longest mount prefix at a
-   *  segment boundary wins, exact method beats method-less (same rules as {@link apiRoute}). Returns
-   *  the owning mount too, so the dispatcher can apply its core-conflict skip set per mount. */
+  /** Resolve a ROOT-mounted plugin route for an absolute request path — the mount matching the MOST
+   *  leading segments wins (literal mounts and ':param' pattern mounts compete on the same scale), and
+   *  exact method beats method-less (same rules as {@link apiRoute}). Returns the owning mount too, so
+   *  the dispatcher can apply its core-conflict skip set per mount. */
   rootApiRoute(path: string, method: string): { mount: string; plugin: string; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params: Record<string, string> } | undefined {
     const clean = '/' + path.replace(/^\/+|\/+$/g, '');
     const pick = (mount: string, remainder: string) => {
@@ -306,19 +307,19 @@ export class PluginRegistry {
       const route = entry.routes.find((r) => r.method === method) ?? entry.routes.find((r) => r.method === undefined);
       return route ? { mount, plugin: entry.plugin, handler: route.handler, access: route.access, remainder } : undefined;
     };
-    const exact = pick(clean, '');
-    if (exact) return { ...exact, params: {} };
-    let at = clean.lastIndexOf('/');
-    while (at > 0) {
-      const hit = pick(clean.slice(0, at), clean.slice(at + 1));
-      if (hit) return { ...hit, params: {} };
-      at = clean.lastIndexOf('/', at - 1);
-    }
-    // Pattern mounts (':param' segments, e.g. '/tasks/:id/ask'): match the path's leading segments
-    // against each pattern; the LONGEST match wins, literals over params on a tie. Checked after the
-    // literal mounts so a literal mount always beats a pattern of the same shape.
     const parts = clean.slice(1).split('/');
-    let best: { mount: string; remainder: string; params: Record<string, string>; literals: number; len: number } | undefined;
+    // Every mount that could serve this path, ranked. Depth first: a mount naming more of the path is
+    // the more specific owner, whether it names those segments literally or with ':param'. Ranking the
+    // two KINDS separately (all literals, then all patterns) would let a one-segment literal mount
+    // swallow a three-segment pattern of another plugin — the shape two plugins take when they share a
+    // prefix (work's '/tasks' beside agents' '/tasks/:id/ask'). Literal beats pattern only at EQUAL
+    // depth, where the literal genuinely describes the path more precisely.
+    const candidates: { mount: string; remainder: string; params: Record<string, string>; literals: number; depth: number }[] = [];
+    for (let depth = parts.length; depth >= 1; depth--) {
+      const mount = '/' + parts.slice(0, depth).join('/');
+      if (!this.rootApiRoutes.has(mount)) continue;
+      candidates.push({ mount, remainder: parts.slice(depth).join('/'), params: {}, literals: depth, depth });
+    }
     for (const mount of this.rootApiRoutes.keys()) {
       if (!mount.includes('/:')) continue;
       const msegs = mount.slice(1).split('/');
@@ -333,12 +334,14 @@ export class PluginRegistry {
         else { ok = false; break; }
       }
       if (!ok) continue;
-      if (best && (msegs.length < best.len || (msegs.length === best.len && literals <= best.literals))) continue;
-      best = { mount, remainder: parts.slice(msegs.length).join('/'), params, literals, len: msegs.length };
+      candidates.push({ mount, remainder: parts.slice(msegs.length).join('/'), params, literals, depth: msegs.length });
     }
-    if (best) {
-      const hit = pick(best.mount, best.remainder);
-      if (hit) return { ...hit, params: best.params };
+    // Deepest first; on a tie the mount whose segments are literal wins. A candidate whose mount has no
+    // route for THIS method is skipped, so a shallower mount still serves the methods it declared.
+    candidates.sort((a, b) => b.depth - a.depth || b.literals - a.literals);
+    for (const candidate of candidates) {
+      const hit = pick(candidate.mount, candidate.remainder);
+      if (hit) return { ...hit, params: candidate.params };
     }
     return undefined;
   }

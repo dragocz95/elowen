@@ -11,11 +11,23 @@ let pluginRoots: string[] = [];
 afterEach(() => { for (const p of pluginRoots) rmSync(p, { recursive: true, force: true }); pluginRoots = []; });
 
 /** An on-disk plugin exercising ROOT-mounted routes: a mount with sub-paths and per-route access,
- *  a deliberate collision with the core '/tasks' surface, and an SSE stream. `marker` distinguishes
- *  plugin generations for the reload-idempotence test. */
+ *  a deliberate collision with the core '/tasks' surface, and an SSE stream. A SECOND plugin mounts a
+ *  deeper pattern under the first one's prefix — the shape two plugins take when they share a path
+ *  family. `marker` distinguishes plugin generations for the reload-idempotence test. */
 function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider; warnings: string[] } {
   const root = mkdtempSync(join(tmpdir(), 'plugin-root-'));
   pluginRoots.push(root);
+  const neighbour = join(root, 'deeply');
+  mkdirSync(neighbour, { recursive: true });
+  writeFileSync(join(neighbour, 'elowen-plugin.json'), JSON.stringify({
+    name: 'deeply', version: '1.0.0', apiVersion: '1', description: 'deeper mount under a neighbour prefix', entry: 'index.mjs',
+    provides: { apiRoutes: ['/rooty/:id/deep'] },
+  }));
+  writeFileSync(join(neighbour, 'index.mjs'), `
+    export function register(ctx){
+      ctx.registerApiRoute({ rootMount: '/rooty/:id/deep', path: '', method: 'GET', access: 'user', handler: async (req) => ({ body: { deep: req.params.id } }) });
+    }
+  `);
   const dir = join(root, 'rooty');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
@@ -44,7 +56,7 @@ function rootPluginProvider(marker = 'gen1'): { provider: PluginRegistryProvider
   `);
   const warnings: string[] = [];
   const provider = new PluginRegistryProvider(() => loadPlugins({
-    dirs: [root], enabled: ['rooty'], logger: { info() {}, warn(m: string) { warnings.push(m); }, error() {} },
+    dirs: [root], enabled: ['rooty', 'deeply'], logger: { info() {}, warn(m: string) { warnings.push(m); }, error() {} },
   }));
   return { provider, warnings };
 }
@@ -110,6 +122,21 @@ describe('root-mounted plugin API routes', () => {
     const icon = await app.request('/plugins/rooty/icon', auth(token));
     expect(icon.status).toBe(404); // the CORE icon route answered (no plugin dirs wired here)
     expect(await icon.json()).toEqual({ error: 'unknown plugin' });
+  });
+
+  it('a deeper pattern mount wins over a shallower literal one — even across plugins', async () => {
+    // Two plugins sharing a path family: 'rooty' owns the family root ('/rooty', which also serves its
+    // own sub-paths through the remainder), 'deeply' owns one deeper pattern inside it
+    // ('/rooty/:id/deep'). The specific mount must win, or the family owner silently swallows every
+    // path its neighbour declared and answers them as an unknown sub-path of its own root.
+    const { provider } = rootPluginProvider();
+    const { app, token } = await makeTestApp({ extra: { plugins: provider } });
+    const deep = await app.request('/rooty/abc/deep', auth(token));
+    expect(deep.status).toBe(200);
+    expect(await deep.json()).toEqual({ deep: 'abc' });
+    // The family root still serves everything the deeper mount does not name, remainder and all.
+    const remainder = await app.request('/rooty/abc/other', auth(token));
+    expect(await remainder.json()).toMatchObject({ remainder: 'abc/other' });
   });
 
   it('a plugin reload swaps handlers without stacking a second registration (single response)', async () => {
