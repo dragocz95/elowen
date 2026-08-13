@@ -9,7 +9,7 @@ export function DiffEditorPane({ path, original, modified }: { path: string; ori
     <MonacoDiffEditor
       key={path}
       height="100%"
-      theme="elowen-oled"
+      theme={runtime().utils.editorTheme()}
       beforeMount={runtime().utils.defineEditorThemes}
       language={langOf(path)}
       original={original}

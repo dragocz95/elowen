@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
-import { defineEditorThemes } from '../../lib/monaco/oledTheme';
+import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -421,7 +421,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               language={f.language ?? 'plaintext'}
               value={String(values[f.key] ?? '')}
               onChange={(v) => set(f.key, v ?? '')}
-              theme="elowen-oled"
+              theme={editorTheme()}
               beforeMount={defineEditorThemes}
               options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', folding: false }}
             />
@@ -434,7 +434,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               language="markdown"
               value={String(values[f.key] ?? '')}
               onChange={(v) => set(f.key, v ?? '')}
-              theme="elowen-oled"
+              theme={editorTheme()}
               beforeMount={defineEditorThemes}
               options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
             />

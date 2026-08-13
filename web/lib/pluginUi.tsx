@@ -85,7 +85,7 @@ import { useAutoSaveStatus } from './useAutoSaveStatus';
 import { useMobile } from './useMobile';
 import { baseName } from './filePath';
 import { copyText } from './clipboard';
-import { defineEditorThemes } from './monaco/oledTheme';
+import { defineEditorThemes, editorTheme } from './monaco/oledTheme';
 import { useTranslation } from './i18n';
 import { usePersistentState } from './usePersistentState';
 import { useProjectFilter } from './useProjectFilter';
@@ -339,7 +339,9 @@ export function ensurePluginUiRuntime(): void {
       compactElapsed, parseTs, isValidSchedule, baseName, copyText,
       // The Monaco theme is shared, not copied: the host embeds editors of its own (logs, personality,
       // plugin config) and a plugin bundle carrying its own colour table would drift from the UI.
-      defineEditorThemes,
+      // The picker travels with it: a bundle that registered both tables but named one itself would
+      // stay on the dark editor under a light skin.
+      defineEditorThemes, editorTheme,
       // Task/mission/date/formatting helpers the moved work views compose. `elowenClient` is the app's
       // one HTTP client — a bundle narrows it to the calls it makes rather than shipping a second one.
       taskBlockers, taskSessionName, taskAgentName, taskElapsed, taskElapsedMs, taskStartedMs, phaseDetails,

@@ -16,7 +16,7 @@ vi.mock('../../../lib/mutations', () => ({
 }));
 // Monaco is browser-only and irrelevant to the states under test — stand it in for a marker div.
 vi.mock('../../../lib/monaco/monacoLoader', () => ({ MonacoEditor: () => <div data-testid="monaco" /> }));
-vi.mock('../../../lib/monaco/oledTheme', () => ({ defineEditorThemes: () => {} }));
+vi.mock('../../../lib/monaco/oledTheme', () => ({ defineEditorThemes: () => {}, editorTheme: () => 'elowen-oled' }));
 
 import { LogsModal } from '../../../modules/settings/LogsModal';
 

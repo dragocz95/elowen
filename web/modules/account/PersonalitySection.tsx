@@ -5,7 +5,7 @@ import { useMyCliSettings } from '../../lib/queries';
 import { useSaveMyCliSettings } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
-import { defineEditorThemes } from '../../lib/monaco/oledTheme';
+import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
@@ -97,7 +97,7 @@ export function PersonalitySection({ onSaveState }: { onSaveState?: (section: st
               language="markdown"
               value={personalityBody}
               onChange={(v) => setPersonalityBody(v ?? '')}
-              theme="elowen-oled"
+              theme={editorTheme()}
               beforeMount={defineEditorThemes}
               height="100%"
               options={{ ...EDIT_OPTIONS, placeholder: t.personality.bodyPlaceholder, ariaLabel: t.personality.bodyLabel }}

@@ -9,7 +9,7 @@ import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState, LoadingState, ErrorState } from '../../components/ui/states';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
-import { defineEditorThemes } from '../../lib/monaco/oledTheme';
+import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { useLogFiles, useLogFile } from '../../lib/queries';
 import { useDeleteLogFile, useDeleteAllLogFiles } from '../../lib/mutations';
@@ -230,7 +230,7 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                   key={selected}
                   height="100%"
                   language="plaintext"
-                  theme="elowen-oled"
+                  theme={editorTheme()}
                   beforeMount={defineEditorThemes}
                   onMount={onEditorMount}
                   options={{

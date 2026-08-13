@@ -43,6 +43,8 @@ interface EditorRuntime {
     copyText(text: string): Promise<boolean>;
     /** The host's single Monaco colour table — see the note on the host side for why it is shared. */
     defineEditorThemes(monaco: { editor: { defineTheme(name: string, theme: unknown): void } }): void;
+    /** Which of those tables matches the app's current design — a skin may run the UI light. */
+    editorTheme(): string;
   };
   navigate(href: string): void;
 }

@@ -1,6 +1,8 @@
-/** Elowen's Monaco theme: a true-black OLED canvas with Ember interaction colors and semantic
- *  syntax/status colors. The application is intentionally dark-only, so registering a parallel
- *  light theme would be dead configuration and risks the embedded editors drifting from the UI. */
+/** Elowen's Monaco themes. The built-in design is a true-black OLED canvas with Ember interaction
+ *  colors ('elowen-oled'); a light SKIN flips the whole app to a paper canvas, so a matching light
+ *  editor ('elowen-paper') registers alongside it and `editorTheme()` picks by the document's
+ *  resolved color-scheme — the one signal a skin already controls, so no component ever needs to
+ *  know skin names. */
 type Monaco = { editor: { defineTheme: (n: string, t: unknown) => void } };
 
 export function defineEditorThemes(monaco: Monaco) {
@@ -42,4 +44,50 @@ export function defineEditorThemes(monaco: Monaco) {
       'diffEditor.removedLineBackground': '#ef444414',
     },
   });
+  monaco.editor.defineTheme('elowen-paper', {
+    base: 'vs', inherit: true,
+    rules: [
+      { token: '', foreground: '0f1c2e' },
+      { token: 'comment', foreground: '8a97ab', fontStyle: 'italic' },
+      { token: 'string', foreground: '15803d' },
+      { token: 'number', foreground: 'b45309' },
+      { token: 'keyword', foreground: '2563eb' },
+      { token: 'type', foreground: '2563eb' },
+      { token: 'delimiter', foreground: '5c6b80' },
+      { token: 'tag', foreground: '2563eb' },
+    ],
+    colors: {
+      'editor.background': '#ffffff',
+      'editor.foreground': '#0f1c2e',
+      'editorLineNumber.foreground': '#b6c2d4',
+      'editorLineNumber.activeForeground': '#2563eb',
+      'editor.lineHighlightBackground': '#f4f7fc',
+      'editor.lineHighlightBorder': '#00000000',
+      'editor.selectionBackground': '#2563eb2e',
+      'editor.inactiveSelectionBackground': '#2563eb1a',
+      'editor.selectionHighlightBackground': '#2563eb17',
+      'editorCursor.foreground': '#2563eb',
+      'editor.findMatchBackground': '#2563eb3d',
+      'editor.findMatchHighlightBackground': '#2563eb1f',
+      'editorGutter.background': '#ffffff',
+      'editorWidget.background': '#ffffff',
+      'editorWidget.border': '#e3e8f1',
+      'input.background': '#f8fafd',
+      'dropdown.background': '#ffffff',
+      'editorIndentGuide.background1': '#eef2f8',
+      'minimap.background': '#ffffff',
+      'diffEditor.insertedTextBackground': '#15803d22',
+      'diffEditor.removedTextBackground': '#dc262622',
+      'diffEditor.insertedLineBackground': '#15803d12',
+      'diffEditor.removedLineBackground': '#dc262612',
+    },
+  });
+}
+
+/** The Monaco theme matching the app's current design: paper when the active skin resolved the
+ *  document to a light color-scheme, the OLED theme otherwise (including SSR, where the dark
+ *  default matches the built-in design). */
+export function editorTheme(): 'elowen-oled' | 'elowen-paper' {
+  if (typeof document === 'undefined') return 'elowen-oled';
+  return getComputedStyle(document.documentElement).colorScheme === 'light' ? 'elowen-paper' : 'elowen-oled';
 }
