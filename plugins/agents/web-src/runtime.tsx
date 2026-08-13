@@ -124,6 +124,7 @@ interface AgentsComponents {
   PluginPageFrame: AnyComponent; SettingsRow: AnyComponent; BackendPicker: AnyComponent;
   ProviderPicker: AnyComponent; ModelCatalogField: AnyComponent; ChoiceField: AnyComponent;
   AutoSaveStatus: AnyComponent; ProviderLogo: AnyComponent;
+  WorkspaceDetailRail: AnyComponent; ConstellationScope: AnyComponent;
 }
 
 interface AgentsRuntime {

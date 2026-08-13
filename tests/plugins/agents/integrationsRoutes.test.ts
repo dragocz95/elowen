@@ -1,11 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { join } from 'node:path';
-import { makeTestApp } from '../../helpers/testApp.js';
+import { makeTestApp, agentsTestHost } from '../../helpers/testApp.js';
 import { openPluginTablesDb } from '../../helpers/pluginTablesDb.js';
+import { openWorkDb } from '../../helpers/workDb.js';
 import { createServer } from '../../../src/api/server.js';
 import { loadPlugins } from '../../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../../src/plugins/pluginsProvider.js';
+import { makePluginDb } from '../../../src/store/pluginDb.js';
 import { MissionStore } from '../../../plugins/agents/src/store/missionStore.js';
+import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
+import { Readiness } from '../../../plugins/work/src/store/readiness.js';
 import { EventBus } from '../../../src/api/sse.js';
 import { FakeClock } from '../../../src/shared/clock.js';
 import { ConfigStore } from '../../../src/store/configStore.js';
@@ -33,6 +37,39 @@ function discoveredButDisabled() {
       dirs: [join(process.cwd(), 'plugins')], enabled: [], logger: { info() {}, warn() {}, error() {} },
     })),
     pluginDirs: [join(process.cwd(), 'plugins')],
+  });
+  return { app, token: users.issueToken(admin.id) };
+}
+
+/** A daemon whose agents plugin is LOADED with `slice` as its own config (plugins.config.agents). The
+ *  slice is handed to a plugin at load — a config PATCH reloads the plugin, which is how an edit
+ *  applies live — so seeing a slice value means loading with it, exactly as the daemon does. */
+function appWithPluginConfig(slice: Record<string, unknown>) {
+  const db = openWorkDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const config = new ConfigStore(db);
+  config.update({ plugins: { config: { agents: slice } } });
+  const users = new UserStore(db);
+  const admin = users.create('admin', 'pw');
+  const tasks = new TaskStore(db);
+  const readiness = new Readiness(db);
+  const projects = new ProjectStore(db);
+  const bus = new EventBus();
+  const app = createServer({
+    tasks, missions: new MissionStore(db), bus, tmux: null as never,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+    clock: new FakeClock(0), config, users, projects,
+    plugins: new PluginRegistryProvider(() => loadPlugins({
+      dirs: [join(process.cwd(), 'plugins')], enabled: ['agents', 'work'],
+      logger: { info() {}, warn() {}, error() {} },
+      delegatedTurnsOutOfProcess: () => false,
+      pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
+      publishEvent: (e) => bus.publish(e),
+      subscribeEvents: (fn) => bus.subscribe(fn),
+      // The daemon reads these from the settings row; the harness passes the same slices through.
+      config: config.get().plugins?.config ?? { agents: slice },
+      host: agentsTestHost({ db, tasks, readiness, config, projects, users }),
+    })),
   });
   return { app, token: users.issueToken(admin.id) };
 }
@@ -92,8 +129,7 @@ describe('GET /integrations/github-status (agents plugin root mount)', () => {
   });
 
   it('reads the token from the plugin config slice and never returns its value', async () => {
-    const { app, token, deps } = await makeTestApp();
-    deps.config.update({ plugins: { config: { agents: { ghToken: 'ghp_slice_secret' } } } });
+    const { app, token } = appWithPluginConfig({ ghToken: 'ghp_slice_secret' });
     const res = await app.request('/integrations/github-status', auth(token));
     const body = await res.json() as { tokenSet: boolean; ready: boolean; method: string };
     expect(body).toMatchObject({ tokenSet: true, ready: true, method: 'token' });

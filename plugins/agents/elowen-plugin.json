@@ -174,6 +174,12 @@
         "id": "cli-agents",
         "label": "CLI Agents",
         "icon": "SquareTerminal"
+      },
+      {
+        "id": "github",
+        "label": "GitHub",
+        "icon": "Github",
+        "layout": "orbital"
       }
     ],
     "strings": {
@@ -229,7 +235,19 @@
       "skipPermissionsNoop": "Elowen cannot toggle this agent’s permissions from here — it either runs its built-in tools without confirmation, or you set auto-approval in the agent’s own config.",
       "resumeSessions": "Resume prior sessions",
       "resumeSessionsHint": "On a restart the agent resumes its previous CLI session and keeps full context. Falls back to a fresh start otherwise.",
-      "embeddedProviderHint": "Runs inside the Elowen daemon — no binary or flags to configure. Workers on Elowen AI models execute in-process and close their tasks themselves."
+      "embeddedProviderHint": "Runs inside the Elowen daemon — no binary or flags to configure. Workers on Elowen AI models execute in-process and close their tasks themselves.",
+      "github": "GitHub",
+      "ghToken": "GitHub token",
+      "ghTokenHint": "Stored server-side, used to push and open PRs",
+      "ghTokenNotSetHint": "Needed to push and open PRs; stored server-side, never returned",
+      "ghTokenPlaceholder": "paste token",
+      "prEnabled": "PR workflow",
+      "prEnabledHint": "Default for new projects: each mission runs in an isolated worktree on its own branch and, when it finishes, Elowen opens a real GitHub PR. Individual projects can override this.",
+      "ghStatusGh": "GitHub ready — pushing as @{account} via the gh CLI",
+      "ghStatusGhNoAccount": "GitHub ready — via the signed-in gh CLI",
+      "ghStatusToken": "GitHub ready — using a stored access token",
+      "ghStatusNone": "No GitHub sign-in — PR-native missions can’t push",
+      "ghStatusNoneHint": "Run `gh auth login` on the server, or paste an access token below."
     }
   }
 }

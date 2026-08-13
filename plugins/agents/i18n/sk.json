@@ -57,7 +57,8 @@
     },
     "settings": {
       "agents": "Agenti a autopilot",
-      "cli-agents": "CLI agenti"
+      "cli-agents": "CLI agenti",
+      "github": "GitHub"
     },
     "strings": {
       "autopilot": "Autopilot",
@@ -112,7 +113,19 @@
       "skipPermissionsNoop": "Elowen pri tomto agentovi nemôže prepínať oprávnenia odtiaľto — buď spúšťa vstavané nástroje bez potvrdzovania, alebo auto-schvaľovanie nastavíte v jeho vlastnej konfigurácii.",
       "resumeSessions": "Nadväzovať na predchádzajúce relácie",
       "resumeSessionsHint": "Pri reštarte agent nadviaže na svoju predchádzajúcu CLI reláciu a zachová kontext. Bez nej štartuje čisto.",
-      "embeddedProviderHint": "Beží priamo vo vnútri Elowen daemonu — žiadna binárka ani parametre. Workeri na Elowen AI modeloch bežia in-process a svoje úlohy uzatvárajú sami."
+      "embeddedProviderHint": "Beží priamo vo vnútri Elowen daemonu — žiadna binárka ani parametre. Workeri na Elowen AI modeloch bežia in-process a svoje úlohy uzatvárajú sami.",
+      "github": "GitHub",
+      "ghToken": "GitHub token",
+      "ghTokenHint": "Uložené na serveri, použité na push a otvorenie PR",
+      "ghTokenNotSetHint": "Potrebné na push a otvorenie PR; uložené na serveri, nikdy nie je vrátené",
+      "ghTokenPlaceholder": "vložiť token",
+      "prEnabled": "PR workflow",
+      "prEnabledHint": "Predvolený stav pre nové projekty: každá misia beží v izolovanom pracovnom strome na vlastnej vetve a po dokončení Elowen otvorí skutočný GitHub PR. Jednotlivé projekty si to môžu prepnúť u seba.",
+      "ghStatusGh": "GitHub pripravený — pushuje sa ako @{account} cez gh CLI",
+      "ghStatusGhNoAccount": "GitHub pripravený — cez prihlásené gh CLI",
+      "ghStatusToken": "GitHub pripravený — používa sa uložený access token",
+      "ghStatusNone": "Žiadne GitHub prihlásenie — PR-native misie nemôžu pushnúť",
+      "ghStatusNoneHint": "Spustite na serveri `gh auth login`, alebo nižšie vložte access token."
     }
   }
 }

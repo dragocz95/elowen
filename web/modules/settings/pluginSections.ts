@@ -14,6 +14,9 @@ export interface PluginSettingsSection {
   settingId: string;
   label: string;
   icon: LucideIcon;
+  /** The section asked for the constellation (orbital) rendering the core sections use. The panel
+   *  wrapper has to know, because the layout attribute sits on the panel, not inside the bundle. */
+  orbital: boolean;
 }
 
 export const isPluginSettingsSectionId = (id: string): boolean => id.startsWith(PLUGIN_SETTINGS_SECTION_PREFIX);
@@ -28,5 +31,6 @@ export function pluginSettingsSections(listing: PluginUiListing[]): PluginSettin
     settingId: s.id,
     label: s.label,
     icon: pluginLucideIcon(s.icon),
+    orbital: s.layout === 'orbital',
   })));
 }

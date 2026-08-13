@@ -10,7 +10,6 @@ import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
 
 let putBody: unknown = null;
-let pluginPatchBody: unknown = null;
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/system', () => HttpResponse.json({
@@ -22,9 +21,9 @@ const server = setupServer(
   // when it is (its spawner is what runs those execs). No `settings` entries — the plugin's own
   // settings decks are exercised in tests/pluginUi, not here.
   http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'agents', url: '/plugins/agents/web/abc.js', apiVersion: 1, nav: [], settings: [] }])),
-  // The GitHub section reads/writes the agents plugin's config slice (prEnabled + the ghToken secret).
-  http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: { prEnabled: false }, configSchema: [], secretsSet: [] })),
-  http.patch('*/api/plugins/agents/config', async ({ request }) => { pluginPatchBody = await request.json(); return HttpResponse.json({ ok: true }); }),
+  // Plugin detail: the core Settings page reads it for the plugin cards, never for a plugin's own
+  // section — the GitHub section moved to the agents settings deck (tests/pluginUi).
+  http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: {}, configSchema: [], secretsSet: [] })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
@@ -43,7 +42,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data',
+      'System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     expect(screen.getByText('12%')).toBeInTheDocument();
@@ -62,7 +61,7 @@ describe('SettingsPage', () => {
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
 
     await screen.findByRole('heading', { level: 1, name: 'System' });
-    for (const name of ['System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data']) {
+    for (const name of ['System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data']) {
       fireEvent.click(screen.getByRole('radio', { name }));
       await waitFor(() => {
         const activePanel = container.querySelector(`[data-settings-panel]:not([style*="display: none"])`);
@@ -148,7 +147,7 @@ describe('SettingsPage', () => {
     const search = await screen.findByRole('searchbox', { name: 'Search models…' });
     fireEvent.change(search, { target: { value: 'sonnet' } });
 
-    fireEvent.click(screen.getByRole('radio', { name: 'GitHub' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Memory' }));
     await waitFor(() => expect(search).not.toBeVisible());
 
     fireEvent.click(screen.getByRole('radio', { name: 'Models' }));
@@ -179,30 +178,6 @@ describe('SettingsPage', () => {
       expect(body.customModels).toContainEqual({ label: 'My Custom Model', exec: 'my/custom' });
     });
   });
-
-  it('saves the GitHub section into the agents plugin config slice (config wave 2)', async () => {
-    localStorage.setItem('elowen.settings.category', 'github');
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByRole('switch', { name: /PR workflow/ })).toBeInTheDocument());
-
-    // Base branch / auto-open / verify command are plugin-owned config (plugins.config.agents) and
-    // edit in the agents plugin's settings deck now — core must not render or save them.
-    expect(screen.queryByText('Verify command')).toBeNull();
-    expect(screen.queryByText('Base branch')).toBeNull();
-
-    // prEnabled + ghToken are plugin-slice keys too: the toggle PATCHes /plugins/agents/config
-    // (the write-only token would ride the same payload) — never PUT /config autopilot.*.
-    putBody = null; pluginPatchBody = null;
-    fireEvent.click(screen.getByRole('switch', { name: /PR workflow/ }));
-    await waitFor(() => {
-      const body = pluginPatchBody as { values: Record<string, unknown> };
-      expect(body.values.prEnabled).toBe(true);
-      expect('ghToken' in body.values).toBe(false); // untouched secret is omitted, not cleared
-    });
-    expect(putBody).toBeNull(); // nothing goes to the main config anymore
-  });
-
 
   it('opens the ConfirmDialog when deleting a custom model', async () => {
     server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'my/custom'], customModels: [{ label: 'My Custom Model', exec: 'my/custom' }], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })));

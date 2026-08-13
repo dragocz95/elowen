@@ -75,9 +75,6 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/projects/ProjectsView.tsx': {
     '/p/editor': 'Opens the extracted editor on a project/commit, behind an editorEnabled gate. Removal path: the editor plugin declares the "open this project here" target it wants links to use.',
   },
-  'modules/settings/GithubSection.tsx': {
-    "usePluginDetail('agents')": 'prEnabled/ghToken are the agents plugin\'s config slice, edited from a core settings section. Removal path: move the whole GitHub section into that plugin\'s settings deck.',
-  },
   'modules/settings/PluginConfigEditor.tsx': {
     "detail.name === 'msteams'": 'The Teams app-package section is not extracted yet.',
   },

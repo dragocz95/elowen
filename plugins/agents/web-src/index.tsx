@@ -10,6 +10,7 @@ import { SessionsView } from './sessions/SessionsView';
 import { EscalationsView } from './escalations/EscalationsView';
 import { AgentsSettings } from './settings/AgentsSettings';
 import { CliAgentsSettings } from './settings/CliAgentsSettings';
+import { GithubSettings } from './settings/GithubSettings';
 
 /** /p/agents root: nothing lives here — forward to the sessions page (replace, no history entry). */
 function RootRedirect() {
@@ -27,5 +28,6 @@ registerAgentsUi({
   settings: {
     'agents': AgentsSettings,
     'cli-agents': CliAgentsSettings,
+    'github': GithubSettings,
   },
 });

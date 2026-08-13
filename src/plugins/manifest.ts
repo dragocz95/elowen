@@ -113,7 +113,11 @@ export interface PluginManifest {
      *  peer pages ("Úkoly" standing over Kanban and Statistics). Overridable per locale like the rest. */
     label?: string;
     nav?: { label: string; icon?: string; route?: string }[];
-    settings?: { id: string; label: string; icon?: string }[];
+    /** `layout` picks which of the app's two settings renderings the section's groups/rows use:
+     *  'classic' (default) stacks rows, 'orbital' renders them as the constellation of pods the core
+     *  Settings sections use. A section moved out of core keeps the look it had; a new one that just
+     *  lists fields wants the default. */
+    settings?: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital' }[];
     /** Flat English view strings for the bundle (labels, hints), keyed freely by the plugin. Locale
      *  overrides come from `i18n/<lang>.json` `web.strings`; /plugins/ui serves the merged record so
      *  bundle views localize without touching the app dictionaries. */
@@ -196,6 +200,7 @@ const ManifestSchema = Type.Object({
       id: Type.String({ minLength: 1 }),
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
+      layout: Type.Optional(Type.Union([Type.Literal('classic'), Type.Literal('orbital')])),
     }))),
     strings: Type.Optional(Type.Record(Type.String(), Type.String())),
   })),

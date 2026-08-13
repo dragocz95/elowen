@@ -16,7 +16,7 @@ import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { en } from '../../lib/i18n/dictionaries/en';
 
-const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'GitHub', 'Memory', 'Data'];
+const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'Memory', 'Data'];
 
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: '', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
@@ -74,5 +74,49 @@ describe('SettingsPage plugin sections', () => {
     // The listing has no `gone` plugin → the stale remembered id resets to the first core section.
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     expect(await screen.findByText('System diagnostics')).toBeInTheDocument();
+  });
+
+  it('a section declaring layout:orbital gets the constellation panel the core sections use', async () => {
+    // The GitHub section moved into the agents plugin and must keep the orbital rendering it had as a
+    // core category. The layout lives on the PANEL, so the manifest declaration has to reach it — a
+    // section that declares nothing stays classic, which is the second half of this assertion.
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([
+      { name: 'demo', url: '/plugins/demo/web/abc.js', apiVersion: 1, nav: [], settings: [
+        { id: 'general', label: 'Demo plugin' },
+        { id: 'orbit', label: 'Demo orbit', layout: 'orbital' },
+      ] },
+    ])));
+    vi.mocked(loadPluginUi).mockResolvedValue({
+      requiresApiVersion: 1,
+      settings: {
+        general: () => <div data-testid="demo-settings">classic</div>,
+        orbit: () => <div data-testid="demo-orbit">orbital</div>,
+      },
+    });
+    const { container } = mountPage();
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Demo orbit' }));
+    await screen.findByTestId('demo-orbit');
+    expect(container.querySelector('[data-settings-panel="plugin:demo:orbit"]')).toHaveAttribute('data-constellation');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Demo plugin' }));
+    await screen.findByTestId('demo-settings');
+    expect(container.querySelector('[data-settings-panel="plugin:demo:general"]')).not.toHaveAttribute('data-constellation');
+  });
+
+  it('with the agents plugin disabled the GitHub section is absent, not empty', async () => {
+    // Production shape on this instance: agents is off, so /plugins/ui lists no agents entry at all.
+    // A user who was last on the GitHub section must land on a real section, and nothing GitHub-shaped
+    // may render — neither a rail entry nor a headerless panel.
+    localStorage.setItem('elowen.settings.category', 'plugin:agents:github');
+    server.use(http.get('*/api/plugins/ui', () => HttpResponse.json([])));
+    mountPage();
+    // A real section is on screen (the System PANEL, not just its rail label), so the user is not left
+    // staring at an empty document where their GitHub settings used to be.
+    expect(await screen.findByText('System diagnostics')).toBeInTheDocument();
+    const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
+    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((n) => n.textContent)).toEqual(CORE_RAIL);
+    expect(screen.queryByText('GitHub token')).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'PR workflow' })).toBeNull();
   });
 });

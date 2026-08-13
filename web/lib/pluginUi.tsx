@@ -76,6 +76,7 @@ import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
 import { TONE_TEXT } from '../components/ui/tone';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { ConstellationScope } from '../components/ui/Constellation';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
@@ -258,6 +259,9 @@ export function ensurePluginUiRuntime(): void {
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      // Which of the two settings renderings a section's groups/rows use. A section that declares
+      // `layout: 'orbital'` in its manifest wraps itself in this, exactly as the core sections do.
+      ConstellationScope,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
       ManageSelectionModal, SelectionSummary, BrainModelField, MarkdownAssetEditor,

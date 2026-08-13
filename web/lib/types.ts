@@ -285,7 +285,9 @@ export interface PluginUiListing {
    *  world borrows its first page's name. */
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];
-  settings: { id: string; label: string; icon?: string }[];
+  /** `layout` picks the section's rendering: 'orbital' uses the constellation layout the core
+   *  Settings sections use, anything else (or absent) the classic stacked rows. */
+  settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital' }[];
   /** Localized flat view strings for the bundle (manifest `web.strings` merged with the locale's
    *  i18n overrides server-side). Optional so an older daemon's listing still parses. */
   strings?: Record<string, string>;
@@ -556,16 +558,6 @@ export interface CliDetectionResult {
   tools: CliStatus[];
   summary: { allInstalled: boolean; allFunctional: boolean };
   freshInstall: FreshInstallInfo;
-}
-
-/** GitHub auth posture for the PR-native workflow. `method` is what a push would actually use. */
-export interface GithubAuthStatus {
-  ghInstalled: boolean;
-  ghAuthenticated: boolean;
-  account: string | null;
-  tokenSet: boolean;
-  ready: boolean;
-  method: 'token' | 'gh' | 'none';
 }
 
 /** One entry in a project's file tree. */

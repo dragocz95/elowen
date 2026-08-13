@@ -7,7 +7,6 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
-import { GithubSection } from '../../modules/settings/GithubSection';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
@@ -70,20 +69,23 @@ const isSectionId = (value: string): boolean =>
 
 /** Categories rendered as an orbital constellation (rows become pods, composites edit in drawers,
  *  the document card frame drops). The rest — catalogs, lists and data views — stay classic. */
-const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain', 'github', 'memory']);
+const ORBITAL_CATEGORIES: ReadonlySet<string> = new Set<Category>(['system', 'brain', 'memory']);
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
-function SettingsPanel({ id, active, visited, children }: {
+function SettingsPanel({ id, active, visited, orbital, children }: {
   id: string;
   active: string;
   visited: ReadonlySet<string>;
+  /** Force the constellation layout for a section the core category list does not name — a
+   *  plugin-contributed one that declared `layout: 'orbital'` in its manifest. */
+  orbital?: boolean;
   children: ReactNode;
 }) {
   if (id !== active && !visited.has(id)) return null;
   return (
     <Activity mode={id === active ? 'visible' : 'hidden'}>
-      <MotionReveal data-settings-panel={id} data-constellation={ORBITAL_CATEGORIES.has(id) ? '' : undefined}>
+      <MotionReveal data-settings-panel={id} data-constellation={(orbital ?? ORBITAL_CATEGORIES.has(id)) ? '' : undefined}>
         <SettingsDocument>{children}</SettingsDocument>
       </MotionReveal>
     </Activity>
@@ -345,7 +347,6 @@ export default function SettingsPage() {
   const activeProviders = PROVIDERS.filter((p) => (configProviders[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
     models: combineSaveFeedback(modelsSave, windowsSave),
-    github: sectionFeedback.github,
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave),
     brain: sectionFeedback.brain,
     memory: sectionFeedback.memory,
@@ -357,7 +358,6 @@ export default function SettingsPage() {
     brain: t.settings.brainSectionHint,
     memory: t.settings.memorySectionHint,
     plugins: t.settings.pluginsSectionHint,
-    github: t.settings.githubSectionHint,
     data: t.settings.dataSectionHint,
     system: t.settings.systemSectionHint,
   };
@@ -553,13 +553,6 @@ export default function SettingsPage() {
         )}
 
 
-        <SettingsPanel id="github" active={category} visited={visitedCategories}>
-          <ConstellationScope core={t.settings.github}>
-            <GithubSection onSaveState={reportSaveState} />
-          </ConstellationScope>
-        </SettingsPanel>
-
-
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
           <ConstellationScope core={t.settings.system}>
@@ -728,7 +721,7 @@ export default function SettingsPage() {
         </SettingsPanel>
 
         {pluginSections.map((section) => (
-          <SettingsPanel key={section.id} id={section.id} active={category} visited={visitedCategories}>
+          <SettingsPanel key={section.id} id={section.id} active={category} visited={visitedCategories} orbital={section.orbital}>
             <PluginSettingsPanel plugin={section.plugin} settingId={section.settingId} />
           </SettingsPanel>
         ))}
