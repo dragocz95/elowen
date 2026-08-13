@@ -127,10 +127,12 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const [category, setCategoryState] = usePersistentState<string>('elowen.settings.category', 'system', isSectionId);
   const [visitedCategories, setVisitedCategories] = useState<Set<string>>(() => new Set([category]));
-  const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<Category, SaveFeedback>>>({});
+  // Keyed by DECK SECTION id, not by core category: a plugin-contributed section renders inside this
+  // same deck, and an orbital one has no header of its own an autosave indicator could live in.
+  const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<string, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
-    if (!(CATEGORY_VALUES as readonly string[]).includes(id)) return;
-    setSectionFeedback((current) => ({ ...current, [id as Category]: { status, retry } }));
+    if (!isSectionId(id)) return;
+    setSectionFeedback((current) => ({ ...current, [id]: { status, retry } }));
   }, []);
   useEffect(() => {
     setVisitedCategories((current) => current.has(category) ? current : new Set(current).add(category));
@@ -345,12 +347,12 @@ export default function SettingsPage() {
   // picker's grouping.
   const configProviders = config.data?.providers ?? {};
   const activeProviders = PROVIDERS.filter((p) => (configProviders[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
+  // Sections that report their own state (core panels and plugin-contributed ones alike) come straight
+  // from the sink; the two whose state is assembled from several independent autosaves are folded here.
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
+    ...sectionFeedback,
     models: combineSaveFeedback(modelsSave, windowsSave),
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave),
-    brain: sectionFeedback.brain,
-    memory: sectionFeedback.memory,
-    plugins: sectionFeedback.plugins,
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
   const sectionHints: Record<Category, string> = {
@@ -722,7 +724,7 @@ export default function SettingsPage() {
 
         {pluginSections.map((section) => (
           <SettingsPanel key={section.id} id={section.id} active={category} visited={visitedCategories} orbital={section.orbital}>
-            <PluginSettingsPanel plugin={section.plugin} settingId={section.settingId} />
+            <PluginSettingsPanel plugin={section.plugin} settingId={section.settingId} sectionId={section.id} onSaveState={reportSaveState} />
           </SettingsPanel>
         ))}
 

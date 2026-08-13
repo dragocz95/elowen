@@ -47,6 +47,10 @@ interface AppConfig {
   brain?: { providers?: { id: string; label: string; apiKeySet?: boolean }[] };
 }
 
+/** One plugin's settings detail, narrowed to what this bundle reads: its stored config values and the
+ *  names of the secret keys the daemon has a value for (secrets themselves are never sent out). */
+interface PluginConfigDetail { config?: Record<string, unknown>; secretsSet?: string[] }
+
 /** The core translation catalog: section → key → string. Deliberately loose — it carries only copy
  *  SHARED with core surfaces (t.sessions.*, t.page.*, …). Copy that nothing outside this plugin
  *  renders lives in its own manifest `web.strings`, read through `usePluginStrings`. */
@@ -79,6 +83,12 @@ interface AgentsHooks {
     opts?: { ready?: boolean; savable?: boolean; delay?: number },
   ): { status: 'idle' | 'saving' | 'saved' | 'error'; retry: () => void; flush: () => void };
   usePluginStrings(plugin: string): Record<string, string>;
+  /** This plugin's own config slice as the HOST caches it (GET /plugins/:name). `secretsSet` names the
+   *  keys the daemon holds a value for — a write-only field can be reported as stored no other way. */
+  usePluginDetail(name: string): QueryResult<PluginConfigDetail>;
+  /** PATCH /plugins/:name/config through the host's mutation, so a save invalidates that cached detail
+   *  instead of leaving this view (and the Plugins section) reading a copy from before the write. */
+  useSavePluginConfig(): MutationResult<{ name: string; values: Record<string, unknown> }>;
   /** Whether a plugin serving the task pages is installed. Agent sessions are named after tasks and
    *  link to them, and that link exists only while some plugin owns those pages. */
   useWorkPlugin(): boolean;

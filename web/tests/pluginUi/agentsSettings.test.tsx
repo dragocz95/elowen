@@ -157,6 +157,63 @@ describe('agents plugin settings — GitHub section', () => {
     expect(putBody).toBeNull(); // nothing of this section belongs to the main config
   });
 
+  it('shows the token as stored once the save lands, without a reload', async () => {
+    // `secretsSet` is the SERVER's answer to "is a token stored", and a save that does not re-read it
+    // leaves the row saying the field is empty right after the user filled it — whose next move is to
+    // paste the secret a second time. Settings panels stay mounted (<Activity mode="hidden">), so
+    // leaving the section and coming back does not repair it either.
+    let stored = false;
+    server.use(
+      http.get('*/api/plugins/agents', () => HttpResponse.json({
+        name: 'agents', config: { prEnabled: false }, configSchema: [], i18n: {},
+        secretsSet: stored ? ['ghToken'] : [],
+      })),
+      http.patch('*/api/plugins/agents/config', async ({ request }) => {
+        patchBody = await request.json();
+        const values = (patchBody as { values: Record<string, unknown> }).values;
+        if (typeof values.ghToken === 'string' && values.ghToken) stored = true;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><GithubSettings surface="deck" plugin="agents" params={{ id: 'github' }} /></ToastProvider></Wrapper>);
+    await screen.findByRole('switch', { name: 'PR workflow' });
+    expect(await screen.findByText('—')).toBeTruthy(); // nothing stored yet
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'GitHub token' })[0]!);
+    const input = screen.getByLabelText('GitHub token', { selector: 'input' });
+    fireEvent.change(input, { target: { value: 'ghp_typed_secret' } });
+
+    // The input clearing is the save having landed; from that moment the mask can only come from the
+    // refreshed server read, not from the local field.
+    await waitFor(() => expect(input).toHaveValue(''));
+    await waitFor(() => expect(screen.getByText('••••••••')).toBeTruthy());
+    expect(screen.queryByText('—')).toBeNull();
+  });
+
+  it('reports a save — and a FAILED save with its retry — up to the settings deck', async () => {
+    // The section renders orbital, and an orbital group is a field of pods with no header: an
+    // indicator handed to its actions slot is dropped without a trace, taking the failure notice and
+    // its Retry with it. As a core category this reported to the deck header (the slot System, Brain
+    // and Memory use), which is the only place an orbital section can show it.
+    const seen: { status: string; retry?: () => void }[] = [];
+    const report = (status: string, retry?: () => void) => { seen.push({ status, retry }); };
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider>
+      <GithubSettings surface="deck" plugin="agents" params={{ id: 'github' }} onSaveState={report} />
+    </ToastProvider></Wrapper>);
+    const toggle = await screen.findByRole('switch', { name: 'PR workflow' });
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(seen.at(-1)?.status).toBe('saved'));
+
+    server.use(http.patch('*/api/plugins/agents/config', () => HttpResponse.json({ error: 'nope' }, { status: 500 })));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(seen.at(-1)?.status).toBe('error'));
+    // A failure the user cannot retry from is a dead end — the deck header renders the button.
+    expect(typeof seen.at(-1)?.retry).toBe('function');
+  });
+
   it('sends a freshly typed token with the same save and then clears the input', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><GithubSettings surface="deck" plugin="agents" params={{ id: 'github' }} /></ToastProvider></Wrapper>);

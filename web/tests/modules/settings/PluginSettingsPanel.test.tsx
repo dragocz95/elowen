@@ -27,7 +27,7 @@ afterAll(() => server.close());
 
 const mount = (plugin: string, settingId = 'general') => {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><PluginSettingsPanel plugin={plugin} settingId={settingId} /></Wrapper>);
+  return render(<Wrapper><PluginSettingsPanel plugin={plugin} settingId={settingId} sectionId={`plugin:${plugin}:${settingId}`} /></Wrapper>);
 };
 
 describe('PluginSettingsPanel', () => {

@@ -93,7 +93,7 @@ import { useFillHeight } from './useFillHeight';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
-  useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents,
+  useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
   useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
@@ -104,7 +104,7 @@ import {
   useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
   useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
-  useSavePluginSubagent, useDeletePluginSubagent,
+  useSavePluginSubagent, useDeletePluginSubagent, useSavePluginConfig,
   useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
   useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
   useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
@@ -299,6 +299,11 @@ export function ensurePluginUiRuntime(): void {
       // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
       // the cronjob plugin's settings editor reaches them here.
       useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
+      // A plugin's own config slice, read and written through the SAME cache entry the Plugins
+      // settings detail uses. A bundle that fetched it by hand instead would hold a private copy of a
+      // value two surfaces edit: the save invalidates the shared key, so both re-read the server's
+      // answer (which secrets are stored) rather than each believing its own last render.
+      usePluginDetail, useSavePluginConfig,
       usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
       usePluginSubagents, useSavePluginSubagent, useDeletePluginSubagent,
       // The editor plugin owns the UI and API routes; these host-bound query/mutation hooks retain the

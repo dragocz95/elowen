@@ -24,6 +24,12 @@ export interface PluginPageProps {
    *  /p/<plugin>, where nothing else does — so on a page it owes the reader a page header of its own
    *  (`components.PluginPageHeader`) and must not repeat the section title inside its card. */
   surface: 'page' | 'deck';
+  /** Report an autosave state to the surrounding surface. Supplied on the Settings deck only, where the
+   *  deck header owns the shared indicator (status plus the Retry a failed save needs). A section that
+   *  renders its own indicator inside a group header can ignore it; a section declaring
+   *  `layout: 'orbital'` cannot — the orbital group is a field of pods with no header to hold one, so
+   *  this channel is the only place its user ever learns that a save failed. */
+  onSaveState?: (status: 'idle' | 'saving' | 'saved' | 'error', retry?: () => void) => void;
 }
 
 /** What a bundle hands to window.__elowenRegisterPluginUi. Routes are `/`-joined segment patterns

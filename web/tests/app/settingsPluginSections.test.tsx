@@ -6,6 +6,7 @@ vi.mock('../../lib/pluginUi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/pluginUi')>();
   return { ...actual, loadPluginUi: vi.fn() };
 });
+import { useEffect } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -102,6 +103,26 @@ describe('SettingsPage plugin sections', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Demo plugin' }));
     await screen.findByTestId('demo-settings');
     expect(container.querySelector('[data-settings-panel="plugin:demo:general"]')).not.toHaveAttribute('data-constellation');
+  });
+
+  it('renders a plugin section\'s save state in the deck header, retry included', async () => {
+    // An orbital section has no header of its own to hold an autosave indicator, so the deck's shared
+    // one is where it belongs — the same slot the core sections report into. Without this wiring a
+    // failed save in a plugin section is invisible and unretryable.
+    const retry = vi.fn();
+    const FailingSection = ({ onSaveState }: { onSaveState?: (s: 'error', r?: () => void) => void }) => {
+      useEffect(() => { onSaveState?.('error', retry); }, [onSaveState]);
+      return <div data-testid="demo-settings">reports upward</div>;
+    };
+    vi.mocked(loadPluginUi).mockResolvedValue({ requiresApiVersion: 1, settings: { general: FailingSection } });
+    mountPage();
+    fireEvent.click(await screen.findByRole('radio', { name: 'Demo plugin' }));
+    await screen.findByTestId('demo-settings');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(en.common.saveFailed);
+    fireEvent.click(screen.getByRole('button', { name: en.common.retry }));
+    expect(retry).toHaveBeenCalled();
   });
 
   it('with the agents plugin disabled the GitHub section is absent, not empty', async () => {
