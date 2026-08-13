@@ -15,11 +15,17 @@ interface GithubAuthStatus {
  *  would actually succeed (and as whom), so the token field's necessity is obvious at a glance. Reads
  *  the plugin's own `/integrations/github-status` probe — the same one the install wizard uses. A
  *  failed probe renders nothing: the rows below still work, and a red banner about a status endpoint
- *  would explain less than the field it sits above. */
+ *  would explain less than the field it sits above.
+ *
+ *  The probe re-runs whenever the plugin's stored config is re-read. Saving a token invalidates that
+ *  cache entry, so the banner learns about the save on the same refetch the token row does — without
+ *  it the section would show "•••••••• saved" above "no GitHub sign-in" until a full page reload. */
 export function GithubStatusBanner() {
   const { hooks, api } = runtime();
   const s = hooks.usePluginStrings('agents');
   const [data, setData] = useState<GithubAuthStatus | null>(null);
+  const detail = hooks.usePluginDetail('agents');
+  const configReadAt = detail.dataUpdatedAt;
 
   useEffect(() => {
     let alive = true;
@@ -27,7 +33,7 @@ export function GithubStatusBanner() {
       .then((d) => { if (alive) setData(d as GithubAuthStatus); })
       .catch(() => { /* probe unavailable — the section renders without the banner */ });
     return () => { alive = false; };
-  }, [api]);
+  }, [api, configReadAt]);
 
   if (!data) return null;
 

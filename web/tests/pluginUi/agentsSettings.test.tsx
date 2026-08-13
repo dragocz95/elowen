@@ -191,6 +191,40 @@ describe('agents plugin settings — GitHub section', () => {
     expect(screen.queryByText('—')).toBeNull();
   });
 
+  it('re-runs the auth probe once the token save lands, without a reload', async () => {
+    // The banner answers "would a push work right now", so a saved token has to move it. It reads a
+    // probe, not the config, so nothing invalidates it on its own: without re-reading it keeps saying
+    // "no GitHub sign-in" above a row that already shows the token stored — two answers, one truth.
+    let stored = false;
+    server.use(
+      http.get('*/api/plugins/agents', () => HttpResponse.json({
+        name: 'agents', config: { prEnabled: false }, configSchema: [], i18n: {},
+        secretsSet: stored ? ['ghToken'] : [],
+      })),
+      http.patch('*/api/plugins/agents/config', async ({ request }) => {
+        const values = ((await request.json()) as { values: Record<string, unknown> }).values;
+        if (typeof values.ghToken === 'string' && values.ghToken) stored = true;
+        return HttpResponse.json({ ok: true });
+      }),
+      http.get('*/api/integrations/github-status', () => HttpResponse.json(
+        stored
+          ? { ghInstalled: false, ghAuthenticated: false, account: null, tokenSet: true, ready: true, method: 'token' }
+          : { ghInstalled: false, ghAuthenticated: false, account: null, tokenSet: false, ready: false, method: 'none' },
+      )),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><GithubSettings surface="deck" plugin="agents" params={{ id: 'github' }} /></ToastProvider></Wrapper>);
+    expect(await screen.findByText('No GitHub sign-in — PR-native missions can’t push')).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'GitHub token' })[0]!);
+    const input = screen.getByLabelText('GitHub token', { selector: 'input' });
+    fireEvent.change(input, { target: { value: 'ghp_typed_secret' } });
+    await waitFor(() => expect(input).toHaveValue('')); // the save landed
+
+    expect(await screen.findByText('GitHub ready — using a stored access token')).toBeTruthy();
+    expect(screen.queryByText('No GitHub sign-in — PR-native missions can’t push')).toBeNull();
+  });
+
   it('reports a save — and a FAILED save with its retry — up to the settings deck', async () => {
     // The section renders orbital, and an orbital group is a field of pods with no header: an
     // indicator handed to its actions slot is dropped without a trace, taking the failure notice and
