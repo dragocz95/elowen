@@ -288,7 +288,13 @@ export interface PluginApiAuth {
   /** The task an agent token is bound to (spawned workers), null for user tokens / unbound agents.
    *  Task-level pinning is the HANDLER's job — the core cannot know what a plugin route's path means. */
   agentTask: string | null;
-  /** Project ids the caller may see, or null for unrestricted (admin / open mode). */
+  /** Project ids the caller may see, or null for "not scoped". Null is a LIST-scoping answer, never an
+   *  authorisation one: it covers the admin and open (userless) mode — where `admin` is true — but ALSO
+   *  setup mode, where the users store exists with nobody in it yet and the request reaches the handler
+   *  carrying no identity at all (`admin` false). A per-project gate must therefore read it as
+   *  `accessibleProjects === null ? auth.admin : accessibleProjects.includes(id)`, which is what the
+   *  core canAccessProject answered; taking a bare null for "allowed" hands an unauthenticated
+   *  onboarding request every project on the instance. */
   accessibleProjects: number[] | null;
 }
 
