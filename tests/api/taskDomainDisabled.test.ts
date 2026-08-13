@@ -99,6 +99,35 @@ describe('the task API without an owner for the task domain', () => {
     expect(await cleanup.json()).toMatchObject({ ok: true, tasks: 0, missions: 0 });
   });
 
+  // The maintenance wipe is CORE-owned and irreversible, and the operator reads its answer as fact.
+  // With the owner gone the rows are still THERE (disabling a plugin drops no table), so reporting
+  // `{ok:true, tasks:0}` over a populated register is the dishonest-success shape the whole extraction
+  // forbids: the operator sees "wiped", and re-enabling the plugin brings the entire register back.
+  // Core's own doctrine (store/db.ts tolerateMissingPluginTables, store/cascade.ts) is that a
+  // destructive CORE path purges plugin rows whether or not the plugin is loaded.
+  it('still wipes the task rows a disabled owner left behind — and counts them', async () => {
+    const { app, db } = await makeApp(false);
+    try {
+      db.prepare("INSERT INTO tasks (id,project_id,title,type) VALUES ('e-1',1,'Epic','epic')").run();
+      db.prepare("INSERT INTO tasks (id,project_id,title,parent_id) VALUES ('t-1',1,'Child','e-1')").run();
+      db.prepare("INSERT INTO task_deps (task_id,depends_on_id) VALUES ('t-1','e-1')").run();
+      // A settled mission: 'disengaged' so the live-mission teardown gate (which would 503 with no
+      // engine) is not what this test measures.
+      db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-e-1','e-1','low','disengaged')").run();
+      db.prepare("INSERT INTO mission_pr (mission_id,branch,worktree) VALUES ('m-e-1','b','/w')").run();
+      db.prepare("INSERT INTO notes (scope,target,body) VALUES ('handoff','e-1','n')").run();
+      db.prepare("INSERT INTO task_usage (task_id,project_id,exec) VALUES ('t-1',1,'x')").run();
+
+      const res = await app.request('/admin/cleanup', { method: 'POST' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, tasks: 2, missions: 1 });
+      const count = (t: string) => (db.prepare(`SELECT COUNT(*) c FROM ${t}`).get() as { c: number }).c;
+      for (const t of ['tasks', 'task_deps', 'missions', 'mission_pr', 'notes']) {
+        expect(`${t} rows left → ${count(t)}`).toBe(`${t} rows left → 0`);
+      }
+    } finally { db.close(); }
+  });
+
   // The list above is written by hand, so it can only prove the gate covers what somebody remembered
   // to put in it. This derives the family from the ROUTER — every path the task routes actually
   // register — so a route added tomorrow outside the gate's patterns turns this red instead of quietly

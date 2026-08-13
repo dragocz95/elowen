@@ -43,9 +43,11 @@ export function registerAdminRoutes(app: ElowenApp, ctx: RouteContext): void {
       log.error('cleanup aborted — worktree cleanup failed', e);
       return c.json({ error: 'mission teardown failed' }, 500);
     }
-    // No task domain ⇒ nothing of its to wipe; the core data (activity feed) still goes, and the counts
-    // report zero rather than pretending rows were removed.
-    const removed = d.tasks?.deleteAll() ?? { tasks: 0, missions: 0 };
+    // With an owner the wipe goes through its store; with none it goes through core's own tolerant
+    // handle on the same tables. It must NOT report zero and stop there: disabling a plugin drops no
+    // table, so the rows are still present, and "wiped" over a register that comes back on re-enable is
+    // exactly the dishonest success the cascade doctrine (store/db.ts) exists to prevent.
+    const removed = d.tasks?.deleteAll() ?? d.taskRefs?.sweepAll() ?? { tasks: 0, missions: 0 };
     const events = d.events?.deleteAll() ?? 0;
     return c.json({ ok: true, tasks: removed.tasks, missions: removed.missions, events });
   });

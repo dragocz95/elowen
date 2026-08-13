@@ -18,6 +18,31 @@ export function deleteTasksAndDeps(db: Db, scope: 'project' | 'epic', id: string
   return tolerateMissingPluginTables(() => deleteTaskRows(db, scope, id), 0);
 }
 
+/** Wipe EVERY task row and everything scoped to tasks — dependency edges, the missions they drove, those
+ *  missions' PR records and every handoff note — for the instance-wide admin cleanup. Same doctrine as
+ *  {@link deleteTasksAndDeps}: the tables are plugin-owned but the WIPE is a core path, so it must purge
+ *  them whether or not the owning plugin is loaded (routing it through the plugin control skips silently
+ *  while the plugin is off, and the whole register resurfaces on re-enable — after the operator was told
+ *  it was erased). Tolerates a fresh install where the tables were never created. Returns the row counts
+ *  removed; `missions` is counted BEFORE the delete because the caller reports it.
+ *
+ *  Deliberately mirrors the owner's own TaskStore.deleteAll rather than calling it (core cannot import a
+ *  plugin, and the point is to work when there is no owner). The two are pinned to the same end state by
+ *  tests/store/taskSweepParity.test.ts. */
+export function deleteAllTaskRows(db: Db): { tasks: number; missions: number } {
+  return db.transaction(() => {
+    const missions = tolerateMissingPluginTables(
+      () => (db.prepare('SELECT COUNT(*) c FROM missions').get() as { c: number }).c, 0);
+    tolerateMissingPluginTables(() => { db.prepare('DELETE FROM task_deps').run(); }, undefined);
+    tolerateMissingPluginTables(() => {
+      db.prepare('DELETE FROM mission_pr').run();
+      db.prepare('DELETE FROM missions').run();
+    }, undefined);
+    tolerateMissingPluginTables(() => { db.prepare('DELETE FROM notes').run(); }, undefined);
+    return { tasks: tolerateMissingPluginTables(() => db.prepare('DELETE FROM tasks').run().changes, 0), missions };
+  })();
+}
+
 function deleteTaskRows(db: Db, scope: 'project' | 'epic', id: string | number): number {
   const ids: string[] = scope === 'project'
     ? (db.prepare('SELECT id FROM tasks WHERE project_id = ?').all(id) as { id: string }[]).map((r) => r.id)

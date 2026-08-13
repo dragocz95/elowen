@@ -1,3 +1,4 @@
+import { deleteAllTaskRows } from './cascade.js';
 import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 
@@ -42,5 +43,15 @@ export class TaskRefs {
       const r = this.prepared().get.get(id) as Row | undefined;
       return r ? toRef(r) : null;
     }, null);
+  }
+
+  /** The instance-wide task wipe behind the admin cleanup, for the case where NO plugin owns the domain.
+   *  It is here rather than in a store of its own because this class is already the core's tolerant
+   *  handle on these grandfathered tables — the one place core keeps a Db on them across every install
+   *  shape (ProjectStore holds the other, for its own cascade). Reads stay the tenancy view; this is the
+   *  single WRITE, and only the maintenance route calls it. When the domain HAS an owner the route uses
+   *  the owner's own deleteAll instead, so this never runs behind a live store. */
+  sweepAll(): { tasks: number; missions: number } {
+    return deleteAllTaskRows(this.db);
   }
 }
