@@ -1422,6 +1422,13 @@ export interface PluginContext {
   readonly embeddings: PluginEmbeddings;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
+  /** The CURRENT account's own values for this plugin (its `userConfigSchema` fields), secrets included
+   *  daemon-side. Resolved from the turn/request identity — a plugin cannot name a user and read someone
+   *  else's values. Returns `null` when the caller is not acting as an account (a system turn, an
+   *  unlinked platform sender), which is a real state and NOT the same as "configured nothing": there is
+   *  deliberately no fallback to the instance-wide config, because a per-account credential that silently
+   *  becomes the operator's would act on the wrong person's behalf. */
+  userConfig(): Record<string, unknown> | null;
   readonly logger: PluginLogger;
 }
 

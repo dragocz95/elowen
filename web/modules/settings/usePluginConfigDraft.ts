@@ -28,9 +28,18 @@ export interface PluginConfigDraft {
 }
 
 /** One draft shared by the schema form and live preview. Refetches after saving never re-seed the
- *  draft, preventing a slow query invalidation from overwriting a newer in-progress edit. */
-export function usePluginConfigDraft(name: string, detail: PluginDetail): PluginConfigDraft {
-  const save = useSavePluginConfig();
+ *  draft, preventing a slow query invalidation from overwriting a newer in-progress edit.
+ *
+ *  `save` overrides where the values go — the per-ACCOUNT form writes the caller's own row instead of
+ *  the instance-wide config. Everything else (debounce, serialization, JSON validation) is identical,
+ *  which is the point: the two forms must not drift into two behaviours. */
+export function usePluginConfigDraft(
+  name: string,
+  detail: Pick<PluginDetail, 'config' | 'configSchema'>,
+  options: { save?: (v: { name: string; values: Record<string, unknown> }) => Promise<unknown> } = {},
+): PluginConfigDraft {
+  const instanceSave = useSavePluginConfig();
+  const save = { mutateAsync: options.save ?? ((v: { name: string; values: Record<string, unknown> }) => instanceSave.mutateAsync(v)) };
   const [values, setValues] = useState<Record<string, unknown>>(() => detail.config);
   const [seededName, setSeededName] = useState<string>(() => name);
   // Config PATCHes are full snapshots. Serialize them so a slow older response can never land after a

@@ -320,7 +320,7 @@ const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string]
   ['brain_sessions', 'user_id'], ['brain_goals', 'user_id'],
   ['memories', 'user_id'], ['memory_events', 'user_id'], ['memory_categories', 'user_id'],
   ['user_projects', 'user_id'], ['user_prompts', 'user_id'], ['auth_tokens', 'user_id'],
-  ['brain_terminals', 'user_id'],
+  ['brain_terminals', 'user_id'], ['user_plugin_config', 'user_id'],
 ];
 
 /** AUTOINCREMENT alone does NOT make an id safe to hand out: SQLite seeds `sqlite_sequence` from the

@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { discoverPlugins } from '../../../plugins/loader.js';
+import { isPluginAllowedForUser } from '../../../shared/pluginAccess.js';
+import type { PluginAccessUser } from '../../../shared/pluginAccess.js';
+import type { PluginConfigField } from '../../../plugins/manifest.js';
 import { CONSENT_REQUIRED_MUTATES } from '../../../plugins/api.js';
 import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../../plugins/contributionReport.js';
 import { MarketplaceError } from '../../../plugins/marketplace.js';
@@ -201,6 +204,79 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       await d.marketplace.update(name);
       return c.json(listing().find((p) => p.name === name) ?? { ok: true });
     } catch (e) { return marketplaceFail(c, e); }
+  });
+
+  /** The caller's own values for one plugin, shaped like the instance-wide detail: declared fields, the
+   *  stored non-secret values (unset ones pre-filled from their `default`), and only WHICH secrets are set.
+   *  A secret value never leaves the daemon — not for the owner of the account, and not for an admin. */
+  const userConfigView = (name: string, schema: PluginConfigField[], stored: Record<string, unknown>) => {
+    const secretKeys = new Set(schema.filter((f) => f.type === 'secret').map((f) => f.key));
+    const config: Record<string, unknown> = {};
+    for (const f of schema) {
+      if (secretKeys.has(f.key)) continue;
+      const val = stored[f.key] !== undefined ? stored[f.key] : f.default;
+      if (val !== undefined) config[f.key] = val;
+    }
+    return {
+      name,
+      userConfigSchema: schema,
+      config,
+      secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== ''),
+    };
+  };
+
+  /** The plugins whose per-account fields THIS caller may fill in: enabled, declaring a `userConfigSchema`,
+   *  and (for a `userGrantable` one) actually granted to them. A plugin they cannot reach must not even be
+   *  listed — the form would write values nothing will ever read. */
+  const userConfigurablePlugins = (user: PluginAccessUser | null | undefined) => {
+    const enabled = new Set(d.config.get().plugins.enabled);
+    return discoverPlugins(d.pluginDirs ?? [])
+      .filter((p) => enabled.has(p.manifest.name)
+        && (p.manifest.userConfigSchema?.length ?? 0) > 0
+        && isPluginAllowedForUser(user, p.manifest));
+  };
+
+  // The signed-in account's OWN per-plugin values. NOT admin-gated, and that is the point: a non-admin
+  // must be able to enter their own credentials. The account is taken from the session — no request can
+  // name a user — so this can only ever read the caller's own values.
+  app.get('/plugins/user-config', (c) => {
+    const user = c.get('user');
+    const store = d.userPluginConfig;
+    // No account (setup mode / no user store) means there is nobody to hold values FOR. Empty, not an
+    // error: the section simply has nothing to show yet.
+    if (!user || !store) return c.json([]);
+    return c.json(userConfigurablePlugins(user).map((p) => ({
+      ...userConfigView(p.manifest.name, p.manifest.userConfigSchema ?? [], store.get(user.id, p.manifest.name)),
+      description: p.manifest.description,
+      i18n: p.i18n,
+    })));
+  });
+
+  // Save the caller's own values for one plugin. Same field semantics as the instance-wide config route:
+  // an empty/absent secret keeps the stored one (the form round-trips secrets write-only) and an explicit
+  // `null` clears a non-secret back to unset. No plugin reload — `ctx.userConfig()` reads live.
+  app.patch('/plugins/:name/user-config', async (c) => {
+    const user = c.get('user');
+    const store = d.userPluginConfig;
+    if (!user || !store) return c.json({ error: 'forbidden' }, 403);
+    const name = c.req.param('name');
+    // Refuse through the SAME predicate the listing uses, so a plugin that is disabled, declares no
+    // per-account fields, or was never granted to this account cannot be written to by URL.
+    const plugin = userConfigurablePlugins(user).find((p) => p.manifest.name === name);
+    if (!plugin) return c.json({ error: 'unknown plugin' }, 404);
+    const b = (await c.req.json().catch(() => null)) as { values?: Record<string, unknown> } | null;
+    if (!b || typeof b.values !== 'object' || b.values === null) return c.json({ error: 'values must be an object' }, 400);
+    const schema = plugin.manifest.userConfigSchema ?? [];
+    const stored = { ...store.get(user.id, name) };
+    for (const f of schema) {
+      const v = b.values[f.key];
+      if (v === undefined) continue;
+      if (f.type === 'secret' && (v === '' || v === null)) continue; // keep the stored secret
+      if (v === null) { delete stored[f.key]; continue; }
+      stored[f.key] = v;
+    }
+    store.set(user.id, name, stored);
+    return c.json(userConfigView(name, schema, store.get(user.id, name)));
   });
 
   // Detail for the per-plugin settings section: the declared config fields + current values. Secret

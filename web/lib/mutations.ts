@@ -383,6 +383,14 @@ export function useSavePluginConfig() {
     onSuccess: (_r, v) => { void qc.invalidateQueries({ queryKey: ['plugin', v.name] }); void qc.invalidateQueries({ queryKey: ['plugins'] }); void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands }); },
   });
 }
+/** Save the caller's own values for one plugin. No plugin reload: `ctx.userConfig()` reads them live. */
+export function useSaveMyPluginConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { name: string; values: Record<string, unknown> }) => elowenClient.saveMyPluginConfig(v.name, v.values),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['my-plugin-config'] }); },
+  });
+}
 /** Destructive — wipe the contents of a plugin's data directory. Refreshes that plugin's detail (data summary). */
 export function useClearPluginData() {
   const qc = useQueryClient();

@@ -28,7 +28,7 @@ export const PLUGIN_API_VERSION = '1';
  *  - `risk` — a per-field risk label (`low`/`medium`/`high`) surfaced in the UI.
  *  - `advanced` — keeps expert-only controls in the plugin workspace's Advanced tab.
  *  - `visibleWhen` — conditional visibility: show only when field `key` equals `equals`. */
-interface PluginConfigField {
+export interface PluginConfigField {
   key: string;
   label: string;
   type:
@@ -96,6 +96,11 @@ export interface PluginManifest {
   icon?: string;
   /** Declared config fields — drives the per-plugin settings form. */
   configSchema?: PluginConfigField[];
+  /** Declared PER-ACCOUNT config fields: each person's own values for this plugin (their API key, their
+   *  identifier in an external system), stored by the host and read at runtime through `ctx.userConfig()`.
+   *  Same field vocabulary as `configSchema` — the difference is only whose values they are. A `secret`
+   *  here never leaves the daemon, not even for an admin. */
+  userConfigSchema?: PluginConfigField[];
   /** Opt in to PER-USER grants: the plugin's API routes, tools and pages are then deny-by-default for
    *  non-admins until an admin grants the plugin to that user (`users.granted_plugins`). Omitted (the
    *  default) means the plugin behaves as it always has — reachable by every authenticated user. Only
@@ -130,6 +135,43 @@ export interface PluginManifest {
   };
 }
 
+/** ONE config field definition, shared by the instance-wide `configSchema` and the per-account
+ *  `userConfigSchema`: both are the same kind of form, so they must never drift apart. */
+const ConfigFieldSchema = Type.Object({
+  key: Type.String({ minLength: 1 }),
+  label: Type.String({ minLength: 1 }),
+  type: Type.Union([
+    Type.Literal('string'), Type.Literal('secret'), Type.Literal('boolean'),
+    Type.Literal('number'), Type.Literal('textarea'), Type.Literal('rolePolicies'),
+    Type.Literal('model'), Type.Literal('provider'),
+    Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
+    Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
+    Type.Literal('embeddingModel'), Type.Literal('mcpServers'),
+  ]),
+  hint: Type.Optional(Type.String()),
+  required: Type.Optional(Type.Boolean()),
+  min: Type.Optional(Type.Number()),
+  max: Type.Optional(Type.Number()),
+  step: Type.Optional(Type.Number()),
+  placeholder: Type.Optional(Type.String()),
+  default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+  providerType: Type.Optional(Type.String()),
+  options: Type.Optional(Type.Array(Type.Object({
+    value: Type.String(),
+    label: Type.String(),
+  }))),
+  language: Type.Optional(Type.String()),
+  help: Type.Optional(Type.String()),
+  risk: Type.Optional(Type.Union([
+    Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'),
+  ])),
+  advanced: Type.Optional(Type.Boolean()),
+  visibleWhen: Type.Optional(Type.Object({
+    key: Type.String(),
+    equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  })),
+});
+
 const ManifestSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
   version: Type.String({ minLength: 1 }),
@@ -149,40 +191,10 @@ const ManifestSchema = Type.Object({
   planSafe: Type.Optional(Type.Array(Type.String())),
   deferLoading: Type.Optional(Type.Array(Type.String())),
   icon: Type.Optional(Type.String()),
-  configSchema: Type.Optional(Type.Array(Type.Object({
-    key: Type.String({ minLength: 1 }),
-    label: Type.String({ minLength: 1 }),
-    type: Type.Union([
-      Type.Literal('string'), Type.Literal('secret'), Type.Literal('boolean'),
-      Type.Literal('number'), Type.Literal('textarea'), Type.Literal('rolePolicies'),
-      Type.Literal('model'), Type.Literal('provider'),
-      Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
-      Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
-      Type.Literal('embeddingModel'), Type.Literal('mcpServers'),
-    ]),
-    hint: Type.Optional(Type.String()),
-    required: Type.Optional(Type.Boolean()),
-    min: Type.Optional(Type.Number()),
-    max: Type.Optional(Type.Number()),
-    step: Type.Optional(Type.Number()),
-    placeholder: Type.Optional(Type.String()),
-    default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
-    providerType: Type.Optional(Type.String()),
-    options: Type.Optional(Type.Array(Type.Object({
-      value: Type.String(),
-      label: Type.String(),
-    }))),
-    language: Type.Optional(Type.String()),
-    help: Type.Optional(Type.String()),
-    risk: Type.Optional(Type.Union([
-      Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'),
-    ])),
-    advanced: Type.Optional(Type.Boolean()),
-    visibleWhen: Type.Optional(Type.Object({
-      key: Type.String(),
-      equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
-    })),
-  }))),
+  configSchema: Type.Optional(Type.Array(ConfigFieldSchema)),
+  /** Per-ACCOUNT settings — each person's own values for this plugin, stored by the host and read
+   *  through `ctx.userConfig()`. Same field vocabulary as `configSchema`. */
+  userConfigSchema: Type.Optional(Type.Array(ConfigFieldSchema)),
   userGrantable: Type.Optional(Type.Boolean()),
   capabilities: Type.Optional(Type.Object({
     mutates: Type.Optional(Type.Array(Type.Union([

@@ -361,11 +361,13 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
  *  one Config collapsible or one collapsible per declared `section`. Secrets are write-only (a
  *  placeholder shows they are set) and saving hot-reloads the brain. Also hosts the cronjob/skills
  *  special sections, whose content is data (jobs.json / .md files), not config schema. */
-type PluginConfigMode = 'setup' | 'behavior' | 'advanced';
+type PluginConfigMode = 'setup' | 'behavior' | 'advanced' | 'all';
 
 export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions, riskText, draft, mode = 'behavior' }: {
   name: string;
-  detail: PluginDetail;
+  /** Only the three fields the form actually reads, so the per-ACCOUNT form can hand it its own schema
+   *  and values instead of an instance-wide plugin detail it does not have. */
+  detail: Pick<PluginDetail, 'name' | 'configSchema' | 'secretsSet'>;
   fieldLabel: (f: PluginConfigField) => string;
   fieldHint: (f: PluginConfigField) => string | undefined;
   fieldOptions: (f: PluginConfigField) => { value: string; label: string }[];
@@ -502,7 +504,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     if (field.advanced) return { field, mode: 'advanced' as const };
     return { field, mode: sectionMode };
   });
-  const visibleSchema = classified.filter((entry, index) => {
+  const visibleSchema = mode === 'all' ? schema : classified.filter((entry, index) => {
     if (entry.field.type !== 'section') return entry.mode === mode;
     const nextSection = classified.findIndex((next, nextIndex) => nextIndex > index && next.field.type === 'section');
     const children = classified.slice(index + 1, nextSection === -1 ? classified.length : nextSection);

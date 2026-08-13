@@ -8,6 +8,7 @@ import type { BrainRuntimeConfig } from './providers.js';
 import type { AgentDef } from './agents/agentRegistry.js';
 import type { MemoryCategorizer } from './memoryCategorizer.js';
 import type { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
+import type { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import type { MemoryStore } from '../store/memoryStore.js';
 import type { MemoryService } from './memoryService.js';
 import type { InferenceClient } from '../inference/types.js';
@@ -132,6 +133,9 @@ export interface BrainDeps {
   memoryCuratorMaxOps?: () => number;
   /** Per-user memory category store — powers the owner's memory_category_* tools. */
   memoryCategoryStore?: MemoryCategoryStore;
+  /** Each account's own values for plugins that declare a `userConfigSchema` — read by `ctx.userConfig()`
+   *  and by the account's own settings routes. */
+  userPluginConfig?: UserPluginConfigStore;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the Elowen system prompt. A test passes

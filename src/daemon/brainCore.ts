@@ -15,6 +15,7 @@ import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import { UserPromptStore } from '../store/userPromptStore.js';
 import { UserSettingStore } from '../store/userSettingStore.js';
+import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
@@ -199,6 +200,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const pushSubscriptions = new PushSubscriptionStore(db);
   const userPrompts = new UserPromptStore(db);
   const userSettings = new UserSettingStore(db);
+  const userPluginConfig = new UserPluginConfigStore(db);
   const prompts = new PromptService(userPrompts);
   const git = new RealGitReader();
   // Give spawned agents a way to close their task: the elowen CLI path + daemon URL + a service token.
@@ -565,6 +567,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           pluginToolNames: async (): Promise<string[]> => (await pluginProvider.get()).tools.map((t) => t.name),
         }),
         projectFiles: { safe: safeProjectPath },
+        userPluginConfig: (userId, plugin) => userPluginConfig.get(userId, plugin),
       },
       subscribeEvents: (fn) => bus.subscribe(fn),
       logger: log,
@@ -673,7 +676,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
-    embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore,
+    embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore, userPluginConfig,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must

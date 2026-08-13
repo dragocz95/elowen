@@ -416,6 +416,18 @@ export interface PluginDetail extends PluginInfo {
   capabilities?: PluginCapabilities;
 }
 
+/** GET /plugins/user-config — the signed-in account's OWN values for each plugin that declares
+ *  per-account fields. Shaped like {@link PluginDetail} so the same schema-driven form renders it; a
+ *  secret value is never included, only `secretsSet` says which are filled in. */
+export interface PluginUserConfig {
+  name: string;
+  description: string;
+  userConfigSchema: PluginConfigField[];
+  config: Record<string, unknown>;
+  secretsSet: string[];
+  i18n?: PluginInfo['i18n'];
+}
+
 /** GET /plugins/:name/contributions — the runtime contribution report filtered to entries OWNED by the
  *  requested plugin (every `plugin` field equals that name). Powers both the Tools and Hooks detail sections. */
 export interface PluginContributions {

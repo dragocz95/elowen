@@ -73,8 +73,9 @@ export function register(ctx) {
     }
   }
 
-  // An account is gone: drop its personal skills with it. `users.id` is reused by the next account, so
-  // leaving the folder would silently hand a stranger someone else's private instructions.
+  // An account is gone: drop its personal skills with it. Nothing else ever reaches this folder again
+  // (the id is never handed out twice — see db.ts's user-sequence guard), so leaving it behind would
+  // simply keep one person's private instructions on the operator's disk forever.
   ctx.registerUserRemoved((userId) => {
     const dir = userSkillsDir(userId);
     if (existsSync(dir)) { rmSync(dir, { recursive: true, force: true }); ctx.requestReload?.(); }

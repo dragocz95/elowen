@@ -108,6 +108,9 @@ export interface ServerDeps {
   memoryStore?: import('../store/memoryStore.js').MemoryStore;
   /** Per-user memory categories (labels + LLM-facing descriptions). Absent → the category routes 400. */
   memoryCategoryStore?: import('../store/memoryCategoryStore.js').MemoryCategoryStore;
+  /** Each account's own values for plugins that declare a `userConfigSchema`. Reachable by the account
+   *  itself only — the settings routes never take a user id from the request. */
+  userPluginConfig?: import('../store/userPluginConfigStore.js').UserPluginConfigStore;
   /** Assigns memories to one of the owner's categories via a cheap model (owner-scoped). Absent → the
    *  manual reclassify route 400s and the curator never auto-categorizes new memories. */
   memoryCategorizer?: import('../brain/memoryCategorizer.js').MemoryCategorizer;

@@ -268,7 +268,7 @@ export async function buildApp(opts: BuildOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
-    brainStore, memoryStore, memoryCategoryStore, embedQueue, memoryCategorizer,
+    brainStore, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals, setPluginHostAdvisor,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -513,7 +513,7 @@ export async function buildApp(opts: BuildOpts) {
     get engine() { return missionsControl()?.engine(); },
     get missionGit() { return missionsControl()?.missionGit(); },
     get advisor() { return missionsControl()?.advisor(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, userPluginConfig, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = () => {

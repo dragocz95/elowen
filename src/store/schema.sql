@@ -65,6 +65,19 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, key)
 );
+-- Per-user, per-plugin settings: each person's own values for a plugin that declares a
+-- `userConfigSchema` (their API key, their identifier in an external system). Stored as ONE JSON blob per
+-- (user, plugin) rather than a key/value row per field, so a write is atomic against the whole form and a
+-- plugin's schema can change without a migration. Secrets live here in plaintext, exactly like the
+-- instance-wide plugin config in `settings` — encryption at rest is a separate, instance-wide decision.
+CREATE TABLE IF NOT EXISTS user_plugin_config (
+  user_id INTEGER NOT NULL,
+  plugin TEXT NOT NULL,
+  data TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, plugin)
+);
+
 -- A linked Discord snowflake is an identity key: at most ONE Elowen user may claim a given id, else a
 -- squatter could point the victim's Discord identity (and its memory namespace / admin routing) at their
 -- own account. This partial UNIQUE index enforces one-owner-per-id atomically — only the discordUserId

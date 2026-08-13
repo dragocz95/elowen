@@ -36,7 +36,7 @@ describe('AccountView', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Account sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
+      'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal', 'Plugins',
     ]);
     // PROTOTYPE(constellation): the hero band is gone — the mascot lives inside the cosmos cores
     // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.

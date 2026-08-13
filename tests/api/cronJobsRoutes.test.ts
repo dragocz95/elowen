@@ -293,8 +293,8 @@ describe('cron jobs routes', () => {
     expect((await save(app, amyTok, job({ id: 'b', name: 'renamed' }))).status).toBe(200);
   });
 
-  // `users.id` is recycled by the next account, so a job left behind would keep firing — and start
-  // reporting into a stranger's conversation.
+  // A job left behind has no owner to run as and no conversation to report into, yet the scheduler would
+  // keep paying for its turns on every slot, forever.
   it('drops an account\'s jobs when the account is deleted', async () => {
     const { app, users, amy, amyTok, adminTok } = setup();
     users.setGrantedPlugins(amy.id, ['cronjob']);

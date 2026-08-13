@@ -86,6 +86,10 @@ export interface PluginHostWiring {
   agentCatalog?: PluginAgentCatalog;
   /** The canonical lexical-and-symlink project path guard, kept in core for extracted file operations. */
   projectFiles?: PluginProjectFiles;
+  /** Read ONE account's own values for ONE plugin (`ctx.userConfig()`). Not gated by a `reads` grant: a
+   *  plugin reading its OWN per-account slice for the account already acting is the same authority as its
+   *  instance-wide `ctx.config`. The identity is resolved by the context, never passed in by the plugin. */
+  userPluginConfig?: (userId: number, plugin: string) => Record<string, unknown>;
 }
 
 export class PluginRegistry {
@@ -931,6 +935,15 @@ export class PluginRegistry {
         return dir;
       },
       config,
+      // Per-account values resolve at CALL time, from the identity of whoever is acting right now — the
+      // same AsyncLocalStorage `currentIdentity()` reads. Capturing them at register time would freeze one
+      // account's credentials into a plugin shared by everyone.
+      userConfig: () => {
+        const userId = currentIdentity()?.elowenUserId;
+        const read = host?.userPluginConfig;
+        if (userId === undefined || !read) return null;
+        return read(userId, name);
+      },
       logger: scoped,
     };
   }

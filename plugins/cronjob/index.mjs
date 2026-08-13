@@ -791,8 +791,8 @@ export function register(ctx) {
     return null;
   };
 
-  // An account is gone: its jobs go with it. `users.id` is recycled, so a job left behind would keep
-  // firing — and start reporting into a stranger's conversation.
+  // An account is gone: its jobs go with it. A job left behind has no owner to run as and no conversation
+  // to report into, yet the scheduler would keep paying for its turns on every slot, forever.
   ctx.registerUserRemoved((userId) => {
     const jobs = store.all();
     const rest = jobs.filter((j) => ownerOf(j) !== userId);

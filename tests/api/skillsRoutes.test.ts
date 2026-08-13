@@ -262,8 +262,8 @@ describe('skills routes', () => {
     expect(existsSync(join(dataRoot, 'skills', 'users', String(amy.id), 'amy-skill.md'))).toBe(false);
   });
 
-  // `users.id` is recycled by the next account, so a personal folder left behind would hand a stranger
-  // someone else's private instructions.
+  // Nothing can ever reach that folder again, so leaving it behind just keeps one person's private
+  // instructions on the operator's disk forever.
   it('drops an account\'s personal skills when the account is deleted', async () => {
     const { app, dataRoot, users, amy, amyTok, adminTok } = setup();
     users.setGrantedPlugins(amy.id, ['skills']);

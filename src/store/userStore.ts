@@ -161,6 +161,7 @@ export class UserStore {
       this.db.prepare('DELETE FROM brain_terminals WHERE user_id = ?').run(id); // no orphan terminal bindings (their tokens went with auth_tokens above)
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
+      this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ?').run(id); // no orphan per-plugin values (incl. their secrets)
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }

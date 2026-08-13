@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PluginRegistry, type PluginHostWiring } from '../../src/plugins/registry.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { PluginBrainWorker, PluginCapabilities, PluginHostStores } from '../../src/plugins/api.js';
 import type { TmuxDriver } from '../../src/tmux/types.js';
 
@@ -22,6 +23,35 @@ const wire = (caps?: PluginCapabilities, host?: PluginHostWiring) => {
     undefined, undefined, undefined, undefined, undefined, undefined, host,
   );
 };
+
+describe('ctx.userConfig()', () => {
+  const reads = (calls: [number, string][]): PluginHostWiring => ({
+    userPluginConfig: (userId, plugin) => { calls.push([userId, plugin]); return { apiKey: 'k' }; },
+  });
+
+  it('returns null outside any identity instead of falling back to somebody\'s values', () => {
+    const calls: [number, string][] = [];
+    // A system turn has no account behind it. Handing back an empty object would be indistinguishable from
+    // "this person configured nothing", and a fallback to the instance config would act as the operator.
+    expect(wire(undefined, reads(calls)).userConfig()).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('returns null when the host wired no store, rather than inventing an empty config', () => {
+    expect(wire(undefined, {}).userConfig()).toBeNull();
+  });
+
+  it('reads the acting account, and asks for its OWN plugin name', () => {
+    const calls: [number, string][] = [];
+    const ctx = wire(undefined, reads(calls));
+    const seen = runWithPolicy(null, () => ctx.userConfig(), {
+      identity: { platform: 'http', userId: '7', elowenUserId: 7, admin: false, owner: false },
+    });
+    expect(seen).toEqual({ apiKey: 'k' });
+    // The plugin never names the user OR itself — a plugin that could would read another's credentials.
+    expect(calls).toEqual([[7, 'demo']]);
+  });
+});
 
 describe('ctx.host capability gates', () => {
   const fullHost: PluginHostWiring = {
