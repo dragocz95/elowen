@@ -117,12 +117,12 @@
     "settings": [
       {
         "id": "jobs",
-        "label": "Scheduled jobs",
+        "label": "Automation",
         "icon": "Clock"
       }
     ],
     "strings": {
-      "title": "Scheduled jobs",
+      "title": "Automation",
       "sectionHint": "Recurring prompts run on schedule. Changes apply within 30 seconds.",
       "empty": "No scheduled jobs yet.",
       "addJob": "Add job",

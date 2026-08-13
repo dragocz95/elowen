@@ -204,3 +204,21 @@ describe('OrbitalNav collapse handle', () => {
     expect(screen.getByTestId('nav-collapse-handle')).toHaveClass('left-0');
   });
 });
+
+describe('OrbitalNav long labels', () => {
+  beforeEach(() => { currentPath.value = '/p/work/stats'; });
+
+  // The selected entry renders ~40% larger than the others, so a label that fits at rest can outgrow the
+  // fixed-width rail once it is clicked — and the rail's `overflow-hidden` cut it off mid-word with no
+  // ellipsis and no way to read the rest. Plugin labels are translated by their own authors, so the rail
+  // cannot assume any length.
+  it('lets a label shrink to an ellipsis and keeps the full text in the title', () => {
+    mount();
+    const link = screen.getByRole('link', { name: 'Stats' });
+    const label = link.lastElementChild as HTMLElement; // the icon orbit is first, the text last
+
+    expect(link.getAttribute('title')).toBe('Stats');
+    expect(label.className).toContain('truncate');
+    expect(label.className).toContain('min-w-0');
+  });
+});

@@ -153,6 +153,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
                 aria-label={compact ? entry.label : undefined}
                 aria-current={active ? 'page' : undefined}
                 className={`group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+                title={compact ? undefined : entry.label}
               >
                 <span className={`flex shrink-0 justify-center ${compact ? 'w-[4.4rem]' : 'w-[5rem]'}`} aria-hidden>
                   <span className={`orbit-node grid shrink-0 place-items-center rounded-full border bg-black transition-[width,height,border-color,box-shadow] duration-[520ms] ease-[cubic-bezier(.16,1,.3,1)] ${active
@@ -161,7 +162,12 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
                     <Icon size={active ? 24 : 17} strokeWidth={1.45} />
                   </span>
                 </span>
-                {!compact ? <span className={`${active ? 'text-[1.65rem] font-medium' : 'text-[1.16rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
+                {/* The active entry renders ~40% larger, so a label that fits at rest can outgrow the
+                    rail once it is selected. `min-w-0` + `truncate` end that in an ellipsis instead of a
+                    word cut off mid-glyph against the rail's `overflow-hidden`; the `title` above keeps
+                    the full text reachable. Plugin labels are translated by their own authors, so no
+                    length is guaranteed. */}
+                {!compact ? <span className={`min-w-0 truncate ${active ? 'text-[1.65rem] font-medium' : 'text-[1.16rem]'} tracking-[-0.03em]`}>{entry.label}</span> : null}
               </Link>
             </div>
           );

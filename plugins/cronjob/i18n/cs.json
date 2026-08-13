@@ -36,10 +36,10 @@
   },
   "web": {
     "settings": {
-      "jobs": "Naplánované úlohy"
+      "jobs": "Automatizace"
     },
     "strings": {
-      "title": "Naplánované úlohy",
+      "title": "Automatizace",
       "sectionHint": "Opakované prompty spouštěné podle plánu. Změny se projeví do 30 sekund.",
       "empty": "Zatím žádné naplánované úlohy.",
       "addJob": "Přidat úlohu",
