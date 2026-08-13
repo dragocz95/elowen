@@ -313,7 +313,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Text→vector embedder for Elowen memory (consumed by Phase-4 retrieval); reuses the operator's brain
   // provider credentials via the same resolver plugins get. Pure network service, no DB access.
   const embeddings = new EmbeddingService({ resolveProvider });
-  const brainStore = new BrainStore(db);
+  // The usage views may hide a task worker's spend ONLY while the other half of /usage/* reports it —
+  // that half is the task domain owner's snapshot aggregate (`tasksDomain()?.usage()`, exactly what the
+  // route reads). Resolved live per query, so toggling the owning plugin applies with no restart, and
+  // the boot window (registry not loaded yet) reads as unowned, which keeps spend VISIBLE rather than
+  // hiding money nobody else is reporting.
+  const brainStore = new BrainStore(db, () => !!tasksDomain()?.usage());
   // Session id → immutable spill namespace, for pathGuard's spill-dir allowance and the
   // toolResultClearing default dir. Wired HERE because this is the single construction path every
   // process shares (daemon and forked sub-agent runner alike) — an unwired process would fall back to

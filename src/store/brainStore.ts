@@ -110,8 +110,14 @@ export class BrainStore {
   /** Delegated-execution views (sub-agent runs/results, workflow-run DAGs) live in their own store;
    *  BrainStore is the facade that delegates to it so callers are unchanged. Shares only the Db handle. */
   private readonly delegation: BrainDelegationStore;
-  constructor(private db: Db) {
-    this.usage = new BrainUsageStore(db);
+  constructor(
+    private db: Db,
+    /** Whether the task domain has a loaded owner — passed straight through to the usage views, which
+     *  may only hide a task worker's spend while somebody else reports it. The daemon supplies it; a
+     *  process with no plugin registry omits it. */
+    taskDomainOwned?: () => boolean,
+  ) {
+    this.usage = new BrainUsageStore(db, Date.now, taskDomainOwned);
     this.delegation = new BrainDelegationStore(db);
   }
 

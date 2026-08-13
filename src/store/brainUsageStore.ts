@@ -206,14 +206,25 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
 export class BrainUsageStore {
   private readonly viewCache = new Map<string, ViewCacheEntry>();
 
-  constructor(private db: Db, private readonly now: () => number = Date.now) {}
+  constructor(
+    private db: Db,
+    private readonly now: () => number = Date.now,
+    /** Does the task domain currently have an OWNER, i.e. does /usage/* merge task snapshots at all?
+     *  Supplied by the daemon (which alone knows the live plugin registry); a process that has no such
+     *  notion — a unit test, a store opened on its own — omits it and the answer falls back to the table
+     *  itself. Read per query, never cached: enabling the plugin swaps the owner inside a LIVE process. */
+    private readonly taskDomainOwned?: () => boolean,
+  ) {}
 
-  /** Does this database carry the work plugin's `task_usage` table? Re-read per query rather than cached
-   *  on the instance: enabling the plugin creates the table inside a LIVE process (a registry reload runs
-   *  its migrations), and a remembered "absent" would go on counting spend that IS snapshotted, i.e.
-   *  double it, until the next restart. The read is a lookup in sqlite_master — nothing beside the full
-   *  brain_messages scans these views run. */
+  /** Is a `brain-task-*` worker's spend accounted for SOMEWHERE ELSE — i.e. may these views hide it?
+   *  Two conditions, both required. The table must exist (a fresh install with the work plugin disabled
+   *  never created it), and the domain must have an OWNER: the snapshots are merged into /usage/* by the
+   *  owner's aggregate, so with no owner nothing reports them and hiding the worker's rows here would
+   *  delete real spend from every statistic instead of deduplicating it. Keying on the table alone was
+   *  exactly that bug — disabling the plugin drops no table, so the money vanished from both halves.
+   *  The sqlite_master read is a lookup, nothing beside the full brain_messages scans these views run. */
   private hasTaskUsage(): boolean {
+    if (this.taskDomainOwned && !this.taskDomainOwned()) return false;
     return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_usage'").get();
   }
 
