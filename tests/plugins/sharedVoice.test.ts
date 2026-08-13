@@ -77,9 +77,19 @@ describe('shared plugin voice helpers', () => {
       await expect(transcribeBuffer(creds, Buffer.from('a'), {})).resolves.toBeNull();
     });
 
-    it('throws on a failed request so the adapter can log it and fall back to a note', async () => {
+    it('throws a failure carrying the status and body, so the adapter can log it and fall back to a note', async () => {
       stubFetch({ error: 'nope' }, 401);
-      await expect(transcribeBuffer(creds, Buffer.from('a'), {})).rejects.toThrow('STT HTTP 401');
+      const err = await transcribeBuffer(creds, Buffer.from('a'), {}).catch((e: unknown) => e) as { status: number; data: unknown; message: string };
+      expect(err.status).toBe(401);
+      expect(err.data).toEqual({ error: 'nope' });
+      expect(err.message).toContain('401');
+    });
+
+    it('does not send the clip twice when the provider is briefly unavailable', async () => {
+      const fetchMock = stubFetch({ error: 'busy' }, 503);
+      await transcribeBuffer(creds, Buffer.from('a'), {}).catch(() => undefined);
+      // Retrying a POST would bill (and possibly transcribe) the same clip again.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('does not blow up on a non-JSON success body', async () => {
