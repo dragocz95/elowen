@@ -50,8 +50,9 @@ describe('tool naming convention', () => {
   it('every bundled plugin tool is TitleCase', { timeout: 30_000 }, async () => {
     const reg = await loadEveryBundledPlugin();
     // Guards the guard: a config/loader regression that registers nothing must fail loudly rather than
-    // vacuously pass an empty list.
-    expect(reg.tools.length).toBeGreaterThan(70);
+    // vacuously pass an empty list. The floor dropped when the chat adapters moved to the plugin
+    // registry — discord alone shipped 25 tools — so it tracks what the package still contains.
+    expect(reg.tools.length).toBeGreaterThan(40);
     expect(reg.tools.map((t) => t.name).filter((n) => !TITLE_CASE.test(n))).toEqual([]);
   });
 

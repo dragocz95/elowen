@@ -331,32 +331,7 @@ describe('cron jobs routes', () => {
   });
 });
 
-// The channel picker's destinations are served by the REAL discord plugin now (a root mount), the
-// same way the cron jobs above are served by the cronjob plugin.
-describe('discord channels route', () => {
-  it('returns [] when the discord plugin has no token/guild configured', async () => {
-    const { app, adminTok } = setup({ enabled: ['cronjob', 'discord'] });
-    const res = await app.request('/plugins/discord/channels', auth(adminTok));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
-  });
-
-  it('rejects a non-admin (403)', async () => {
-    const { app, amyTok } = setup({ enabled: ['cronjob', 'discord'] });
-    expect((await app.request('/plugins/discord/channels', auth(amyTok))).status).toBe(403);
-  });
-
-  // An unconfigured plugin still answers (an empty picker); a DISABLED one is the platform's 503, and
-  // the distinction matters — the route lives inside `register`, ahead of the bail-out an unset bot
-  // token takes, precisely so the two do not collapse into one another.
-  it('answers 503 "discord plugin is disabled" when the plugin is off', async () => {
-    const { app, adminTok } = setup({ enabled: ['cronjob'] });
-    const res = await app.request('/plugins/discord/channels', auth(adminTok));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'discord plugin is disabled' });
-  });
-});
-
-// The msteams app-package route moved to the plugin registry with its plugin. What it covered about the
-// CORE — that a declared route of a disabled plugin answers 503 rather than 404 — is covered above by the
-// discord channels route, which exercises the identical path in pluginApi.
+// The discord channels route and the msteams app-package route both moved to the plugin registry with
+// their plugins. What they proved about the CORE — that a declared root mount of a DISABLED plugin
+// answers 503 rather than a bare 404 — is proved above by the cronjob routes, which take the identical
+// path through pluginApi.

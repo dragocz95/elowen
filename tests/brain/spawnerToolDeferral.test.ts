@@ -81,18 +81,21 @@ const factoryToolNames = (create: ReturnType<typeof vi.fn>): string[] => {
 };
 
 describe('LiveSessionSpawner — deferred-tool policy from the runtime config', () => {
-  it('flows all 31 bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
+  it('flows the bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-deferral-defaults-'));
     try {
       const registry = await loadPlugins({
         dirs: [join(process.cwd(), 'plugins')],
-        enabled: ['cronjob', 'discord', 'mcp'],
-        config: { discord: { botToken: 'test-token' } },
+        // The chat adapters that used to supply most of these defaults now live in the plugin registry.
+        // What this test is about is the PATH — manifest `deferLoading` reaching the spawned handle — so
+        // it uses the bundled plugins that still declare one rather than a count that tracked who
+        // happened to ship in the package.
+        enabled: ['cronjob', 'mcp'],
         dataRoot,
         delegatedTurnsOutOfProcess: () => false,
         logger: { info() {}, warn() {}, error() {} },
       });
-      expect(registry.toolDeferLoading.size).toBe(31);
+      expect(registry.toolDeferLoading.size).toBeGreaterThan(0);
       expect(BUILTIN_TOOL_DEFER_LOADING).toEqual(['GenerateImage', 'EditImage']);
 
       addTool(registry, 'image-gen', 'GenerateImage');
@@ -101,12 +104,14 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
       const deferred = (await spawn()).toolSearch?.deferred;
 
       expect(deferred).toBeDefined();
-      expect(deferred?.size).toBe(33);
+      // The manifest-declared set plus the two core defaults, stated as a relation rather than a
+      // literal count: what must hold is that nothing is dropped on the way to the handle.
       expect(deferred).toEqual(new Set([
         ...registry.toolDeferLoading,
         'GenerateImage',
         'EditImage',
       ]));
+      expect(deferred?.size).toBe(registry.toolDeferLoading.size + 2);
     } finally {
       rmSync(dataRoot, { recursive: true, force: true });
     }

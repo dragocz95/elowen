@@ -3,10 +3,10 @@ import { describe, it, expect } from 'vitest';
 import { SHARED_MESSAGES } from '../../packages/plugin-shared/messages.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { renderHelpLines, HELP_DESCRIPTIONS } from '../../packages/plugin-shared/help.mjs';
-// @ts-expect-error — plain .mjs plugin module, no types
-import { MESSAGES as DISCORD } from '../../plugins/discord/lib/messages.mjs';
-// The Teams adapter now lives in the plugin registry, which asserts the same inheritance against the
-// published elowen-plugin-shared. What stays testable HERE is every adapter still in the package.
+
+// Every chat adapter now lives in the plugin registry, and each one asserts there that it inherits these
+// texts verbatim from the published elowen-plugin-shared. What is testable HERE is the shared package
+// itself: that its key sets line up across languages and that its /help renderer behaves.
 
 describe('shared plugin service messages', () => {
   it('SHARED_MESSAGES exposes the same key set in every language', () => {
@@ -18,16 +18,6 @@ describe('shared plugin service messages', () => {
     expect(SHARED_MESSAGES.sk.noModels).toContain('modely');
   });
 
-  it('every adapter inherits the shared keys with identical values', () => {
-    for (const M of [DISCORD]) {
-      for (const lang of ['en', 'cs', 'sk'] as const) {
-        expect(M[lang].noModels).toBe(SHARED_MESSAGES[lang].noModels);
-        expect(M[lang].restarting).toBe(SHARED_MESSAGES[lang].restarting);
-        // The function keys stay referentially shared too (spread copies the reference).
-        expect(M[lang].compacted(42)).toBe(SHARED_MESSAGES[lang].compacted(42));
-      }
-    }
-  });
 });
 
 describe('shared /help renderer', () => {
@@ -72,26 +62,5 @@ describe('shared /help renderer', () => {
     const en = Object.keys(HELP_DESCRIPTIONS.en).sort();
     expect(Object.keys(HELP_DESCRIPTIONS.cs).sort()).toEqual(en);
     expect(Object.keys(HELP_DESCRIPTIONS.sk).sort()).toEqual(en);
-  });
-});
-
-describe('/help renders the passed command list (single-source, no drift)', () => {
-  const list = (names: string[]) => names.map((name) => ({ name }));
-
-  it('lists /context localized in every surface and language that passes it in', () => {
-    // help() renders whatever list it is handed; a surface that exposes /context passes it in, and the
-    // shared renderer localizes it in every language (the exact Telegram cs drift this design removes).
-    for (const M of [DISCORD]) {
-      expect(M.en.help('Elowen', list(['context']))).toContain('/context');
-      expect(M.cs.help('Elowen', list(['context']))).toContain('/context');
-      expect(M.sk.help('Elowen', list(['context']))).toContain('/context');
-    }
-  });
-
-  it('renders a plugin prompt-command from the list via its own English description', () => {
-    const body = DISCORD.en.help('Elowen', [{ name: 'stop' }, { name: 'deploy', description: 'Ship it' }]);
-    expect(body).toContain('Elowen on Discord');
-    expect(body).toContain('/stop'); // built-in still localized from HELP_DESCRIPTIONS
-    expect(body).toContain('`/deploy` — Ship it'); // plugin command appears, fallback description
   });
 });
