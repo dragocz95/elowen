@@ -218,7 +218,7 @@ export function register(ctx) {
    *  positive answer, and an unreadable user table is not one. */
   const accountExists = (id) => {
     try { return ctx.host.stores().usersRead.list().some((u) => u.id === id); }
-    catch { return false; }
+    catch (e) { ctx.logger.warn(`could not read the account list (${e instanceof Error ? e.message : e}) — treating account ${id} as unknown`); return false; }
   };
 
   const describeSkill = (name, file, source, owner, canWrite = true) => {
@@ -368,14 +368,21 @@ export function register(ctx) {
         // channels and sub-agents keep seeing it. A turn with no account behind it has no personal set at
         // all, so that too can only mean the instance one — which `adminOnly` then refuses for a non-admin.
         const explicit = p.scope === 'instance' || p.scope === 'personal' ? p.scope : null;
-        const wantsInstance = explicit ? explicit === 'instance' : (ctx.isAdminSession() || me === null);
+        // Unspecified goes through the SAME resolver the HTTP route uses — not a second copy of the rule,
+        // which is how the two would end up answering "unspecified" differently.
+        const target = explicit === 'instance' ? { ok: true, owner: null, dir: instanceDir }
+          : explicit === 'personal' ? (me === null ? { ok: false } : { ok: true, owner: me, dir: userSkillsDir(me) })
+            : legacyTarget(ctx.isAdminSession(), me);
+        const wantsInstance = target.ok && target.owner === null;
         if (wantsInstance) adminOnly();
-        if (!wantsInstance && me === null) return ok('Error: this turn has no account behind it, so there is no personal skill set to write to.');
-        const dir = wantsInstance ? instanceDir : userSkillsDir(me);
+        // No account behind the turn AND not an admin session: there is no personal set to write to, and
+        // the shared one is admin-only. Say both, so the caller knows which of the two to fix.
+        if (!target.ok) return ok('Error: this turn has no account behind it, so there is no personal skill set to write to — and writing the instance-wide set needs an admin session.');
+        const dir = target.dir;
         if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
         // Refuse rather than shadow: a personal skill with an instance skill's name would register twice
         // and the two would fight over the same slot in the prompt.
-        const collision = nameCollision(p.name, wantsInstance ? null : me);
+        const collision = nameCollision(p.name, target.owner);
         if (collision) return ok(`Error: ${collision}.`);
         const body = `---\nname: ${p.name}\ndescription: ${p.description.replaceAll('\n', ' ')}\n---\n\n${p.content}\n`;
         mkdirSync(dir, { recursive: true });

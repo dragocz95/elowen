@@ -33,6 +33,25 @@ function applyConfigPatch(
   return next;
 }
 
+/** What a config form may be shown: the stored NON-secret values, with unset fields pre-filled from their
+ *  declared `default` so a fresh install shows sensible values (display-only — nothing is persisted until
+ *  the user saves), plus only WHICH secrets are set. A secret value never leaves the daemon, for anybody.
+ *  Shared by the instance-wide detail and the per-account one, next to `applyConfigPatch` which shares the
+ *  write half: a second copy of either rule leaks the day one of them learns something the other did not. */
+function maskedConfigView(
+  schema: PluginConfigField[],
+  stored: Record<string, unknown>,
+): { config: Record<string, unknown>; secretsSet: string[] } {
+  const secretKeys = new Set(schema.filter((f) => f.type === 'secret').map((f) => f.key));
+  const config: Record<string, unknown> = {};
+  for (const f of schema) {
+    if (secretKeys.has(f.key)) continue;
+    const val = stored[f.key] !== undefined ? stored[f.key] : f.default;
+    if (val !== undefined) config[f.key] = val;
+  }
+  return { config, secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== '') };
+}
+
 /** Map a marketplace service error to its HTTP status; unknown errors become a 500. */
 function marketplaceFail(c: Context, e: unknown) {
   const status: ContentfulStatusCode = e instanceof MarketplaceError ? (e.status as ContentfulStatusCode) : 500;
@@ -227,24 +246,12 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     } catch (e) { return marketplaceFail(c, e); }
   });
 
-  /** The caller's own values for one plugin, shaped like the instance-wide detail: declared fields, the
-   *  stored non-secret values (unset ones pre-filled from their `default`), and only WHICH secrets are set.
-   *  A secret value never leaves the daemon — not for the owner of the account, and not for an admin. */
-  const userConfigView = (name: string, schema: PluginConfigField[], stored: Record<string, unknown>) => {
-    const secretKeys = new Set(schema.filter((f) => f.type === 'secret').map((f) => f.key));
-    const config: Record<string, unknown> = {};
-    for (const f of schema) {
-      if (secretKeys.has(f.key)) continue;
-      const val = stored[f.key] !== undefined ? stored[f.key] : f.default;
-      if (val !== undefined) config[f.key] = val;
-    }
-    return {
-      name,
-      userConfigSchema: schema,
-      config,
-      secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== ''),
-    };
-  };
+  /** The caller's own values for one plugin, shaped like the instance-wide detail. */
+  const userConfigView = (name: string, schema: PluginConfigField[], stored: Record<string, unknown>) => ({
+    name,
+    userConfigSchema: schema,
+    ...maskedConfigView(schema, stored),
+  });
 
   /** The plugins whose per-account fields THIS caller may fill in: enabled, declaring a `userConfigSchema`,
    *  and (for a `userGrantable` one) actually granted to them. A plugin they cannot reach must not even be
@@ -301,22 +308,10 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!manifest) return c.json({ error: 'unknown plugin' }, 404);
     const item = listing().find((p) => p.name === name);
     const schema = manifest.configSchema ?? [];
-    const stored = d.config.pluginConfig(name);
-    const secretKeys = new Set(schema.filter((f) => f.type === 'secret').map((f) => f.key));
-    // Pre-fill unset fields from their declared `default` so a fresh install shows sensible values (the
-    // defaults mirror each plugin's runtime fallback, so this is display-only — nothing is persisted
-    // until the user saves). Secrets never carry a default and never leave the daemon.
-    const config: Record<string, unknown> = {};
-    for (const f of schema) {
-      if (secretKeys.has(f.key)) continue;
-      const val = stored[f.key] !== undefined ? stored[f.key] : f.default;
-      if (val !== undefined) config[f.key] = val;
-    }
     return c.json({
       ...item,
       configSchema: schema,
-      config,
-      secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== ''),
+      ...maskedConfigView(schema, d.config.pluginConfig(name)),
       // Declared capabilities (deny-by-default `{}` when the manifest omits them) so the UI can render the
       // plugin's permission/risk section — what it may mutate, read, and whether it reaches the network.
       capabilities: manifest.capabilities ?? {},

@@ -178,6 +178,9 @@ function CronJobRow({ job, persisted, ownerLabel, adminFields, channels, models,
             title={enabled ? s.enabled : s.paused}
             aria-hidden
           />
+          {/* The dot carries the state in colour alone. `title` is not reliably announced, so the state
+              also travels as text a screen reader reads out with the row. */}
+          <span className="sr-only">{enabled ? s.enabled : s.paused}</span>
         </C.DataTableCell>
         <C.DataTableCell>
           <button type="button" onClick={onSelect} className="flex w-full min-w-0 items-center gap-2 text-left">

@@ -6,7 +6,7 @@ import { MonacoEditor } from '../../lib/monaco/monacoLoader';
 import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
+import { Input, textareaClass } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
@@ -25,7 +25,6 @@ import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from './usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
-const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
 // A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to
 // the generic behavior glyph so every section card carries an icon-chip header like the rest of settings.

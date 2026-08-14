@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { Blocks } from 'lucide-react';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
-import { LoadingState, ErrorState } from '../../components/ui/states';
+import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { useMyPluginConfigs } from '../../lib/queries';
 import { useSaveMyPluginConfig } from '../../lib/mutations';
@@ -64,7 +64,7 @@ export function AccountPluginsSection({ onSaveState }: { onSaveState?: (section:
   if (isLoading || !data) return <LoadingState />;
   // Reachable only if a plugin's fields disappear while the section is open (a disable, a revoked grant):
   // the section itself is not offered for an empty list.
-  if (data.length === 0) return <SpatialGroup><p className="text-sm text-text-muted">{t.account.pluginsEmpty}</p></SpatialGroup>;
+  if (data.length === 0) return <SpatialGroup><EmptyState title={t.account.pluginsEmpty} icon={Blocks} /></SpatialGroup>;
 
   return (
     <SpatialGroup>

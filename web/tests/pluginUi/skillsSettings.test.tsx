@@ -124,7 +124,9 @@ describe('skills SkillsSettings (optimistic disclosure toggle)', () => {
     // Back to everything, then open MY alpha: exactly one row may light up, not both namesakes.
     // ONE "all" radio: an asset type with ownership scopes shows only that filter, because the coarse
     // source filter beside it would answer the same question twice (and offer "Built-in" in both).
-    fireEvent.click(screen.getByRole('radio', { name: strings.scopeAll }));
+    // The "all" option of the scope filter is the CORE label (the register owns that option, not the
+    // plugin), which is why the plugin ships no string for it.
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
     await waitFor(() => expect(screen.getAllByText('alpha')).toHaveLength(2));
     fireEvent.click(screen.getAllByText('alpha')[1]!);
     await screen.findByRole('dialog');

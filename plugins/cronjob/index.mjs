@@ -776,14 +776,16 @@ export function register(ctx) {
    *  construction, which is exactly what it meant before ownership existed. */
   const ownerIsAdmin = (userId) => {
     if (userId === null || userId === undefined) return true;
-    try { return ctx.host.stores().usersRead.isAdmin(userId) === true; } catch { return false; }
+    try { return ctx.host.stores().usersRead.isAdmin(userId) === true; }
+    catch (e) { ctx.logger.warn(`could not read whether user ${userId} is an admin (${e instanceof Error ? e.message : e}) — treating as not`); return false; }
   };
   /** Whether the account owning a job may still schedule at all — i.e. still holds this plugin's grant.
    *  Fail CLOSED like the shell guard: a host that cannot answer must not keep running somebody's
    *  unattended automation on an assumption. */
   const ownerMaySchedule = (userId) => {
     if (userId === null || userId === undefined) return true;
-    try { return ctx.host.stores().usersRead.mayUsePlugin(userId, PLUGIN_NAME) === true; } catch { return false; }
+    try { return ctx.host.stores().usersRead.mayUsePlugin(userId, PLUGIN_NAME) === true; }
+    catch (e) { ctx.logger.warn(`could not read whether user ${userId} may still schedule (${e instanceof Error ? e.message : e}) — treating as not`); return false; }
   };
 
   /** WHO owns a job: an account id, or null for an instance job. */
@@ -892,8 +894,17 @@ export function register(ctx) {
     if (me === null) throw new Error('scheduling needs an Elowen account behind the conversation');
     return me;
   };
-  /** The jobs a tool call may see or address. */
-  const visibleJobs = (jobs) => (ctx.isAdminSession() ? jobs : jobs.filter((j) => ownerOf(j) === callerId()));
+  /** The jobs a tool call may see or address. Ownership is compared only when there IS a caller: an
+   *  instance job's owner is also null, so `ownerOf(j) === callerId()` would hand every instance job to
+   *  any turn without an account — and a sub-agent is exactly that, since a delegated identity carries no
+   *  `elowenUserId` (identity.ts) while still inheriting its parent's plugin grant. One delegation hop
+   *  from a granted colleague would otherwise expose the operator's job names, schedules and last results,
+   *  and let them be deleted by id. No account behind the turn and no admin session = nothing to see. */
+  const visibleJobs = (jobs) => {
+    if (ctx.isAdminSession()) return jobs;
+    const me = callerId();
+    return me === null ? [] : jobs.filter((j) => ownerOf(j) === me);
+  };
 
   ctx.registerApiRoute({
     rootMount: '/plugins/cronjob/jobs', path: '', method: 'GET', access: 'user',

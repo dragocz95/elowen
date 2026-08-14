@@ -237,6 +237,28 @@ describe('cron load — jobs of accounts that no longer exist', () => {
   });
 });
 
+describe('cron tools — a turn with no account behind it', () => {
+  // A sub-agent inherits its parent's plugin grants but NOT their account (a delegated identity carries no
+  // `elowenUserId`). An instance job's owner is also null, so comparing owner to caller would read
+  // "null === null" as "mine" and hand every instance job to any granted colleague one delegation hop away.
+  it('sees no instance job and cannot remove one, even though the grant came through', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob({ id: 'operators-job', name: 'operator digest' })]);
+    const { reg } = await loadCron(dataRoot);
+    const list = reg.tools.find((t) => t.name === 'CronList')!;
+    const remove = reg.tools.find((t) => t.name === 'CronRemove')!;
+
+    const delegated: TurnIdentity = { platform: 'subagent', userId: 'subagent', admin: false, owner: false };
+    await runWithPolicy(LIMITED, async () => {
+      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toBe('No scheduled jobs.');
+      expect(asText(await remove.execute('t', { id: 'operators-job' }, undefined as never, undefined as never)))
+        .toMatch(/no job with id/);
+    }, { identity: delegated });
+
+    expect(readJobs(dataRoot).map((j) => j.id)).toEqual(['operators-job']);
+  });
+});
+
 describe('cron tools — scheduling for the account behind the turn', () => {
   it('stamps the caller as owner, and refuses what only an admin may schedule', async () => {
     const dataRoot = freshDataRoot();

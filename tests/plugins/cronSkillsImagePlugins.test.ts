@@ -111,7 +111,11 @@ describe('skills plugin creator tools', () => {
     const del = reg.tools.find((t) => t.name === 'DeleteSkill')!;
 
     await runWithPolicy(LIMITED, async () => {
-      expect(asText(await create.execute('t', { name: 'x', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/admin session/);
+      // No account behind the turn and no admin session: neither set is writable, and the refusal names
+      // both so the caller knows which of the two is missing.
+      const refusal = asText(await create.execute('t', { name: 'x', description: 'd', content: 'c' }, undefined as never, undefined as never));
+      expect(refusal).toMatch(/admin session/);
+      expect(refusal).toMatch(/no account behind it/);
     });
     await runWithPolicy(ADMIN, async () => {
       expect(asText(await create.execute('t', { name: 'Bad Name', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/kebab-case/);

@@ -4,7 +4,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Search, Trash2 } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
+import { Input, textareaClass } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -16,7 +16,6 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { apiErrorMessage } from '../../lib/elowenClient';
 
-const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
 /** Mirrors NAME_RE in the daemon's validation for both skills and sub-agents. */
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;

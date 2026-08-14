@@ -71,10 +71,16 @@ async function dispatchPluginApi(
   // this?", not two. It is explicitly not a turn scope: no Policy, no tool policy, no session id, so
   // `isAdminSession()` stays false and the path guard keeps refusing.
   const ownerId = ctx.d.users?.ownerId();
+  // An AGENT token carries no account: it is issued to the daemon's service principal, so `auth.userId`
+  // names the operator rather than anyone the request is for. Handing that on as the acting account would
+  // make `ctx.userConfig()` inside an agent-scope route read the OPERATOR's per-account values (their
+  // credentials) for work that belongs to a task. No account is the honest answer; a route that needs the
+  // task's owner must resolve it from `auth.agentTask`.
+  const actingUserId = scope === 'agent' ? null : request.auth.userId;
   const identity: TurnIdentity = {
     platform: 'http',
     userId: String(request.auth.userId ?? ''),
-    ...(request.auth.userId !== null ? { elowenUserId: request.auth.userId } : {}),
+    ...(actingUserId !== null ? { elowenUserId: actingUserId } : {}),
     ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
     admin: request.auth.admin,
     owner: request.auth.userId !== null && ownerId !== undefined && request.auth.userId === ownerId,

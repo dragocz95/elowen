@@ -70,7 +70,6 @@
       "ownerColumn": "Owner",
       "ownerInstance": "Everyone",
       "ownerMine": "Mine",
-      "scopeAll": "All",
       "scopeMine": "Mine",
       "scopeInstance": "Instance",
       "scopeBundled": "Bundled",
