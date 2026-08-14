@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
@@ -99,68 +99,6 @@ describe('cronjob plugin', () => {
       expect(asText(await remove.execute('t', { id: jobs[0]!.id }, undefined as never, undefined as never))).toMatch(/Removed/);
       expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toBe('No scheduled jobs.');
     });
-  });
-});
-
-describe('skills plugin creator tools', () => {
-  it('create → list → delete a user skill (admin only)', async () => {
-    const dataRoot = freshDataRoot();
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    const create = reg.tools.find((t) => t.name === 'CreateSkill')!;
-    const list = reg.tools.find((t) => t.name === 'ListSkills')!;
-    const del = reg.tools.find((t) => t.name === 'DeleteSkill')!;
-
-    await runWithPolicy(LIMITED, async () => {
-      // No account behind the turn and no admin session: neither set is writable, and the refusal names
-      // both so the caller knows which of the two is missing.
-      const refusal = asText(await create.execute('t', { name: 'x', description: 'd', content: 'c' }, undefined as never, undefined as never));
-      expect(refusal).toMatch(/admin session/);
-      expect(refusal).toMatch(/no account behind it/);
-    });
-    await runWithPolicy(ADMIN, async () => {
-      expect(asText(await create.execute('t', { name: 'Bad Name', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/kebab-case/);
-      expect(asText(await create.execute('t', { name: 'deploy-checklist', description: 'Kdy nasazovat', content: 'Kroky…' }, undefined as never, undefined as never))).toMatch(/saved/);
-      const file = join(dataRoot, 'skills/deploy-checklist.md');
-      expect(readFileSync(file, 'utf-8')).toContain('name: deploy-checklist');
-      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain('deploy-checklist (instance)');
-      expect(asText(await del.execute('t', { name: 'deploy-checklist' }, undefined as never, undefined as never))).toMatch(/deleted/);
-      expect(existsSync(file)).toBe(false);
-    });
-  });
-
-  // A turn that belongs to an account writes into THAT account's set by default; the instance set stays
-  // admin-only. Without this, one person's CreateSkill would edit everyone's system prompt.
-  it('writes a personal skill for the account behind the turn, and hides it from other accounts', async () => {
-    const dataRoot = freshDataRoot();
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    const create = reg.tools.find((t) => t.name === 'CreateSkill')!;
-    const list = reg.tools.find((t) => t.name === 'ListSkills')!;
-    const amy: TurnIdentity = { platform: 'elowen', userId: '4', elowenUserId: 4, admin: false, owner: false };
-    const bob: TurnIdentity = { platform: 'elowen', userId: '5', elowenUserId: 5, admin: false, owner: false };
-
-    await runWithPolicy(LIMITED, async () => {
-      expect(asText(await create.execute('t', { name: 'amy-skill', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/personal/);
-      expect(existsSync(join(dataRoot, 'skills/users/4/amy-skill.md'))).toBe(true);
-      expect(existsSync(join(dataRoot, 'skills/amy-skill.md'))).toBe(false);
-      // A non-admin cannot promote it to the shared set.
-      expect(asText(await create.execute('t', { name: 'amy-shared', description: 'd', content: 'c', scope: 'instance' }, undefined as never, undefined as never))).toMatch(/admin session/);
-      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain('amy-skill (personal)');
-    }, { identity: amy });
-
-    await runWithPolicy(LIMITED, async () => {
-      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).not.toContain('amy-skill');
-    }, { identity: bob });
-  });
-
-  it('user-created skills register on the next plugin load', async () => {
-    const dataRoot = freshDataRoot();
-    const reg1 = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    const create = reg1.tools.find((t) => t.name === 'CreateSkill')!;
-    await runWithPolicy(ADMIN, async () => {
-      await create.execute('t', { name: 'novy-skill', description: 'test', content: 'obsah' }, undefined as never, undefined as never);
-    });
-    const reg2 = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    expect(reg2.skills.some((s) => s.name === 'novy-skill')).toBe(true);
   });
 });
 

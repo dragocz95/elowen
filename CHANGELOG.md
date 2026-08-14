@@ -62,6 +62,13 @@ is a plugin that adds a feature.
   in the package. A fresh install no longer enables `security-scan` and `codebase` — they are not on disk
   until you ask for them. An instance that had any of them enabled keeps its configuration and its indexed
   data; install the plugin from the registry to get the code back.
+- **Skills management moved to the plugin registry.** Skills themselves stay a core feature — the daemon
+  reads them into the system prompt exactly as before — but the plugin that creates, edits and lists them
+  now installs from Settings → Plugins instead of shipping in the package. An existing install keeps its
+  skills and its configuration; a fresh one has skills working and adds the management UI on request.
+- **A core slash command tied to a plugin now disappears with it.** `/skills` and `/mcp` render nothing
+  but their plugin's data, so they are no longer offered on any surface while that plugin is not running,
+  instead of opening a picker that could only report an error.
 
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the

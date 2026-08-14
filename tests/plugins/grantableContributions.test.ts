@@ -37,7 +37,7 @@ function grantablePlugins(): string[] {
 describe('a user-grantable plugin only contributes what the grant can withhold', () => {
   it('finds the grantable plugins from their manifests', () => {
     // Guards the test itself: if this ever reads empty, the loop below would pass by doing nothing.
-    expect(grantablePlugins()).toEqual(['cronjob', 'skills']);
+    expect(grantablePlugins()).toEqual(['cronjob']);
   });
 
   for (const name of grantablePlugins()) {

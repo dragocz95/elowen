@@ -20,8 +20,10 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // deliberately shared with the channel re-key `context` further down, which is explicitly absent from
   // the CLI — every surface renders and dispatches from `commandsFor`, and no surface ever sees both.
   { name: 'context', description: 'Context breakdown — what is filling the window', kind: 'info', surfaces: ['cli'] },
-  { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', surfaces: ['cli'] },
-  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli', 'web'] },
+  // Both are core commands whose entire payload comes from a plugin's routes, so both carry
+  // `requiresPlugin` and vanish from the menu when that plugin is not running.
+  { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', surfaces: ['cli'], requiresPlugin: 'mcp' },
+  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli', 'web'], requiresPlugin: 'skills' },
   { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', surfaces: ['cli'] },
   { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', surfaces: ['cli'] },
   { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', surfaces: ['cli'] },
@@ -130,9 +132,18 @@ function pluginCommandDef(cmd: PluginSlashCommand): SlashCommandDef {
 }
 
 /** The full menu for a surface/user: built-ins first, then plugin prompt commands (surface-scoped,
- *  built-in names never shadowed). Single source both `/brain/commands` and any test builds from. */
-export function commandsWithPlugins(surface: SlashSurface, isAdmin: boolean, pluginCommands: PluginSlashCommand[]): SlashCommandDef[] {
-  const base = commandsFor(surface, isAdmin);
+ *  built-in names never shadowed). Single source both `/brain/commands` and any test builds from.
+ *
+ *  `loadedPlugins` is the set of plugins actually running, and it is REQUIRED rather than optional so a
+ *  future caller cannot silently opt out of the gate and republish a command for a plugin that is not
+ *  there. Pass the live registry's set; an empty set correctly hides every plugin-gated built-in. */
+export function commandsWithPlugins(
+  surface: SlashSurface,
+  isAdmin: boolean,
+  pluginCommands: PluginSlashCommand[],
+  loadedPlugins: ReadonlySet<string>,
+): SlashCommandDef[] {
+  const base = commandsFor(surface, isAdmin).filter((c) => !c.requiresPlugin || loadedPlugins.has(c.requiresPlugin));
   const extra = pluginCommands
     .filter((c) => (!c.surfaces || c.surfaces.includes(surface)) && !isReservedCommandName(c.name))
     .map(pluginCommandDef);

@@ -80,10 +80,12 @@ describe('slash command registry', () => {
 
 
   describe('plugin-contributed prompt commands', () => {
+    // The plugin-gated built-ins are present in these cases so the merge assertions keep their subject.
+    const LOADED = new Set(['skills', 'mcp']);
     const plugin = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1 with notes: $ARGS', plugin: 'ops' }];
 
     it('merges plugin commands after the built-ins for the surface', () => {
-      const cli = commandsWithPlugins('cli', true, plugin);
+      const cli = commandsWithPlugins('cli', true, plugin, LOADED);
       const deploy = cli.find((c) => c.name === 'deploy');
       expect(deploy).toMatchObject({ kind: 'prompt', prompt: 'Deploy to $1 with notes: $ARGS', plugin: 'ops' });
       // built-ins still present and come first
@@ -91,7 +93,7 @@ describe('slash command registry', () => {
     });
 
     it('never lets a plugin command shadow a built-in', () => {
-      const merged = commandsWithPlugins('cli', true, [{ name: 'help', description: 'x', prompt: 'y' }]);
+      const merged = commandsWithPlugins('cli', true, [{ name: 'help', description: 'x', prompt: 'y' }], LOADED);
       expect(merged.filter((c) => c.name === 'help')).toHaveLength(1);
       expect(merged.find((c) => c.name === 'help')?.kind).toBe('info');
       expect(isBuiltinCommand('help')).toBe(true);
@@ -105,7 +107,7 @@ describe('slash command registry', () => {
         { name: 'voice', description: 'x', prompt: 'y' },
         { name: 'display', description: 'x', prompt: 'y' },
         { name: 'deploy', description: 'x', prompt: 'y' },
-      ]);
+      ], LOADED);
       expect(merged.some((c) => c.name === 'voice')).toBe(false);
       expect(merged.some((c) => c.name === 'display')).toBe(false);
       expect(merged.some((c) => c.name === 'deploy')).toBe(true); // an ordinary plugin command still passes
@@ -113,8 +115,43 @@ describe('slash command registry', () => {
 
     it('respects a plugin command surface restriction', () => {
       const cliOnly = [{ name: 'lint', description: 'x', prompt: 'lint it', surfaces: ['cli' as const] }];
-      expect(commandsWithPlugins('cli', true, cliOnly).some((c) => c.name === 'lint')).toBe(true);
-      expect(commandsWithPlugins('web', true, cliOnly).some((c) => c.name === 'lint')).toBe(false);
+      expect(commandsWithPlugins('cli', true, cliOnly, LOADED).some((c) => c.name === 'lint')).toBe(true);
+      expect(commandsWithPlugins('web', true, cliOnly, LOADED).some((c) => c.name === 'lint')).toBe(false);
+    });
+  });
+
+  // A built-in whose payload comes entirely from a plugin (`/skills` renders that plugin's routes,
+  // `/mcp` that one's) is worse than useless when the plugin is not running: the surface offers a picker
+  // that can only report an error. Since those plugins can live in the marketplace rather than in the
+  // package, "not running" is an ordinary healthy state, not a broken install.
+  describe('built-ins gated on a plugin', () => {
+    it('hides a gated built-in when its plugin is not loaded, and keeps the ungated ones', () => {
+      const none = commandsWithPlugins('cli', true, [], new Set());
+      expect(none.some((c) => c.name === 'skills')).toBe(false);
+      expect(none.some((c) => c.name === 'mcp')).toBe(false);
+      expect(none.some((c) => c.name === 'compact')).toBe(true);
+    });
+
+    it('shows exactly the gated built-ins whose plugin is loaded', () => {
+      const onlySkills = commandsWithPlugins('cli', true, [], new Set(['skills']));
+      expect(onlySkills.some((c) => c.name === 'skills')).toBe(true);
+      expect(onlySkills.some((c) => c.name === 'mcp')).toBe(false);
+    });
+
+    it('gates every surface the command is offered on, not just the CLI', () => {
+      // /skills is a CLI+web command; the web dock builds its menu from the same endpoint.
+      expect(commandsWithPlugins('web', true, [], new Set()).some((c) => c.name === 'skills')).toBe(false);
+      expect(commandsWithPlugins('web', true, [], new Set(['skills'])).some((c) => c.name === 'skills')).toBe(true);
+    });
+
+    it('never gates a command the server itself dispatches', () => {
+      // The gate lives in the MENU. `POST /brain/command` resolves an `action` through findCommand, which
+      // does not consult it — so an `action` that needed a plugin would still be executed by anyone who
+      // sent its name, gate or no gate. Keeping gated commands client-dispatched (picker/info) is what
+      // makes hiding them sufficient.
+      const gated = SLASH_COMMANDS.filter((c) => c.requiresPlugin);
+      expect(gated.length).toBeGreaterThan(0);
+      for (const c of gated) expect(c.kind).not.toBe('action');
     });
   });
 

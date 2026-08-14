@@ -16,7 +16,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
  *  so a fresh install does not have them on disk to enable. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'statusline', 'mcp', 'lsp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'cronjob', 'statusline', 'mcp', 'lsp'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];

@@ -550,7 +550,9 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const pluginCommands = registry
       ? [...registry.commands.values()].map((cmd) => ({ ...cmd, plugin: registry.commandOwner.get(cmd.name) }))
       : [];
-    return c.json({ commands: commandsWithPlugins(surface, !!c.get('user').is_admin, pluginCommands) });
+    // No registry (still loading, or it failed) means nothing is running, so every plugin-gated built-in
+    // is withheld rather than advertised on a hunch.
+    return c.json({ commands: commandsWithPlugins(surface, !!c.get('user').is_admin, pluginCommands, registry?.loadedNames ?? new Set()) });
   });
 
   // Execute a server-side (`action`) slash command through ONE dispatch path for every surface. Pickers

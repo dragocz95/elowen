@@ -602,7 +602,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // enabled by default: they are not on disk until someone asks for them.
   plugins: {
     enabled: [
-      'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
+      'files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs',
       'cronjob', 'statusline', 'mcp', 'lsp',
     ],
     removed: [],

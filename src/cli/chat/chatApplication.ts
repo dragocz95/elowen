@@ -3,6 +3,7 @@ import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import type { BrainEvent } from '../../brain/events.js';
 import { commandsFor } from '../../brain/slashCommands.js';
+import type { SlashCommandDef } from '../../shared/wireContract.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { ChatApplicationLifetime } from './applicationLifetime.js';
 import { BrainClient } from './brainClient.js';
@@ -33,6 +34,13 @@ import { TerminalLifecycle, createShutdownCoordinator, installExitGuards } from 
 import { color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
+
+/** The menu to fall back on when the daemon cannot be asked for it. Plugin-gated built-ins are dropped:
+ *  the daemon is the only thing that knows which plugins are running, so offering `/skills` or `/mcp` on
+ *  a guess would show a picker that can only fail. Everything else works without the server's blessing. */
+function offlineCommands(): SlashCommandDef[] {
+  return commandsFor('cli', true).filter((c) => !c.requiresPlugin);
+}
 
 export interface ChatLaunchOptions {
   base: string;
@@ -184,7 +192,7 @@ export class ChatApplication {
       client.processes().catch(() => []),
       client.terminalSettings().catch(() => null),
       loadInitialTranscript(client, hydrator, bootHydration.signal),
-      client.commands().catch(() => commandsFor('cli', true)),
+      client.commands().catch(() => offlineCommands()),
       // The operator's `!` timeout. A failed/absent value keeps the built-in default — the local shell must
       // stay usable against an older daemon, and offline is not a reason to refuse to run a command.
       client.localShellTimeoutMs().catch(() => null),
@@ -196,7 +204,7 @@ export class ChatApplication {
     const localPick = !!(prefs.theme && isChatThemeName(prefs.theme));
     if (!localPick && termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
     if (typeof termSettings?.showThoughtsCli === 'boolean') showThoughts = termSettings.showThoughtsCli;
-    const commandDefs = serverCommands.length ? serverCommands : commandsFor('cli', true);
+    const commandDefs = serverCommands.length ? serverCommands : offlineCommands();
 
     const term = new ProcessTerminal();
     const tui = new TUI(term);

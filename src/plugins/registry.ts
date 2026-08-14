@@ -373,6 +373,14 @@ export class PluginRegistry {
     this.pluginCapabilities.set(name, caps);
   }
 
+  /** The names of the plugins that actually loaded. Derived from the capability map because the loader
+   *  fills that for EVERY plugin whose register() completed (deny-by-default `{}` when the manifest
+   *  declares none), so it cannot drift from "what is running" the way a second list would. Read by the
+   *  slash-command menu to hide a built-in whose work belongs to a plugin that is not here. */
+  get loadedNames(): ReadonlySet<string> {
+    return new Set(this.pluginCapabilities.keys());
+  }
+
   /** The skills ONE session may see: every instance-wide skill, plus those owned by `userId`. Pass null
    *  for a session that serves nobody in particular (a shared channel, a task worker) — it then sees only
    *  the instance-wide set. The identical array is returned when no per-user skill exists at all, so an
@@ -575,7 +583,7 @@ export class PluginRegistry {
       // its `kind` so the adapter can tell a native/control command from a plugin prompt macro. Reads the
       // MERGED registry lazily (allChatCommands closes over it, like allToolNames) so a plugin registered
       // later — or a reload — is reflected without a stale snapshot.
-      chatCommands: (surface) => commandsWithPlugins(surface, true, allChatCommands?.() ?? []).map(
+      chatCommands: (surface) => commandsWithPlugins(surface, true, allChatCommands?.() ?? [], this.loadedNames).map(
         ({ name: commandName, description, kind, adminOnly }) => ({ name: commandName, description, kind, ...(adminOnly ? { adminOnly } : {}) }),
       ),
       registerSystemPromptFragment: (f) => { this.promptFragments.push(f); this.promptFragmentOwners.push(name); },

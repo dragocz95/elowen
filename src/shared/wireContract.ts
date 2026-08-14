@@ -132,6 +132,13 @@ export interface SlashCommandDef {
   prompt?: string;
   /** For plugin commands: the owning plugin's name (menu attribution + provenance). */
   plugin?: string;
+  /** For a BUILT-IN command whose work is done by a plugin (`/skills`, `/mcp`): the plugin that must be
+   *  running for it to do anything. The command is dropped from a surface's menu while that plugin is
+   *  absent — it would otherwise open a picker that can only report an error, and a plugin living in the
+   *  marketplace rather than the package is absent on a perfectly healthy install. Distinct from
+   *  `plugin` above: that one MARKS a command as contributed by a plugin, this one GATES a core command
+   *  on one. */
+  requiresPlugin?: string;
 }
 
 /** One option of an `AskUserQuestion` choice, as it rides the `ask` SSE event. Referenced only through
