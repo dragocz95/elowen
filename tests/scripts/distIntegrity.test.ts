@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 interface DistIntegrity {
   cleanDist(root: string): void;
   inspectDistParity(root: string): { missing: string[]; orphaned: string[] };
+  inspectPluginFolders(root: string): { unmanifested: string[] };
   assertDistParity(root: string): void;
 }
 
@@ -70,6 +71,38 @@ describe('dist integrity', () => {
     expect(() => api.assertDistParity(root)).toThrow(
       'missing output: dist/cli/main.js\norphaned output: dist/legacy.js',
     );
+  });
+
+  // Regression: `git rm plugins/<name>` leaves the plugin's GITIGNORED build output (web/index.js)
+  // behind, the build copies that folder into dist/, and it ships inside the npm package. The loader
+  // then finds a folder for an enabled name, cannot read its manifest, and logs a bare ERROR next to a
+  // plugin that loaded fine from the user directory. Parity cannot see it — source and dist agree.
+  it('rejects a plugin folder left behind without its manifest', async () => {
+    const root = fixture();
+    write(root, 'plugins/keeper/elowen-plugin.json', '{"name":"keeper"}');
+    write(root, 'plugins/keeper/index.mjs', 'export {};');
+    write(root, 'dist/plugins/keeper/index.mjs', 'export {};');
+    write(root, 'plugins/ghost/web/index.js', 'export {};');
+    write(root, 'dist/plugins/ghost/web/index.js', 'export {};');
+
+    const api = await integrity();
+    expect(api.inspectDistParity(root)).toEqual({ missing: [], orphaned: [] });
+    expect(api.inspectPluginFolders(root)).toEqual({ unmanifested: ['ghost'] });
+    expect(() => api.assertDistParity(root)).toThrow(
+      'plugin folder without elowen-plugin.json (leftover of a deleted plugin?): plugins/ghost',
+    );
+  });
+
+  it('accepts the shared underscore folders that are not plugins', async () => {
+    const root = fixture();
+    write(root, 'plugins/_shared/httpClient.mjs', 'export {};');
+    write(root, 'dist/plugins/_shared/httpClient.mjs', 'export {};');
+
+    expect((await integrity()).inspectPluginFolders(root)).toEqual({ unmanifested: [] });
+  });
+
+  it('passes against the real repository', async () => {
+    expect((await integrity()).inspectPluginFolders(repositoryRoot)).toEqual({ unmanifested: [] });
   });
 
   it('cleans only the validated repository dist directory', async () => {

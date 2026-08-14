@@ -88,12 +88,34 @@ export function inspectDistParity(root) {
   };
 }
 
+/** Plugin folders with no manifest. Parity alone cannot see these: when a plugin is deleted with
+ *  `git rm`, its gitignored build output (plugins/<name>/web/index.js) survives on disk, the build
+ *  copies it into dist/, and it ships — where the loader finds a folder for an enabled name, fails to
+ *  read its manifest and logs a plain ERROR. Both sides are then "in parity" around a folder that is
+ *  really just a leftover. */
+const pluginFoldersWithoutManifest = (root) => {
+  const { repository } = loadRepository(root);
+  const pluginsDir = join(repository, 'plugins');
+  if (!existsSync(pluginsDir)) return [];
+  return readdirSync(pluginsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_'))
+    .map((entry) => entry.name)
+    .filter((name) => !existsSync(join(pluginsDir, name, 'elowen-plugin.json')))
+    .sort();
+};
+
+export function inspectPluginFolders(root) {
+  return { unmanifested: pluginFoldersWithoutManifest(root) };
+}
+
 export function assertDistParity(root) {
   const { missing, orphaned } = inspectDistParity(root);
-  if (missing.length === 0 && orphaned.length === 0) return;
+  const { unmanifested } = inspectPluginFolders(root);
+  if (missing.length === 0 && orphaned.length === 0 && unmanifested.length === 0) return;
   throw new Error([
     ...missing.map((path) => `missing output: ${path}`),
     ...orphaned.map((path) => `orphaned output: ${path}`),
+    ...unmanifested.map((name) => `plugin folder without elowen-plugin.json (leftover of a deleted plugin?): plugins/${name}`),
   ].join('\n'));
 }
 
