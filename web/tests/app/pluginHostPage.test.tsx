@@ -25,11 +25,12 @@ vi.mock('../../lib/pluginUi', async (orig) => ({
   loadPluginUi: () => Promise.resolve(registration.value),
 }));
 
-const mount = () => {
+const mount = (opts: { listing?: unknown[]; admin?: boolean } = {}) => {
   const { wrapper: Wrapper, client } = createWrapper();
-  client.setQueryData(['plugin-ui', 'en'], [
+  client.setQueryData(['plugin-ui', 'en'], opts.listing ?? [
     { name: 'skills', url: '/plugins/skills/web/index.js', apiVersion: 1, nav: [], settings: [{ id: 'skills', label: 'Skills' }] },
   ]);
+  client.setQueryData(['me'], { user: { id: 7, username: 'amy', is_admin: opts.admin ?? true } });
   return render(<Wrapper><PluginHostPage /></Wrapper>);
 };
 
@@ -48,6 +49,22 @@ describe('plugin host route', () => {
     expect(page).not.toBeNull();
     expect(page!.contains(screen.getByTestId('section'))).toBe(true);
     expect(container.querySelector('[data-settings-document]')).toBeNull(); // the mock section renders none
+  });
+
+  // Landing on the address of a plugin that is not in YOUR listing means two different things. An admin
+  // is looking at something switched off and can go switch it on; anybody else is looking at something
+  // that is probably running fine and simply not theirs — and the settings page is admin-only, so
+  // offering them that button would send them somewhere they may not go.
+  it('tells a missing plugin apart from one this account was never granted', async () => {
+    mount({ listing: [], admin: false });
+    expect(await screen.findByText(en.pluginUi.notGranted)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: en.pluginUi.manage })).toBeNull();
+  });
+
+  it('offers an admin the switch, because for them it really is off', async () => {
+    mount({ listing: [], admin: true });
+    expect(await screen.findByText(en.pluginUi.unavailable)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.pluginUi.manage })).toBeInTheDocument();
   });
 
   it('leaves a plugin page unwrapped — it brings its own layout', async () => {

@@ -1839,6 +1839,7 @@ export const cs = {
     unavailableTitle: 'Rozhraní není k dispozici',
     manage: 'Spravovat pluginy',
     unavailable: 'Tento plugin není zapnutý, nebo nemá žádné rozhraní.',
+    notGranted: 'Tento doplněk vám nebyl přidělen. Požádejte o přístup správce.',
     incompatible: 'Tento plugin vyžaduje novější verzi aplikace. Pro použití jeho rozhraní aktualizujte server.',
     loadFailed: 'Rozhraní pluginu se nepodařilo načíst. Zkontrolujte záznamy pluginu v Nastavení → Pluginy.',
     pageMissing: 'Plugin nemá na této adrese žádnou stránku.',

@@ -1839,6 +1839,7 @@ export const sk = {
     unavailableTitle: 'Rozhranie nie je k dispozícii',
     manage: 'Spravovať pluginy',
     unavailable: 'Tento plugin nie je zapnutý, alebo nemá žiadne rozhranie.',
+    notGranted: 'Tento doplnok vám nebol pridelený. Požiadajte o prístup správcu.',
     incompatible: 'Tento plugin vyžaduje novšiu verziu aplikácie. Na použitie jeho rozhrania aktualizujte server.',
     loadFailed: 'Rozhranie pluginu sa nepodarilo načítať. Skontrolujte záznamy pluginu v Nastavenia → Pluginy.',
     pageMissing: 'Plugin nemá na tejto adrese žiadnu stránku.',

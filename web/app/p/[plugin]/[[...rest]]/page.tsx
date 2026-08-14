@@ -13,7 +13,7 @@ import { Button } from '../../../../components/ui/Button';
 import { EmptyState } from '../../../../components/ui/states';
 import { pluginLucideIcon } from '../../../../lib/pluginIcons';
 import { PluginErrorBoundary, PluginPlaceholder as Placeholder } from '../../../../components/plugin/PluginUiGuards';
-import { usePluginUi } from '../../../../lib/queries';
+import { usePluginUi, useMe } from '../../../../lib/queries';
 import { useTranslation } from '../../../../lib/i18n';
 import {
   PLUGIN_UI_API_VERSION, loadPluginUi, matchPluginPage, setPluginNavigate,
@@ -30,6 +30,10 @@ export default function PluginHostPage() {
   const router = useRouter();
   const { t, locale } = useTranslation();
   const listing = usePluginUi(locale);
+  // Why the plugin is missing from the listing depends on who is asking. For an admin it is off (or has
+  // no UI) and they can fix that; for anybody else the plugin may well be running — they just hold no
+  // grant for it, and the settings page they would be sent to is admin-only.
+  const isAdmin = useMe().data?.user?.is_admin === true;
   const [registration, setRegistration] = useState<PluginUiRegistration | null | undefined>(undefined);
   // A settings section autosaves and reports the outcome to whoever hosts it. In the Settings deck that
   // was the deck header; a section reached as a page has no other place to say that a save failed — and
@@ -70,7 +74,7 @@ export default function PluginHostPage() {
 
   let body: ReactNode;
   if (listing.isLoading) body = null;
-  else if (!entry) body = notice(strings.unavailable, true);
+  else if (!entry) body = notice(isAdmin ? strings.unavailable : strings.notGranted, isAdmin);
   else if (!compatible) body = notice(strings.incompatible);
   else if (registration === undefined) body = null; // bundle loading
   else if (registration === null) body = notice(strings.loadFailed, true);
