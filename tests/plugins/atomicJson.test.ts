@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync, mkdirSync } from 'node:fs';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { readJsonSafe, writeJsonAtomic } from '../../plugins/_shared/atomicJson.mjs';
+import { readJsonSafe, writeJsonAtomic } from '../../packages/plugin-shared/atomicJson.mjs';
 
 let dirs: string[] = [];
 function freshDir(): string { const p = mkdtempSync(join(tmpdir(), 'elowen-atomicjson-')); dirs.push(p); return p; }

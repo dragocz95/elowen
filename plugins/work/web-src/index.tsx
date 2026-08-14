@@ -3,7 +3,7 @@
  *  Registers the work domain's four pages (task register, kanban board, timeline, spend stats) on the
  *  host's plugin-UI runtime. The plugin already owns their tables, API routes and control-plane tools;
  *  these are the surfaces on top of them, so disabling the plugin takes the whole vertical with it.
- *  Built by @elowen/plugin-ui-kit (esbuild; react shimmed to the host instance) into web/index.js,
+ *  Built by elowen-plugin-ui-kit (esbuild; react shimmed to the host instance) into web/index.js,
  *  which the manifest's `web.entry` points at.
  */
 import { useEffect } from 'react';

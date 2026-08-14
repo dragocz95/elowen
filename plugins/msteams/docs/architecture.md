@@ -121,7 +121,7 @@ place the plugin persists message text, so it is strictly opt-in
    line. `tests/plugins/msteamsPlugin.test.ts:193` pins the absence of a reply specifically; it is not
    the absence of *all* traffic, because step 2 above already made a roster call before this gate. A
    match is turned into the access descriptor by the shared `buildRoleAccess`
-   (`plugins/_shared/access.mjs`), folded with this conversation's saved model / reasoning / fast state.
+   (`packages/plugin-shared/access.mjs`), folded with this conversation's saved model / reasoning / fast state.
 
 ### 2.5 Commands (`:401-404`)
 
@@ -151,7 +151,7 @@ the size afterwards (`lib/connector.mjs:108-111`).
 
 - Chat sessions are shared, so every message names its speaker: `[<display name>] <text>` (`:413`).
 - The channel key is `${conversationId}#${gen}` (`:415-416`), where `gen` is bumped by `/new`.
-- `resolveDisplaySettings` (`_shared/display.mjs`) merges the plugin config with this conversation's
+- `resolveDisplaySettings` (`elowen-plugin-shared/display`) merges the plugin config with this conversation's
   `/display` overrides. If `observesLiveEvents` says a stream is needed, a `LiveMessage` is opened;
   otherwise `onEvent` handles **only** `ask`, so a parked question still renders its card instead of
   hanging until timeout (`:418-424`).
@@ -233,7 +233,7 @@ feeds the people directory (`notePeople`, `:195`).
 
 ### 3.3 The live message
 
-`lib/stream.mjs` is a thin Teams binding for the shared engine `plugins/_shared/liveMessage.mjs`. It
+`lib/stream.mjs` is a thin Teams binding for the shared engine `packages/plugin-shared/liveMessage.mjs`. It
 supplies:
 
 - the transport closures (`create`/`edit`/`remove`/`postImages`) that call the adapter's `tm*` helpers
@@ -278,7 +278,7 @@ documented at `lib/cards.mjs:4-6`.
 
    > **Known discrepancy (unfixed at `701144dd`).** Both production call sites store the asker as
    > `from.id`, the `29:` channel account id (`:424`, and `:419` via the shared engine's
-   > `plugins/_shared/liveMessage.mjs:363`), while the check above reads `aadObjectId` first. A real
+   > `packages/plugin-shared/liveMessage.mjs:363`), while the check above reads `aadObjectId` first. A real
    > Teams user always has an `aadObjectId`, so the two never agree and **the original asker is refused
    > their own card** unless they are also an admin. The pickers do it consistently — they store
    > `String(from.aadObjectId || from.id)` at `:964` and compare the same expression at `:1019` — and
@@ -373,7 +373,7 @@ An empty message is refused up front (`:747`). Then `findPerson` (`:694`) → `c
 
 `index.mjs:47` creates it at `<plugin data dir>/channel-state.json` — the per-plugin data dir the host
 hands over via `ctx.dataDir()` (rooted at `plugins-data/`, `src/daemon/brainCore.ts:255`). `lib/state.mjs`
-is a one-line re-export of the shared implementation (`plugins/_shared/stateStore.mjs`): the whole file is
+is a one-line re-export of the shared implementation (`packages/plugin-shared/stateStore.mjs`): the whole file is
 read once and cached in memory, and every `patch()` rewrites it through a temp file + atomic rename. A
 write failure is logged **and re-thrown**, so a `/model` or `/display` handler cannot confirm a change
 that never stuck.
@@ -386,7 +386,7 @@ command handlers:
 | Field | Written at | Meaning |
 | --- | --- | --- |
 | `ref` | `:168`, `:660` | `{ serviceUrl, conversationType, tenantId, botId }` — the route to reach this conversation later. |
-| `gen` | `_shared/chatCommands.mjs` (`/new`) | Conversation generation; folded into the channel key as `id#gen`. |
+| `gen` | `elowen-plugin-shared/chatCommands` (`/new`) | Conversation generation; folded into the channel key as `id#gen`. |
 | `model` | `:1041` | `{ provider, model }` chosen with `/model`. |
 | `thinkingLevel` | `:1047` | Reasoning effort chosen with `/reasoning`; `undefined` = model default. |
 | `fast` | `/fast`, cleared at `:1041` | Fast mode; cleared when the newly picked model has no fast tier. |

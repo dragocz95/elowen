@@ -15,7 +15,7 @@
     "e2e:smoke": "playwright test --grep @smoke"
   },
   "dependencies": {
-    "@elowen/plugin-ui-kit": "file:../packages/plugin-ui-kit",
+    "elowen-plugin-ui-kit": "file:../packages/plugin-ui-kit",
     "@monaco-editor/react": "^4.7.0",
     "@react-three/fiber": "^9.6.1",
     "@tanstack/react-query": "^5.101.4",

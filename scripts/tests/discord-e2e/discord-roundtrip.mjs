@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Discord chat-adapter E2E scenario against a REAL built daemon + the REAL Discord plugin.
 //
-// Wiring under test (the shared plugins/_shared cores over the Discord surface — REST + gateway, distinct
+// Wiring under test (the shared shared elowen-plugin-shared cores over the Discord surface — REST + gateway, distinct
 // from Telegram's grammY long-poll):
 //   fake Discord gateway (WS)  ──MESSAGE_CREATE / INTERACTION_CREATE──▶  real discord plugin (pointed at the
 //   fake via the `apiBase` + `gatewayUrl` seam)  ──▶  PlatformOrchestrator  ──▶  real brain channel session

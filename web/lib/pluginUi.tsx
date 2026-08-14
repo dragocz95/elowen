@@ -19,11 +19,11 @@ import * as JsxRuntime from 'react/jsx-runtime';
 import { useQueries } from '@tanstack/react-query';
 import type { ComponentType, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-// The contract (runtime surface, registration shape, Window globals) lives in @elowen/plugin-ui-kit —
+// The contract (runtime surface, registration shape, Window globals) lives in elowen-plugin-ui-kit —
 // the SAME package plugin authors build against — so the two sides cannot drift. Types ONLY: a value
 // import would need Turbopack to resolve the symlinked package outside its root, while `import type`
 // is erased before bundling. Re-exported below for the app's own consumers.
-import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from '@elowen/plugin-ui-kit';
+import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';

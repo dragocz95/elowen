@@ -12,7 +12,7 @@ import { StateStore } from './lib/state.mjs';
 import { DiscordAdapter } from './lib/adapter.mjs';
 import { registerTools } from './lib/tools.mjs';
 import { listGuildChannels } from './lib/channels.mjs';
-import { platformImageDirs } from '../_shared/images.mjs';
+import { platformImageDirs } from 'elowen-plugin-shared/images';
 
 export { stripForSpeech, extractImageRefs, stripThinking, parseModelExec, memberIsAdmin, displayNameOf, resolveMentions, buildReplyContext, splitContent, footerLine, withoutFooter } from './lib/format.mjs';
 export { buildAskComponents } from './lib/ask.mjs';

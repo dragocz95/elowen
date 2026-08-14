@@ -2,12 +2,12 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildPluginUiBundle } from '@elowen/plugin-ui-kit/build';
+import { buildPluginUiBundle } from 'elowen-plugin-ui-kit/build';
 
 /** The plugin-web toolchain's load-bearing invariant: a bundle must NEVER carry its own React — all
  *  react/react-dom/jsx-runtime imports have to collapse into reads of window.ElowenUiRuntime, and the
  *  output must be a single self-contained ESM file (the daemon content-hashes it as-is). */
-describe('@elowen/plugin-ui-kit build', () => {
+describe('elowen-plugin-ui-kit build', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ui-kit-build-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

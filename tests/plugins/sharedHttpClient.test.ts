@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-// @ts-expect-error — plain ESM shared helper, no type declarations (same as the other plugins/_shared modules)
-import { createHttpClient, HttpError } from '../../plugins/_shared/httpClient.mjs';
+// @ts-expect-error — plain ESM shared helper, no type declarations (same as the other elowen-plugin-shared modules)
+import { createHttpClient, HttpError } from '../../packages/plugin-shared/httpClient.mjs';
 
 type FetchCall = { url: string; init: RequestInit };
 

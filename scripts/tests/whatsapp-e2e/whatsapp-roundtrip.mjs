@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // WhatsApp chat-adapter E2E scenario against a REAL built daemon + the REAL WhatsApp plugin.
 //
-// Wiring under test (the shared plugins/_shared cores over the hardest surface — Baileys):
+// Wiring under test (the shared shared elowen-plugin-shared cores over the hardest surface — Baileys):
 //   scripted inbound text  ──HTTP bridge──▶  fake in-process Baileys socket (loaded INSIDE the daemon via
 //   the adapter's `WHATSAPP_E2E_SOCKET_MODULE` seam)  ──messages.upsert──▶  real whatsapp adapter
 //   ──▶  PlatformOrchestrator  ──▶  real brain channel session  ──▶  scripted OpenAI model server  ──▶

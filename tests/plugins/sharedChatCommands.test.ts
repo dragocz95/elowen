@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { CONTROL_COMMANDS, runControlCommand } from '../../plugins/_shared/chatCommands.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 
 const MSG = {
   newConversation: 'NEW',
@@ -20,7 +20,7 @@ const MSG = {
   restartUnavailable: 'RESTART_NA',
 };
 
-/** A minimal StateStore stand-in (the real one is _shared/stateStore.mjs). */
+/** A minimal StateStore stand-in (the real one is elowen-plugin-shared/stateStore). */
 function fakeState(init: Record<string, unknown> = {}) {
   const store: Record<string, Record<string, unknown>> = { X: { ...init } };
   return { get: (id: string) => store[id] ?? (store[id] = {}), patch: (id: string, p: Record<string, unknown>) => { store[id] = { ...(store[id] ?? {}), ...p }; }, _store: store };

@@ -1,11 +1,11 @@
-// WhatsApp binding for the shared live-message engine (../../_shared/liveMessage.mjs): the Baileys
+// WhatsApp binding for the shared live-message engine (elowen-plugin-shared/liveMessage): the Baileys
 // transport, the plain-text render style and the final-answer send. The throttled editable message, the
 // brain-event reducer and the render/fold core all live in the shared engine. WhatsApp used to carry its
 // own copy of that lifecycle and kept drifting away from it (a final settle with no retry, an error reply
 // that could overtake an in-flight progress send), so only what genuinely differs stays here.
 import { CHUNK, extractImageRefs, splitContent, footerLine } from './format.mjs';
-import { createLiveMessage } from '../../_shared/liveMessage.mjs';
-import { resolveDisplaySettings } from '../../_shared/display.mjs';
+import { createLiveMessage } from 'elowen-plugin-shared/liveMessage';
+import { resolveDisplaySettings } from 'elowen-plugin-shared/display';
 
 const EDIT_THROTTLE_MS = 1500; // WhatsApp is stricter than Discord/Telegram on edits — stay well under any limit
 

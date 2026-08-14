@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { rolePrompt, buildRoleAccess, applyVisionModel } from '../../plugins/_shared/access.mjs';
+import { rolePrompt, buildRoleAccess, applyVisionModel } from '../../packages/plugin-shared/access.mjs';
 
 describe('shared plugin access descriptor', () => {
   describe('rolePrompt', () => {

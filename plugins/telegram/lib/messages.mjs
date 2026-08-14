@@ -1,9 +1,9 @@
 /** User-facing service messages, per configured language (config `language`: 'en' | 'cs'). These are
  *  the bot's own texts (command replies, placeholders) — the brain's answers are in the user's language.
  *  Telegram messages are sent as plain text, so these carry no markdown emphasis markers. Surface-neutral
- *  keys and the `/help` command wording live in ../../_shared. */
-import { SHARED_MESSAGES } from '../../_shared/messages.mjs';
-import { renderHelpLines } from '../../_shared/help.mjs';
+ *  keys and the `/help` command wording live in elowen-plugin-shared. */
+import { SHARED_MESSAGES } from 'elowen-plugin-shared/messages';
+import { renderHelpLines } from 'elowen-plugin-shared/help';
 
 // Telegram sends plain text — command tokens carry no inline-code markers. The /help LIST is passed in at
 // call time (the daemon's chat-command catalog + adapter-local voice/display) so it never drifts.

@@ -51,6 +51,11 @@ is a plugin that adds a feature.
   instead of pretending a mission exists.
 
 ### Changed
+- **The shared plugin helpers ship as `elowen-plugin-shared`.** What used to be `plugins/_shared/` — the
+  formatting, live-message, chat-command and state helpers every chat adapter is built on — is now a
+  published package the daemon depends on, imported as `elowen-plugin-shared/format` and friends. It
+  changes nothing at runtime for an existing install; it is what lets a chat adapter live outside the
+  package at all, since a plugin installed from the registry cannot reach a folder that ships next to it.
 - **Extensions with no daemon dependency moved to the plugin registry.** `formatters`, `dev-commands`,
   `security-scan` and `codebase` are plain extensions the daemon never calls into, so they now live in the
   public plugin registry and install from Settings → Plugins like any other extension instead of shipping

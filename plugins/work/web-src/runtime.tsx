@@ -3,7 +3,7 @@
  *  The runtime hands over untyped `components`/`hooks`/`utils` records (the host cannot know every
  *  plugin's needs); this module narrows each entry to the signature the moved views were written
  *  against in the core app. The narrowing is a local structural CONTRACT, not a source import — the
- *  bundle must not compile against `web/` (it builds standalone via @elowen/plugin-ui-kit).
+ *  bundle must not compile against `web/` (it builds standalone via elowen-plugin-ui-kit).
  *
  *  The plugin owns the work domain end to end — its tables, routes, tools and these pages. What it
  *  deliberately does NOT own is a second browser data plane: the query/mutation hooks below are the

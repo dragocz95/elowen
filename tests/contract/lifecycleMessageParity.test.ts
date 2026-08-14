@@ -12,7 +12,12 @@ import { lifecycleNotice, LIFECYCLE_KEYS, type LifecycleKey } from '../../src/da
 // Left unguarded, the two copies drift the moment someone rewords one side, and the result is invisible:
 // an English instance keeps reading fine (it is served the daemon's fallback) while a Czech one silently
 // says something the daemon no longer says. This test is the link.
-const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/_shared/lifecycle.mjs');
+//
+// This lock works by reading the shared source from disk, so it holds only while elowen-plugin-shared
+// is built from this repository. If that package is ever developed elsewhere, the guard has to become
+// something the package itself carries (a published fixture both sides assert against) — otherwise it
+// keeps passing against a copy nobody ships.
+const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../packages/plugin-shared/lifecycle.mjs');
 const plugin = await import(pluginPath) as {
   LIFECYCLE_MESSAGES: Record<string, Record<string, string | ((...a: never[]) => string)>>;
   lifecycleText(lang: string, notice: unknown, fallback: string): string;

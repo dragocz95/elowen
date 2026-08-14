@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter } from '../../plugins/_shared/format.mjs';
+import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter } from '../../packages/plugin-shared/format.mjs';
 
 describe('shared plugin format helpers', () => {
   it('splitContent / extractImageRefs / stripThinking never throw on a null or undefined body (the shipped Discord/WhatsApp TypeError)', () => {

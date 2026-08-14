@@ -5,7 +5,7 @@ import { stripInlineReasoning } from '../../src/brain/messageView.js';
 
 // Inline chain-of-thought stripping is hand-mirrored because the untyped `.mjs` plugin shared library
 // cannot import the daemon's NodeNext source: src/brain/messageView.ts serves every stored-message
-// consumer, plugins/_shared/format.mjs serves each adapter's text-fallback path. The same text must not
+// consumer, packages/plugin-shared/format.mjs serves each adapter's text-fallback path. The same text must not
 // come out differently depending on which one saw it, and until this test existed nothing said so.
 //
 // The corpus deliberately leads with the case that made the pair worth guarding: BOTH copies used to
@@ -14,7 +14,12 @@ import { stripInlineReasoning } from '../../src/brain/messageView.js';
 // very function was silently delivered as 2 936 characters. Anchoring both open-ended rules to a line
 // boundary keeps every genuine case (a cut-off stream opens its reasoning on a fresh line) while leaving
 // a mid-sentence mention alone.
-const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/_shared/format.mjs');
+//
+// This lock works by reading the shared source from disk, so it holds only while elowen-plugin-shared
+// is built from this repository. If that package is ever developed elsewhere, the guard has to become
+// something the package itself carries (a published fixture both sides assert against) — otherwise it
+// keeps passing against a copy nobody ships.
+const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../packages/plugin-shared/format.mjs');
 const plugin = await import(pluginPath) as { stripThinking(text: string): string };
 
 const CORPUS: { label: string; input: string }[] = [

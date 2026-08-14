@@ -13,8 +13,8 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runtimeFooter } from '../_shared/format.mjs';
-import { readJsonSafe, writeJsonAtomic } from '../_shared/atomicJson.mjs';
+import { runtimeFooter } from 'elowen-plugin-shared/format';
+import { readJsonSafe, writeJsonAtomic } from 'elowen-plugin-shared/atomicJson';
 
 /** This plugin's own manifest name — the key an account's grant is stored under. */
 const PLUGIN_NAME = 'cronjob';

@@ -1,9 +1,9 @@
 /** User-facing service messages, per configured language (config `language`: 'en' | 'cs'). These are
  *  the bot's own texts (command replies, placeholders) — the brain's answers are in the user's language.
- *  Surface-neutral keys and the `/help` command wording live in ../../_shared; WhatsApp-specific texts
+ *  Surface-neutral keys and the `/help` command wording live in elowen-plugin-shared; WhatsApp-specific texts
  *  (`*bold*` emphasis, numbered-reply prompts) stay here. */
-import { SHARED_MESSAGES } from '../../_shared/messages.mjs';
-import { renderHelpLines } from '../../_shared/help.mjs';
+import { SHARED_MESSAGES } from 'elowen-plugin-shared/messages';
+import { renderHelpLines } from 'elowen-plugin-shared/help';
 
 // WhatsApp has no /voice or /display surface. The /help LIST is passed in at call time (the daemon's
 // chat-command catalog) so it never drifts from what is registered. Command tokens use inline code.

@@ -1,5 +1,5 @@
 // Teams-flavoured formatting: shared splitting/reply-context helpers sized for Teams message limits.
-import { splitContent as splitAtChunk, parseModelExec, runtimeFooter } from '../../_shared/format.mjs';
+import { splitContent as splitAtChunk, parseModelExec, runtimeFooter } from 'elowen-plugin-shared/format';
 
 export { parseModelExec };
 

@@ -73,9 +73,20 @@ module.exports = {
       to: { path: '^src/', dependencyTypesNot: ['type-only'] },
     },
     {
+      name: 'plugin-shared-not-to-core',
+      severity: 'error',
+      comment: 'packages/plugin-shared ships to npm as @elowen/plugin-shared and is imported by plugins '
+        + 'that may live in another repository entirely, where src/ does not exist — so unlike plugins/ it '
+        + 'may not reach into the daemon even type-only. What it needs from the host it takes as an '
+        + 'argument. Two contract tests pin its behaviour against the daemon (inlineReasoningParity, '
+        + 'lifecycleMessageParity); that pinning is a comparison of source text, never an import.',
+      from: { path: '^packages/plugin-shared/' },
+      to: { path: '^(src|web|plugins)/' },
+    },
+    {
       name: 'plugin-bundle-not-to-web-app',
       severity: 'error',
-      comment: 'A plugin browser bundle (plugins/*/web-src) is built standalone by @elowen/plugin-ui-kit '
+      comment: 'A plugin browser bundle (plugins/*/web-src) is built standalone by elowen-plugin-ui-kit '
         + 'and must reach the app ONLY through window.ElowenUiRuntime, narrowed in its own runtime module. '
         + 'Importing web/ would bundle a second copy of the app (a second react-query client, a second set '
         + 'of components) into a file the daemon serves next to the real one. Its TESTS are exempt: they '

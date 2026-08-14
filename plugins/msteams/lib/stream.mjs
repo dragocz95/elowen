@@ -1,10 +1,10 @@
-// Teams binding for the shared live-message engine (../../_shared/liveMessage.mjs): the Bot Connector
+// Teams binding for the shared live-message engine (elowen-plugin-shared/liveMessage): the Bot Connector
 // transport (adapter.tmSend / tmEdit / tmDelete), a markdown render style, and the final-answer image
 // strategy (attachments ahead of the text). The throttled editable message, the streaming answer and the
 // brain-event reducer all live in the shared engine — only the genuinely Teams-specific pieces are here.
 import { CHUNK, splitContent, footerLine } from './format.mjs';
-import { extractImageRefs } from '../../_shared/format.mjs';
-import { createLiveMessage } from '../../_shared/liveMessage.mjs';
+import { extractImageRefs } from 'elowen-plugin-shared/format';
+import { createLiveMessage } from 'elowen-plugin-shared/liveMessage';
 
 /** Post a final text to a conversation. Generated-image links become real Teams image attachments (their
  *  relative daemon URLs are dead text here): the links are stripped and the images ride ahead of the

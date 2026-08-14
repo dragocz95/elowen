@@ -39,6 +39,9 @@
     "LICENSE",
     "README.md"
   ],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "prebuild": "npm run languages-check --silent && node scripts/dist-integrity.mjs clean",
     "build:ts": "tsc -b tsconfig.json $(ls tsconfig.plugins.*.json 2>/dev/null)",
@@ -98,6 +101,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.0.0",
+    "elowen-plugin-shared": "0.1.0",
     "grammy": "^1.44.0",
     "hono": "^4.6.0",
     "jose": "^5.10.0",
@@ -117,13 +121,13 @@
     "protobufjs": "^7.6.5"
   },
   "devDependencies": {
-    "@elowen/plugin-ui-kit": "file:packages/plugin-ui-kit",
     "@next/eslint-plugin-next": "^16.2.12",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "dependency-cruiser": "^17.4.3",
+    "elowen-plugin-ui-kit": "0.1.0",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-unused-imports": "^4.4.1",

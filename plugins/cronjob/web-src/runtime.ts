@@ -3,7 +3,7 @@
  *  The runtime hands over untyped `components`/`hooks`/`utils` records; this module narrows each
  *  entry to the signature the moved jobs editor was written against in the core app. The narrowing
  *  is a local structural CONTRACT, not a source import — the bundle must not compile against `web/`
- *  (it builds standalone via @elowen/plugin-ui-kit).
+ *  (it builds standalone via elowen-plugin-ui-kit).
  */
 import type { ComponentType, ReactNode } from 'react';
 

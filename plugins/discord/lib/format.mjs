@@ -1,7 +1,7 @@
 // Discord text/format helpers. The transport-neutral pieces (stripForSpeech, extractImageRefs,
-// stripThinking, parseModelExec, the fenced-split core) live in ../../_shared/format.mjs; only Discord's
+// stripThinking, parseModelExec, the fenced-split core) live in elowen-plugin-shared/format; only Discord's
 // own chunk size, mention/name resolution, reply-quote and subtext footer stay here.
-import { splitContent as splitAtChunk, extractImageRefs, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter } from '../../_shared/format.mjs';
+import { splitContent as splitAtChunk, extractImageRefs, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter } from 'elowen-plugin-shared/format';
 export { extractImageRefs, stripThinking, parseModelExec, stripForSpeech };
 
 export const CHUNK = 1990;

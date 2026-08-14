@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { resolveImageFiles, platformImageDirs, imageMimeType } from '../../plugins/_shared/images.mjs';
+import { resolveImageFiles, platformImageDirs, imageMimeType } from '../../packages/plugin-shared/images.mjs';
 
 describe('shared plugin image resolution', () => {
   let root: string;

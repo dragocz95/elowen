@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { observesLiveEvents, resolveDisplaySettings } from '../../plugins/_shared/display.mjs';
+import { observesLiveEvents, resolveDisplaySettings } from '../../packages/plugin-shared/display.mjs';
 
 describe('observesLiveEvents', () => {
   it('is true whenever the surface renders tool activity', () => {

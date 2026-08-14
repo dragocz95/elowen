@@ -71,7 +71,7 @@ hint live in `plugins/msteams/i18n/cs.json` and `sk.json`.
 | `toolOutput` | enum `hidden`/`summary`/`tail` | `summary` | How much of a finished tool's result the progress message keeps. |
 | `toolMessageMode` | enum `single`/`per_tool` | `single` | One edited progress message, or one message per tool call. |
 | `runtimeFooter` | boolean | `true` | Appends the `model · context %` line (`lib/format.mjs:27`). |
-| `showReasoning` | boolean | `false` | Streams model reasoning into the progress message. Also forces a live stream to exist (`_shared/display.mjs`, `observesLiveEvents`). |
+| `showReasoning` | boolean | `false` | Streams model reasoning into the progress message. Also forces a live stream to exist (`elowen-plugin-shared/display`, `observesLiveEvents`). |
 | `language` | enum `en`/`cs`/`sk` | `en` | Language of the bot's **own** service texts (`lib/messages.mjs`). Not the agent's answer language. |
 | `historyLimit` | number 0–100 | `0` | How many remembered messages seed a brand-new conversation. `0` means **nothing is written to disk** (`lib/adapter.mjs:236-240`). |
 | `visionModel` | model | empty | Model used for turns carrying image attachments (`lib/adapter.mjs:430-432`). |

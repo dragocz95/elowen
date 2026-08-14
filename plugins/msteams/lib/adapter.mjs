@@ -14,13 +14,13 @@ import { MESSAGES } from './messages.mjs';
 import { LiveMessage, postWithImages } from './stream.mjs';
 import { buildAskCard, buildPickerCard, settledCard } from './cards.mjs';
 import { buildAppPackage } from './appPackage.mjs';
-import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
-import { lifecycleText } from '../../_shared/lifecycle.mjs';
-import { observesLiveEvents, resolveDisplaySettings, updateDisplayOverrides } from '../../_shared/display.mjs';
-import { applyVisionModel, buildRoleAccess } from '../../_shared/access.mjs';
-import { resolveImageFiles, imageMimeType } from '../../_shared/images.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from 'elowen-plugin-shared/chatCommands';
+import { lifecycleText } from 'elowen-plugin-shared/lifecycle';
+import { observesLiveEvents, resolveDisplaySettings, updateDisplayOverrides } from 'elowen-plugin-shared/display';
+import { applyVisionModel, buildRoleAccess } from 'elowen-plugin-shared/access';
+import { resolveImageFiles, imageMimeType } from 'elowen-plugin-shared/images';
 
-/** The `/display` axes and their values — mirrors the resolution sets in _shared/display.mjs. */
+/** The `/display` axes and their values — mirrors the resolution sets in elowen-plugin-shared/display. */
 const DISPLAY_AXES = {
   toolActivity: ['off', 'status', 'live'],
   answerMode: ['final', 'live'],

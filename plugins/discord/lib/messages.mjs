@@ -1,9 +1,9 @@
 /** User-facing gateway messages, per configured language (config `language`: 'en' | 'cs'). These are
  *  the bot's own service texts (slash-command replies, placeholders) — the brain's answers are in
  *  whatever language the user writes. Surface-neutral keys and the `/help` command wording live in
- *  ../../_shared; only Discord-specific texts (channel wording, `**bold**` emphasis, pickers) stay here. */
-import { SHARED_MESSAGES } from '../../_shared/messages.mjs';
-import { renderHelpLines } from '../../_shared/help.mjs';
+ *  elowen-plugin-shared; only Discord-specific texts (channel wording, `**bold**` emphasis, pickers) stay here. */
+import { SHARED_MESSAGES } from 'elowen-plugin-shared/messages';
+import { renderHelpLines } from 'elowen-plugin-shared/help';
 
 // Discord wraps command tokens in inline code. The /help LIST is passed in at call time (the daemon's
 // chat-command catalog + adapter-local voice/display) so it can never drift from what is registered.

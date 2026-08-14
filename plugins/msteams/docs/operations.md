@@ -101,7 +101,7 @@ beyond cosmetics:
 Access is per **sender**, not per channel — but a policy whose `roleId` is a conversation id grants the
 whole room, which is how a channel-wide policy is expressed. The matched policy contributes the project
 scope, the role prompt, and an optional per-role tool allowlist; the conversation's own state contributes
-the model, reasoning level and fast flag (`plugins/_shared/access.mjs`, `buildRoleAccess`).
+the model, reasoning level and fast flag (`packages/plugin-shared/access.mjs`, `buildRoleAccess`).
 
 Note that `admin: true` in a role policy grants the **operator role inside the chat**; it does not grant
 the owner's control-plane tools. The owner gate used by `TeamsSend`, `TeamsMessagePerson` and `TeamsApi`
@@ -189,7 +189,7 @@ the app) counts as success (`lib/graph.mjs:88`).
 | `image download failed: …` (`:482`) | error | An inbound image exceeded `maxImageBytes` or the download failed; the turn continues with `[Attachment: image (download failed or too large)]`. |
 | `image upload failed: …` (`:630`) | error | An outbound generated image could not be attached; the text still went out. |
 | `msteams directory: could not persist <key>: …` (`lib/directory.mjs:86`) | warn | The people directory could not be written. Harmless in itself — it is re-learned from the next roster read. |
-| `stateStore: failed to persist …` (`plugins/_shared/stateStore.mjs:27`) | error | The state file could not be written; this one is re-thrown, so the command that caused it fails visibly rather than confirming a change that never stuck. |
+| `stateStore: failed to persist …` (`packages/plugin-shared/stateStore.mjs:27`) | error | The state file could not be written; this one is re-thrown, so the command that caused it fails visibly rather than confirming a change that never stuck. |
 
 Two quiet failure modes with **no log line at all**, worth knowing about:
 

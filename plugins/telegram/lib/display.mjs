@@ -1,1 +1,1 @@
-export { resolveDisplaySettings, updateDisplayOverrides, observesLiveEvents } from '../../_shared/display.mjs';
+export { resolveDisplaySettings, updateDisplayOverrides, observesLiveEvents } from 'elowen-plugin-shared/display';

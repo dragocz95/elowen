@@ -372,7 +372,7 @@ Everything the bundle needs comes from `window.ElowenUiRuntime`: the HOST's
 React instance (never bundle your own — the build aliases `react` to it), a
 curated `components`/`hooks`/`utils` surface, an authenticated same-origin
 `api(path, init)` fetch, and SPA `navigate(href)`. Build with
-`@elowen/plugin-ui-kit` (`packages/plugin-ui-kit`): write sources under
+`elowen-plugin-ui-kit` (`packages/plugin-ui-kit`): write sources under
 `<plugin>/web-src/` and let `npm run build:plugins-web` emit
 `<plugin>/web/index.js` (part of `npm run build`). The runtime contract's
 types live in the kit's `index.d.ts`; narrow the untyped records locally in

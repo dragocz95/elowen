@@ -1,9 +1,9 @@
-// Discord binding for the shared live-message engine (../../_shared/liveMessage.mjs): the Discord REST
+// Discord binding for the shared live-message engine (elowen-plugin-shared/liveMessage): the Discord REST
 // transport, the markdown render style, and the final-answer image strategy. The throttled editable
 // message, the streaming answer and the brain-event reducer all live in the shared engine — only the
 // pieces that genuinely differ from Telegram/other surfaces stay here.
 import { CHUNK, extractImageRefs, splitContent, footerLine } from './format.mjs';
-import { createLiveMessage } from '../../_shared/liveMessage.mjs';
+import { createLiveMessage } from 'elowen-plugin-shared/liveMessage';
 
 /** Post a final text to a channel. Generated-image links become real Discord file uploads (their
  *  relative daemon URLs are dead text on Discord): the links are stripped and the files ride the
@@ -43,7 +43,7 @@ const transport = {
 
 // Discord renders markdown, so the style escapes @everyone/<@ ping injection, neutralizes ``` fences, and
 // uses **bold**/~~strike~~, a `-#` subtext line and `_italic_`; the fold rule, output summaries and diff
-// summary come straight from the shared core (../../_shared/liveTrace.mjs).
+// summary come straight from the shared core (elowen-plugin-shared/liveTrace).
 const style = {
   mentionSafe: (s) => s.replace(/@(?=everyone|here)/gi, '@​').replace(/<@(?=[!&]?\d)/g, '<@​'),
   fenceSafe: (s) => s.replace(/```/g, "'''"),

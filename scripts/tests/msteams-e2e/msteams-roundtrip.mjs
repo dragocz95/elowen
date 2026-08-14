@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Teams chat-adapter E2E scenario against a REAL built daemon + the REAL msteams plugin.
 //
-// Wiring under test (the shared plugins/_shared cores over the Bot Framework surface — an inbound
+// Wiring under test (the shared shared elowen-plugin-shared cores over the Bot Framework surface — an inbound
 // signed webhook + outbound Connector REST, distinct from Discord's gateway and Telegram's long-poll):
 //   fake Bot Framework ──signed activity POST /hooks/msteams/messages──▶ real msteams plugin (JWT
 //   verified against the fake's JWKS via the `openIdMetadataUrl` seam) ──▶ PlatformOrchestrator ──▶

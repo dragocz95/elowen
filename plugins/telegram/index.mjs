@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { StateStore } from './lib/state.mjs';
 import { TelegramAdapter } from './lib/adapter.mjs';
 import { registerTools } from './lib/tools.mjs';
-import { platformImageDirs } from '../_shared/images.mjs';
+import { platformImageDirs } from 'elowen-plugin-shared/images';
 
 export { stripForSpeech, extractImageRefs, stripThinking, parseModelExec, buildReplyContext, splitContent, footerLine } from './lib/format.mjs';
 export { buildAskKeyboard } from './lib/ask.mjs';

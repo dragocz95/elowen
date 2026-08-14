@@ -11,11 +11,11 @@ import { parseAskReply } from './ask.mjs';
 import { sameId, isGroup, numberOf, toJid, senderIsAdmin } from './jid.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage } from './stream.mjs';
-import { CONTROL_COMMANDS, runControlCommand } from '../../_shared/chatCommands.mjs';
-import { lifecycleText } from '../../_shared/lifecycle.mjs';
-import { isSteered } from '../../_shared/turnResult.mjs';
-import { buildRoleAccess, applyVisionModel } from '../../_shared/access.mjs';
-import { resolveImageFiles } from '../../_shared/images.mjs';
+import { CONTROL_COMMANDS, runControlCommand } from 'elowen-plugin-shared/chatCommands';
+import { lifecycleText } from 'elowen-plugin-shared/lifecycle';
+import { isSteered } from 'elowen-plugin-shared/turnResult';
+import { buildRoleAccess, applyVisionModel } from 'elowen-plugin-shared/access';
+import { resolveImageFiles } from 'elowen-plugin-shared/images';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger inbound images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)

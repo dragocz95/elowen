@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   // @ts-expect-error — plain .mjs plugin module, no types
   sanitizeControl, makeTextHelpers, outputFailed, makeOutputSummary, diffSummary, makeFoldedCalls, makeToolLinesFor, makeCardLines,
-} from '../../plugins/_shared/liveTrace.mjs';
+} from '../../packages/plugin-shared/liveTrace.mjs';
 
 const DISCORD = {
   mentionSafe: (s: string) => s.replace(/@(?=everyone|here)/gi, '@​').replace(/<@(?=[!&]?\d)/g, '<@​'),

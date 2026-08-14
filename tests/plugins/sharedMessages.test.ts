@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { SHARED_MESSAGES } from '../../plugins/_shared/messages.mjs';
+import { SHARED_MESSAGES } from '../../packages/plugin-shared/messages.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { renderHelpLines, HELP_DESCRIPTIONS } from '../../plugins/_shared/help.mjs';
+import { renderHelpLines, HELP_DESCRIPTIONS } from '../../packages/plugin-shared/help.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { MESSAGES as DISCORD } from '../../plugins/discord/lib/messages.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types

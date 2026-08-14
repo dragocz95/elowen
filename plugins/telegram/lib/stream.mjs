@@ -1,11 +1,11 @@
-// Telegram binding for the shared live-message engine (../../_shared/liveMessage.mjs): the grammY
+// Telegram binding for the shared live-message engine (elowen-plugin-shared/liveMessage): the grammY
 // transport (bot.api.sendMessage / editMessageText / deleteMessage via the adapter's tg* helpers), the
 // plain-text render style, and the final-answer image strategy (photos ahead of the text). The throttled
 // editable message, the streaming answer and the brain-event reducer all live in the shared engine — only
 // the pieces that genuinely differ from Discord/other surfaces stay here. Telegram messages are sent
 // without a parse_mode, so the markdown decorations render as plain text.
 import { CHUNK, extractImageRefs, splitContent, footerLine } from './format.mjs';
-import { createLiveMessage } from '../../_shared/liveMessage.mjs';
+import { createLiveMessage } from 'elowen-plugin-shared/liveMessage';
 
 /** Post a final text to a chat. Generated-image links become real Telegram photo uploads (their relative
  *  daemon URLs are dead text here): the links are stripped and the images ride ahead of the (possibly
@@ -39,7 +39,7 @@ const transport = {
 
 // Telegram sends plain text (no parse_mode), so the style is all-identity — nothing to escape
 // (mentions/fences are inert) and no bold/strike/italic/subtext markers — with a plain `  ↳` output line.
-// The fold rule and summaries come from the shared core (../../_shared/liveTrace.mjs).
+// The fold rule and summaries come from the shared core (elowen-plugin-shared/liveTrace).
 const style = {
   mentionSafe: (s) => s,
   fenceSafe: (s) => s,

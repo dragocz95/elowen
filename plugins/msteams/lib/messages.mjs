@@ -1,7 +1,7 @@
 // Service texts the bot itself speaks (not the model). English + Czech, picked by cfg.language.
 // Teams renders markdown, so /help command names come out monospaced.
-import { SHARED_MESSAGES } from '../../_shared/messages.mjs';
-import { renderHelpLines } from '../../_shared/help.mjs';
+import { SHARED_MESSAGES } from 'elowen-plugin-shared/messages';
+import { renderHelpLines } from 'elowen-plugin-shared/help';
 
 const mono = (s) => `\`${s}\``;
 

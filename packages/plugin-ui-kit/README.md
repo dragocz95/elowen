@@ -1,4 +1,4 @@
-# @elowen/plugin-ui-kit
+# elowen-plugin-ui-kit
 
 Contract types and build toolchain for [Elowen](https://github.com/dragocz95/elowen) plugin browser
 UIs. A plugin ships ONE built same-origin ESM bundle; the Elowen web app loads it and hands it the
@@ -15,7 +15,7 @@ SPA `navigate`). The bundle registers its pages and settings panels with
 ## Building a bundle
 
 ```js
-import { buildPluginUiBundle } from '@elowen/plugin-ui-kit/build';
+import { buildPluginUiBundle } from 'elowen-plugin-ui-kit/build';
 await buildPluginUiBundle({ entry: 'web-src/index.tsx', outfile: 'web/index.js' });
 ```
 

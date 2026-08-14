@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { StateStore } from './lib/state.mjs';
 import { MsTeamsAdapter } from './lib/adapter.mjs';
 import { registerTools } from './lib/tools.mjs';
-import { platformImageDirs } from '../_shared/images.mjs';
+import { platformImageDirs } from 'elowen-plugin-shared/images';
 
 export { matchesId, senderIds, senderIsAdmin, displayNameOf } from './lib/ids.mjs';
 export { splitContent, footerLine, CHUNK } from './lib/format.mjs';

@@ -1,7 +1,7 @@
 // WhatsApp text/format helpers. The transport-neutral pieces (extractImageRefs, stripThinking,
-// parseModelExec, the fenced-split core) live in ../../_shared/format.mjs; only WhatsApp's own chunk size,
+// parseModelExec, the fenced-split core) live in elowen-plugin-shared/format; only WhatsApp's own chunk size,
 // reply-quote and footer stay here.
-import { splitContent as splitAtChunk, extractImageRefs, stripThinking, parseModelExec, runtimeFooter, stripRuntimeFooter } from '../../_shared/format.mjs';
+import { splitContent as splitAtChunk, extractImageRefs, stripThinking, parseModelExec, runtimeFooter, stripRuntimeFooter } from 'elowen-plugin-shared/format';
 export { extractImageRefs, stripThinking, parseModelExec };
 
 export const CHUNK = 4000;            // split long replies into readable pieces

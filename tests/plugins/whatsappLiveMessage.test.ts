@@ -12,7 +12,7 @@ type Lm = {
 };
 
 /** WhatsApp keeps its OWN Baileys transport while the whole message lifecycle comes from the shared engine
- *  (plugins/_shared/liveMessage.mjs). These tests pin the lifecycle rules a WhatsApp-local copy kept
+ *  (packages/plugin-shared/liveMessage.mjs). These tests pin the lifecycle rules a WhatsApp-local copy kept
  *  drifting away from — sends serialized (a slow create must not be raced into a second bubble), the last
  *  throttled update landing on its own, the newest rows kept when the trace outgrows the limit, the final
  *  settle retried once — plus the two surface differences that must survive the merge: the stricter

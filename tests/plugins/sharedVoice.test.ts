@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { voiceCreds, transcribeBuffer } from '../../plugins/_shared/voice.mjs';
+import { voiceCreds, transcribeBuffer } from '../../packages/plugin-shared/voice.mjs';
 
 describe('shared plugin voice helpers', () => {
   afterEach(() => vi.unstubAllGlobals());

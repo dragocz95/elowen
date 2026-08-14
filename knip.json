@@ -24,6 +24,16 @@
         "playwright.config.ts"
       ],
       "playwright": false
+    },
+    "packages/plugin-shared": {
+      "entry": [
+        "*.mjs"
+      ]
+    },
+    "packages/plugin-ui-kit": {
+      "entry": [
+        "shims/*.cjs"
+      ]
     }
   },
   "ignoreBinaries": [
@@ -36,7 +46,7 @@
     "src/plugins/api.ts": [
       "types"
     ],
-    "plugins/_shared/lifecycle.mjs": [
+    "packages/plugin-shared/lifecycle.mjs": [
       "exports"
     ],
     "plugins/agents/src/lib/execs.ts": [

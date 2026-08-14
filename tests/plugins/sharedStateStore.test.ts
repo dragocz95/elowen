@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync } from 'node:fs';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { StateStore } from '../../plugins/_shared/stateStore.mjs';
+import { StateStore } from '../../packages/plugin-shared/stateStore.mjs';
 
 let dirs: string[] = [];
 function freshDir(): string { const p = mkdtempSync(join(tmpdir(), 'elowen-statestore-')); dirs.push(p); return p; }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Telegram chat-adapter E2E scenario against a REAL built daemon + the REAL Telegram plugin.
 //
-// Wiring under test (the just-refactored plugins/_shared cores had no end-to-end coverage):
+// Wiring under test (the just-refactored shared elowen-plugin-shared cores had no end-to-end coverage):
 //   fake Telegram Bot API  ──getUpdates──▶  real telegram plugin (grammY, pointed at the fake via the
 //   `apiRoot` seam)  ──▶  PlatformOrchestrator  ──▶  real brain channel session  ──▶  scripted OpenAI
 //   model server  ──▶  streamed reply  ──▶  the bot's sendMessage/editMessageText, captured on the fake.

@@ -1,7 +1,7 @@
 /** agents — browser UI bundle (plugin platform F3).
  *
  *  Registers the subsystem's moved pages (live agent sessions, the escalations inbox) and the plugin
- *  settings section on the host's plugin-UI runtime. Built by @elowen/plugin-ui-kit (esbuild; react
+ *  settings section on the host's plugin-UI runtime. Built by elowen-plugin-ui-kit (esbuild; react
  *  shimmed to the host instance) into web/index.js, which the manifest's `web.entry` points at.
  */
 import { useEffect } from 'react';

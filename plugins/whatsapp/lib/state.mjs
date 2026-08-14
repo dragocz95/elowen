@@ -1,1 +1,1 @@
-export { StateStore } from '../../_shared/stateStore.mjs';
+export { StateStore } from 'elowen-plugin-shared/stateStore';

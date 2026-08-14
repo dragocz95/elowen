@@ -11,7 +11,7 @@ type Lm = { onEvent: (e: Record<string, unknown>) => void };
  *  soft wrap, so its whole tool trace arrived as one run-on paragraph. `style.lineBreak` lets that
  *  surface ask for "\n\n" without every other one changing. */
 describe('shared LiveMessage trace separator', () => {
-  const load = async () => (await import(join(repoRoot, 'plugins/_shared/liveMessage.mjs'))) as {
+  const load = async () => (await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs'))) as {
     createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string) => Lm;
   };
 
