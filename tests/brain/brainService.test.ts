@@ -4,7 +4,7 @@ import { realpathSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
-import type { SubagentProgressEvent } from '../../src/plugins/api.js';
+import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
@@ -12,7 +12,7 @@ import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { defineTool } from '@earendil-works/pi-coding-agent';
+import { defineTool, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { MemoryStore } from '../../src/store/memoryStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
@@ -610,7 +610,7 @@ describe('BrainService', () => {
     expect(seenAppend).toContain('Follow house style.');
   });
 
-  it('feeds registered plugin skills to the resource loader (PI renders progressive disclosure natively)', async () => {
+  it('feeds one byte-identical skill list to the rendered block and PI expansion', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} });
@@ -623,15 +623,42 @@ describe('BrainService', () => {
       disableModelInvocation: false,
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let seenSkills: { name: string; filePath: string }[] | undefined;
-    d.resourceLoaderFactory = (o: { skills?: { name: string; filePath: string }[] }) => { seenSkills = o.skills; return undefined; };
+    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[] } | undefined;
+    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[] }) => { seen = o; return undefined; };
 
     const svc = new BrainService(d as never);
     await svc.start(1);
-    // Skills are no longer flattened into the appended prompt — they reach PI through the resource
-    // loader's skillsOverride, which renders the <available_skills> block and /skill:name expansion.
-    expect(seenSkills?.map((s) => s.name)).toContain('deploy-checklist');
-    expect(seenSkills?.find((s) => s.name === 'deploy-checklist')?.filePath).toBe('/plugins/skills/skills/deploy-checklist.md');
+    const seenSkills = seen?.skills ?? [];
+    const skillsBlocks = (seen?.appendSystemPrompt ?? []).filter((chunk) => chunk.includes('<available_skills>'));
+    expect(seenSkills).toBe(reg.skills);
+    expect(seenSkills.map((s) => s.name)).toEqual(['deploy-checklist']);
+    expect(skillsBlocks).toEqual([formatSkillsForPrompt(seenSkills)]);
+  });
+
+  it('uses the same grant-filtered skill list for prompt awareness and PI expansion', async () => {
+    const d = fakeDeps();
+    d.users.get = () => ({ name: 'Filip', username: 'filip', is_admin: false, granted_plugins: ['granted'] });
+    const reg = new PluginRegistry();
+    const skill = (name: string, plugin: string): PluginSkill => ({
+      name, description: `Use ${name}.`, filePath: `/plugins/${plugin}/${name}.md`, baseDir: `/plugins/${plugin}`,
+      sourceInfo: { path: `/plugins/${plugin}/${name}.md`, source: `elowen-plugin:${plugin}`, scope: 'user', origin: 'package' },
+      disableModelInvocation: false,
+    });
+    reg.contextFor('granted', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('granted-skill', 'granted'));
+    reg.contextFor('denied', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('denied-skill', 'denied'));
+    reg.contextFor('open', {}, { info() {}, warn() {}, error() {} }).registerSkill(skill('open-skill', 'open'));
+    reg.setUserGrantable('granted', true);
+    reg.setUserGrantable('denied', true);
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    let seen: { appendSystemPrompt?: string[]; skills?: PluginSkill[] } | undefined;
+    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[]; skills?: PluginSkill[] }) => { seen = o; return undefined; };
+
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seenSkills = seen?.skills ?? [];
+    const skillsBlocks = (seen?.appendSystemPrompt ?? []).filter((chunk) => chunk.includes('<available_skills>'));
+    expect(seenSkills.map((s) => s.name)).toEqual(['granted-skill', 'open-skill']);
+    expect(skillsBlocks).toEqual([formatSkillsForPrompt(seenSkills)]);
   });
 
   // A personal skill is a briefing only its owner asked for. It has to reach that owner's session and no
@@ -651,18 +678,26 @@ describe('BrainService', () => {
       ctx.registerSkill(skillFor('theirs-only'), { ownerUserId: 2 });
       return reg;
     };
-    const seenFor = async (userId: number, session?: string) => {
+    const seenFor = async (userId: number, channel = false) => {
       const d = fakeDeps();
       (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => registry());
       let seen: { name: string }[] | undefined;
       d.resourceLoaderFactory = (o: { skills?: { name: string }[] }) => { seen = o.skills; return undefined; };
       const svc = new BrainService(d as never);
-      await svc.start(userId, session ? { session } : undefined);
+      if (channel) {
+        await svc.channelSend({
+          channelId: `skills-${userId}`, ownerUserId: userId,
+          policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
+        }, 'hello');
+      } else {
+        await svc.start(userId);
+      }
       return (seen ?? []).map((sk) => sk.name);
     };
 
     expect(await seenFor(1)).toEqual(['shared-one', 'mine-only']);
     expect(await seenFor(2)).toEqual(['shared-one', 'theirs-only']);
+    expect(await seenFor(1, true)).toEqual(['shared-one']);
   });
 
   it('feeds registered plugin prompt commands to the resource loader as PI prompt templates', async () => {

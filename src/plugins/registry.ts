@@ -18,6 +18,7 @@ import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
+import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -62,6 +63,10 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   missions: ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'advisor', 'onTaskClosed'],
   tasks: ['store', 'readiness', 'usage'],
 };
+
+/** A missing account is not plugin-access open mode: shared channels, task workers and unlinked callers
+ *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
+const UNGRANTED_PLUGIN_USER: PluginAccessUser = { is_admin: false, granted_plugins: [] };
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
@@ -381,16 +386,22 @@ export class PluginRegistry {
     return new Set(this.pluginCapabilities.keys());
   }
 
-  /** The skills ONE session may see: every instance-wide skill, plus those owned by `userId`. Pass null
-   *  for a session that serves nobody in particular (a shared channel, a task worker) — it then sees only
-   *  the instance-wide set. The identical array is returned when no per-user skill exists at all, so an
-   *  instance that never uses them renders a byte-identical system prompt. */
-  skillsFor(userId: number | null | undefined): PluginSkill[] {
-    if (!this.skillOwnerUsers.some((o) => o !== null)) return this.skills;
-    return this.skills.filter((_, i) => {
-      const owner = this.skillOwnerUsers[i] ?? null;
-      return owner === null || (userId != null && owner === userId);
+  /** The skills ONE session may see: every permitted instance-wide skill, plus permitted skills owned by
+   *  `userId`. Pass null for a session that serves nobody in particular (a shared channel, a task worker) —
+   *  it then sees only instance-wide skills from non-grantable plugins. A missing account fails closed for
+   *  grant-gated plugins; it is not the predicate's open mode because these callers run inside a user-backed
+   *  daemon. Return the original array when nothing was removed so unchanged prompts remain byte-identical. */
+  skillsFor(userId: number | null | undefined, user?: Partial<PluginAccessUser> | null): PluginSkill[] {
+    const accessUser: PluginAccessUser = user
+      ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
+      : UNGRANTED_PLUGIN_USER;
+    const filtered = this.skills.filter((_, i) => {
+      const ownerUserId = this.skillOwnerUsers[i] ?? null;
+      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) return false;
+      const plugin = this.skillOwners[i]!;
+      return isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) });
     });
+    return filtered.length === this.skills.length ? this.skills : filtered;
   }
 
   /** Record whether a plugin opted into per-user grants (manifest `userGrantable`). Called by the

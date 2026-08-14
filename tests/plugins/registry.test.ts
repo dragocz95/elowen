@@ -21,13 +21,16 @@ describe('PluginRegistry', () => {
   });
 
   describe('skillsFor (per-account skill sets)', () => {
+    const accessUser = (over: Partial<{ is_admin: boolean; granted_plugins: string[] }> = {}) =>
+      ({ is_admin: false, granted_plugins: [] as string[], ...over });
+
     // The prompt cache is instance-wide: the system prompt of a user with no personal skills must stay
     // BYTE-identical to what it was before per-user skills existed, so the shared prefix keeps hitting.
-    it('returns the very same array when nothing is owned by an account', () => {
+    it('returns the very same array when nothing is owned by an account or grant-filtered', () => {
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('skills', {}, noopLog);
       ctx.registerSkill(fakeSkill('shared'));
-      expect(reg.skillsFor(7)).toBe(reg.skills);
+      expect(reg.skillsFor(7, accessUser())).toBe(reg.skills);
       expect(reg.skillsFor(null)).toBe(reg.skills);
     });
 
@@ -38,8 +41,8 @@ describe('PluginRegistry', () => {
       ctx.registerSkill(fakeSkill('amy-only'), { ownerUserId: 4 });
       ctx.registerSkill(fakeSkill('bob-only'), { ownerUserId: 5 });
 
-      expect(reg.skillsFor(4).map((s) => s.name)).toEqual(['shared', 'amy-only']);
-      expect(reg.skillsFor(5).map((s) => s.name)).toEqual(['shared', 'bob-only']);
+      expect(reg.skillsFor(4, accessUser()).map((s) => s.name)).toEqual(['shared', 'amy-only']);
+      expect(reg.skillsFor(5, accessUser()).map((s) => s.name)).toEqual(['shared', 'bob-only']);
       // A shared channel (no single owner) and an unlinked sender see the instance set only — a set
       // fixed at spawn cannot follow a sender who changes from turn to turn.
       expect(reg.skillsFor(null).map((s) => s.name)).toEqual(['shared']);
@@ -48,14 +51,60 @@ describe('PluginRegistry', () => {
       expect(reg.skills).toHaveLength(3);
     });
 
-    it('carries ownership through a merge of two registries', () => {
+    it('shows a grant-gated plugin skill to a user who holds its grant', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('cronjob', {}, noopLog).registerSkill(fakeSkill('cron-schedule'));
+      reg.setUserGrantable('cronjob', true);
+
+      expect(reg.skillsFor(4, accessUser({ granted_plugins: ['cronjob'] })).map((s) => s.name))
+        .toEqual(['cron-schedule']);
+    });
+
+    it('hides a grant-gated plugin skill from a non-admin without its grant', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('cronjob', {}, noopLog).registerSkill(fakeSkill('cron-schedule'));
+      reg.setUserGrantable('cronjob', true);
+
+      expect(reg.skillsFor(4, accessUser()).map((s) => s.name)).toEqual([]);
+    });
+
+    it('always shows grant-gated plugin skills to an admin', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('cronjob', {}, noopLog).registerSkill(fakeSkill('cron-schedule'));
+      reg.setUserGrantable('cronjob', true);
+
+      expect(reg.skillsFor(1, accessUser({ is_admin: true })).map((s) => s.name))
+        .toEqual(['cron-schedule']);
+    });
+
+    it('leaves skills from plugins that are not userGrantable unaffected', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('files', {}, noopLog).registerSkill(fakeSkill('file-workflow'));
+
+      expect(reg.skillsFor(4, accessUser()).map((s) => s.name)).toEqual(['file-workflow']);
+    });
+
+    it('fails closed for a caller with no account while preserving instance-wide open skills', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('cronjob', {}, noopLog).registerSkill(fakeSkill('cron-schedule'));
+      reg.contextFor('files', {}, noopLog).registerSkill(fakeSkill('file-workflow'));
+      reg.setUserGrantable('cronjob', true);
+
+      expect(reg.skillsFor(null).map((s) => s.name)).toEqual(['file-workflow']);
+      expect(reg.skillsFor(undefined).map((s) => s.name)).toEqual(['file-workflow']);
+    });
+
+    it('carries ownership and grant metadata through a merge of two registries', () => {
       const a = new PluginRegistry();
-      a.contextFor('skills', {}, noopLog).registerSkill(fakeSkill('shared'));
+      a.contextFor('files', {}, noopLog).registerSkill(fakeSkill('shared'));
       const b = new PluginRegistry();
-      b.contextFor('skills', {}, noopLog).registerSkill(fakeSkill('amy-only'), { ownerUserId: 4 });
+      const gated = b.contextFor('skills', {}, noopLog);
+      gated.registerSkill(fakeSkill('gated-shared'));
+      gated.registerSkill(fakeSkill('amy-only'), { ownerUserId: 4 });
+      b.setUserGrantable('skills', true);
       a.merge(b);
-      expect(a.skillsFor(4).map((s) => s.name)).toEqual(['shared', 'amy-only']);
-      expect(a.skillsFor(5).map((s) => s.name)).toEqual(['shared']);
+      expect(a.skillsFor(4, accessUser({ granted_plugins: ['skills'] })).map((s) => s.name)).toEqual(['shared', 'gated-shared', 'amy-only']);
+      expect(a.skillsFor(5, accessUser()).map((s) => s.name)).toEqual(['shared']);
     });
   });
 
