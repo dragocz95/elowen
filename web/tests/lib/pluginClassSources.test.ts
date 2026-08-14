@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectPluginClassSources, userPluginsDir } from '../../scripts/collect-plugin-classes.mjs';
@@ -47,9 +47,17 @@ describe('plugin class sources', () => {
     const blob = collectPluginClassSources(repoRoot);
     // A container-query variant no core page uses: it exists in the built CSS only via this mirror.
     expect(blob).toContain('@sm:');
-    for (const plugin of ['agents', 'cronjob', 'editor', 'skills', 'subagent']) {
-      expect(blob).toContain(`plugins/${plugin}/web-src`);
-    }
+
+    // Read the expectation off the repo rather than naming plugins. A hardcoded list goes red the moment
+    // a plugin moves to the marketplace registry — and it hid something worse: the mirror ALSO picks up
+    // plugins installed in the data directory, so a name that had already left the package still
+    // satisfied the list on a developer machine and failed only in CI, where that directory is empty.
+    const bundled = readdirSync(join(repoRoot, 'plugins'), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(repoRoot, 'plugins', e.name, 'web-src')))
+      .map((e) => e.name);
+
+    expect(bundled.length).toBeGreaterThan(2); // the loop below proves nothing if discovery breaks
+    for (const plugin of bundled) expect(blob).toContain(`plugins/${plugin}/web-src`);
   });
 
   // A plugin is not only a plugin we shipped: installed ones live in the data directory, and the host
