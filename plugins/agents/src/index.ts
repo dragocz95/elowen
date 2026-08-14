@@ -12,6 +12,9 @@
  *  plugin services and never calls the control, so it never assembles a second mission engine or
  *  attaches the push/usage bus subscribers beside the daemon's.
  */
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadSkillsFromDir } from '@earendil-works/pi-coding-agent';
 import type { MissionsDomainControl, PluginContext } from '../../../src/plugins/api.js';
 import type { ElowenEvent } from '../../../src/api/sse.js';
 import { AGENTS_MIGRATIONS } from './store/migrations.js';
@@ -32,6 +35,11 @@ import { AGENTS_MCP_TOOLS } from './mcpTools.js';
 import { agentsPluginConfig } from './config.js';
 import { logger, setBaseLogger } from './lib/logger.js';
 import { MISSIONS_WITHOUT_TASKS, TaskDomainUnavailableError, gateRoutesOnTaskDomain } from './lib/taskDomain.js';
+
+/** Absolute path of the plugin's own skills dir. The compiled entry lives at `plugins/agents/dist/…`,
+ *  the skill at `plugins/agents/skills/` — one level up, so the same resolution works in the repo
+ *  checkout and in the packaged `dist/plugins/agents` copy. */
+const AGENTS_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills');
 
 export function register(ctx: PluginContext): void {
   // Logging first: every subsystem module logs through lib/logger's scoped facade, which delegates to
@@ -214,6 +222,14 @@ export function register(ctx: PluginContext): void {
 
   // The subsystem's brain tools (owner-chat gated at execute time; gone while the plugin is disabled).
   registerAgentsTools(ctx, rt);
+
+  // The skill that teaches the model to USE those tools ships with them, exactly as the task domain's
+  // does. Left in the skills plugin it would keep describing missions and live sessions on an instance
+  // where this plugin is off and nothing answers — and a model that believes a missing tool should be
+  // there works around its absence instead of stopping.
+  for (const skill of loadSkillsFromDir({ dir: AGENTS_SKILLS_DIR, source: 'elowen-plugin:agents' }).skills) {
+    ctx.registerSkill(skill);
+  }
 
   // The agents tools of the daemon's OWN /mcp server (missions/sessions/notes — every route they
   // proxy is a plugin root mount above). Pure REST-proxy declarations: registering them never builds

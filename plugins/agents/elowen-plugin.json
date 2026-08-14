@@ -55,6 +55,9 @@
       "elowen_session_kill",
       "elowen_session_send_keys",
       "elowen_session_read_pane"
+    ],
+    "skills": [
+      "elowen-control"
     ]
   },
   "planSafe": [
