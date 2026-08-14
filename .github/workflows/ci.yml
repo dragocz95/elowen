@@ -164,37 +164,6 @@ jobs:
       - run: npm run build
       - run: node scripts/tests/discord-e2e/discord-roundtrip.mjs
 
-  msteams-e2e:
-    name: Teams E2E (real daemon + fake Bot Framework)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
-      # those best-effort calls don't spew errors during boot.
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      # Boots the ACTUAL built daemon, enables the REAL msteams plugin pointed at a fake Bot Framework
-      # (token endpoint + JWKS + Connector REST, via the adapter's `oauthTokenUrl`/`openIdMetadataUrl`
-      # seams), and drives a signed activity through the daemon's /hooks webhook end to end: async
-      # Connector reply, live-trace PUT edits and /status via the shared control core. Plus teeth checks
-      # that a forged JWT bounces with 401 and a provider error surfaces as the bot's "⚠️" reply.
-      - run: npm ci
-      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
-      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
-      # cannot resolve and the build fails before this job reaches what it is here to test.
-      - run: npm ci --prefix web
-      - run: npm run build
-      - run: node scripts/tests/msteams-e2e/msteams-roundtrip.mjs
-
   cron-e2e:
     name: Cron E2E (real daemon + scheduled collector)
     runs-on: ubuntu-latest

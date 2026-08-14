@@ -357,25 +357,6 @@ describe('discord channels route', () => {
   });
 });
 
-describe('msteams app-package route', () => {
-  // Enabled but unconfigured: no adapter is built, so the package cannot be, and the plugin answers
-  // the same 503 the core route did when it could not find the adapter among the platforms.
-  it('answers 503 while the plugin has no adapter', async () => {
-    const { app, adminTok } = setup({ enabled: ['cronjob', 'msteams'] });
-    const res = await app.request('/plugins/msteams/app-package', auth(adminTok));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'msteams plugin not enabled' });
-  });
-
-  it('rejects a non-admin (403)', async () => {
-    const { app, amyTok } = setup({ enabled: ['cronjob', 'msteams'] });
-    expect((await app.request('/plugins/msteams/app-package', auth(amyTok))).status).toBe(403);
-  });
-
-  it('answers the platform 503 when the plugin is off', async () => {
-    const { app, adminTok } = setup({ enabled: ['cronjob'] });
-    const res = await app.request('/plugins/msteams/app-package', auth(adminTok));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'msteams plugin is disabled' });
-  });
-});
+// The msteams app-package route moved to the plugin registry with its plugin. What it covered about the
+// CORE — that a declared route of a disabled plugin answers 503 rather than 404 — is covered above by the
+// discord channels route, which exercises the identical path in pluginApi.

@@ -9,7 +9,8 @@ import { MESSAGES as DISCORD } from '../../plugins/discord/lib/messages.mjs';
 import { MESSAGES as TELEGRAM } from '../../plugins/telegram/lib/messages.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { MESSAGES as WHATSAPP } from '../../plugins/whatsapp/lib/messages.mjs';
-import { MESSAGES as MSTEAMS } from '../../plugins/msteams/lib/messages.mjs';
+// The Teams adapter now lives in the plugin registry, which asserts the same inheritance against the
+// published elowen-plugin-shared. What stays testable HERE is every adapter still in the package.
 
 describe('shared plugin service messages', () => {
   it('SHARED_MESSAGES exposes the same key set in every language', () => {
@@ -22,7 +23,7 @@ describe('shared plugin service messages', () => {
   });
 
   it('every adapter inherits the shared keys with identical values', () => {
-    for (const M of [DISCORD, TELEGRAM, WHATSAPP, MSTEAMS]) {
+    for (const M of [DISCORD, TELEGRAM, WHATSAPP]) {
       for (const lang of ['en', 'cs', 'sk'] as const) {
         expect(M[lang].noModels).toBe(SHARED_MESSAGES[lang].noModels);
         expect(M[lang].restarting).toBe(SHARED_MESSAGES[lang].restarting);

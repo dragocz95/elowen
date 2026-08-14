@@ -66,6 +66,7 @@
     "@monaco-editor/react",
     "@testing-library/react",
     "@tanstack/react-query",
-    "msw"
+    "msw",
+    "jose"
   ]
 }
