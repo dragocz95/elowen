@@ -28,13 +28,18 @@ describe('CI workflow: jobs that build also install the web dependencies', () =>
     expect(body).toBeTruthy();
     const jobs = body.split(/\n {2}(?=[a-z0-9_-]+:\n)/);
 
-    const offenders = jobs
-      .filter((j) => j.includes('npm run build') && !j.includes('npm ci --prefix web'))
+    // A job that runs entirely inside web/ is a different case: its `npm run build` IS the web app's
+    // build and its plain `npm ci` already installs those dependencies. Adding `--prefix web` there
+    // would resolve to web/web/ and fail — which is exactly what happened on the first attempt.
+    const rootBuildJobs = jobs.filter((j) => j.includes('npm run build') && !j.includes('working-directory: web'));
+
+    const offenders = rootBuildJobs
+      .filter((j) => !j.includes('npm ci --prefix web'))
       .map((j) => j.split(':', 1)[0].trim());
 
     expect(offenders).toEqual([]);
     // Guard the guard: if the split ever stops finding jobs, the filter above would be vacuously happy.
-    expect(jobs.filter((j) => j.includes('npm run build')).length).toBeGreaterThan(5);
+    expect(rootBuildJobs.length).toBeGreaterThan(5);
   });
 
   it('still describes plugin bundles as depending on the web app libraries', () => {

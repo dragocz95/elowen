@@ -202,6 +202,7 @@ async function scenarioUnsafeToolRecovery() {
 
     // DelegateContinue is scoped to the conversation that owns the child. Its original blocking turn died,
     // but the parent session itself survived in SQLite and is the only valid continuation caller.
+    const delegationsBefore = model.toolCalls.filter((call) => call.name === 'Delegate').length;
     await post(daemon.baseUrl, token, '/brain/send', {
       text: MARKERS.unsafeParentContinue,
       session: run.parent_session_id,
@@ -215,7 +216,15 @@ async function scenarioUnsafeToolRecovery() {
       return messages.at(-1)?.role === 'tool' && JSON.stringify(messages.at(-1)).includes(MARKERS.unsafeContinued);
     }));
 
-    check('the parent used DelegateContinue instead of a new delegation', model.toolCalls.filter((call) => call.name === 'DelegateContinue').length === 1);
+    // "Continue, don't re-delegate" is about WHICH tool the parent reached for, not how many times it
+    // reached for it. Pinning the count to exactly one made this check fail whenever the scripted model
+    // retried a call — a red CI run for behaviour that was correct. What actually matters is that a
+    // DelegateContinue happened and that no NEW delegation was started alongside it, and the second half
+    // was never asserted at all before.
+    const delegationsAfter = model.toolCalls.filter((call) => call.name === 'Delegate').length;
+    check('the parent used DelegateContinue instead of a new delegation',
+      model.toolCalls.some((call) => call.name === 'DelegateContinue') && delegationsAfter === delegationsBefore,
+      `DelegateContinue calls=${model.toolCalls.filter((c) => c.name === 'DelegateContinue').length}, Delegate before=${delegationsBefore} after=${delegationsAfter}`);
     check('DelegateContinue resumed the original child session', JSON.stringify(continuedChild.body).includes(MARKERS.unsafeTask));
     check('the continued child result returned through the parent tool-result path', !!parentFollowUp);
   } finally {

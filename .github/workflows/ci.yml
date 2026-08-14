@@ -418,10 +418,6 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - run: npm ci
-      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
-      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
-      # cannot resolve and the build fails before this job reaches what it is here to test.
-      - run: npm ci --prefix web
       - run: npm run build
       - run: npm test
 
