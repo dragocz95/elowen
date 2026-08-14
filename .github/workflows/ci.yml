@@ -58,6 +58,10 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       # tests/scripts/distIntegrity.test.ts drives the real build against the checkout to prove it
       # removes stale output. That is safe on a throwaway runner and destructive on a machine whose
@@ -89,6 +93,10 @@ jobs:
       # OpenAI-compatible model server, and drives a real chat turn over HTTP+SSE (auth → start → stream →
       # send → tool call → idle → persisted transcript), plus a teeth check that a provider error surfaces.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/brain-e2e/chat-turn.mjs
       # The other half of this suite: stopping a turn and killing the session. It exists next to chat-turn
@@ -118,6 +126,10 @@ jobs:
       # shared control commands (/status, /new, /fast) end to end, asserting the bot's captured replies are
       # Telegram plain text. Plus a teeth check that a provider error surfaces as the bot's "⚠️" reply.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/telegram-e2e/telegram-roundtrip.mjs
 
@@ -145,6 +157,10 @@ jobs:
       # captured replies use Discord formatting (markdown bold, ephemeral interaction callbacks, message
       # references). Plus a teeth check that a provider error surfaces as the bot's "⚠️" reply.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/discord-e2e/discord-roundtrip.mjs
 
@@ -172,6 +188,10 @@ jobs:
       # Connector reply, live-trace PUT edits and /status via the shared control core. Plus teeth checks
       # that a forged JWT bounces with 401 and a provider error surfaces as the bot's "⚠️" reply.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/msteams-e2e/msteams-roundtrip.mjs
 
@@ -198,6 +218,10 @@ jobs:
       # under the "Check output" framing, persists as the cron channel session, and the one-shot job is
       # consumed. Teeth: an empty collector skips the turn and the poll times out.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/cron-e2e/run.mjs
 
@@ -224,6 +248,10 @@ jobs:
       # clean client disconnect), and the WebSocket terminal channel (single-use ws-ticket gate). Teeth:
       # flipping a re-engaged 401 expectation to 200 fails the run.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/api-e2e/run.mjs
 
@@ -250,6 +278,10 @@ jobs:
       # (tool-rename maps, prompt-key renames), preserves the pre-existing admin/sessions, and does not
       # re-trigger setup. Teeth: asserting a pre-migration value fails the run.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/migration-e2e/run.mjs
 
@@ -304,6 +336,10 @@ jobs:
       # Noise/Signal wire can't be faked), injects an inbound message and drives the shared control commands,
       # asserting the captured sends use WhatsApp formatting. Teeth: a provider error surfaces as the reply.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/whatsapp-e2e/whatsapp-roundtrip.mjs
 
@@ -329,6 +365,10 @@ jobs:
       # WorkflowStart DAG), asserting the child sub-agent really spawns with the right task, runs its own turn,
       # and its result returns to the parent. Teeth: a non-spawning tool fails the run.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/delegate-e2e/run.mjs
       # The DAG itself: dependency order, parallel fan-out, resume re-running only what did not finish, and
@@ -355,6 +395,10 @@ jobs:
       # Exercises boot recovery against an actual daemon process restarted over the same throwaway SQLite DB:
       # safe background/foreground respawn, fail-closed unanswered tool calls and the legacy-row migration.
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: node scripts/tests/recovery-e2e/run.mjs
 
@@ -374,6 +418,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - run: npm ci
+      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
+      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
+      # cannot resolve and the build fails before this job reaches what it is here to test.
+      - run: npm ci --prefix web
       - run: npm run build
       - run: npm test
 

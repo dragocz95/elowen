@@ -5,7 +5,7 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.28.0] - 2026-08-14
+## [0.28.1] - 2026-08-14
 
 The tmux-agent and missions subsystem — spawning coding agents into tmux, the autopilot mission engine,
 the overseer, escalations, and their web pages — now ships as the bundled `agents` plugin, on a plugin
