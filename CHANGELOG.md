@@ -50,6 +50,12 @@ is a plugin that adds a feature.
   create commands — hide rather than reporting an empty register, and the missions layer refuses honestly
   instead of pretending a mission exists.
 
+### Changed
+- **`formatters` and `dev-commands` moved to the plugin registry.** Both were off in a fresh install and
+  neither is wired into the daemon, so they now live in the public plugin registry and install from
+  Settings → Plugins like any other extension instead of shipping in the package. An instance that had
+  either one enabled keeps its configuration; install the plugin from the registry to get it back.
+
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the
   child transcript, and returns cleanly to the parent only when the child cannot be resolved.
