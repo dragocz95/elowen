@@ -6,14 +6,17 @@ import { ConfigStore } from '../../src/store/configStore.js';
 
 /** The fresh-install default plugin set — a BARE ASSISTANT: tools that need no configuration to be
  *  useful (files, terminal, askuser, runtime-context, skills, subagent, elowen-docs, cronjob,
- *  security-scan, statusline, codebase, mcp, lsp). Every entry is checked against its own manifest
- *  below, so this list can never silently drift from what actually ships on.
+ *  statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
+ *  silently drift from what actually ships on.
  *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
  *  with no embedding model configured it ranks by keyword instead of failing — so it still answers "how
  *  do I set this up?" on the fresh install where nothing is set up yet. lsp qualifies the same way: a
- *  language whose server is not installed degrades to an honest "not installed". */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'lsp'];
+ *  language whose server is not installed degrades to an honest "not installed".
+ *
+ *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
+ *  so a fresh install does not have them on disk to enable. */
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs', 'cronjob', 'statusline', 'mcp', 'lsp'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];

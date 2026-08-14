@@ -81,18 +81,18 @@ const factoryToolNames = (create: ReturnType<typeof vi.fn>): string[] => {
 };
 
 describe('LiveSessionSpawner — deferred-tool policy from the runtime config', () => {
-  it('flows all 34 bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
+  it('flows all 33 bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-deferral-defaults-'));
     try {
       const registry = await loadPlugins({
         dirs: [join(process.cwd(), 'plugins')],
-        enabled: ['cronjob', 'discord', 'mcp', 'security-scan', 'skills'],
+        enabled: ['cronjob', 'discord', 'mcp', 'skills'],
         config: { discord: { botToken: 'test-token' } },
         dataRoot,
         delegatedTurnsOutOfProcess: () => false,
         logger: { info() {}, warn() {}, error() {} },
       });
-      expect(registry.toolDeferLoading.size).toBe(34);
+      expect(registry.toolDeferLoading.size).toBe(33);
       expect(BUILTIN_TOOL_DEFER_LOADING).toEqual(['GenerateImage', 'EditImage']);
 
       addTool(registry, 'image-gen', 'GenerateImage');
@@ -101,7 +101,7 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
       const deferred = (await spawn()).toolSearch?.deferred;
 
       expect(deferred).toBeDefined();
-      expect(deferred?.size).toBe(36);
+      expect(deferred?.size).toBe(35);
       expect(deferred).toEqual(new Set([
         ...registry.toolDeferLoading,
         'GenerateImage',

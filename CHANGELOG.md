@@ -51,10 +51,12 @@ is a plugin that adds a feature.
   instead of pretending a mission exists.
 
 ### Changed
-- **`formatters` and `dev-commands` moved to the plugin registry.** Both were off in a fresh install and
-  neither is wired into the daemon, so they now live in the public plugin registry and install from
-  Settings → Plugins like any other extension instead of shipping in the package. An instance that had
-  either one enabled keeps its configuration; install the plugin from the registry to get it back.
+- **Extensions with no daemon dependency moved to the plugin registry.** `formatters`, `dev-commands`,
+  `security-scan` and `codebase` are plain extensions the daemon never calls into, so they now live in the
+  public plugin registry and install from Settings → Plugins like any other extension instead of shipping
+  in the package. A fresh install no longer enables `security-scan` and `codebase` — they are not on disk
+  until you ask for them. An instance that had any of them enabled keeps its configuration and its indexed
+  data; install the plugin from the registry to get the code back.
 
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the

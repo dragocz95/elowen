@@ -595,12 +595,15 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // migrateEditorPlugin keep the subsystems those installs already had.
   //
   // The chat platforms stay OFF because each declares a required credential, and a plugin that ships on
-  // may not open by asking for one — also enforced by the fresh-default suite. Also off: dev-commands
-  // and formatters, which act on the repo unasked.
+  // may not open by asking for one — also enforced by the fresh-default suite.
+  //
+  // What is listed here is what ships IN the package. Extensions that carry no daemon dependency now
+  // live in the plugin registry and are installed from Settings → Plugins instead, so they cannot be
+  // enabled by default: they are not on disk until someone asks for them.
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs',
-      'cronjob', 'security-scan', 'statusline', 'codebase', 'mcp', 'lsp',
+      'cronjob', 'statusline', 'mcp', 'lsp',
     ],
     removed: [],
   },

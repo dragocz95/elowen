@@ -1,3 +1,0 @@
-{
-  "description": "Prehľadá kód alebo súbor v repozitári a nájde nebezpečné vzory (eval, pickle.load, shell=True, nezabezpečená deserializácia, natvrdo zapísané tajné kľúče…), než sa naň spoľahnete. Iba poradný nástroj — hlási nálezy, nikdy nič nespúšťa."
-}
