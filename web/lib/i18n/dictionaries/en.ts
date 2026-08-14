@@ -1013,7 +1013,6 @@ export const en = {
     merged: 'Memories merged',
     bodyRequired: 'The memory text is required',
     saveError: 'Saving the memory failed',
-    deleteError: 'Deleting the memory failed',
     restoreError: 'Restoring the memory failed',
     // Delete confirm
     deleteConfirmTitle: 'Delete memory?',

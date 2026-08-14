@@ -1013,7 +1013,6 @@ export const cs = {
     merged: 'Vzpomínky sloučeny',
     bodyRequired: 'Text vzpomínky je povinný',
     saveError: 'Uložení vzpomínky selhalo',
-    deleteError: 'Smazání vzpomínky selhalo',
     restoreError: 'Obnovení vzpomínky selhalo',
     // Potvrzení smazání
     deleteConfirmTitle: 'Smazat vzpomínku?',

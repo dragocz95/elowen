@@ -1013,7 +1013,6 @@ export const sk = {
     merged: 'Spomienky zlúčené',
     bodyRequired: 'Text spomienky je povinný',
     saveError: 'Uloženie spomienky zlyhalo',
-    deleteError: 'Vymazanie spomienky zlyhalo',
     restoreError: 'Obnovenie spomienky zlyhalo',
     // Delete confirm
     deleteConfirmTitle: 'Vymazať spomienku?',

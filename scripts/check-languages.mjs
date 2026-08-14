@@ -122,6 +122,16 @@ const DYNAMIC_NAMESPACES = [
   'terminal.palette',  // TerminalSection: t.terminal.palette[key] — 21 palette slot labels
 ];
 
+// Keys the app itself no longer reads, kept because a plugin in the REGISTRY
+// (github.com/dragocz95/elowen-plugins) reads them through the runtime's useTranslation. That runtime
+// hands a bundle the core dictionary, so these are as live as any app key — the scan just cannot see
+// the consumer, which lives in another repository. Each entry names it, so removing one stays a
+// decision about that plugin.
+const REGISTRY_PLUGIN_KEYS = [
+  'managePicker.groupChannels', // cronjob JobsSettings: group label for the destination picker
+  'managePicker.groupThreads',  // cronjob JobsSettings: the same picker's thread group
+];
+
 function collectLeaves(dict, path = '', out = []) {
   for (const [key, value] of Object.entries(dict)) {
     const keyPath = path ? `${path}.${key}` : key;
@@ -155,6 +165,7 @@ const sourceIdentifiers = new Set(sourceBlob.match(/[A-Za-z0-9_]+/g));
 
 for (const leaf of collectLeaves(dictionaries.en)) {
   if (DYNAMIC_NAMESPACES.some((ns) => leaf.path.startsWith(`${ns}.`))) continue;
+  if (REGISTRY_PLUGIN_KEYS.includes(leaf.path)) continue;
   if (!sourceIdentifiers.has(leaf.name)) {
     errors.push(`web: ${leaf.path} is never referenced by any web source (dead key — delete it from every locale, or add its namespace to DYNAMIC_NAMESPACES if it is accessed with a computed key)`);
   }
