@@ -279,6 +279,40 @@ describe('BrainService', () => {
       .resolves.toBeUndefined();
   });
 
+  it('does not start plugin runtime during a reload before the initial platform start', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const connect = vi.fn(async () => {});
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerPlatform({ name: 'discord', listen: () => {}, connect });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+
+    await expect(svc.reloadPlugins()).resolves.toBe(true);
+    expect(connect).not.toHaveBeenCalled();
+
+    await svc.startPlatforms();
+    expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it('reloads only the platform subset started inside a sub-agent runner', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const subagentConnect = vi.fn(async () => {});
+    const discordConnect = vi.fn(async () => {});
+    const ctx = reg.contextFor('platforms', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerPlatform({ name: 'subagent', listen: () => {}, connect: subagentConnect });
+    ctx.registerPlatform({ name: 'discord', listen: () => {}, connect: discordConnect });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+
+    await svc.startPlatforms(undefined, ['subagent']);
+    await expect(svc.reloadPlugins()).resolves.toBe(true);
+
+    expect(subagentConnect).toHaveBeenCalledTimes(2);
+    expect(discordConnect).not.toHaveBeenCalled();
+  });
+
   it('announces a plugin reload only once the registry actually swapped', async () => {
     // The browser is told "saved, applies when the work finishes" by the toggle route, so the swap itself
     // is what it waits for: announcing while work is still draining would refresh the nav to the OLD set.

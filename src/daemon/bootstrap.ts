@@ -460,16 +460,28 @@ export async function buildApp(opts: BuildOpts) {
     discovered: () => discoverPlugins(pluginDirs),
     getEnabled: () => config.get().plugins.enabled,
     setEnabled: (names) => { config.update({ plugins: { enabled: names } }); },
-    // The marketplace only needs the reload attempted; whether the registry swapped now or is deferred
-    // to the next settled turn does not change what an install/uninstall reports.
-    reload: async () => { await brain?.reloadPlugins(); },
+    // An install keeps its rollback folder only until this proves that the swap happened and the exact
+    // plugin survived import/register. A deferred reload is not an apply: committing there would delete the
+    // only rollback copy before the daemon had ever rebuilt itself around the new folder.
+    reload: async (expectedPlugin) => {
+      let applied = true;
+      if (brain) applied = await brain.reloadPlugins();
+      else pluginProvider.invalidate();
+      if (!applied) throw new Error('plugin reload deferred while work was still running');
+      if (expectedPlugin && !(await pluginProvider.get()).loadedNames.has(expectedPlugin)) {
+        throw new Error(`plugin "${expectedPlugin}" did not load into the rebuilt registry`);
+      }
+    },
   });
   marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
   // Restore any plugin that is enabled but no longer on disk — the case an upgrade creates when a
-  // plugin moves out of the package into the registry. Deliberately not awaited: it needs the network,
-  // and a slow or unreachable registry must not hold up the daemon. It reloads the registry itself when
-  // it restores anything, so the plugins land on the next settled turn.
-  void marketplace.reconcileEnabled().catch((e) => log.warn(`plugin reconcile failed: ${e instanceof Error ? e.message : String(e)}`));
+  // plugin moves out of the package into the registry. Start it now but do not await it from buildApp: a
+  // slow registry must not hold up the HTTP daemon. The first plugin-runtime start below waits for it,
+  // keeping adapters offline until every restore has completed its validating registry reload.
+  const pluginReconcile = marketplace.reconcileEnabled().catch((e) => {
+    log.warn(`plugin reconcile failed: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  });
   // The admin-only `/restart` slash command: announce it on the platforms (Discord main channel), drop a
   // marker so the NEXT boot announces "back online", then hand off to systemd. Runs in prod only (a
   // :memory: test DB has no config dir + no units). `setTimeout` lets the HTTP response flush before the
@@ -540,7 +552,8 @@ export async function buildApp(opts: BuildOpts) {
     // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. Once they are connected,
     // announce that the daemon is up — every boot, with the wording depending on whether an operator
     // `/restart` asked for it.
-    void brain?.startPlatforms(log)
+    void pluginReconcile
+      .then(() => brain?.startPlatforms(log))
       .then(() => announceBoot(brain, restartMarker, bootMarker, ELOWEN_VERSION))
       // Boot phase 2 of delegation recovery: respawn the interrupted sub-agents claimed above, now that the
       // platforms are up so their turns can actually run. After announceBoot, with its own catch, so a

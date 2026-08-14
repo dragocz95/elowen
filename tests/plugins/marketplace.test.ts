@@ -189,6 +189,7 @@ describe('MarketplaceService.install', () => {
     expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
     expect(enabled).toContain('weather');
     expect(reload).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledWith('weather');
     const disk = discoverPlugins([bundledDir, userDir]).find((p) => p.manifest.name === 'weather');
     expect(disk?.source).toBe('user');
   });
@@ -207,10 +208,11 @@ describe('MarketplaceService.install', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('honors { enable:false }', async () => {
-    const { svc, enabled } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+  it('honors { enable:false } without requiring the inert plugin in the rebuilt registry', async () => {
+    const { svc, enabled, reload } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
     await svc.install('weather', { enable: false });
     expect(enabled).not.toContain('weather');
+    expect(reload).toHaveBeenCalledWith(undefined);
   });
 
   it('rejects a name not in the registry (404)', async () => {
@@ -266,7 +268,7 @@ describe('MarketplaceService.update', () => {
     const manifest = JSON.parse(readFileSync(join(userDir, 'notion', 'elowen-plugin.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('1.0.0');
     expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(false); // backup consumed, no debris
-    expect(reload).toHaveBeenCalledTimes(2); // and the restored version was put back into service
+    expect(reload.mock.calls).toEqual([['notion'], []]); // rollback reloads without requiring the rejected version
   });
 
   it('refuses to update a built-in plugin (409)', async () => {

@@ -146,8 +146,9 @@ export interface MarketplaceServiceOptions {
   discovered: () => DiscoveredPlugin[];
   getEnabled: () => string[];
   setEnabled: (names: string[]) => void;
-  /** Drop the memoized registry + hot-reload running sessions (`brain.reloadPlugins`). */
-  reload: () => Promise<void>;
+  /** Drop the memoized registry + hot-reload running sessions (`brain.reloadPlugins`). When supplied,
+   *  `expectedPlugin` must be present in the rebuilt registry or the apply must reject and roll back. */
+  reload: (expectedPlugin?: string) => Promise<void>;
   io?: Partial<MarketplaceIO>;
 }
 
@@ -297,8 +298,9 @@ export class MarketplaceService {
       }
       try {
         // `enable: false` because it is already enabled; install() would otherwise rewrite the config
-        // for no reason. The install itself reloads, so a caller that restores several gets one reload
-        // per plugin — acceptable at boot, where nothing is serving yet.
+        // for no reason. Keep install()'s per-plugin validating reload: applyOrRollback must retain each
+        // backup until the daemon has rebuilt the registry around that exact restored folder. Bootstrap
+        // keeps platform adapters offline until the whole reconcile settles, so none can serve between them.
         await this.install(name, { enable: false });
         restored.push(name);
         log.info(`plugin "${name}" was enabled but missing — restored from the registry`);
@@ -328,7 +330,7 @@ export class MarketplaceService {
    *  the failed version live and the backup deleted is what makes such an update unrecoverable. */
   private async applyOrRollback(name: string, swap: { commit: () => void; rollback: () => void }): Promise<void> {
     try {
-      await this.opts.reload();
+      await this.opts.reload(this.opts.getEnabled().includes(name) ? name : undefined);
     } catch (e) {
       swap.rollback();
       await this.opts.reload().catch((re) => log.error(`plugin ${name}: reload after rollback failed: ${errMsg(re)}`));

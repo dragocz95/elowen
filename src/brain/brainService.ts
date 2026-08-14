@@ -153,6 +153,14 @@ export class BrainService {
    *  is coalesced onto this flag and drained once a turn settles (see drainDeferredPluginReload), so the
    *  runtime converges on the persisted plugin set without a daemon restart. */
   private pendingPluginReload = false;
+  /** This process's selected platform adapters have completed their initial start. A registry rebuild
+   *  before this point validates boot-restored plugins but must not connect an adapter early: the next
+   *  restore would otherwise cycle it and destroy any channel session it accepted in between. */
+  private pluginRuntimeStarted = false;
+  /** A runner starts only its `subagent` adapter and no services; preserve that exact lifecycle shape when
+   *  it reloads instead of either stranding the new adapter generation or starting every daemon gateway. */
+  private pluginServicesStarted = false;
+  private pluginPlatformFilter: readonly string[] | undefined;
   constructor(private d: BrainDeps) {
     // One identity per daemon boot, stamped onto every running sub-agent row. A LATER boot uses it to tell
     // a restart orphan (owner_boot_id != this) from its own live work, and to accept a delegated
@@ -1290,11 +1298,16 @@ export class BrainService {
         // generation's bus subscriptions detach with them, so a stale closure never double-handles
         // events beside its replacement.
         before?.disposeEventSubscriptions();
-        await this.pluginServices.stopAll();
-        this.platforms.stopAll();
-        await this.pluginServices.runBootReconciles();
-        await this.platforms.startAll();
-        await this.pluginServices.startAll();
+        if (this.pluginRuntimeStarted) {
+          if (this.pluginServicesStarted) await this.pluginServices.stopAll();
+          this.platforms.stopAll();
+          if (this.pluginServicesStarted) await this.pluginServices.runBootReconciles();
+          await this.platforms.startAll(undefined, this.pluginPlatformFilter);
+          if (this.pluginServicesStarted) await this.pluginServices.startAll();
+        }
+        // A pre-runtime reload still has to force the lazy provider to rebuild now. install() treats this
+        // await as its apply check and keeps the rollback folder until it succeeds; only adapter/service
+        // startup is deferred to the one initial start after boot marketplace reconciliation settles.
         const after = await this.d.plugins?.get();
         if (after) await new PluginHookBus({ hooks: after.hooks }).emit('plugin.reload.after', {});
       });
@@ -1341,11 +1354,20 @@ export class BrainService {
    *  nested delegation fails outright), while a second Discord/WhatsApp gateway from a child process
    *  would answer the operator's rooms twice. */
   async startPlatforms(log?: { info(m: string): void; error(m: string): void }, only?: readonly string[]): Promise<void> {
-    // Plugin background services belong ONLY to the full daemon: a runner narrowed to `only` platforms
-    // must not grow a second mission engine / sweeper fleet beside the daemon's.
-    if (!only) await this.pluginServices.runBootReconciles();
-    await this.platforms.startAll(log, only);
-    if (!only) await this.pluginServices.startAll();
+    // Share the reload lock so a toggle racing the initial start observes one settled lifecycle: either
+    // the reload validates first and this starts its generation, or this starts first and the reload cycles
+    // the same runtime shape. A repeated start is a no-op, never duplicate gateways.
+    await this.serial('plugins-reload', async () => {
+      if (this.pluginRuntimeStarted) return;
+      // Plugin background services belong ONLY to the full daemon: a runner narrowed to `only` platforms
+      // must not grow a second mission engine / sweeper fleet beside the daemon's.
+      if (!only) await this.pluginServices.runBootReconciles();
+      await this.platforms.startAll(log, only);
+      if (!only) await this.pluginServices.startAll();
+      this.pluginServicesStarted = !only;
+      this.pluginPlatformFilter = only ? [...only] : undefined;
+      this.pluginRuntimeStarted = true;
+    });
   }
 
   /** Execute ONE delegated turn in THIS process. The single delegated entry point: the daemon reaches it
