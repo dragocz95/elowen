@@ -63,7 +63,6 @@
     "test:e2e:stop-kill": "npm run build --silent && node scripts/tests/brain-e2e/stop-kill.mjs",
     "test:e2e:continuity": "npm run build --silent && node scripts/tests/continuity-e2e/run.mjs",
     "test:e2e:hooks": "npm run build --silent && node scripts/tests/hooks-e2e/run.mjs",
-    "test:e2e:cron": "npm run build --silent && node scripts/tests/cron-e2e/run.mjs",
     "test:e2e:api": "npm run build --silent && node scripts/tests/api-e2e/run.mjs",
     "test:e2e:migration": "npm run build --silent && node scripts/tests/migration-e2e/run.mjs",
     "test:e2e:web": "npm run build --silent && npm run build:web && node scripts/tests/web-e2e/run.mjs",

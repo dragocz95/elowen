@@ -103,36 +103,6 @@ jobs:
       # and was simply never wired up here, so nothing guarded that path.
       - run: node scripts/tests/brain-e2e/stop-kill.mjs
 
-  cron-e2e:
-    name: Cron E2E (real daemon + scheduled collector)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
-      # those best-effort calls don't spew errors during boot.
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      # Boots the ACTUAL built daemon, enables the cronjob plugin, registers a one-shot job whose `check`
-      # collector emits a marker, shortens the tick, and asserts the collector output reaches the brain
-      # under the "Check output" framing, persists as the cron channel session, and the one-shot job is
-      # consumed. Teeth: an empty collector skips the turn and the poll times out.
-      - run: npm ci
-      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
-      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
-      # cannot resolve and the build fails before this job reaches what it is here to test.
-      - run: npm ci --prefix web
-      - run: npm run build
-      - run: node scripts/tests/cron-e2e/run.mjs
-
   api-e2e:
     name: API E2E (REST/SSE/WS contract)
     runs-on: ubuntu-latest

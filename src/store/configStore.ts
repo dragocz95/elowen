@@ -603,7 +603,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   plugins: {
     enabled: [
       'files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs',
-      'cronjob', 'statusline', 'mcp', 'lsp',
+      'statusline', 'mcp', 'lsp',
     ],
     removed: [],
   },

@@ -70,6 +70,7 @@
     "jose",
     "grammy",
     "baileys",
-    "qrcode"
+    "qrcode",
+    "elowen-plugin-shared"
   ]
 }

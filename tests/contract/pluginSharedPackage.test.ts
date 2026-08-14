@@ -52,7 +52,13 @@ describe('elowen-plugin-shared package contract', () => {
     for (const target of Object.values(exportsMap)) expect(files).toContain(target.replace('./', ''));
   });
 
-  it('no bundled plugin imports a subpath the package does not export', () => {
+  // Every consumer of this package now lives in the plugin registry — the chat adapters and cronjob took
+  // their imports with them. So this repo can no longer check "does a plugin import a subpath that
+  // exists"; what it can still check is that the package it PUBLISHES is coherent, which the tests above
+  // do. This one pins the remaining half of that: nothing bundled here reaches into the package by a
+  // path it does not export, and — the part that would otherwise rot silently — the day something
+  // bundled starts importing it again, that import is held to the same rule.
+  it('nothing bundled imports a subpath the package does not export', () => {
     const specifiers = new Set<string>();
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -65,8 +71,13 @@ describe('elowen-plugin-shared package contract', () => {
       }
     };
     walk(join(repoRoot, 'plugins'));
-    expect(specifiers.size).toBeGreaterThan(0); // the adapters do import it — guard against a dead test
     const valid = new Set(Object.keys(exportsMap).map((k) => k.replace('.', 'elowen-plugin-shared')));
     expect([...specifiers].filter((s) => !valid.has(s))).toEqual([]);
+  });
+
+  it('has at least one exported subpath to hold consumers to', () => {
+    // Guards the guard above, which is now vacuous by design: with no bundled importer left, an empty
+    // exports map would make it pass while proving nothing about the package we publish.
+    expect(Object.keys(exportsMap).length).toBeGreaterThan(3);
   });
 });

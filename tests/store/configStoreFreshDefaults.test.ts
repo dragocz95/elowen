@@ -5,8 +5,7 @@ import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 
 /** The fresh-install default plugin set — a BARE ASSISTANT: tools that need no configuration to be
- *  useful (files, terminal, askuser, runtime-context, skills, subagent, elowen-docs, cronjob,
- *  statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
+ *  useful (files, terminal, askuser, runtime-context, subagent, elowen-docs, statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
  *  silently drift from what actually ships on.
  *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
@@ -16,7 +15,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
  *  so a fresh install does not have them on disk to enable. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'cronjob', 'statusline', 'mcp', 'lsp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp', 'lsp'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
@@ -70,7 +69,7 @@ describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {
  *  own lifecycle (agents → Sessions/Escalations, work → Tasks/Kanban/Timeline/Stats, editor → Editor).
  *  Elowen out of the box is an assistant, not somebody else's product, so none of those ship enabled;
  *  the owner installs them from Settings → Plugins. A plugin contributing only a SETTINGS section
- *  (skills, subagent, cronjob) configures the assistant itself and is fine. */
+ *  (subagent) configures the assistant itself and is fine. */
 describe('a fresh install enables no plugin that owns a domain vertical', () => {
   const cfg = new ConfigStore(openDb(':memory:'));
   const enabled = cfg.get().plugins.enabled;

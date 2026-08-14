@@ -1,0 +1,33 @@
+{
+  "_comment": "FROZEN CONTRACT, shared by the Elowen package and the plugin registry. The cron/schedule grammar is hand-mirrored in three implementations that cannot import one another: the cronjob plugin's parseSchedule (the authority, and what validates API writes), web/lib/cronSchedule.ts (web validation) and web/lib/cron.ts (the dashboard's next-run computation). Since the plugin moved to the registry, no test can hold all three at once — so each side pins itself to THIS file instead. Widening the grammar means changing it here, in BOTH repositories, deliberately.",
+  "generatedFrom": "plugins/cronjob parseSchedule",
+  "accepts": {
+    "every 15m": true,
+    "every 2h": true,
+    "every 1m": true,
+    "daily 07:30": true,
+    "weekly sun 20:00": true,
+    "weekly fri 09:05": true,
+    "0 9 * * 1-5": true,
+    "*/15 * * * *": true,
+    "0 0 1 * *": true,
+    "0 0 29 2 *": true,
+    "0 0 * * sun": true,
+    "0 9 * jan-mar *": true,
+    "30 8,12,18 * * *": true,
+    "5/15 * * * *": true,
+    "every 0m": false,
+    "nonsense": false,
+    "0 9 * *": false,
+    "0 9 * * *  *": false,
+    "99 * * * *": false,
+    "0 24 * * *": false,
+    "0 9 * * 8": false,
+    "0 9 32 * *": false,
+    "0 9 * 13 *": false,
+    "1-3-5 * * * *": false,
+    "daily 24:00": false,
+    "weekly xyz 10:00": false,
+    "": false
+  }
+}

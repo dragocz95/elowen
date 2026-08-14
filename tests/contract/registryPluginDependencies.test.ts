@@ -20,6 +20,11 @@ const REGISTRY_PLUGIN_DEPENDENCIES: Record<string, string> = {
   grammy: 'telegram — the Bot API client the adapter is built on (plugins/telegram/lib/adapter.mjs in the registry)',
   baileys: 'whatsapp — the WhatsApp Web protocol client behind the paired session (plugins/whatsapp/lib/adapter.mjs in the registry)',
   qrcode: 'whatsapp — renders the pairing QR the Settings screen shows (plugins/whatsapp/lib/adapter.mjs in the registry)',
+  // Published FROM this repository (packages/plugin-shared) and imported by registry plugins only.
+  // Nothing bundled here imports it any more — the last consumers were the chat adapters — but an
+  // installed plugin resolves `elowen-plugin-shared` through the daemon's node_modules, so it has to
+  // stay declared. tests/contract/pluginSharedPackage.test.ts pins its exact version alongside this.
+  'elowen-plugin-shared': 'every registry plugin built on the shared helpers (HTTP client, message formatting)',
 };
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
