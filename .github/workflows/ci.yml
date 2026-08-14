@@ -103,36 +103,6 @@ jobs:
       # and was simply never wired up here, so nothing guarded that path.
       - run: node scripts/tests/brain-e2e/stop-kill.mjs
 
-  telegram-e2e:
-    name: Telegram E2E (real daemon + fake Bot API)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
-      # those best-effort calls don't spew errors during boot.
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      # Boots the ACTUAL built daemon on a throwaway port, enables the REAL telegram plugin pointed at a
-      # fake Telegram Bot API server (via the adapter's `apiRoot` seam), and drives a private message + the
-      # shared control commands (/status, /new, /fast) end to end, asserting the bot's captured replies are
-      # Telegram plain text. Plus a teeth check that a provider error surfaces as the bot's "⚠️" reply.
-      - run: npm ci
-      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
-      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
-      # cannot resolve and the build fails before this job reaches what it is here to test.
-      - run: npm ci --prefix web
-      - run: npm run build
-      - run: node scripts/tests/telegram-e2e/telegram-roundtrip.mjs
-
   discord-e2e:
     name: Discord E2E (real daemon + fake Discord API)
     runs-on: ubuntu-latest

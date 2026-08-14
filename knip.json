@@ -67,6 +67,7 @@
     "@testing-library/react",
     "@tanstack/react-query",
     "msw",
-    "jose"
+    "jose",
+    "grammy"
   ]
 }
