@@ -5,8 +5,6 @@ import { SHARED_MESSAGES } from '../../packages/plugin-shared/messages.mjs';
 import { renderHelpLines, HELP_DESCRIPTIONS } from '../../packages/plugin-shared/help.mjs';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { MESSAGES as DISCORD } from '../../plugins/discord/lib/messages.mjs';
-// @ts-expect-error — plain .mjs plugin module, no types
-import { MESSAGES as WHATSAPP } from '../../plugins/whatsapp/lib/messages.mjs';
 // The Teams adapter now lives in the plugin registry, which asserts the same inheritance against the
 // published elowen-plugin-shared. What stays testable HERE is every adapter still in the package.
 
@@ -21,7 +19,7 @@ describe('shared plugin service messages', () => {
   });
 
   it('every adapter inherits the shared keys with identical values', () => {
-    for (const M of [DISCORD, WHATSAPP]) {
+    for (const M of [DISCORD]) {
       for (const lang of ['en', 'cs', 'sk'] as const) {
         expect(M[lang].noModels).toBe(SHARED_MESSAGES[lang].noModels);
         expect(M[lang].restarting).toBe(SHARED_MESSAGES[lang].restarting);
@@ -87,16 +85,6 @@ describe('/help renders the passed command list (single-source, no drift)', () =
       expect(M.en.help('Elowen', list(['context']))).toContain('/context');
       expect(M.cs.help('Elowen', list(['context']))).toContain('/context');
       expect(M.sk.help('Elowen', list(['context']))).toContain('/context');
-    }
-  });
-
-  it('every text surface that gates /fast has a fastUsage string in every language', () => {
-    // The shared core replies msg.fastUsage on an invalid /fast arg; Telegram + WhatsApp accept free text,
-    // so every language must carry the key (Telegram cs previously lacked it → a silent, zero-reply path).
-    for (const M of [WHATSAPP]) {
-      expect(typeof M.en.fastUsage).toBe('string');
-      expect(typeof M.cs.fastUsage).toBe('string');
-      expect(typeof M.sk.fastUsage).toBe('string');
     }
   });
 

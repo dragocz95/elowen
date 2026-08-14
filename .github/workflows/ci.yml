@@ -252,36 +252,6 @@ jobs:
       - run: npm run build:web
       - run: node scripts/tests/web-e2e/run.mjs
 
-  whatsapp-e2e:
-    name: WhatsApp E2E (real daemon + fake baileys socket)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      # The real daemon boots RealTmuxDriver and runs startup sweeps that shell out to tmux; install it so
-      # those best-effort calls don't spew errors during boot.
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      # Boots the ACTUAL built daemon, enables the REAL whatsapp plugin with its baileys socket swapped for a
-      # fake connected socket (via the adapter's WHATSAPP_E2E_SOCKET_MODULE seam — baileys' encrypted
-      # Noise/Signal wire can't be faked), injects an inbound message and drives the shared control commands,
-      # asserting the captured sends use WhatsApp formatting. Teeth: a provider error surfaces as the reply.
-      - run: npm ci
-      # `npm run build` bundles each plugin's browser UI, and those bundles import the web
-      # app's libraries (lucide-react, monaco, react-query…). Without the web install they
-      # cannot resolve and the build fails before this job reaches what it is here to test.
-      - run: npm ci --prefix web
-      - run: npm run build
-      - run: node scripts/tests/whatsapp-e2e/whatsapp-roundtrip.mjs
-
   delegate-e2e:
     name: Delegate E2E (sub-agent + workflow)
     runs-on: ubuntu-latest

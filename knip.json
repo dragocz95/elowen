@@ -68,6 +68,8 @@
     "@tanstack/react-query",
     "msw",
     "jose",
-    "grammy"
+    "grammy",
+    "baileys",
+    "qrcode"
   ]
 }
