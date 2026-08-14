@@ -175,6 +175,7 @@
       "paused": "Paused",
       "channel": "Destination channel",
       "channelDefault": "default channel",
+      "channelOwnerChat": "owner's conversation",
       "pillDefault": "(default)",
       "model": "Model",
       "modelDefault": "default",

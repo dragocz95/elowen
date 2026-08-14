@@ -70,6 +70,7 @@
       "paused": "Pozastaveno",
       "channel": "Cílový kanál",
       "channelDefault": "výchozí kanál",
+      "channelOwnerChat": "konverzace vlastníka",
       "pillDefault": "(výchozí)",
       "model": "Model",
       "modelDefault": "výchozí",

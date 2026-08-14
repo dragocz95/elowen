@@ -70,11 +70,15 @@ function ChannelField({ value, onChange, channels }: { value: string; onChange: 
  *  last result); `draft` holds what the user is typing. When the server's copy changes and the row has no
  *  unsaved edit, the draft adopts it — otherwise a job the brain's cron tools changed behind this page's
  *  back would be shown stale and overwritten by the row's next save. */
-function CronJobRow({ job, persisted, ownerLabel, channels, models, selected, onSelect, onClose, onRemoved }: {
+function CronJobRow({ job, persisted, ownerLabel, adminFields, channels, models, selected, onSelect, onClose, onRemoved }: {
   job: CronJob;
   persisted: boolean;
   /** Who owns the job, for the admin's owner column; null hides the column (everyone else sees only their own). */
   ownerLabel: string | null;
+  /** Whether this caller may set the fields only an INSTANCE job has: the shell guard (it runs a command
+   *  on the host) and the destination channel (it belongs to the operator). The server refuses both on an
+   *  owned job, so offering them to somebody whose save would be rejected is worse than not showing them. */
+  adminFields: boolean;
   channels: DiscordChannelOption[];
   models: BrainModelOption[];
   selected: boolean;
@@ -158,7 +162,11 @@ function CronJobRow({ job, persisted, ownerLabel, channels, models, selected, on
   const validSchedule = draft.runAt ? true : utils.isValidSchedule(draft.schedule);
   const lastRunMs = utils.parseTs(job.lastRun);
   const destChannel = draft.notifyChannelId ? channels.find((ch) => ch.id === draft.notifyChannelId) : undefined;
-  const dest = draft.notifyChannelId ? destChannel?.name ?? draft.notifyChannelId : null;
+  // An OWNED job has no channel destination at all — it reports in its owner's own conversation and no
+  // channel may be set on it, so naming the notification channel here would describe a delivery that
+  // never happens. Only an instance job falls back to "default channel".
+  const dest = draft.notifyChannelId ? destChannel?.name ?? draft.notifyChannelId
+    : job.ownerUserId != null ? s.channelOwnerChat : null;
   const name = draft.name || s.jobNew;
 
   return (
@@ -187,15 +195,20 @@ function CronJobRow({ job, persisted, ownerLabel, channels, models, selected, on
           <C.DataTableCell priority="wide" title={ownerLabel} className="truncate text-xs text-text-muted">{ownerLabel}</C.DataTableCell>
         ) : null}
         {/* Destination: one line that truncates, full name on hover. A channel or thread title can be far
-            longer than the column, and wrapping it pushed every other row out of alignment. */}
-        <C.DataTableCell priority="wide" title={dest ?? s.channelDefault} className="truncate text-xs text-text-muted">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0">
-              {destChannel?.type === 'thread' ? <MessageSquare size={12} aria-hidden /> : <Hash size={12} aria-hidden />}
+            longer than the column, and wrapping it pushed every other row out of alignment. Shown only to
+            an admin: an owned job always reports in its owner's own conversation and they cannot change
+            that, so the column would repeat one value down the whole page — and "default channel" would
+            name a channel the job never writes to. */}
+        {adminFields ? (
+          <C.DataTableCell priority="wide" title={dest ?? s.channelDefault} className="truncate text-xs text-text-muted">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0">
+                {destChannel?.type === 'thread' ? <MessageSquare size={12} aria-hidden /> : <Hash size={12} aria-hidden />}
+              </span>
+              <span className={`truncate ${dest ? '' : 'italic text-text-muted/65'}`}>{dest ?? s.channelDefault}</span>
             </span>
-            <span className={`truncate ${dest ? '' : 'italic text-text-muted/65'}`}>{dest ?? s.channelDefault}</span>
-          </span>
-        </C.DataTableCell>
+          </C.DataTableCell>
+        ) : null}
         <C.DataTableCell priority="wide" title={lastRunMs != null ? new Date(lastRunMs).toLocaleString() : undefined} className="whitespace-nowrap text-xs text-text-muted">
           <span className="flex items-center gap-1.5">
             <Timer size={12} aria-hidden />
@@ -245,25 +258,29 @@ function CronJobRow({ job, persisted, ownerLabel, channels, models, selected, on
                 </span>
               </C.Field>
             </div>
-            <C.Field label={s.check} hint={s.helpCheck}>
-              <textarea
-                value={draft.check ?? ''}
-                onChange={(e) => patch({ check: e.target.value || undefined })}
-                rows={2}
-                className={textareaClass}
-                placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
-              />
-            </C.Field>
+            {adminFields ? (
+              <C.Field label={s.check} hint={s.helpCheck}>
+                <textarea
+                  value={draft.check ?? ''}
+                  onChange={(e) => patch({ check: e.target.value || undefined })}
+                  rows={2}
+                  className={textareaClass}
+                  placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
+                />
+              </C.Field>
+            ) : null}
             <C.Field label={s.prompt} hint={s.helpPrompt}>
               <textarea value={draft.prompt} onChange={(e) => patch({ prompt: e.target.value })} rows={8} className={textareaClass} />
             </C.Field>
-            <C.Field label={s.channel} hint={s.helpChannel}>
-              <ChannelField
-                value={draft.notifyChannelId ?? ''}
-                onChange={(v) => patch({ notifyChannelId: v || undefined })}
-                channels={channels}
-              />
-            </C.Field>
+            {adminFields ? (
+              <C.Field label={s.channel} hint={s.helpChannel}>
+                <ChannelField
+                  value={draft.notifyChannelId ?? ''}
+                  onChange={(v) => patch({ notifyChannelId: v || undefined })}
+                  channels={channels}
+                />
+              </C.Field>
+            ) : null}
             <C.Field label={s.model} hint={s.helpModel}>
               <C.BrainModelField
                 value={draft.model ? `${draft.model.provider}/${draft.model.model}` : ''}
@@ -374,7 +391,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
     <div className="flex min-w-0 flex-col gap-3">
       <C.DataTable
         ariaLabel={s.title}
-        columns={isAdmin ? '2rem minmax(0,1fr) 9.5rem 7rem minmax(0,12rem) 7rem 5.5rem' : '2rem minmax(0,1fr) 9.5rem minmax(0,12rem) 7rem 5.5rem'}
+        columns={isAdmin ? '2rem minmax(0,1fr) 9.5rem 7rem minmax(0,12rem) 7rem 5.5rem' : '2rem minmax(0,1fr) 9.5rem 7rem 5.5rem'}
         compactColumns="2rem minmax(0,1fr) 5.5rem"
       >
         <C.DataTableRow header>
@@ -382,7 +399,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
           <C.DataTableCell header>{s.name}</C.DataTableCell>
           <C.DataTableCell header priority="wide">{s.schedule}</C.DataTableCell>
           {isAdmin ? <C.DataTableCell header priority="wide">{s.ownerColumn}</C.DataTableCell> : null}
-          <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell>
+          {isAdmin ? <C.DataTableCell header priority="wide">{s.channel}</C.DataTableCell> : null}
           <C.DataTableCell header priority="wide" className="whitespace-nowrap">{s.colLastRun}</C.DataTableCell>
           <C.DataTableCell header role="presentation" aria-hidden>{null}</C.DataTableCell>
         </C.DataTableRow>
@@ -392,6 +409,7 @@ export function JobsSettings({ surface }: { surface: 'page' | 'deck' }) {
             job={job}
             persisted={saved.has(job.id)}
             ownerLabel={isAdmin ? (job.ownerUserId == null ? s.ownerInstance : job.ownerUserId === myId ? s.ownerMine : `#${job.ownerUserId}`) : null}
+            adminFields={isAdmin}
             channels={channels.data ?? []}
             models={models.data ?? []}
             selected={selectedId === job.id}

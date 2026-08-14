@@ -70,6 +70,7 @@
       "paused": "Pozastavené",
       "channel": "Cieľový kanál",
       "channelDefault": "predvolený kanál",
+      "channelOwnerChat": "konverzácia vlastníka",
       "pillDefault": "(predvolené)",
       "model": "Model",
       "modelDefault": "predvolený",

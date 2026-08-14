@@ -24,8 +24,8 @@ const server = setupServer(
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
-const skillRow = (name: string, disableModelInvocation: boolean, owner: number | null = null) =>
-  ({ name, description: `${name} desc`, source: 'user', owner, disableModelInvocation, version: null, content: `Body ${name}.` });
+const skillRow = (name: string, disableModelInvocation: boolean, owner: number | null = null, canDelete = true) =>
+  ({ name, description: `${name} desc`, source: 'user', owner, canDelete, disableModelInvocation, version: null, content: `Body ${name}.` });
 const list = [skillRow('alpha', false), skillRow('beta', false)];
 const toggles = () => screen.getAllByRole('switch', { name: strings.disableModelInvocation });
 
@@ -122,11 +122,31 @@ describe('skills SkillsSettings (optimistic disclosure toggle)', () => {
     expect(screen.queryByText('gamma')).toBeNull();
 
     // Back to everything, then open MY alpha: exactly one row may light up, not both namesakes.
-    fireEvent.click(screen.getAllByRole('radio', { name: strings.scopeAll })[1]!);
+    // ONE "all" radio: an asset type with ownership scopes shows only that filter, because the coarse
+    // source filter beside it would answer the same question twice (and offer "Built-in" in both).
+    fireEvent.click(screen.getByRole('radio', { name: strings.scopeAll }));
     await waitFor(() => expect(screen.getAllByText('alpha')).toHaveLength(2));
     fireEvent.click(screen.getAllByText('alpha')[1]!);
     await screen.findByRole('dialog');
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1);
+  });
+
+  // The daemon decides who may write which skill; a row this caller cannot write must not offer controls
+  // whose request would come back 403 — but it is still a CUSTOM skill, not a built-in one.
+  it('shows a skill the caller may not write as read-only, without calling it built-in', async () => {
+    server.use(http.get('*/api/plugins/skills/list', () => HttpResponse.json([
+      skillRow('shared-one', false, null, false), // instance-wide, seen by a non-admin
+      skillRow('mine', false, 7, true),
+    ])));
+    const mounted = mount();
+
+    await screen.findByText('shared-one');
+    // One delete button and one editable name button: the read-only row offers neither.
+    expect(screen.getAllByRole('button', { name: strings.remove })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'mine' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'shared-one' })).toBeNull();
+    // Provenance is not editability: both rows are user-defined skills.
+    expect(mounted.container.textContent).not.toContain(strings.badgeBundled);
   });
 
   // The same component serves the Settings deck and its own page. On a page it wears the SAME spatial

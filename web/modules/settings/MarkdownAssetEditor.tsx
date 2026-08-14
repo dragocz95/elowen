@@ -198,17 +198,9 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.assetEditor.search} className="pl-9" />
           </div>
-          <Segmented
-            value={source}
-            onChange={(value) => setSource(value as SourceFilter)}
-            options={[
-              { value: 'all', label: t.assetEditor.filterAll },
-              { value: 'user', label: t.assetEditor.filterUser },
-              { value: 'builtin', label: t.assetEditor.filterBuiltin },
-            ]}
-            aria-label={t.assetEditor.filterAll}
-            nowrap
-          />
+          {/* One filter row, never two: an asset type with ownership scopes already splits the same set
+              more finely (mine / instance / bundled), so showing the coarse source filter beside it would
+              offer two controls whose answers overlap — and "Built-in" in both of them. */}
           {ownership ? (
             <Segmented
               value={scope}
@@ -217,7 +209,19 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
               aria-label={ownership.header}
               nowrap
             />
-          ) : null}
+          ) : (
+            <Segmented
+              value={source}
+              onChange={(value) => setSource(value as SourceFilter)}
+              options={[
+                { value: 'all', label: t.assetEditor.filterAll },
+                { value: 'user', label: t.assetEditor.filterUser },
+                { value: 'builtin', label: t.assetEditor.filterBuiltin },
+              ]}
+              aria-label={t.assetEditor.filterAll}
+              nowrap
+            />
+          )}
           {addAction}
         </div>
       </ControlSurfaceToolbar>
@@ -241,7 +245,12 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
                 </DataTableRow>
                 {pageItems.map((item) => {
-                  const editable = item.source === 'user' && item.canDelete !== false;
+                  // Two different questions, deliberately kept apart: WHERE the entry came from (drives the
+                  // badge and the source filter, so the same row reads the same way for everyone) and
+                  // whether THIS caller may write it (drives the controls). An instance-wide skill shown to
+                  // somebody who may not edit it is still a custom skill, not a built-in one.
+                  const isUser = item.source === 'user';
+                  const editable = isUser && item.canDelete !== false;
                   const open = () => { if (editable) { setForm(formFromItem(item)); setEditing(item); } };
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   return (
@@ -270,7 +279,7 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                         </DataTableCell>
                       ) : null}
                       <DataTableCell priority="wide" className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone={editable ? 'accent' : 'default'}>{editable ? labels.badgeUser : labels.badgeBuiltin}</Badge>
+                        <Badge tone={isUser ? 'accent' : 'default'}>{isUser ? labels.badgeUser : labels.badgeBuiltin}</Badge>
                         {renderBadges?.(item)}
                       </DataTableCell>
                       <DataTableCell priority="wide" className="flex items-center">

@@ -71,6 +71,28 @@ describe('cronjob JobsSettings — error state', () => {
     expect(screen.queryByText('her digest')).toBeNull();
   });
 
+  // The server refuses a shell guard and a destination channel on an owned job, so the form must not
+  // offer either: a field whose save always comes back 400 is worse than no field.
+  it('offers a non-admin none of the fields only an instance job may carry', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 9, username: 'amy', is_admin: false } })),
+      http.get('*/api/plugins/cronjob/jobs', () => HttpResponse.json([job({ id: 'mine', name: 'my digest', ownerUserId: 9 })])),
+      http.get('*/api/plugins/discord/channels', () => HttpResponse.json(CHANNELS)),
+      http.get('*/api/brain/models', () => HttpResponse.json(MODELS)),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><JobsSettings surface="deck" /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByText('my digest'));
+
+    await screen.findByText(strings.prompt);
+    expect(screen.queryByText(strings.check)).toBeNull();
+    expect(screen.queryByText(strings.channel)).toBeNull();
+    // The owner column belongs to the admin too — hers is the only list she can see.
+    expect(screen.queryByText(strings.ownerColumn)).toBeNull();
+    // The model picker is hers to set, so it stays.
+    expect(screen.getAllByText(strings.model).length).toBeGreaterThan(0);
+  });
+
   it('shows a retryable error instead of an infinite skeleton', async () => {
     let attempts = 0;
     server.use(
