@@ -203,7 +203,7 @@ command. The prompt supports PI argument substitutions such as `$ARGUMENTS`,
 ### Inbound HTTP routes (webhooks)
 
 A plugin that needs to RECEIVE HTTP callbacks (e.g. a chat platform that
-delivers messages by webhook, like the bundled `msteams` plugin) declares the
+delivers messages by webhook, like the `msteams` plugin in the registry) declares the
 route path in the manifest and registers a handler:
 
 ```json

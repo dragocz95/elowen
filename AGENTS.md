@@ -50,4 +50,4 @@ The services run through `/var/www/.npm-global/lib/node_modules/elowen`, which i
 - Use shared `HelpTip`, `ManageSelectionModal`, `SelectionSummary`, and model picker components instead of bespoke controls.
 - Keep plugin config calm and compact; long explanations belong behind the shared help affordance.
 - Plugin i18n can override field labels, hints, and enum option labels. Keep manifest English as the fallback.
-- Discord per-channel presentation is resolved through `plugins/discord/lib/display.mjs`; preserve independent overrides and legacy fallback behavior.
+- Discord per-channel presentation is resolved through `plugins/discord/lib/display.mjs`, which now lives in the plugin registry (`github.com/dragocz95/elowen-plugins`) rather than this repo; preserve independent overrides and legacy fallback behavior.
