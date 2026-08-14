@@ -465,6 +465,11 @@ export async function buildApp(opts: BuildOpts) {
     reload: async () => { await brain?.reloadPlugins(); },
   });
   marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
+  // Restore any plugin that is enabled but no longer on disk — the case an upgrade creates when a
+  // plugin moves out of the package into the registry. Deliberately not awaited: it needs the network,
+  // and a slow or unreachable registry must not hold up the daemon. It reloads the registry itself when
+  // it restores anything, so the plugins land on the next settled turn.
+  void marketplace.reconcileEnabled().catch((e) => log.warn(`plugin reconcile failed: ${e instanceof Error ? e.message : String(e)}`));
   // The admin-only `/restart` slash command: announce it on the platforms (Discord main channel), drop a
   // marker so the NEXT boot announces "back online", then hand off to systemd. Runs in prod only (a
   // :memory: test DB has no config dir + no units). `setTimeout` lets the HTTP response flush before the

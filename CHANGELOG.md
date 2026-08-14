@@ -5,6 +5,8 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-14
+
 The tmux-agent and missions subsystem — spawning coding agents into tmux, the autopilot mission engine,
 the overseer, escalations, and their web pages — now ships as the bundled `agents` plugin, on a plugin
 platform any plugin can build on. An existing install is enabled automatically on upgrade (a running
@@ -69,6 +71,11 @@ is a plugin that adds a feature.
 - **A core slash command tied to a plugin now disappears with it.** `/skills` and `/mcp` render nothing
   but their plugin's data, so they are no longer offered on any surface while that plugin is not running,
   instead of opening a picker that could only report an error.
+- **An upgrade restores a plugin that moved to the registry.** When a plugin you have enabled is no
+  longer on disk — which is exactly what a package that stopped bundling it leaves behind — the daemon
+  reinstalls it from the registry on the next start instead of skipping it in silence. It only touches
+  names you already enabled, never changes what is enabled, and an unreachable registry just logs and
+  leaves things as they are.
 
 ### Fixed
 - Read-only sub-agent drill-in now survives transient EventSource disconnects, keeps child turn errors in the

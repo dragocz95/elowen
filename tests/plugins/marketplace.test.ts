@@ -307,6 +307,75 @@ describe('MarketplaceService.uninstall', () => {
   });
 });
 
+// The upgrade path for a plugin that moves out of the npm package: its name stays in `plugins.enabled`
+// while its folder disappears with the old package, and the loader skips a missing plugin in silence.
+// Without this reconcile the operator simply finds the feature gone after a routine `npm i -g elowen`.
+describe('MarketplaceService.reconcileEnabled', () => {
+  it('reinstalls an enabled plugin that is no longer on disk', async () => {
+    const { svc, userDir, enabled } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    enabled.push('weather');
+
+    expect(await svc.reconcileEnabled()).toEqual(['weather']);
+    expect(existsSync(join(userDir, 'weather', 'elowen-plugin.json'))).toBe(true);
+    // It restores, it does not re-decide: the enabled list is untouched (no duplicate, no reordering).
+    expect(enabled).toEqual(['weather']);
+  });
+
+  it('never installs a plugin the operator has not enabled', async () => {
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0' }, { name: 'spy', version: '1.0.0' }],
+    });
+    enabled.push('weather');
+
+    expect(await svc.reconcileEnabled()).toEqual(['weather']);
+    expect(existsSync(join(userDir, 'spy'))).toBe(false);
+  });
+
+  it('leaves an enabled name the registry does not carry alone', async () => {
+    const { svc, enabled, reload } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    enabled.push('handwritten');
+
+    expect(await svc.reconcileEnabled()).toEqual([]);
+    expect(enabled).toEqual(['handwritten']); // still enabled — this is not the place to un-decide that
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when every enabled plugin is present, without touching the network', async () => {
+    const calls: string[] = [];
+    const { svc } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0' }],
+      bundled: [{ name: 'files', version: '1.0.0' }],
+      installed: [{ name: 'weather', version: '1.0.0' }],
+      calls,
+    });
+
+    expect(await svc.reconcileEnabled()).toEqual([]);
+    expect(calls).toEqual([]); // no clone/fetch when there is nothing to look up
+  });
+
+  it('reports rather than throws when the registry is unreachable', async () => {
+    const { svc, enabled } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    enabled.push('weather');
+    const { svc: broken } = setup({ registryEntries: [], failRevParse: true });
+    // A boot must survive an offline registry: the plugin stays missing, the daemon still starts.
+    await expect(broken.reconcileEnabled()).resolves.toEqual([]);
+    await expect(svc.reconcileEnabled()).resolves.toEqual(['weather']);
+  });
+
+  it('does not resurrect a plugin that still ships bundled', async () => {
+    // A bundled plugin is on disk by definition, so it is never "missing" — and install() would refuse
+    // it anyway. This pins that the reconcile cannot shadow a built-in with a registry copy.
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'files', version: '9.9.9' }],
+      bundled: [{ name: 'files', version: '1.0.0' }],
+      installed: [],
+    });
+    enabled.push('files'); // enabled AND in the registry — only "on disk as bundled" keeps it out
+    expect(await svc.reconcileEnabled()).toEqual([]);
+    expect(existsSync(join(userDir, 'files'))).toBe(false);
+  });
+});
+
 describe('MarketplaceService.sweep', () => {
   it('deletes leftover .staging-*/.old-* dirs', () => {
     const { svc, userDir } = setup({ registryEntries: [] });

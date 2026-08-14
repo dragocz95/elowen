@@ -57,6 +57,28 @@ async function postJson(baseUrl, path, token, body) {
   return { status: res.status, json };
 }
 
+async function patchJson(baseUrl, path, token, body) {
+  const headers = { 'content-type': 'application/json' };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(`${baseUrl}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body ?? {}) });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* leave null */ }
+  return { status: res.status, json };
+}
+
+/** Turn a bundled plugin on, performing the same two-step consent handshake the UI does: the first call
+ *  answers 409 listing the grants it wants, the second repeats them back. Reading them off the refusal
+ *  instead of hardcoding a list keeps this working when a manifest changes what it asks for. */
+async function enablePlugin(baseUrl, token, name) {
+  let r = await patchJson(baseUrl, `/plugins/${name}`, token, { enabled: true });
+  if (r.status === 409 && Array.isArray(r.json?.grants)) {
+    r = await patchJson(baseUrl, `/plugins/${name}`, token, { enabled: true, acknowledgeGrants: r.json.grants });
+  }
+  assert(r.status === 200, `[enable/${name}] PATCH /plugins/${name} {enabled:true} → 200 (got ${r.status} ${JSON.stringify(r.json)})`);
+  return r;
+}
+
 // ---- SSE helper (same frame parsing as scripts/tests/brain-e2e/chat-turn.mjs) ------------------------
 
 /** Open a real SSE stream and expose parsed brain events + a deadline-bounded waitFor. Parses standard
@@ -161,6 +183,16 @@ function prodDaemonPid() {
 async function websocketChannel(baseUrl, token) {
   console.log('\n[3] WEBSOCKET CHANNEL — /ws/terminal (ticket gate)');
   const wsBase = toWs(baseUrl);
+
+  // /ws/terminal and its ticket mint are ROOT MOUNTS of the `agents` plugin, and a fresh install no
+  // longer enables that plugin — so on a bare daemon the mint answers 503 and every assertion below
+  // would be probing the disabled-plugin path instead of the ticket gate. Enable it first, and hold the
+  // enable itself to 200: if the plugin cannot be turned on, this area has nothing to test and must say
+  // so rather than quietly checking the wrong thing.
+  // `work` first: agents builds its missions on task tracking and refuses to serve without it.
+  await enablePlugin(baseUrl, token, 'work');
+  await enablePlugin(baseUrl, token, 'agents');
+  ok('enabled the work + agents plugins — agents owns /ws/terminal and the ticket mint');
 
   // The mint endpoint is Bearer-gated (NOT in isPublic): tokenless → 401 unauthorized.
   let p = await postJson(baseUrl, '/sessions/elowen-e2e/ws-ticket', null, {});

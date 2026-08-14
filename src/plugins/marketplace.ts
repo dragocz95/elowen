@@ -265,6 +265,50 @@ export class MarketplaceService {
     });
   }
 
+  /** Reinstall plugins the operator has ENABLED that are no longer on disk, when the registry offers
+   *  them. This is what makes moving a plugin out of the npm package survivable: an upgrade that drops
+   *  a bundled plugin would otherwise leave the name enabled with nothing behind it, and the loader
+   *  would skip it in silence — the operator would just find the feature gone.
+   *
+   *  Deliberately narrow. It only touches names ALREADY enabled (so it installs nothing the operator did
+   *  not ask for), only from the curated registry (the same single source an explicit install uses), and
+   *  it never changes what is enabled. Offline, or a name the registry does not carry, is not an error:
+   *  the plugin stays missing exactly as it is today and the reason is logged once. Returns the names
+   *  actually installed, so the caller can decide whether a reload is worth it. */
+  async reconcileEnabled(): Promise<string[]> {
+    const onDisk = new Set(this.opts.discovered().map((p) => p.manifest.name));
+    const missing = this.opts.getEnabled().filter((n) => !onDisk.has(n));
+    if (!missing.length) return [];
+
+    let available: Set<string>;
+    try {
+      await this.ensureFresh(false);
+      available = new Set(this.readRegistry().map((e) => e.name));
+    } catch (e) {
+      log.warn(`enabled plugins missing from disk (${missing.join(', ')}) and the registry is unreachable: ${errMsg(e)}`);
+      return [];
+    }
+
+    const restored: string[] = [];
+    for (const name of missing) {
+      if (!available.has(name)) {
+        log.warn(`plugin "${name}" is enabled but neither installed nor in the registry — it stays disabled until you reinstall it`);
+        continue;
+      }
+      try {
+        // `enable: false` because it is already enabled; install() would otherwise rewrite the config
+        // for no reason. The install itself reloads, so a caller that restores several gets one reload
+        // per plugin — acceptable at boot, where nothing is serving yet.
+        await this.install(name, { enable: false });
+        restored.push(name);
+        log.info(`plugin "${name}" was enabled but missing — restored from the registry`);
+      } catch (e) {
+        log.warn(`could not restore enabled plugin "${name}" from the registry: ${errMsg(e)}`);
+      }
+    }
+    return restored;
+  }
+
   /** Clear leftover `.staging-*` / `.old-*` scratch dirs from an interrupted install. Called once on
    *  daemon startup so the user plugin dir never accretes crash debris. */
   sweep(): void {
