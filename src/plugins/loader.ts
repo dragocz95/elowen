@@ -171,6 +171,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
       const pluginDir = join(dir, name);
       try {
         if (!statSync(pluginDir).isDirectory()) continue;
+        // A folder without a manifest is not a plugin, so treat it exactly like an absent folder rather
+        // than reporting a failure. The usual source is the gitignored build output (web/index.js) left
+        // behind when a plugin is deleted from the bundle: the name still loads fine from the next dir,
+        // and an ERROR logged next to a successful load only teaches people to ignore the log. A folder
+        // that IS a plugin but is broken (unreadable or invalid manifest, name mismatch) still fails
+        // loudly, and an enabled plugin that no dir provides is reported once at the end.
+        if (!existsSync(join(pluginDir, 'elowen-plugin.json'))) continue;
         const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'elowen-plugin.json'), 'utf-8')));
         if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != folder "${name}"`);
         // Resolve the entry inside the plugin dir and refuse one that escapes it (e.g. `../../x.mjs`) —
@@ -275,6 +282,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         opts.logger.error(`plugin skipped: ${name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  }
+  // An enabled plugin that no directory provides used to vanish without a word — the loader simply never
+  // reached a folder for it. Say it once, listing the names, so "I enabled it and nothing happened" is
+  // answerable from the log. Warn, not error: boot reconcile reinstalls a missing enabled plugin from the
+  // registry moments later, and a broken plugin already reported itself above.
+  const missing = [...wanted].filter((name) => !loaded.has(name)).sort();
+  if (missing.length > 0) {
+    opts.logger.warn(`enabled but not found in any plugin directory: ${missing.join(', ')}`);
   }
   return registry;
 }

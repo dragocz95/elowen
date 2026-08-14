@@ -86,6 +86,64 @@ describe('loadPlugins', () => {
     expect(reg.toolOwner.has('sneaky')).toBe(false);
   });
 
+  // Regression: deleting a bundled plugin leaves its GITIGNORED web bundle behind, so the bundle dir
+  // keeps a folder for that name with no manifest. The loader used to log ERROR "plugin skipped" for it
+  // — immediately before loading that very same plugin from the user dir. A folder that is not a plugin
+  // has to be as quiet as no folder at all.
+  it('ignores a manifest-less folder silently and still loads that name from a later dir', async () => {
+    const bundled = mkdtempSync(join(tmpdir(), 'elowen-bundled-'));
+    const user = mkdtempSync(join(tmpdir(), 'elowen-user-'));
+    try {
+      mkdirSync(join(bundled, 'ghost', 'web'), { recursive: true });
+      writeFileSync(join(bundled, 'ghost', 'web', 'index.js'), 'export {};');
+      makePlugin(user, 'ghost', `export function register(ctx){ ctx.registerSystemPromptFragment('alive'); }`);
+
+      const errors: string[] = [];
+      const warnings: string[] = [];
+      const reg = await loadPlugins({
+        dirs: [bundled, user],
+        enabled: ['ghost'],
+        logger: { info() {}, warn: (m) => warnings.push(m), error: (m) => errors.push(m) },
+      });
+
+      expect(reg.promptFragments).toContain('alive');
+      expect(errors).toEqual([]);
+      expect(warnings).toEqual([]);
+    } finally {
+      rmSync(bundled, { recursive: true, force: true });
+      rmSync(user, { recursive: true, force: true });
+    }
+  });
+
+  // That quiet skip must not swallow a folder that IS a plugin and is broken.
+  it('still fails loudly for a folder whose manifest cannot be parsed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-badmanifest-'));
+    try {
+      mkdirSync(join(dir, 'mangled'), { recursive: true });
+      writeFileSync(join(dir, 'mangled', 'elowen-plugin.json'), '{ not json');
+
+      const errors: string[] = [];
+      await loadPlugins({ dirs: [dir], enabled: ['mangled'], logger: { info() {}, warn() {}, error: (m) => errors.push(m) } });
+
+      expect(errors.some((m) => m.startsWith('plugin skipped: mangled:'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Before this, an enabled plugin that no directory provided disappeared without a single log line.
+  it('reports enabled plugins that no directory provides, once and by name', async () => {
+    const warnings: string[] = [];
+    const reg = await loadPlugins({
+      dirs: [root],
+      enabled: ['good', 'nosuchplugin', 'anotherghost'],
+      logger: { info() {}, warn: (m) => warnings.push(m), error() {} },
+    });
+
+    expect(reg.skills.map((s) => s.name)).toContain('g');
+    expect(warnings).toContain('enabled but not found in any plugin directory: anotherghost, nosuchplugin');
+  });
+
   it('denies resolveProvider for an id outside the plugin config and without a providers read capability', async () => {
     const resolveProvider = (id: string) => id === 'oai' ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test' } : null;
     const reg = await loadPlugins({ dirs: [root], enabled: ['stealsprovider'], resolveProvider, logger: log });
