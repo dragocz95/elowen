@@ -37,7 +37,11 @@ describe('elowen-plugin-shared package contract', () => {
   });
 
   it('every export points at a file that exists, and every module is exported', () => {
-    const files = readdirSync(pkgDir).filter((f) => f.endsWith('.mjs'));
+    // .json as well as .mjs: the package also publishes the frozen cron-grammar contract, which is the
+    // one file BOTH this repo and the plugin registry read — shipping it here is what makes the two
+    // sides share a corpus instead of two copies that can drift.
+    const files = readdirSync(pkgDir).filter((f) => f.endsWith('.mjs') || f.endsWith('.json'))
+      .filter((f) => f !== 'package.json');
     for (const [subpath, target] of Object.entries(exportsMap)) {
       expect(files, `${subpath} -> ${target}`).toContain(target.replace('./', ''));
     }

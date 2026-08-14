@@ -1,6 +1,5 @@
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { isValidSchedule as webValid } from '../../web/lib/cronSchedule';
 import { isValidSchedule as webRunValid, nextCronRun } from '../../web/lib/cron';
@@ -12,11 +11,13 @@ import type { CronJob } from '../../web/lib/types';
 // and web/lib/cron.ts (the dashboard's next-run computation).
 //
 // The plugin now lives in the registry, so no single test can hold all three side by side any more.
-// Instead both sides pin themselves to the same frozen corpus: this file checks the two WEB copies, and
-// the registry checks the plugin against a byte-identical fixture. A drift like web/lib/cron.ts silently
-// dropping the cron-expression branch — a valid job shown as "never fires" — still fails here.
+// Both sides therefore pin themselves to the same corpus — and to the SAME FILE, not two copies with a
+// promise: it ships inside elowen-plugin-shared, which the daemon depends on and every registry plugin
+// resolves at runtime. Widening the grammar means publishing a new version of that package, so the two
+// sides cannot drift apart while both stay green. A drift like web/lib/cron.ts silently dropping the
+// cron-expression branch — a valid job shown as "never fires" — still fails here.
 const grammar = JSON.parse(
-  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'cronGrammar.json'), 'utf-8'),
+  readFileSync(createRequire(import.meta.url).resolve('elowen-plugin-shared/cronGrammar'), 'utf-8'),
 ) as { accepts: Record<string, boolean> };
 
 describe('cron schedule grammar parity (web-validate ⋅ web-nextrun ⋅ frozen contract)', () => {

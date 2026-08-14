@@ -86,11 +86,12 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     try {
       const registry = await loadPlugins({
         dirs: [join(process.cwd(), 'plugins')],
-        // The chat adapters that used to supply most of these defaults now live in the plugin registry.
-        // What this test is about is the PATH — manifest `deferLoading` reaching the spawned handle — so
-        // it uses the bundled plugins that still declare one rather than a count that tracked who
-        // happened to ship in the package.
-        enabled: ['cronjob', 'mcp'],
+        // The chat adapters and cronjob that used to supply most of these defaults now live in the plugin
+        // registry, leaving mcp as the only bundled plugin whose manifest still declares `deferLoading`.
+        // What this test is about is the PATH — a manifest's `deferLoading` reaching the spawned handle —
+        // so one real declaring plugin carries it; naming a plugin that is no longer bundled would not,
+        // since the loader just skips it and the assertions would quietly rest on the rest.
+        enabled: ['mcp'],
         dataRoot,
         delegatedTurnsOutOfProcess: () => false,
         logger: { info() {}, warn() {}, error() {} },
