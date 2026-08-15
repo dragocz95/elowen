@@ -17,7 +17,8 @@
 
 import Database from 'better-sqlite3';
 import { scryptSync, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** The schema version a migrated DB must end on: the highest migration db.ts declares.
  *
@@ -51,6 +52,86 @@ export const OLD_ADMIN = { username: 'admin', password: 'oldpass123' };
 // already exists, the daemon must skip creation, so after boot there must be NO 'freshadmin' user and a
 // login with these must be rejected.
 export const BOOTSTRAP = { username: 'freshadmin', password: 'freshpass456' };
+
+// --- The fixture PLUGIN: a stand-in for a subsystem that was extracted out of the core ---------------
+//
+// The scenario this suite carries ("a pre-plugin database is upgraded and the vertical that used to be
+// core keeps working") needs a plugin that GRANDFATHERS an existing table. The real one — `agents`, which
+// adopted `missions` — now lives in the plugin registry and is not in this package, so the SUBJECT here is
+// a fixture while the MECHANISM stays the daemon's: ctx.db().migrate() running at boot on a
+// just-upgraded legacy database, its bookkeeping in plugin_migrations, and a root-mounted route serving
+// rows the core migration was never allowed to touch.
+//
+// It records, inside its own migration, how many `missions` rows it could see. That number is the teeth
+// of the adoption claim: a CREATE TABLE IF NOT EXISTS that ADOPTS the legacy table sees the pre-existing
+// row, while a plugin that created a fresh table (or a core migration that had dropped the old one) would
+// record 0 and the run goes red.
+export const ADOPTER_PLUGIN = {
+  name: 'e2e-legacy-adopter',
+  manifest: {
+    provides: { apiRoutes: ['/e2e-missions'] },
+    capabilities: { reads: ['db'] },
+  },
+  register: `
+  const db = ctx.db();
+  db.migrate([{
+    version: 1,
+    up: (h) => {
+      // The GRANDFATHERED table, in the shape the core era left it: on this upgraded database the form
+      // is a no-op that adopts the existing table and its rows; on a fresh one it is what creates it.
+      h.exec(\`CREATE TABLE IF NOT EXISTS missions (
+        id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, autonomy TEXT NOT NULL,
+        max_sessions INTEGER NOT NULL DEFAULT 1,
+        state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by INTEGER,
+        pilot_exec TEXT NOT NULL DEFAULT '', overseer_exec TEXT NOT NULL DEFAULT ''
+      )\`);
+      // The plugin's OWN namespaced table (the p_<plugin>_* convention), holding the adoption evidence.
+      h.exec('CREATE TABLE IF NOT EXISTS p_e2e_legacy_adopter_adoption (id INTEGER PRIMARY KEY CHECK (id = 1), missions_seen INTEGER NOT NULL)');
+      const seen = h.prepare('SELECT COUNT(*) AS n FROM missions').get().n;
+      h.prepare('INSERT OR REPLACE INTO p_e2e_legacy_adopter_adoption (id, missions_seen) VALUES (1, ?)').run(seen);
+    },
+  }]);
+  ctx.registerApiRoute({
+    rootMount: '/e2e-missions', path: '', method: 'GET', access: 'user',
+    handler: async () => ({ body: {
+      missions: db.prepare('SELECT id, epic_id, state, autonomy FROM missions ORDER BY id').all(),
+      missionsSeenAtMigration: db.prepare('SELECT missions_seen AS n FROM p_e2e_legacy_adopter_adoption WHERE id = 1').get()?.n ?? null,
+    } }),
+  });`,
+};
+
+/** Lay the fixture plugin down in the daemon's writable plugin dir — `<dirname(dbPath)>/plugins/<name>`,
+ *  the path brainCore.ts derives from the DB location and the marketplace installs into. Written before
+ *  the first boot: a folder that appears later is not discovered until something forces a rescan. */
+export function writeAdopterPlugin(dataDir) {
+  const dir = join(dataDir, 'plugins', ADOPTER_PLUGIN.name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
+    name: ADOPTER_PLUGIN.name, version: '1.0.0', apiVersion: '1',
+    description: 'migration-e2e fixture: adopts a grandfathered core table', entry: 'index.mjs',
+    ...ADOPTER_PLUGIN.manifest,
+  }, null, 2));
+  writeFileSync(join(dir, 'index.mjs'), `export function register(ctx){\n${ADOPTER_PLUGIN.register}\n}\n`);
+}
+
+/** Seed the marketplace's registry CACHE with the manifest of a plugin that is not installed here.
+ *
+ *  This reproduces the state a real upgraded host lands in: the config migration switches `agents` on,
+ *  the code for it lives in the plugin registry, and the boot reconciler could not fetch it. The daemon
+ *  answers such a path with an explicit 503 ("enabled but not installed") instead of a bare 404 — and it
+ *  learns WHICH paths belong to the absent plugin from exactly this cache
+ *  (MarketplaceService.declaredRootRoutes reads `<dbdir>/marketplace/plugins/<name>/elowen-plugin.json`).
+ *  Without a cache there is no claim and the 404 stands, so the seed is what makes the 503 reachable. */
+export function seedRegistryCache(dataDir, name, apiRoutes) {
+  const dir = join(dataDir, 'marketplace', 'plugins', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
+    name, version: '0.1.0', apiVersion: '1',
+    description: `registry-cache stub for ${name}`, entry: 'index.mjs',
+    provides: { apiRoutes },
+  }, null, 2));
+}
 
 /**
  * Create the old-schema fixture at `dbPath`. Returns the values the migration is expected to produce, so
@@ -137,9 +218,11 @@ export function buildOldFixture(dbPath) {
     );
 
     -- OLD agents-subsystem tables from the pre-extraction (core) era, holding a RUNNING mission. The
-    -- plugin's grandfathered migrations must adopt these tables as-is (never move or rename a row),
-    -- the agents auto-enable migration must switch the plugin on for this pre-existing install, and
-    -- the engine must still see the active mission after the upgrade (run.mjs asserts all three).
+    -- core migration must leave every one of them exactly as it found them — these tables belong to a
+    -- vertical the daemon no longer owns, and an upgrade that "tidied" them would be data loss. The
+    -- fixture ADOPTER_PLUGIN then grandfathers the missions table the way the extracted plugin does,
+    -- and the auto-enable migration must switch agents on for this pre-existing install (run.mjs
+    -- asserts all three).
     -- projects/tasks at their OLD shape: the columns addColumn later adds (notes/icon; description/
     -- scheduled_at/autostart/result_summary/outcome/closed_at/changed_files/*_sha/resume_note) are
     -- absent so the additive block has real work to do.
@@ -196,7 +279,14 @@ export function buildOldFixture(dbPath) {
   // values — lossless rollback), and the deliberately ABSENT plugins.enabled list is what the agents
   // auto-enable migration must fix (an upgrade with running missions must not lose the subsystem).
   const settingsData = JSON.stringify({
-    plugins: { config: { someplatform: { rolePolicies: [{ name: 'member', tools: ['read_file', 'list_dir', '*'] }] } } },
+    plugins: {
+      // One plugin this install had already switched on: the fixture adopter, which stands in for the
+      // extracted vertical. It must be enabled HERE and not through the API, because the whole point is
+      // that its schema migration runs at BOOT, on the database the core migration has just upgraded.
+      // `agents` is deliberately absent — adding it is the auto-enable migration's job.
+      enabled: [ADOPTER_PLUGIN.name],
+      config: { someplatform: { rolePolicies: [{ name: 'member', tools: ['read_file', 'list_dir', '*'] }] } },
+    },
     // Wave 1 keys (overseerModel + the PR lifecycle) AND wave 2 keys (pilot/overseer execs,
     // reviewOnDone, tddMode, prEnabled + the top-level ghToken) — both one-shot copies must run.
     autopilot: {
@@ -226,8 +316,9 @@ export function buildOldFixture(dbPath) {
 
   // A RUNNING mission from the core era: an active mission over an epic with one phase mid-flight
   // (in_progress, its agent's tmux session dead with the old daemon) and one dependent phase open.
-  // After the upgrade the mission must still be active, the zombie phase reverted to 'open' by the
-  // plugin's boot reconcile (no loss, re-pickable), and the dependency untouched.
+  // After the upgrade the mission must still be active and readable through the plugin that adopts the
+  // table, and the dependency must be untouched. (Re-picking the zombie phase is the extracted plugin's
+  // own boot reconcile — plugin behaviour, asserted in the registry repo's agents suite, not here.)
   db.prepare('INSERT INTO projects (id, slug, path) VALUES (?, ?, ?)').run(1, 'legacy', '/tmp');
   db.prepare("INSERT INTO tasks (id, project_id, title, type, status) VALUES ('epic1', 1, 'Legacy epic', 'epic', 'in_progress')").run();
   db.prepare("INSERT INTO tasks (id, project_id, title, type, status, parent_id, labels) VALUES ('ph1', 1, 'phase one', 'task', 'in_progress', 'epic1', 'agent:Nova')").run();

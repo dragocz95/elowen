@@ -12,9 +12,10 @@
 //      model server): authed open delivers frames and idles, an UNAUTHED open is rejected, and a client
 //      disconnect closes cleanly with no hang.
 //   3) WEBSOCKET CHANNEL — GET /ws/terminal (the @hono/node-server WS upgrade). It is public in isPublic; its
-//      capability is the single-use ticket minted by the AUTHED POST /sessions/:name/ws-ticket. Asserts
-//      the ticket gate: no/garbage ticket is rejected (close 4001 'ticket'), the mint endpoint itself is
-//      Bearer-gated, and a valid ticket passes the gate.
+//      capability is the single-use ticket minted through the core ticket store, which is reachable ONLY
+//      from an authenticated route holding the `reads:['terminals']` grant. Asserts the ticket gate:
+//      no/garbage ticket is rejected (close 4001 'ticket'), the mint is Bearer-gated and grant-gated, and
+//      a valid ticket passes the gate exactly once.
 //
 // TEETH: an unauthed protected request that wrongly succeeds, an SSE open that wrongly bypasses auth, or a
 // WS that accepts a ticketless client all fail the run loudly. No bare sleeps — every wait is deadline-
@@ -67,7 +68,7 @@ async function patchJson(baseUrl, path, token, body) {
   return { status: res.status, json };
 }
 
-/** Turn a bundled plugin on, performing the same two-step consent handshake the UI does: the first call
+/** Turn a discovered plugin on, performing the same two-step consent handshake the UI does: the first call
  *  answers 409 listing the grants it wants, the second repeats them back. Reading them off the refusal
  *  instead of hardcoding a list keeps this working when a manifest changes what it asks for. */
 async function enablePlugin(baseUrl, token, name) {
@@ -168,6 +169,47 @@ function wsProbe(url, deadlineMs = 5_000) {
 
 const toWs = (baseUrl) => baseUrl.replace(/^http/, 'ws');
 
+// ---- fixture plugins for the WS ticket area ---------------------------------------------------------
+
+/** The session name the mint routes below issue tickets for. Any string works — the core ticket store
+ *  does not interpret it; who may ask for one is the mint route's business. */
+const WS_SESSION = 'elowen-e2e';
+
+/** GRANTED minter: the shape a plugin takes when it owns a terminal surface. Root-mounts an
+ *  authenticated route that calls the core `host.terminals().ticketIssue` seam — the SAME single-use
+ *  store `/ws/terminal` redeems — and declares the `reads:['terminals']` capability that seam is gated on.
+ *
+ *  Why a fixture and not a product plugin: the ticket mint used to be `POST /sessions/:name/ws-ticket`
+ *  from the bundled `agents` plugin, which now lives in the plugin registry and is not in this package
+ *  (and cannot be fetched from CI). The daemon-side subject never moved — the ticket store, the
+ *  `/ws/terminal` upgrade in src/daemon/index.ts, its isPublic exemption and the auth guard in front of
+ *  every non-exempt route are all core. So the mint gets a fixture SUBJECT and the gate keeps its teeth. */
+const WS_TICKET_PLUGIN = {
+  name: 'e2e-ws-ticket',
+  manifest: {
+    provides: { apiRoutes: ['/e2e-terminal/ws-ticket/:session'] },
+    capabilities: { reads: ['terminals'] },
+  },
+  register: `
+  ctx.registerApiRoute({
+    rootMount: '/e2e-terminal/ws-ticket/:session', path: '', method: 'POST', access: 'user',
+    handler: async (req) => ({ body: { ticket: ctx.host.terminals().ticketIssue(req.params.session, req.auth.userId) } }),
+  });`,
+};
+
+/** UNGRANTED minter: identical route, manifest deliberately WITHOUT reads:['terminals']. The host seam
+ *  must refuse it, so an admin-installed plugin cannot reach the terminal capability without declaring
+ *  (and having consented to) the power it is asking for. */
+const WS_TICKET_UNGRANTED_PLUGIN = {
+  name: 'e2e-ws-ticket-ungranted',
+  manifest: { provides: { apiRoutes: ['/e2e-terminal-ungranted/ws-ticket/:session'] } },
+  register: `
+  ctx.registerApiRoute({
+    rootMount: '/e2e-terminal-ungranted/ws-ticket/:session', path: '', method: 'POST', access: 'user',
+    handler: async (req) => ({ body: { ticket: ctx.host.terminals().ticketIssue(req.params.session, req.auth.userId) } }),
+  });`,
+};
+
 // ---- prod-safety guard: prod daemon PID must be untouched -------------------------------------------
 
 function prodDaemonPid() {
@@ -184,21 +226,32 @@ async function websocketChannel(baseUrl, token) {
   console.log('\n[3] WEBSOCKET CHANNEL — /ws/terminal (ticket gate)');
   const wsBase = toWs(baseUrl);
 
-  // /ws/terminal and its ticket mint are ROOT MOUNTS of the `agents` plugin, and a fresh install no
-  // longer enables that plugin — so on a bare daemon the mint answers 503 and every assertion below
-  // would be probing the disabled-plugin path instead of the ticket gate. Enable it first, and hold the
-  // enable itself to 200: if the plugin cannot be turned on, this area has nothing to test and must say
-  // so rather than quietly checking the wrong thing.
-  // `work` first: agents builds its missions on task tracking and refuses to serve without it.
-  await enablePlugin(baseUrl, token, 'work');
-  await enablePlugin(baseUrl, token, 'agents');
-  ok('enabled the work + agents plugins — agents owns /ws/terminal and the ticket mint');
+  const mintPath = `/e2e-terminal/ws-ticket/${WS_SESSION}`;
+  const ungrantedMintPath = `/e2e-terminal-ungranted/ws-ticket/${WS_SESSION}`;
 
-  // The mint endpoint is Bearer-gated (NOT in isPublic): tokenless → 401 unauthorized.
-  let p = await postJson(baseUrl, '/sessions/elowen-e2e/ws-ticket', null, {});
+  // Nothing in THIS package mints a terminal ticket any more (the `agents` plugin that root-mounted
+  // POST /sessions/:name/ws-ticket moved to the plugin registry), so the two fixture plugins written
+  // into the daemon's plugin dir before boot supply the mint. Hold the enable to 200: if a minter
+  // cannot be turned on, this area has nothing to test and must say so rather than quietly checking
+  // the wrong thing.
+  await enablePlugin(baseUrl, token, WS_TICKET_PLUGIN.name);
+  await enablePlugin(baseUrl, token, WS_TICKET_UNGRANTED_PLUGIN.name);
+  ok('enabled the granted + ungranted fixture minters (root-mounted routes over the core ticket store)');
+
+  // The mint endpoint is Bearer-gated (NOT in isPublic): tokenless → 401 unauthorized. The guard runs
+  // before the plugin dispatcher, so this is the daemon refusing, not the plugin.
+  let p = await postJson(baseUrl, mintPath, null, {});
   assert(p.status === 401 && p.json?.error === 'unauthorized',
-    `[ws-ticket/no-token] POST /sessions/:name/ws-ticket → 401 tokenless (got ${p.status} ${JSON.stringify(p.json)})`);
-  ok('POST /sessions/:name/ws-ticket → 401 tokenless (capability mint is Bearer-gated)');
+    `[ws-ticket/no-token] POST ${mintPath} → 401 tokenless (got ${p.status} ${JSON.stringify(p.json)})`);
+  ok('POST <mint> → 401 tokenless (capability mint is Bearer-gated)');
+
+  // Grant gate: the same route in a plugin that did not declare reads:['terminals'] must NOT get a
+  // ticket, even with a valid admin Bearer. The seam throws, the dispatcher answers 500 — what matters
+  // is that no capability came back.
+  p = await postJson(baseUrl, ungrantedMintPath, token, {});
+  assert(p.status !== 200 && !p.json?.ticket,
+    `[ws-ticket/no-grant] an ungranted plugin gets NO ticket from host.terminals() (got ${p.status} ${JSON.stringify(p.json)})`);
+  ok(`POST <ungranted mint> → ${p.status}, no ticket (reads:['terminals'] is enforced at the host seam)`);
 
   // No ticket → the upgrade is accepted but the handler immediately closes 4001 'ticket' (the gate).
   let w = await wsProbe(`${wsBase}/ws/terminal`);
@@ -212,12 +265,12 @@ async function websocketChannel(baseUrl, token) {
     `[ws/garbage-ticket] /ws/terminal with a garbage ticket closes 4001 'ticket' (got ${JSON.stringify(w)})`);
   ok("WS /ws/terminal (garbage ticket) → closed 4001 'ticket'");
 
-  // Authed mint → a real single-use ticket (admin passes sessionAccessible for any session name).
-  p = await postJson(baseUrl, '/sessions/elowen-e2e/ws-ticket', token, {});
+  // Authed mint on the GRANTED plugin → a real single-use ticket out of the core store.
+  p = await postJson(baseUrl, mintPath, token, {});
   assert(p.status === 200 && typeof p.json?.ticket === 'string' && p.json.ticket,
-    `[ws-ticket/authed] POST /sessions/:name/ws-ticket → 200 { ticket } with a valid Bearer (got ${p.status} ${JSON.stringify(p.json)})`);
+    `[ws-ticket/authed] POST ${mintPath} → 200 { ticket } with a valid Bearer (got ${p.status} ${JSON.stringify(p.json)})`);
   const ticket = p.json.ticket;
-  ok('POST /sessions/:name/ws-ticket → 200 { ticket } with a valid Bearer');
+  ok('POST <mint> → 200 { ticket } with a valid Bearer');
 
   // Valid ticket → PAST the ticket gate. It is consumed; the handler then tries to attach a PTY. node-pty
   // is unavailable in this environment, so it closes 4001 'pty' — a DIFFERENT reason than the ticket-gate
@@ -300,10 +353,14 @@ async function main() {
   console.log(pidBefore ? `prod elowen-daemon MainPID before: ${pidBefore}` : 'prod elowen-daemon not detected (PID guard best-effort)');
 
   // Area 1 (auth matrix) leaves the plain daemon running so area 3 (WS) can reuse it + its admin token.
+  // The handle is taken from the BOOT, not from the return value: a failing assertion inside those areas
+  // never returns one, and a `finally` that had nothing to stop left the child daemon alive on its
+  // throwaway port with its temp dir on disk — every red run leaking one. The fixture minters are laid
+  // down here because a plugin folder that appears after boot is not discovered until a rescan.
   let plainDaemon = null;
   try {
-    const auth = await runAuthAndWs();
-    plainDaemon = auth.daemon;
+    plainDaemon = await bootPlainDaemon({ plugins: [WS_TICKET_PLUGIN, WS_TICKET_UNGRANTED_PLUGIN] });
+    await runAuthAndWs(plainDaemon);
   } finally {
     if (plainDaemon) await plainDaemon.stop();
   }
@@ -319,11 +376,10 @@ async function main() {
   }
 }
 
-/** Run the auth matrix, then the WS area on the same re-engaged plain daemon; return its handle so the
- *  caller can tear it down. Kept together because area 3 needs area 1's live daemon + admin token. */
-async function runAuthAndWs() {
+/** Run the auth matrix, then the WS area on the same re-engaged plain daemon (the CALLER owns the boot
+ *  and the teardown). Kept together because area 3 needs area 1's live daemon + admin token. */
+async function runAuthAndWs(daemon) {
   console.log('\n[1] AUTH GUARD MATRIX');
-  const daemon = await bootPlainDaemon();
   const { baseUrl } = daemon;
   const admin = { username: 'admin', password: `e2e-${Math.random().toString(36).slice(2)}` };
 
@@ -396,8 +452,6 @@ async function runAuthAndWs() {
 
   // Area 3 rides the same re-engaged daemon + admin token.
   await websocketChannel(baseUrl, token);
-
-  return { daemon };
 }
 
 main().then(() => {

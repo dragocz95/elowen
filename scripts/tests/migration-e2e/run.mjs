@@ -16,10 +16,26 @@
 // form and the run goes red.
 //
 // It also carries the plugin-extraction upgrade scenario (plan risk 2): the fixture holds a RUNNING
-// mission from the pre-plugin core era. After the upgrade the agents plugin must be auto-enabled (its
-// root-mounted /missions route answers), the mission must still be active, the zombie in_progress phase
-// must be reverted to 'open' by the plugin's boot reconcile, and the plugin-owned autopilot keys must be
-// COPIED into plugins.config.agents with autopilot.* left intact (lossless rollback).
+// mission from the pre-plugin core era, in tables the daemon no longer owns. After the upgrade the
+// `agents` plugin must be auto-enabled and the plugin-owned autopilot keys COPIED into
+// plugins.config.agents with autopilot.* left intact (lossless rollback); the legacy rows must survive
+// untouched; a plugin that GRANDFATHERS one of those tables must adopt it (rows included) through
+// ctx.db().migrate() at boot and serve it; and /missions — a path whose owner is switched on but not
+// installed on this host — must answer an explicit 503 rather than a 404 that reads as data loss.
+//
+// WHAT IS NOT HERE. `agents` and `work` left this package for the plugin registry, so nothing on this
+// host can serve /missions or /tasks and no amount of fixture-building changes that. The daemon-side
+// half of every assertion is re-anchored above; the plugin-side half — the agents boot reconcile that
+// re-opens a zombie in_progress phase — moved to the registry repo, which owns that code
+// (elowen-plugins → tests/agents-registration.test.ts, "reconcileZombies re-opens a task whose agent
+// session died").
+//
+// NO NETWORK. The config migration switches four extracted plugins on, and a daemon that finds an
+// enabled plugin missing from disk asks the marketplace to restore it (bootstrap.ts →
+// marketplace.reconcileEnabled). Left alone that clones github.com/dragocz95/elowen-plugins from a CI
+// runner: slow, flaky, and it would decide the outcome of the assertions below. ELOWEN_PLUGIN_REGISTRY
+// therefore points at a local path that does not exist, so the reconcile fails immediately and offline,
+// which is exactly the state the 503 is the answer to.
 
 import Database from 'better-sqlite3';
 import { spawn } from 'node:child_process';
@@ -28,7 +44,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildOldFixture, OLD_ADMIN, BOOTSTRAP } from './build-fixture.mjs';
+import { buildOldFixture, writeAdopterPlugin, seedRegistryCache, ADOPTER_PLUGIN, OLD_ADMIN, BOOTSTRAP } from './build-fixture.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const daemonEntry = join(repoRoot, 'dist', 'daemon', 'index.js');
@@ -96,6 +112,11 @@ async function main() {
     // 1) Build the OLD-schema fixture (user_version = 0, old tool names, retired tables).
     console.log('Building old-schema fixture at', dbPath);
     const expected = buildOldFixture(dbPath);
+    // The extracted-vertical stand-in, installed the way the marketplace installs a plugin, and the
+    // registry-cache manifest that lets the daemon name /missions' absent owner. Both must exist before
+    // the first boot — the boot scan is what discovers them.
+    writeAdopterPlugin(dataDir);
+    seedRegistryCache(dataDir, 'agents', ['/missions']);
 
     // Sanity: confirm the fixture really starts un-migrated, else the test would pass vacuously.
     {
@@ -127,6 +148,11 @@ async function main() {
       ELOWEN_LOG_DIR: join(dataDir, 'logs'),
       ELOWEN_BOOTSTRAP_USER: BOOTSTRAP.username,
       ELOWEN_BOOTSTRAP_PASS: BOOTSTRAP.password,
+      // Deterministic, offline boot reconcile: a local path that is not a repository. `git clone` fails
+      // at once, the marketplace logs the registry as unreachable and installs nothing, and the seeded
+      // cache above survives (a failed clone only removes its own temp dir). Without this the reconcile
+      // would reach for GitHub on any host that has a network.
+      ELOWEN_PLUGIN_REGISTRY: join(dataDir, 'no-such-registry.git'),
     });
 
     console.log('Booting real daemon on', baseUrl);
@@ -156,29 +182,30 @@ async function main() {
     });
     assert(bootstrapLogin.status === 401, `bootstrap creds rejected — setup not re-triggered (HTTP ${bootstrapLogin.status})`);
 
-    // 3d) The RUNNING mission survived the upgrade: the agents plugin was auto-enabled for this
-    //     pre-existing install (its root-mounted /missions route answers — a disabled plugin would
-    //     404), the mission is still active, and the boot reconcile reverted the zombie phase
-    //     (in_progress, session dead with the old daemon) to 'open' so the engine can re-pick it.
+    // 3d) The extracted vertical survived the upgrade, in the two halves this host can observe.
     const auth = { authorization: `Bearer ${login.token}` };
+
+    // The auto-enable reached the RUNNING daemon, not just the settings row: /missions is a path the
+    // daemon now attributes to an enabled owner. The code for that owner is in the plugin registry and
+    // not on this host, so the honest answer is 503 "enabled but not installed" — 404 would claim the
+    // endpoint never existed, which for a mission list reads as data loss. Had the migration failed to
+    // enable `agents`, nothing would claim the path and this WOULD be a 404.
     const missionsRes = await fetch(`${baseUrl}/missions`, { headers: auth });
-    assert(missionsRes.status === 200, `plugin /missions route answers after auto-enable (HTTP ${missionsRes.status})`);
-    const missions = await missionsRes.json();
-    const mission = (Array.isArray(missions) ? missions : missions.missions ?? []).find((m) => m.id === 'm-epic1');
-    assert(mission, 'the pre-upgrade mission m-epic1 is listed');
-    eq(mission.state, 'active', 'the mission is still active (engine sees it — nothing was lost)');
-    {
-      // The zombie reconcile is a boot task; give it a moment past /health.
-      let ph1 = null;
-      const until = Date.now() + 15_000;
-      while (Date.now() < until) {
-        const tasks = await (await fetch(`${baseUrl}/tasks`, { headers: auth })).json();
-        ph1 = tasks.find((t) => t.id === 'ph1');
-        if (ph1 && ph1.status === 'open') break;
-        await sleep(250);
-      }
-      eq(ph1 && ph1.status, 'open', "zombie phase ph1 (dead session) reverted to 'open' by the boot reconcile");
-    }
+    const missionsBody = await missionsRes.json().catch(() => null);
+    assert(missionsRes.status === 503, `/missions answers 503 for the auto-enabled but uninstalled owner (HTTP ${missionsRes.status})`);
+    eq(missionsBody, { error: 'agents plugin is enabled but not installed' },
+      '/missions names the absent owner rather than 404-ing the path away');
+
+    // The rows themselves: a plugin that grandfathers `missions` adopts the legacy table at boot and
+    // serves the pre-upgrade mission. `missionsSeenAtMigration` is recorded INSIDE that migration, so it
+    // is the proof the adoption found the existing row rather than creating an empty table beside it.
+    const adoptedRes = await fetch(`${baseUrl}/e2e-missions`, { headers: auth });
+    assert(adoptedRes.status === 200, `the adopting plugin's route answers after the upgrade (HTTP ${adoptedRes.status})`);
+    const adopted = await adoptedRes.json();
+    eq(adopted.missionsSeenAtMigration, 1, 'the plugin migration adopted the legacy missions table WITH its row');
+    const mission = (adopted.missions ?? []).find((m) => m.id === 'm-epic1');
+    assert(mission, 'the pre-upgrade mission m-epic1 is served by the plugin that adopted the table');
+    eq(mission.state, 'active', 'the mission is still active (nothing was lost)');
 
     // 4) Stop the daemon, then open the migrated DB and assert the transforms have teeth.
     await stop();
@@ -268,13 +295,18 @@ async function main() {
       eq(migrated.autopilot.pilotExec, 'claude:opus', 'autopilot.pilotExec untouched (copy, not move)');
       eq(migrated.ghToken, 'legacy-gh-token', 'top-level ghToken untouched (copy, not move)');
 
-      // The grandfathered plugin schema adopted the OLD tables without touching the rows.
-      const pm = db.prepare("SELECT COUNT(*) AS n FROM plugin_migrations WHERE plugin = 'agents'").get().n;
-      assert(pm >= 1, 'agents plugin migrations are bookkept in plugin_migrations');
+      // The grandfathered plugin schema adopted the OLD tables without touching the rows: each step
+      // bookkept exactly once in plugin_migrations, and the legacy rows still there afterwards.
+      const pm = db.prepare('SELECT version FROM plugin_migrations WHERE plugin = ? ORDER BY version').all(ADOPTER_PLUGIN.name).map((r) => r.version);
+      eq(pm, [1], `the adopting plugin's migration is bookkept exactly once in plugin_migrations`);
       const missionRow = db.prepare("SELECT epic_id, state, autonomy FROM missions WHERE id = 'm-epic1'").get();
       eq(missionRow, { epic_id: 'epic1', state: 'active', autonomy: 'L2' }, 'mission row intact after upgrade');
+      // Tables of a vertical the daemon no longer owns: the core migration must not touch them at all,
+      // and no plugin here adopts task_deps — an upgrade that tidied up unknown tables would lose this.
       const dep = db.prepare("SELECT COUNT(*) AS n FROM task_deps WHERE task_id = 'ph2' AND depends_on_id = 'ph1'").get().n;
       eq(dep, 1, 'phase dependency intact after upgrade');
+      const ph1 = db.prepare("SELECT status FROM tasks WHERE id = 'ph1'").get();
+      eq(ph1, { status: 'in_progress' }, 'the legacy task rows are left exactly as they were (no core rewrite)');
     } finally {
       db.close();
     }
