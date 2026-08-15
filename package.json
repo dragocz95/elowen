@@ -39,6 +39,15 @@
     "LICENSE",
     "README.md"
   ],
+  "exports": {
+    "./plugin-api": {
+      "types": "./dist/plugins/api.d.ts",
+      "default": "./dist/plugins/api.js"
+    },
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*",
+    "./plugins/*": "./plugins/*"
+  },
   "workspaces": [
     "packages/*"
   ],
