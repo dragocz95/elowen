@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
+import { interpolate } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
 const saveProviders = vi.fn();
@@ -221,7 +222,7 @@ describe('BrainSection — OAuth account model picker', () => {
     renderSection();
     fireEvent.click(screen.getByRole('button', { name: `${en.brain.disconnect}: ${en.brain.types['oauth-anthropic']}` }));
     expect(disconnect).not.toHaveBeenCalled();
-    expect(screen.getByText(en.brain.disconnectConfirm.replace('{provider}', en.brain.types['oauth-anthropic']))).toBeInTheDocument();
+    expect(screen.getByText(interpolate(en.brain.disconnectConfirm, { provider: en.brain.types['oauth-anthropic'], agentName: 'Elowen' }))).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: en.brain.disconnect }));
     expect(disconnect).toHaveBeenCalledWith('oauth-anthropic', expect.any(Object));
   });

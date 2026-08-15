@@ -5,7 +5,8 @@ import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
-import { plural, useTranslation } from '../../lib/i18n';
+import { interpolate, plural, useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
@@ -431,6 +432,7 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
 
 function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t } = useTranslation();
+  const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
   if (turn.role === 'event') return <SessionEvents events={turn.events} tk={tk} />;
 
@@ -456,7 +458,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
           <span aria-hidden className={`mt-1.5 h-2 w-2 rounded-full ${you ? 'bg-accent ring-4 ring-accent/15' : 'bg-text-muted'}`} />
         ) : <span aria-hidden />}
         <div className="min-w-0">
-          {showRole ? <div className={`mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : t.chat.roleElowen}</div> : null}
+          {showRole ? <div className={`mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
           <div className="flex min-w-0 flex-col">{body}</div>
         </div>
       </div>

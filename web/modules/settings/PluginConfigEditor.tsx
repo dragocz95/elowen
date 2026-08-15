@@ -18,7 +18,8 @@ import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
-import { useTranslation } from '../../lib/i18n';
+import { interpolate, useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
@@ -325,8 +326,9 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
 function PluginProviderField({ value, onChange, providerType }: { value: string; onChange: (v: string) => void; providerType?: string }) {
   const { data: config } = useConfig();
   const { t } = useTranslation();
+  const { agentName } = useBrand();
   const providers = (config?.brain?.providers ?? []).filter((p) => p.apiKeySet && (!providerType || p.type === providerType));
-  return <ProviderPicker providers={providers} value={value} onChange={onChange} emptyText={t.pluginCfg.noProviders} size="sm" />;
+  return <ProviderPicker providers={providers} value={value} onChange={onChange} emptyText={interpolate(t.pluginCfg.noProviders, { agentName })} size="sm" />;
 }
 
 /** A config field's compact label row. Long manifest explanations stay behind the shared `?` affordance

@@ -9,7 +9,8 @@ import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
-import { useTranslation } from '../../lib/i18n';
+import { interpolate, useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels } from '../../lib/queries';
 import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSettings, useReclassifyMemories } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -33,6 +34,7 @@ function useProviderCatalog(brainModels: BrainModelOption[] | undefined, provide
  *  no separate base URL. Admin-only (the Settings config group is already admin-gated). */
 export function MemorySection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { t } = useTranslation();
+  const { agentName } = useBrand();
   const { data: config } = useConfig();
   const { data: embedding, isError: embeddingIsError, refetch: refetchEmbedding } = useEmbeddingSettings();
   const { data: categorization, isError: categorizationIsError, refetch: refetchCategorization } = useCategorizationSettings();
@@ -198,7 +200,7 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
     </SettingsRow>
   );
   const rowCatProvider = (
-    <SettingsRow label={t.categorization.providerLabel} description={t.help.categorizationProvider} icon={Server} status={catBadge}>
+    <SettingsRow label={t.categorization.providerLabel} description={interpolate(t.help.categorizationProvider, { agentName })} icon={Server} status={catBadge}>
       {providers.length > 0
         ? <ChoiceField title={t.categorization.providerLabel} options={providers.map((p) => ({ value: p.id, label: p.label }))} value={catProvider} onChange={setCatProvider} picker="always" />
         : <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />}

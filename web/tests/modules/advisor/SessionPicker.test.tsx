@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { interpolate } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
 // SessionPicker reads the single chat controller via useBrainChat (activeSessionId + currentModel) — mock
@@ -55,7 +56,7 @@ describe('SessionPicker', () => {
   it('shows the admin-only Elowen CLI section with the open row (with an active conversation)', async () => {
     server.use(meHandler(true), noSessions);
     renderPicker(<SessionPicker open onPick={vi.fn()} onClose={vi.fn()} exclude={[]} />, { activeSessionId: 'sess-1', currentModel: 'claude-opus' });
-    expect(await screen.findByText(en.advisor.sectionElowenCli)).toBeInTheDocument();
+    expect(await screen.findByText(interpolate(en.advisor.sectionElowenCli, { productName: 'Elowen' }))).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: new RegExp(en.advisor.elowenCliOpen) })).toBeInTheDocument();
     expect(screen.getByText('claude-opus')).toBeInTheDocument();
   });
@@ -65,7 +66,7 @@ describe('SessionPicker', () => {
     renderPicker(<SessionPicker open onPick={vi.fn()} onClose={vi.fn()} exclude={[]} />, { activeSessionId: 'sess-1', currentModel: 'claude-opus' });
     // Wait for the (non-admin) session list heading so the me query has settled before asserting absence.
     expect(await screen.findByText(en.advisor.pickSession)).toBeInTheDocument();
-    expect(screen.queryByText(en.advisor.sectionElowenCli)).toBeNull();
+    expect(screen.queryByText(interpolate(en.advisor.sectionElowenCli, { productName: 'Elowen' }))).toBeNull();
     expect(screen.queryByText(en.advisor.elowenCliOpen)).toBeNull();
     expect(screen.queryByText(en.advisor.sectionCliAgents)).toBeNull();
   });
