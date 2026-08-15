@@ -35,7 +35,7 @@ function contributedRow(kind: 'ok' | 'throws') {
   return f.provider;
 }
 
-function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; contributor?: 'ok' | 'throws' | false } = {}) {
+function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; contributor?: 'ok' | 'throws' | false; taskOwner?: false } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
@@ -52,7 +52,8 @@ function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: Con
   // `contributor: false` covers the degradation, `'throws'` the broken-check path.
   const provider = over.contributor === false ? undefined : contributedRow(over.contributor ?? 'ok');
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions: new RefMissions(db),
+    ...(over.taskOwner === false ? {} : { tasks }),
+    taskRefs: new TaskRefs(db), readiness, missions: new RefMissions(db),
     bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects, users,
@@ -90,6 +91,22 @@ describe('GET /system/readiness', () => {
     const { status, body } = await getChecks(app);
     expect(status).toBe(200);
     expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'memory', 'platforms', 'plugins']);
+  });
+
+  // The task domain is plugin-owned. On an install where no plugin provides it there is nothing that can
+  // run a task, so reporting "Tasks: sonnet ✓" — which this check would happily do, since it reads only
+  // the configured executor — sends an operator debugging their model when the answer is that the
+  // subsystem is absent. The row has to disappear the way the plugin-contributed ones do.
+  it('tasks: the row is absent when no plugin owns the task domain', async () => {
+    const { app } = makeApp({ model: 'kimi', taskOwner: false, patch: {
+      defaults: { exec: 'elowen:relay/kimi', autonomy: 'L3', maxSessions: 1 },
+      brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] },
+    } });
+    const { status, body } = await getChecks(app);
+    expect(status).toBe(200);
+    expect(body.checks.map((c) => c.id)).not.toContain('tasks');
+    // The rest of the report still stands — an absent domain costs its own row and nothing else.
+    expect(body.checks.map((c) => c.id)).toEqual(['chat', 'widgets', 'memory', 'platforms', 'plugins']);
   });
 
   it('chat: ok with the resolved model id as detail', async () => {

@@ -272,7 +272,16 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
         try {
           r = await c.askPoll(taskId, askId) as { text?: string };
         } catch (e) {
-          if (String(e).includes('404')) { console.log('No answer is available (the request was lost). Proceed using your own best judgement: make the safest reasonable, reversible assumption and continue.'); break; }
+          const err = String(e);
+          // The plugin serving this surface is absent, so the gate itself is gone — not one lost
+          // exchange. Telling the agent to "use its own best judgement" here would quietly convert a
+          // human-in-the-loop checkpoint into unattended work, which is the opposite of what asking
+          // meant. Report it instead and let the agent stop at the decision it could not get answered.
+          if (err.includes('not installed or not enabled')) {
+            console.log('The ask surface is unavailable: the plugin that answers it is not installed on this daemon, so no human or autopilot can reply. Do NOT proceed with the decision you asked about — report that the question could not be delivered.');
+            break;
+          }
+          if (err.includes('404')) { console.log('No answer is available (the request was lost). Proceed using your own best judgement: make the safest reasonable, reversible assumption and continue.'); break; }
           await new Promise((res) => setTimeout(res, 2000)); // transient — back off and re-poll
           continue;
         }

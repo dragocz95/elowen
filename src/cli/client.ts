@@ -8,11 +8,17 @@ export class ElowenClient {
       // Surface the server's own error message (routes answer {"error": …}) — a spawned agent reads
       // this text, and "503 on /notes" says far less than "agents plugin is disabled".
       const detail = await res.json().then((b) => (b as { error?: string })?.error, () => undefined);
-      // The mission/session surface is served by the agents plugin's root mounts: without the plugin
-      // the mounts do not exist at all, so a 404 here almost always means "subsystem off", not a typo'd
-      // id (an unknown id on a live mount answers 404 WITH an error body — kept via `detail` above).
-      if (res.status === 404 && !detail && /^\/(sessions|missions)(\/|$|\?)/.test(path)) {
-        throw new Error(`elowen API 404 on ${path} — agents subsystem is unavailable (the agents plugin is disabled on this daemon)`);
+      // These surfaces are served by a plugin's root mounts: the task domain by `work`, missions and
+      // sessions by `agents`. Without the plugin the mount does not exist at all, so a bare 404 here
+      // almost always means "subsystem off" rather than a typo'd id (an unknown id on a LIVE mount
+      // answers 404 WITH an error body, kept via `detail` above). The daemon normally answers 503 for a
+      // plugin it knows about, but that relies on a marketplace cache the offline case does not have —
+      // which is exactly when a person needs to be told the difference.
+      const domain = /^\/(sessions|missions|notes|plan)(\/|$|\?)/.test(path) ? 'agents'
+        : /^\/(tasks|activity)(\/|$|\?)/.test(path) ? 'work'
+          : null;
+      if (res.status === 404 && !detail && domain) {
+        throw new Error(`elowen API 404 on ${path} — this surface belongs to the ${domain} plugin, which is not installed or not enabled on this daemon`);
       }
       throw new Error(`elowen API ${res.status} on ${path}${detail ? ` — ${detail}` : ''}`);
     }

@@ -9,7 +9,7 @@ This repository is Elowen (`github.com/dragocz95/elowen`), a TypeScript daemon w
 - Read the real callers and focused tests before changing behavior.
 - Reuse PI-native skills, compaction, steering, context files, and shared UI components before adding parallel mechanisms.
 - Keep plugin behavior in the plugin; keep shared transport/runtime behavior in `src/`.
-- The TypeScript plugin compile units (`plugins/agents`, `plugins/lsp`, `plugins/editor`, `plugins/work` — one `tsconfig.plugins.<name>.json` each, all built by `npm run build:ts`) may import from `src/` TYPE-ONLY (erased at compile time); core `src/` must never import from `plugins/` — depcruise enforces both directions for every plugin, not just the ones listed here. Browser bundle sources live in `plugins/<name>/web-src/` and must not import `web/` sources (they narrow `window.ElowenUiRuntime` locally).
+- Every bundled plugin is plain `.mjs` today: the four TypeScript ones (`agents`, `work`, `editor`, `lsp`) moved to the plugin registry (`github.com/dragocz95/elowen-plugins`), which compiles them itself. The rules still stand for the next one to land here — a TypeScript plugin gets its own `tsconfig.plugins.<name>.json`, picked up by `npm run build:ts` through a glob rather than by name, and may import from `src/` TYPE-ONLY (erased at compile time); core `src/` must never import from `plugins/`, and depcruise enforces both directions. Browser bundle sources live in `plugins/<name>/web-src/` (only `subagent` has one now) and must not import `web/` sources (they narrow `window.ElowenUiRuntime` locally). A plugin's own tests belong to whichever repo holds the plugin: nothing under `plugins/*/web-src/` is collected by the web suite any more, and `tests/contract/pluginWebTestHoming.test.ts` fails if a test file appears there.
 - Do not touch unrelated worktree changes, especially `benchmark-env/`.
 - After completing each logical change, create a scoped local git commit automatically. Do not wait for a separate commit request, never include unrelated worktree changes, and do not treat this rule as authorization to push.
 - Preserve Czech and English user-facing text. Plugin manifests provide English fallback; add locale overrides under `plugins/<name>/i18n/<lang>.json`, including enum option labels when needed.
@@ -27,10 +27,11 @@ npm run typecheck
 For web changes also run the focused web tests and `npm run build:web`.
 
 The full build chain is `npm run build` = `npm run build:ts` (`tsc -b` over the
-daemon plus every TypeScript plugin compile unit) followed by
-`npm run build:plugins-web` (esbuild of every `plugins/*/web-src/` into the
-gitignored `plugins/*/web/index.js`) and the dist copies. `npm run check`
-bundles lint, knip, depcruise, typecheck, and languages-check.
+daemon plus every TypeScript plugin compile unit it discovers — none are bundled
+today) followed by `npm run build:plugins-web` (esbuild of every
+`plugins/*/web-src/` into the gitignored `plugins/*/web/index.js`) and the dist
+copies. `npm run check` bundles lint, knip, depcruise, typecheck, and
+languages-check.
 
 ## Production deploy
 

@@ -350,11 +350,17 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       ...(model ? {} : { hint: 'Run `elowen setup` to connect an AI provider.' }) });
 
     // tasks — the embedded `elowen:` engine is always runnable; any other exec must name an installed CLI.
+    // Reported only while the task domain HAS an owner: `d.tasks` is absent when no plugin provides it,
+    // and a green "Tasks: sonnet" on an install with no task subsystem is worse than no row at all — it
+    // sends someone debugging a configured executor when the answer is that nothing can run a task. The
+    // row disappearing is the same honest answer the extracted 'missions' check gives.
     const exec = cfg.defaults.exec;
-    const elowenSpec = parseElowenExec(exec); // embedded engine: runnable iff the provider it names still exists
-    const tasksOk = elowenSpec ? cfg.brain.providers.some((pr) => pr.id === elowenSpec.provider) : execCliInstalled(exec, cfg.providers);
-    checks.push({ id: 'tasks', label: 'Tasks', ok: tasksOk, detail: exec || 'not set',
-      ...(tasksOk ? {} : { hint: elowenSpec ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
+    if (d.tasks) {
+      const elowenSpec = parseElowenExec(exec); // embedded engine: runnable iff the provider it names still exists
+      const tasksOk = elowenSpec ? cfg.brain.providers.some((pr) => pr.id === elowenSpec.provider) : execCliInstalled(exec, cfg.providers);
+      checks.push({ id: 'tasks', label: 'Tasks', ok: tasksOk, detail: exec || 'not set',
+        ...(tasksOk ? {} : { hint: elowenSpec ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
+    }
 
     // Plugin-contributed rows slot in here (where the extracted 'missions' check used to sit): the
     // agents plugin reports missions readiness while enabled; a disabled plugin's checks disappear

@@ -1809,7 +1809,7 @@ export const en = {
     unavailableTitle: 'Interface unavailable',
     manage: 'Manage plugins',
     unavailable: 'This plugin is not enabled, or it has no interface.',
-    notGranted: 'This extension has not been assigned to your account. Ask an administrator for access.',
+    notGranted: 'This extension is not available on your account. It may not be installed on this workspace, or it may not be assigned to you — an administrator can tell you which.',
     incompatible: 'This plugin needs a newer version of the application. Update the server to use its interface.',
     loadFailed: 'The plugin interface failed to load. Check the plugin logs in Settings → Plugins.',
     pageMissing: 'The plugin has no page at this address.',
