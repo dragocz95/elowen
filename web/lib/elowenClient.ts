@@ -92,7 +92,6 @@ export const elowenClient = {
   deleteMission: (epicId: string) => req<{ ok: boolean; tasks: number }>(`/tasks/${encodeURIComponent(epicId)}?subtree=1`, { method: 'DELETE' }),
   /** Admin cleanup: wipe all tasks, missions and the activity feed; stop every live session. */
   cleanupAll: () => req<{ ok: boolean; tasks: number; missions: number; events: number }>('/admin/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  taskDeps: (id: string) => req<string[]>(`/tasks/${encodeURIComponent(id)}/deps`),
   taskUsage: (id: string) => req<TokenUsage | null>(`/tasks/${encodeURIComponent(id)}/usage`),
   /** Total token/cost usage aggregated per model; optional project filter and date window. `window`
    *  bounds come from `rangeBounds()` (lib/dateRange.ts) and can be `±Infinity` for an open-ended
