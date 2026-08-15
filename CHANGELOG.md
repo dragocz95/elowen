@@ -5,6 +5,43 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.2] - 2026-08-15
+
+The package finishes becoming the agent. The last four plugins that owned a whole domain — `agents`
+(missions, sessions, escalations), `work` (tasks, kanban, timeline, stats), `editor` and `lsp` — moved
+out of the npm package into the plugin registry, which now builds TypeScript plugins of its own. What
+you install is chat, memory, projects, users and settings; every feature beyond that arrives from the
+marketplace, on the same footing as a plugin anyone else writes.
+
+Nothing changes for an existing install: an upgrade re-enables the plugins it finds enabled, and the
+boot reconciler fetches whichever ones are missing from the registry. `lsp` leaves the default set, so a
+fresh install stays a bare agent and turns LSP on when it wants it.
+
+### Added
+- **A plugin can declare the daemon it needs.** `requiresCore` in the manifest is checked against the
+  running version at install time, and a plugin built for a newer daemon is refused with a readable
+  error instead of installing cleanly and then failing halfway through `register()` — which used to look
+  like a feature that quietly vanished.
+- **A stable plugin API subpath.** Plugins compile against `elowen/plugin-api` rather than a deep path
+  into `dist/`, so the type contract external plugins depend on is a named export the package can keep.
+
+### Changed
+- **A plugin that is enabled but not installed answers 503, not 404.** The two states are different and
+  callers act on them differently: 404 means the route does not exist (the plugin was removed), 503 means
+  the subsystem is temporarily unavailable while the reconciler fetches it. The web already degraded on
+  presence; this is for the CLI, spawned agents and MCP tools.
+- **The navigation rail arrives complete.** The plugin listing is prefetched on the server and handed to
+  the client with the first paint, so the rail no longer starts with the core entries and fills in a
+  moment later on every reload. The listing is per-user, so it is seeded per request and never cached
+  across users.
+- **The interface calls the instance by its own name.** Text that referred to the product by its default
+  name now interpolates the configured brand, distinguishing the product (CLI, version, installation)
+  from the agent (models, chat, personality, memory). Literal commands are unchanged.
+
+### Fixed
+- The bundled-plugin string scanner treated a `/*` inside a string literal as the start of a block
+  comment and skipped everything to the next `*/`, losing 56 lines of a bundle from its own coverage.
+
 ## [0.28.1] - 2026-08-14
 
 The tmux-agent and missions subsystem — spawning coding agents into tmux, the autopilot mission engine,
