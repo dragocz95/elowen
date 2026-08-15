@@ -9,10 +9,13 @@ import type { Db } from '../../src/store/db.js';
  *  what, in every one of those suites, is how a test ends up asserting against a shape nobody ships.
  *
  *  WHAT THIS IS NOT. It is not the source of truth. The plugins are, and this is a copy that can drift
- *  from them. The drift is caught on the OTHER side: the registry pins its own copy against the shape the
- *  published daemon expects, the same arrangement `tests/contract/pluginCoreCopyParity.test.ts` describes
- *  for the small helpers a plugin copies out of core. A fixture whose divergence nothing notices would be
- *  worse than no fixture, because every suite above it would keep passing against a fiction.
+ *  from them. Two things stand between that copy and a fiction, and neither is complete on its own:
+ *  tests/store/pluginSchemaFixture.test.ts pins this file against the shape core itself froze before the
+ *  tables left, and the registry's own schema-parity suites pin the plugins against theirs. Both compare
+ *  against their OWN baseline, so a deliberate schema change reddens the side that made it and NOT the
+ *  other — whoever changes a plugin's DDL has to update this file by hand. That is a known weakness, not
+ *  an oversight; closing it properly means publishing this DDL as a package artefact both sides import,
+ *  the way elowen-plugin-shared/cronGrammar is shared today.
  *
  *  Table names are GRANDFATHERED from the era when core owned these tables (tasks, missions, notes — not
  *  p_work_* / p_agents_*), which is why nothing here is namespaced. The CREATE forms carry the columns
