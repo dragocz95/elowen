@@ -42,7 +42,7 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import '../../modules/settings/theme.css';
-import { useTranslation } from '../../lib/i18n';
+import { interpolate, useTranslation } from '../../lib/i18n';
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
@@ -107,6 +107,7 @@ export default function SettingsPage() {
   const agentsUi = useAgentsPlugin();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
+  const agentAiLabel = interpolate(t.settings.brain, { agentName: brand.agentName });
   // Plugin-contributed Settings sections ride the same live listing as the sidebar's plugin worlds:
   // toggling a plugin invalidates the query and its sections appear/disappear without a reload.
   const pluginUi = usePluginUi(locale);
@@ -367,7 +368,7 @@ export default function SettingsPage() {
   };
   // Core sections, in their fixed order. Plugins do not appear here: each owns a world in the main
   // navigation and its settings sections are pages of that world.
-  const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] }));
+  const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: id === 'brain' ? agentAiLabel : t.settings[id], description: sectionHints[id] }));
   const diagnostics = system.data?.diagnostics;
 
   return (

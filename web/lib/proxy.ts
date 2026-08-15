@@ -44,11 +44,16 @@ export function namedCookie(name: string, value: string, secure: boolean, maxAge
   return `${name}=${encodeURIComponent(value)}; ${attrs}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
 }
 
-/** Read (and URL-decode) an arbitrary cookie by name from the request, or null when absent. Anchored
- *  so one cookie name can't match as a substring of another. */
-export function readCookie(req: Request, name: string): string | null {
-  const m = (req.headers.get('cookie') ?? '').match(new RegExp(`(?:^|; )${name}=([^;]+)`));
+/** Read (and URL-decode) an arbitrary cookie by name from a raw Cookie header, or null when absent.
+ *  Anchored so one cookie name can't match as a substring of another. */
+export function readCookieHeader(cookieHeader: string, name: string): string | null {
+  const m = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Read (and URL-decode) an arbitrary cookie by name from the request, or null when absent. */
+export function readCookie(req: Request, name: string): string | null {
+  return readCookieHeader(req.headers.get('cookie') ?? '', name);
 }
 
 /** Same-origin guard for mutating requests (CSRF defense-in-depth on top of SameSite=Lax).

@@ -45,8 +45,6 @@ describe('plugin class sources', () => {
 
   it('the mirror carries the markup of every plugin that ships a browser bundle', () => {
     const blob = collectPluginClassSources(repoRoot);
-    // A container-query variant no core page uses: it exists in the built CSS only via this mirror.
-    expect(blob).toContain('@sm:');
 
     // Read the expectation off the repo rather than naming plugins. A hardcoded list goes red the moment
     // a plugin moves to the marketplace registry — and it hid something worse: the mirror ALSO picks up
@@ -56,8 +54,24 @@ describe('plugin class sources', () => {
       .filter((e) => e.isDirectory() && existsSync(join(repoRoot, 'plugins', e.name, 'web-src')))
       .map((e) => e.name);
 
-    expect(bundled.length).toBeGreaterThan(2); // the loop below proves nothing if discovery breaks
+    expect(bundled.length).toBeGreaterThan(0); // the loop below proves nothing if discovery breaks
     for (const plugin of bundled) expect(blob).toContain(`plugins/${plugin}/web-src`);
+
+    // The paths above only prove the mirror NAMED each bundle; this proves it carried the markup, which
+    // is the part Tailwind scans. Derived from the sources rather than asserting one literal class: the
+    // previous version pinned '@sm:', a variant that left with the plugins that used it, so the check
+    // began measuring nothing the moment those moved to the registry.
+    const classAttr = /class(?:Name)?=(?:"([^"]+)"|'([^']+)')/g;
+    const sampled = bundled.flatMap((plugin) => {
+      const dir = join(repoRoot, 'plugins', plugin, 'web-src');
+      const file = readdirSync(dir, { recursive: true, encoding: 'utf-8' })
+        .find((f) => /\.tsx$/.test(f) && classAttr.test(readFileSync(join(dir, f), 'utf-8')));
+      if (!file) return [];
+      const source = readFileSync(join(dir, file), 'utf-8');
+      return [...source.matchAll(classAttr)].map((m) => m[1] ?? m[2]).filter((v) => v.includes('-')).slice(0, 1);
+    });
+    expect(sampled.length).toBe(bundled.length);
+    for (const literal of sampled) expect(blob).toContain(literal);
   });
 
   // A plugin is not only a plugin we shipped: installed ones live in the data directory, and the host
@@ -80,7 +94,12 @@ describe('plugin class sources', () => {
     // fresh checkout). That must degrade to "no user plugins", never to a build failure.
     const env = { ...process.env, ELOWEN_DB: join(tmpdir(), 'elowen-absent-' + Math.random().toString(36).slice(2), 'elowen.db') };
     expect(userPluginsDir(env)).toContain('plugins');
-    expect(collectPluginClassSources(repoRoot, env)).toContain('plugins/agents/web-src');
+    // Named off the repo, not written down: `agents` used to be spelled here and stayed green only
+    // because it was still in the package.
+    const anyBundled = readdirSync(join(repoRoot, 'plugins'), { withFileTypes: true })
+      .find((e) => e.isDirectory() && existsSync(join(repoRoot, 'plugins', e.name, 'web-src')));
+    expect(anyBundled).toBeDefined();
+    expect(collectPluginClassSources(repoRoot, env)).toContain(`plugins/${anyBundled!.name}/web-src`);
   });
 
   it('regenerates the web build chain: build and dev both refresh the mirror before Next runs', () => {

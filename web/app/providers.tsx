@@ -2,7 +2,19 @@
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ElowenApiError } from '../lib/elowenClient';
+import { QUERY_KEYS } from '../lib/queries';
 import { useElowenEvents } from '../lib/useElowenEvents';
+import type { PluginUiListing } from '../lib/types';
+
+/** The server-prefetched /plugins/ui listing (root layout), handed over so the client's first paint
+ *  already carries the plugin worlds instead of popping them in when the client fetch resolves. Null
+ *  for logged-out visitors and every daemon/auth failure — the client query then fills it in as
+ *  before. The key is the EXACT key usePluginUi reads, locale included, or the seed would populate a
+ *  key nothing subscribes to and the flash would remain while tests look green. */
+export interface PluginUiSeed {
+  locale: string;
+  listing: PluginUiListing[];
+}
 
 // EventBridge is exported so LoginGate can render it only when authenticated.
 // Mounting it while unauthenticated would open a tokenless SSE connection → 401,
@@ -14,8 +26,9 @@ export function EventBridge() {
   return null;
 }
 
-export function Providers({ children }: { children: ReactNode }) {
-  const [client] = useState(() => new QueryClient({
+export function Providers({ children, pluginUiSeed = null }: { children: ReactNode; pluginUiSeed?: PluginUiSeed | null }) {
+  const [client] = useState(() => {
+    const client = new QueryClient({
     defaultOptions: {
       queries: {
         // The SSE bus drives freshness (useElowenEvents invalidates on every relevant event), so treat
@@ -36,7 +49,13 @@ export function Providers({ children }: { children: ReactNode }) {
         },
       },
     },
-  }));
+    });
+    // Seed once, at client construction: fresh at mount, so the 60s staleTime on usePluginUi keeps the
+    // client from refetching what the server just rendered. The SSE bus still invalidates the key on a
+    // plugin toggle, so live updates are unaffected.
+    if (pluginUiSeed) client.setQueryData([...QUERY_KEYS.pluginUi, pluginUiSeed.locale], pluginUiSeed.listing);
+    return client;
+  });
   return (
     <QueryClientProvider client={client}>
       {children}

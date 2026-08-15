@@ -291,9 +291,16 @@ export const useMe = () =>
 
 /** Enabled plugins with a browser UI — drives the shell nav + the /p/[plugin] host page. Keyed per
  *  locale (labels are localized server-side); held in the query cache so a plugin toggle can invalidate
- *  it and the menu updates without a reload. */
+ *  it and the menu updates without a reload. The root layout seeds the first-paint locale's listing
+ *  into this cache; `placeholderData` keeps that previous listing across the post-mount locale switch,
+ *  so stored-locale users don't lose the plugin worlds (and the layout) while their locale's loads. */
 export const usePluginUi = (locale: string) =>
-  useQuery({ queryKey: [...QUERY_KEYS.pluginUi, locale], queryFn: () => elowenClient.pluginUi(locale), staleTime: 60_000 });
+  useQuery({
+    queryKey: [...QUERY_KEYS.pluginUi, locale],
+    queryFn: () => elowenClient.pluginUi(locale),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
 
 /** Whether a named plugin contributes a browser UI on this instance — read from the SAME /plugins/ui
  *  listing the sidebar nav uses, so every affordance a plugin owns gates on one source. False while the

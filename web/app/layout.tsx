@@ -5,6 +5,8 @@ import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
+import { fetchPluginUiListing } from '../lib/pluginUiServer';
+import { DEFAULT_LOCALE } from '../lib/i18n';
 import { activeSkin } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
@@ -49,6 +51,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // login screen — rendered before any token exists — already carries the instance brand.
   const theme = await fetchThemePayload();
   const themeStyle = buildThemeStyle(theme);
+  // Server-prefetch the caller's plugin worlds for the navigation rail, so they arrive in the HTML
+  // instead of popping in when the client's /plugins/ui fetch resolves (the layout shift this removes).
+  // The first paint always renders in DEFAULT_LOCALE (the stored locale applies only after mount), so
+  // the seed matches the client's first-paint query key. Null — logged out, 401/403, daemon down —
+  // renders exactly as before and the client query fills the listing in.
+  const pluginUi = await fetchPluginUiListing(DEFAULT_LOCALE);
   // Compiled-in design skin (ELOWEN_SKIN env). All skins ship in every build scoped under
   // `:root[data-skin='…']`; without the attribute none of their rules match, so a skinless instance
   // renders byte-identical markup to a build from before skins existed.
@@ -68,7 +76,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
         {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
       </head>
-      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme}>{children}</Shell></body>
+      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale: DEFAULT_LOCALE, listing: pluginUi } : null}>{children}</Shell></body>
     </html>
   );
 }
