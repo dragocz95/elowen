@@ -36,14 +36,19 @@ function writeRegistryFixture(root: string, entries: { name: string; version: st
   for (const e of entries) writePlugin(pluginsDir, e.name, e.version, e.requiresCore);
 }
 
-/** A fake `git` exec: `clone` copies the fixture registry into the target dir; the rest no-op. */
-function fakeGit(fixtureRegistry: string, opts: { failRevParse?: boolean; calls?: string[] } = {}) {
+/** A fake `git` exec: `clone` copies the fixture registry into the target dir; the rest no-op. When
+ *  `net.offline` is set, only the commands that actually reach the network fail — a local `rev-parse`
+ *  on an existing clone still answers, which is precisely the shape of a daemon booting without a link. */
+function fakeGit(fixtureRegistry: string, opts: { failRevParse?: boolean; calls?: string[]; net?: { offline: boolean } } = {}) {
   return vi.fn(async (cmd: string, args: string[]) => {
     opts.calls?.push([cmd, ...args].join(' '));
     if (cmd === 'git' && args[0] === '--version') return { stdout: 'git version 2.40.0' };
     if (args.includes('rev-parse')) {
       if (opts.failRevParse) throw new Error('not a git repo');
       return { stdout: 'true' };
+    }
+    if (opts.net?.offline && (args[0] === 'clone' || args.includes('fetch'))) {
+      throw new Error('could not resolve host: github.com');
     }
     if (args[0] === 'clone') {
       const dest = args[args.length - 1];
@@ -64,6 +69,8 @@ interface Harness {
   enabled: string[];
   reload: ReturnType<typeof vi.fn>;
   exec: ReturnType<typeof vi.fn>;
+  /** Flip `offline` to make every network-touching git command fail from that point on. */
+  net: { offline: boolean };
 }
 
 function setup(opts: {
@@ -73,6 +80,10 @@ function setup(opts: {
   hostileNames?: string[];
   failRevParse?: boolean;
   seedCacheGit?: boolean;
+  /** Put a WARM cache on disk — a full registry clone, exactly what an earlier successful refresh
+   *  leaves behind — without letting this process record a fetch. Models a restarted daemon. */
+  warmCache?: boolean;
+  offline?: boolean;
   calls?: string[];
 }): Harness {
   const base = tmpDir('mkt');
@@ -88,10 +99,15 @@ function setup(opts: {
   for (const b of opts.bundled ?? []) writePlugin(bundledDir, b.name, b.version);
   for (const p of opts.installed ?? []) writePlugin(userDir, p.name, p.version);
   if (opts.seedCacheGit) mkdirSync(join(cacheDir, '.git'), { recursive: true });
+  if (opts.warmCache) {
+    cpSync(fixture, cacheDir, { recursive: true });
+    mkdirSync(join(cacheDir, '.git'), { recursive: true });
+  }
 
   const enabled: string[] = [...(opts.installed ?? []).map((p) => p.name)];
   const reload = vi.fn(async () => {});
-  const exec = fakeGit(fixture, { failRevParse: opts.failRevParse, calls: opts.calls });
+  const net = { offline: !!opts.offline };
+  const exec = fakeGit(fixture, { failRevParse: opts.failRevParse, calls: opts.calls, net });
 
   const svc = new MarketplaceService({
     registryUrl: 'https://example.invalid/registry.git',
@@ -105,7 +121,7 @@ function setup(opts: {
     reload,
     io: { exec, now: () => 1_000_000, rand: () => 'rnd' },
   });
-  return { svc, bundledDir, userDir, dataRoot, cacheDir, enabled, reload, exec };
+  return { svc, bundledDir, userDir, dataRoot, cacheDir, enabled, reload, exec, net };
 }
 
 describe('parseRegistry', () => {
@@ -219,6 +235,26 @@ describe('MarketplaceService.install', () => {
   it('rejects a name not in the registry (404)', async () => {
     const { svc } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
     await expect(svc.install('ghost')).rejects.toMatchObject({ status: 404 });
+  });
+
+  // The payload is copied out of the cache, so an install the cache can already satisfy must not be
+  // refused merely because the refresh could not run — the catalog the operator clicked was rendered
+  // from that same cache. This is also the path reconcileEnabled() uses to restore during an offline boot.
+  it('installs from the last-good cache while the network is down', async () => {
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0' }],
+      warmCache: true, offline: true,
+    });
+    await svc.install('weather');
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
+    expect(enabled).toContain('weather');
+  });
+
+  // …but with nothing readable to install FROM, the failure must be explicit rather than a 404 that
+  // reads as "no such plugin".
+  it('reports the registry as unavailable (503) when offline with no cache', async () => {
+    const { svc } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }], offline: true });
+    await expect(svc.install('weather')).rejects.toMatchObject({ status: 503 });
   });
 
   it('rejects installing over a built-in plugin (409)', async () => {
@@ -405,6 +441,36 @@ describe('MarketplaceService.reconcileEnabled', () => {
     // A boot must survive an offline registry: the plugin stays missing, the daemon still starts.
     await expect(broken.reconcileEnabled()).resolves.toEqual([]);
     await expect(svc.reconcileEnabled()).resolves.toEqual(['weather']);
+  });
+
+  // A daemon that boots WITHOUT a network is the ordinary case this reconcile exists for, and it is the
+  // one where the cache is most valuable: `lastFetch` is process-local, so the first reconcile of every
+  // boot refreshes, and the refresh is the only step that needs the network — the payload it would
+  // install is already on disk. Treating the failed refresh as fatal dropped the plugin for the whole
+  // process lifetime, so the operator found the feature gone precisely when they could not fix it.
+  it('restores from the last-good cache when the boot has no network', async () => {
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0' }],
+      warmCache: true, offline: true,
+    });
+    enabled.push('weather');
+
+    expect(await svc.reconcileEnabled()).toEqual(['weather']);
+    expect(existsSync(join(userDir, 'weather', 'elowen-plugin.json'))).toBe(true);
+    expect(enabled).toEqual(['weather']); // restored, not re-decided
+  });
+
+  // The degradation must stop at "serve what is cached" — with no readable cache there is nothing to
+  // install from, and the reconcile must still report rather than throw the boot.
+  it('gives up quietly when the boot has no network AND no cache', async () => {
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0' }],
+      offline: true,
+    });
+    enabled.push('weather');
+
+    await expect(svc.reconcileEnabled()).resolves.toEqual([]);
+    expect(existsSync(join(userDir, 'weather'))).toBe(false);
   });
 
   it('does not resurrect a plugin that still ships bundled', async () => {

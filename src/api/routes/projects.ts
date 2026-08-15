@@ -79,16 +79,27 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     for (const t of doomed) {
       if (t.type === 'epic') {
         const missionId = `m-${t.id}`;
-        const mission = d.missions.get(missionId);
+        // Read the mission from the ROWS, not from `d.missions`: that seam answers null for everything
+        // while the agents plugin is absent, so the guards below could never fire in the one shape that
+        // needs them — the delete returned 200 while the worktree stayed on disk with every record
+        // naming it erased. The rows answer whether or not a plugin is loaded, exactly like the doomed
+        // list above.
+        const mission = d.taskRefs?.missionTeardown(missionId) ?? null;
+        const state = mission?.state ?? d.missions.get(missionId)?.state ?? null;
         // Teardown must SUCCEED before the rows go, exactly as at DELETE /tasks/:id. Swallowing a
         // failure here — or proceeding with the agents plugin disabled, where nothing can stop a
         // mission's agents at all — deletes the only records by which a live agent or an on-disk
         // worktree could still be found.
         try {
-          if (mission && mission.state !== 'disengaged') {
+          if (state && state !== 'disengaged') {
             if (!d.engine) return c.json({ error: 'agents plugin is disabled' }, 503);
             await d.engine.disengage(missionId);
           }
+          // A worktree is freed by its owner or not at all. With a mission_pr row present and no
+          // missionGit to act on it, the cascade would delete the row that resolves the directory and
+          // strand it — so refuse, which is recoverable (re-enable the plugin, delete again) where the
+          // leak is not.
+          if (mission?.worktree && !d.missionGit) return c.json({ error: 'agents plugin is disabled' }, 503);
           await d.missionGit?.cleanup(missionId);
         } catch (e) {
           log.error(`project ${id} not deleted — mission ${missionId} teardown failed`, e);

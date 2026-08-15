@@ -37,8 +37,21 @@ export function registerAdminRoutes(app: ElowenApp, ctx: RouteContext): void {
     // the disengage sweep above only reaches 'active'/'stalled' missions, but a paused or naturally-
     // completed one still holds a worktree for the pause/PR-feedback path. cleanup() is a no-op for a
     // mission with no PR record, so calling it for every mission id here is safe.
+    //
+    // The ids come from the owner when there is one and from core's own tolerant handle on the same rows
+    // when there is not: `listMissionIds()` answers empty with no task plugin, while the rows — and the
+    // directories they name — are still there and the wipe below still deletes them.
+    const missionIds = d.tasks?.listMissionIds() ?? d.taskRefs?.missionIds() ?? [];
+    // Deriving the ids is only half of it: with the AGENTS plugin absent there is no missionGit either,
+    // so nothing can free those directories, and wiping `mission_pr` would erase the only record naming
+    // them. Refusing is the honest answer and the recoverable one — re-enable the plugin and run the wipe
+    // again, and the worktrees are freed properly. A leak is not recoverable, and this is narrow: an
+    // instance whose missions hold no worktree (or that never had the plugin) still wipes normally.
+    if (!d.missionGit && missionIds.some((id) => d.taskRefs?.missionTeardown(id)?.worktree)) {
+      return c.json({ error: 'agents plugin is disabled' }, 503);
+    }
     try {
-      for (const missionId of d.tasks?.listMissionIds() ?? []) await d.missionGit?.cleanup(missionId);
+      for (const missionId of missionIds) await d.missionGit?.cleanup(missionId);
     } catch (e) {
       log.error('cleanup aborted — worktree cleanup failed', e);
       return c.json({ error: 'mission teardown failed' }, 500);

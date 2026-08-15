@@ -13,6 +13,7 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import type { AgentsMissionGit } from '../../src/plugins/api.js';
 import { RefMissions } from '../helpers/refStores.js';
 
 /** The subject is the daemon's OWN "declared but inactive" gate, so the domain it gates is a FIXTURE
@@ -82,6 +83,21 @@ function fixturePluginDir(): string {
 /** A daemon whose `ledger` domain either has an owner (the plugin enabled) or has none (it is switched
  *  off). Which plugins are ENABLED is the ONLY difference — everything else is wired identically, and
  *  the plugin dir is discoverable in both shapes. */
+/** Records the missions whose worktree the route freed. The subject here is the LEDGER domain being
+ *  unowned, not the agents one — so the agents side is wired as PRESENT, which is what lets the wipe
+ *  below actually free the worktree it is about to erase the record of. (With no owner for a worktree
+ *  the wipe refuses instead; that cell is pinned in tests/api/adminCleanupTeardown.test.ts.) */
+function recordingMissionGit(): AgentsMissionGit & { freed: string[] } {
+  const unused = () => { throw new Error('not part of the admin cleanup'); };
+  const freed: string[] = [];
+  return {
+    freed,
+    cleanup: async (missionId: string) => { freed.push(missionId); },
+    worktreeFor: unused, prInfo: unused, pendingPrMissionIds: unused, openPr: unused,
+    mergePr: unused, appendFixPhase: unused, commitPhase: unused,
+  } as AgentsMissionGit & { freed: string[] };
+}
+
 async function makeApp(owned: boolean) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -99,14 +115,15 @@ async function makeApp(owned: boolean) {
     logger: { info() {}, warn() {}, error() {} },
   }));
   const registry = await provider.get();
+  const missionGit = recordingMissionGit();
   const app = createServer({
     taskRefs: new TaskRefs(db),
-    missions: new RefMissions(db), bus, tmux: new FakeTmuxDriver(),
+    missions: new RefMissions(db), bus, tmux: new FakeTmuxDriver(), missionGit,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects,
     plugins: provider, pluginDirs: dirs,
   });
-  return { app, db, registry };
+  return { app, db, registry, missionGit };
 }
 
 /** A concrete request path for a mount pattern; the gate is path-shaped only, so any segment does. */
@@ -158,7 +175,7 @@ describe('a plugin-owned path family whose owner is not loaded', () => {
   // Core's own doctrine (store/db.ts tolerateMissingPluginTables, store/cascade.ts) is that a
   // destructive CORE path purges plugin rows whether or not the plugin is loaded.
   it('still wipes the plugin rows a disabled owner left behind — and counts them', async () => {
-    const { app, db } = await makeApp(false);
+    const { app, db, missionGit } = await makeApp(false);
     try {
       db.prepare("INSERT INTO tasks (id,project_id,title,type) VALUES ('e-1',1,'Epic','epic')").run();
       db.prepare("INSERT INTO tasks (id,project_id,title,parent_id) VALUES ('t-1',1,'Child','e-1')").run();
@@ -177,6 +194,10 @@ describe('a plugin-owned path family whose owner is not loaded', () => {
       for (const t of ['tasks', 'task_deps', 'missions', 'mission_pr', 'notes']) {
         expect(`${t} rows left → ${count(t)}`).toBe(`${t} rows left → 0`);
       }
+      // Erasing `mission_pr` erases the only record naming the worktree, so the directory has to be
+      // freed on the way past — the wipe reached these rows without the task plugin, and it has to
+      // reach the disk the same way.
+      expect(missionGit.freed).toEqual(['m-e-1']);
     } finally { db.close(); }
   });
 

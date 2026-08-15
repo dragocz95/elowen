@@ -958,6 +958,9 @@ export class ConfigStore {
     if (!this.hasSettings()) return;
     const cur = this.read();
     if (cur.agentsConfigMigrated) return;
+    // See migrateWorkPlugin: the one-shot marker is a config key and does not survive a rollback, so an
+    // explicitly removed plugin would come back enabled on the re-upgrade. `plugins.removed` does survive.
+    if (cur.plugins.removed.includes('agents')) return;
     const enabled = cur.plugins.enabled.includes('agents') ? cur.plugins.enabled : [...cur.plugins.enabled, 'agents'];
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, agentsConfigMigrated: true });
   }
@@ -1045,6 +1048,12 @@ export class ConfigStore {
     if (!this.hasSettings()) return;
     const cur = this.read();
     if (cur.workPluginMigrated) return;
+    // An explicit removal outranks the continuity sweep. The marker alone cannot carry that: it is a
+    // config KEY, so rolling back to a daemon that does not know it drops it on the next write and the
+    // re-upgrade re-runs this — handing the plugin back to an admin who had deliberately uninstalled it.
+    // `plugins.removed` survives that round trip (every version reads and writes it), and a name in it
+    // is a decision, never an accident, so honour it.
+    if (cur.plugins.removed.includes('work')) return;
     const enabled = cur.plugins.enabled.includes('work') ? cur.plugins.enabled : [...cur.plugins.enabled, 'work'];
     this.write({ ...cur, plugins: { ...cur.plugins, enabled }, workPluginMigrated: true });
   }

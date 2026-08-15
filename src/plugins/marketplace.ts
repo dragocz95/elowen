@@ -215,8 +215,20 @@ export class MarketplaceService {
   async install(name: string, opts: { enable?: boolean } = {}): Promise<void> {
     return this.lock.run('marketplace', async () => {
       this.ensureSafeName(name);
-      await this.ensureFresh(false);
-      if (!this.readRegistry().some((e) => e.name === name)) throw new MarketplaceError(`plugin "${name}" is not in the registry`, 404);
+      // Same degradation as catalog(): the install payload comes from the cache on disk, so a failed
+      // refresh is not a reason to refuse one the cache can already satisfy — it is the very cache the
+      // catalog the caller is acting on was rendered from. This is also what lets reconcileEnabled()
+      // restore a plugin during an offline boot, since it goes through here. A cache that cannot be READ
+      // is still fatal, and the refresh error is reported with it rather than swallowed.
+      let registryError: string | undefined;
+      try { await this.ensureFresh(false); }
+      catch (e) { registryError = errMsg(e); }
+
+      let entries: RegistryEntry[];
+      try { entries = this.readRegistry(); }
+      catch (e) { throw new MarketplaceError(`the plugin registry is unavailable: ${registryError ?? errMsg(e)}`, 503); }
+      if (!entries.some((e) => e.name === name)) throw new MarketplaceError(`plugin "${name}" is not in the registry`, 404);
+      if (registryError) log.warn(`registry refresh failed (${registryError}) — installing "${name}" from the last-good cache`);
 
       const existing = this.opts.discovered().find((p) => p.manifest.name === name);
       if (existing?.source === 'bundled') throw new MarketplaceError(`"${name}" is a built-in plugin, managed by the app`, 409);
@@ -291,14 +303,22 @@ export class MarketplaceService {
     const missing = this.opts.getEnabled().filter((n) => !onDisk.has(n));
     if (!missing.length) return [];
 
+    // Degrade exactly as catalog() does — a refresh failure must NOT discard a cache that is already on
+    // disk. `lastFetch` is process-local, so the first reconcile of every boot always refreshes: treating
+    // that refresh as fatal meant an offline boot threw away enabled-but-missing plugins whose payload was
+    // sitting in the cache, fully installable (copyFromCache reads nothing but disk). Only an unreadable
+    // cache is actually fatal here; the refresh error stays in the log either way.
+    let registryError: string | undefined;
+    try { await this.ensureFresh(false); }
+    catch (e) { registryError = errMsg(e); }
+
     let available: Set<string>;
-    try {
-      await this.ensureFresh(false);
-      available = new Set(this.readRegistry().map((e) => e.name));
-    } catch (e) {
-      log.warn(`enabled plugins missing from disk (${missing.join(', ')}) and the registry is unreachable: ${errMsg(e)}`);
+    try { available = new Set(this.readRegistry().map((e) => e.name)); }
+    catch (e) {
+      log.warn(`enabled plugins missing from disk (${missing.join(', ')}) and the registry is unavailable: ${registryError ?? errMsg(e)}`);
       return [];
     }
+    if (registryError) log.warn(`registry refresh failed (${registryError}) — restoring from the last-good cache`);
 
     const restored: string[] = [];
     for (const name of missing) {

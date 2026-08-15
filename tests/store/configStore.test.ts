@@ -576,6 +576,30 @@ describe('ConfigStore work plugin migration', () => {
     expect(cs.get().plugins.enabled.filter((n) => n === 'work')).toEqual(['work']);
   });
 
+  // The marker is a config KEY, so it does not survive a rollback: a daemon that predates it drops the
+  // key on its next write, and the re-upgrade runs this sweep again. That is survivable for a plugin the
+  // admin merely disabled (it comes back on, they turn it off again), but not for one they explicitly
+  // REMOVED — that decision is recorded in `plugins.removed`, which every version reads and writes, and
+  // it must outrank a continuity sweep whose whole premise is "keep what this install already had".
+  it('never resurrects a plugin the admin explicitly removed', () => {
+    const { cs, stored } = storeWith(OLD_ROW({ plugins: { enabled: ['files'], removed: ['work'], config: {} } }));
+    cs.migrateWorkPlugin();
+    expect(cs.get().plugins.enabled).not.toContain('work');
+    // Not marked done either: the sweep did not run, so an admin who later RESTORES the plugin from the
+    // Available tab still gets the continuity it was written for.
+    expect(stored()['workPluginMigrated']).toBeUndefined();
+  });
+
+  // The agents twin is the same sweep over the same rollback-fragile marker, so it carries the same hole.
+  it('never resurrects an explicitly removed agents plugin either', () => {
+    const { cs } = storeWith(JSON.stringify({
+      allowedExecs: ['sonnet'],
+      plugins: { enabled: ['files'], removed: ['agents'], config: {} },
+    }));
+    cs.migrateAgentsEnabled();
+    expect(cs.get().plugins.enabled).not.toContain('agents');
+  });
+
   it('is a no-op on a fresh install (no settings row → the defaults already carry the marker)', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     cs.migrateWorkPlugin();
