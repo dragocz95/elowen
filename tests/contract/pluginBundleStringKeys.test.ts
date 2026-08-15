@@ -59,9 +59,36 @@ function manifestStrings(plugin: string): Set<string> {
   return new Set(Object.keys((JSON.parse(raw) as Manifest).web?.strings ?? {}));
 }
 
-/** Prose is not a call site: a key named in a doc comment has no consumer. */
+/** Prose is not a call site: a key named in a doc comment has no consumer.
+ *
+ *  Both rules below err toward KEEPING code, deliberately. A false positive here is a loud
+ *  missing-key failure that someone investigates; a read this function swallows is invisible and
+ *  green forever. The naive form of this — `/\/\*[\s\S]*?\*\//g` — got that trade the wrong way
+ *  round: any `/*` opened a comment, so a string holding a glob (`cat /some-dir/*`) opened one that
+ *  closed at the next genuine doc block, taking every read in between with it. Measured on a real
+ *  bundle: 56 lines, 14 reads, 10 keys, and an injected typo in that file reported nothing missing.
+ *  So a block comment must OPEN its line (optionally after `{`, the JSX form), and a line comment is
+ *  found by walking the line rather than by regex, so `//` inside a string stays code. */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const withoutBlocks = source.replace(/^[ \t]*\{?[ \t]*\/\*[\s\S]*?\*\/[ \t]*\}?[ \t]*$/gm, '');
+  return withoutBlocks.split('\n').map(stripLineComment).join('\n');
+}
+
+/** Everything from an unquoted `//` to end of line. Quote state is tracked so a `//` inside a string
+ *  literal — a URL, a path — is left alone; escapes are honoured so `'a\''` does not end early. */
+function stripLineComment(line: string): string {
+  let quote: string | null = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === '\\') i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '/' && line[i + 1] === '/') return line.slice(0, i);
+  }
+  return line;
 }
 
 /** The binding a file gave `usePluginStrings(<plugin>)`, e.g. `const s = hooks.usePluginStrings('work')`.
@@ -180,6 +207,21 @@ describe('the scan itself still sees what it is looking for', () => {
     });
     expect(found.statik.map((r) => `${r.plugin}.${r.key}`)).toEqual(['ledger.title']);
     expect(found.sites).toBe(1);
+  });
+
+  it('keeps reading a file after a string that merely contains a comment opener', () => {
+    // The regression this replaced: `/*` inside a string literal opened a block comment that closed
+    // at the next real doc block, swallowing every read in between and reporting nothing missing.
+    const found = scan({
+      'Jobs.tsx': [
+        "const s = hooks.usePluginStrings('ledger');",
+        'export const Hint = () => <input placeholder="test -n x && cat /new-bookings/*" />;',
+        'export const Link = () => <a href="https://example.com/docs">{s.docs}</a>;',
+        '/** A genuine doc block, dozens of lines later. */',
+        'export const Jobs = () => <h1>{s.title}</h1>;',
+      ].join('\n'),
+    });
+    expect(found.statik.map((r) => r.key).sort()).toEqual(['docs', 'title']);
   });
 
   it('reports a computed read rather than passing over it', () => {
