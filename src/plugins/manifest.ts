@@ -66,6 +66,12 @@ export interface PluginManifest {
   name: string;
   version: string;
   apiVersion: string;
+  /** Minimum daemon version this plugin needs, e.g. "0.29.0". Checked at INSTALL time, so a plugin built
+   *  against a newer core is refused with a readable error instead of installing cleanly and then failing
+   *  inside `register(ctx)` — which the loader would swallow as "plugin skipped", leaving the user with
+   *  functionality that silently is not there. `apiVersion` remains the axis for BREAKING changes; this
+   *  one is for additive ones, which is what a compiled plugin actually trips over. */
+  requiresCore?: string;
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
@@ -176,6 +182,7 @@ const ManifestSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
   version: Type.String({ minLength: 1 }),
   apiVersion: Type.String({ minLength: 1 }),
+  requiresCore: Type.Optional(Type.String({ pattern: '^\\d+(\\.\\d+)*$' })),
   description: Type.String(),
   entry: Type.String({ minLength: 1 }),
   provides: Type.Optional(Type.Object({

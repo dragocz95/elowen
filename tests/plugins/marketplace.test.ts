@@ -12,11 +12,12 @@ const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
 /** One plugin folder (manifest + entry) inside a `plugins/<name>` root. */
-function writePlugin(pluginsRoot: string, name: string, version: string): string {
+function writePlugin(pluginsRoot: string, name: string, version: string, requiresCore?: string): string {
   const dir = join(pluginsRoot, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version, apiVersion: '1', description: `${name} plugin`, entry: 'index.mjs',
+    ...(requiresCore ? { requiresCore } : {}),
     provides: { tools: [`${name}_tool`] },
   }));
   writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
@@ -24,7 +25,7 @@ function writePlugin(pluginsRoot: string, name: string, version: string): string
 }
 
 /** Build a registry-repo fixture: registry.json + plugins/<name>/ for each entry. */
-function writeRegistryFixture(root: string, entries: { name: string; version: string }[], extraNames: string[] = []): void {
+function writeRegistryFixture(root: string, entries: { name: string; version: string; requiresCore?: string }[], extraNames: string[] = []): void {
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'registry.json'), JSON.stringify({
     schema: 1,
@@ -32,7 +33,7 @@ function writeRegistryFixture(root: string, entries: { name: string; version: st
       .map((e) => ({ ...e, description: (e as { description?: string }).description ?? `${e.name} desc`, category: 'utility' })),
   }));
   const pluginsDir = join(root, 'plugins');
-  for (const e of entries) writePlugin(pluginsDir, e.name, e.version);
+  for (const e of entries) writePlugin(pluginsDir, e.name, e.version, e.requiresCore);
 }
 
 /** A fake `git` exec: `clone` copies the fixture registry into the target dir; the rest no-op. */
@@ -66,7 +67,7 @@ interface Harness {
 }
 
 function setup(opts: {
-  registryEntries: { name: string; version: string }[];
+  registryEntries: { name: string; version: string; requiresCore?: string }[];
   bundled?: { name: string; version: string }[];
   installed?: { name: string; version: string }[];
   hostileNames?: string[];
@@ -227,6 +228,48 @@ describe('MarketplaceService.install', () => {
     });
     await expect(svc.install('memory')).rejects.toBeInstanceOf(MarketplaceError);
     await expect(svc.install('memory')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('refuses a plugin that needs a newer daemon, and leaves nothing installed', async () => {
+    // The version is deliberately absurd rather than "current + 1": this must keep asserting the same
+    // thing after the next release bump, and a test that quietly stops covering its case is worse than
+    // no test.
+    const { svc, userDir, enabled, reload } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0', requiresCore: '999.0.0' }],
+    });
+    await expect(svc.install('weather')).rejects.toBeInstanceOf(MarketplaceError);
+    // A rejected install must not be half-applied — no folder, not enabled, no reload. Without this the
+    // gate could "fail" and still leave the daemon carrying a plugin it cannot run.
+    expect(existsSync(join(userDir, 'weather'))).toBe(false);
+    expect(enabled).not.toContain('weather');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('names the required and the running version, so the user knows what to do about it', async () => {
+    const { svc } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0', requiresCore: '999.0.0' }],
+    });
+    const running = (JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as { version: string }).version;
+    await expect(svc.install('weather')).rejects.toThrow(new RegExp(`999\\.0\\.0.*${running.replace(/\./g, '\\.')}`));
+  });
+
+  it('installs when the requirement is satisfied — the gate must fail in both directions', async () => {
+    // The mirror of the case above. A gate that only ever rejects would pass its own test while blocking
+    // every plugin, so the permissive direction is the half that proves it discriminates.
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0', requiresCore: '0.0.1' }],
+    });
+    await svc.install('weather');
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
+    expect(enabled).toContain('weather');
+  });
+
+  it('installs a plugin that declares no requirement at all', async () => {
+    // Every plugin in the registry today omits the field; if the gate treated "absent" as "incompatible"
+    // it would brick the whole marketplace on upgrade.
+    const { svc, userDir } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    await svc.install('weather');
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
   });
 
   it('rejects an invalid plugin name (400) before touching disk', async () => {

@@ -8,6 +8,7 @@ import { parseManifest } from './manifest.js';
 import type { DiscoveredPlugin } from './loader.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
 import { isNewer } from '../cli/version.js';
+import { readPkgVersion } from '../shared/pkgVersion.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('marketplace');
@@ -23,10 +24,19 @@ const DEFAULT_REGISTRY_BRANCH = 'main';
  *  SKILL_NAME_RE — kills separators, `..`, empties and absolute paths at the source. */
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
-/** Guard rails on a copied plugin tree — a decompression/space-bomb backstop. Plugins are a handful of
- *  small text files (manifest + one or more .mjs + i18n JSON), never megabytes. */
-const MAX_FILES = 400;
+/** Guard rails on a copied plugin tree — a decompression/space-bomb backstop, not a size policy. Most
+ *  plugins are a handful of small text files (manifest + one or more .mjs + i18n JSON), but a TypeScript
+ *  plugin ships its sources AND its compiled output, which roughly doubles the file count for the same
+ *  code: the largest one is a little over 300 files for ~1.2 MB. The byte ceiling is what actually bounds
+ *  the damage here, and it is untouched — the file count only needs enough headroom that a legitimate
+ *  plugin can keep growing without tripping a bomb guard. */
+const MAX_FILES = 800;
 const MAX_BYTES = 8 * 1024 * 1024;
+
+/** This daemon's version, for the `requiresCore` gate below. Read from the package the same way the CLI
+ *  and /health do, rather than threaded through options, so the check cannot be silently skipped by a
+ *  caller that forgot to pass it. */
+const CORE_VERSION = readPkgVersion(import.meta.url);
 
 /** One catalog entry as published in the registry's `registry.json`. Only `name` is security-load-bearing
  *  (it becomes a path segment and the install allowlist key); the rest are display hints for the card and
@@ -339,6 +349,28 @@ export class MarketplaceService {
     swap.commit();
   }
 
+  /** Root API mounts that `name` DECLARES, read from the registry cache rather than from disk — for a
+   *  plugin that is enabled but not installed, which is precisely when nothing on disk can answer.
+   *
+   *  This exists so a subsystem that moved out of the npm package into the registry degrades to an
+   *  explicit 503 ("enabled but not installed") instead of a bare 404. A 404 tells a caller the endpoint
+   *  never existed, which for `/tasks` or `/missions` is a lie that reads as data loss; the boot
+   *  reconciler normally reinstalls such a plugin, so reaching this path at all means the registry was
+   *  unreachable and the honest answer is "temporarily unavailable".
+   *
+   *  Best-effort by construction: no cache, no clone yet, unreadable or malformed manifest all mean an
+   *  empty list and the caller falls back to 404. Never throws, never touches the network. */
+  declaredRootRoutes(name: string): string[] {
+    try {
+      this.ensureSafeName(name);
+      const manifestPath = join(this.cacheDir, 'plugins', name, 'elowen-plugin.json');
+      if (!existsSync(manifestPath)) return [];
+      return parseManifest(JSON.parse(readFileSync(manifestPath, 'utf-8'))).provides?.apiRoutes ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   private ensureSafeName(name: string): void {
     if (!NAME_RE.test(name)) throw new MarketplaceError('invalid plugin name', 400);
     // Belt-and-suspenders: the validated name must be a plain single segment under each root.
@@ -500,6 +532,16 @@ export class MarketplaceService {
 
     const manifest = parseManifest(JSON.parse(readFileSync(join(dir, 'elowen-plugin.json'), 'utf-8')));
     if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != "${name}"`);
+    // Refuse a plugin that needs a newer daemon than this one, HERE rather than at load time. A plugin
+    // compiled against a newer core installs perfectly happily and then throws inside register(ctx) on
+    // the first missing API — which the loader catches and logs as "plugin skipped", so the user is left
+    // with a feature that is quietly absent and no indication why. Failing the install says it out loud
+    // and leaves nothing half-applied.
+    if (manifest.requiresCore && isNewer(manifest.requiresCore, CORE_VERSION)) {
+      throw new Error(
+        `"${name}" needs Elowen ${manifest.requiresCore} or newer, but this daemon is ${CORE_VERSION} — update Elowen first`,
+      );
+    }
     const entryPath = resolve(dir, manifest.entry);
     if (entryPath !== dir && !entryPath.startsWith(dir + sep)) throw new Error(`entry "${manifest.entry}" escapes plugin dir`);
     if (!existsSync(entryPath)) throw new Error(`entry "${manifest.entry}" not found`);
