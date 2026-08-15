@@ -49,11 +49,6 @@ interface MirrorPair {
   daemonFile: string;
   daemon: string;
   allowMissing?: readonly string[];
-  /** Where the mirror lives, when it is not `web/lib/types.ts` — a plugin bundle builds standalone and
-   *  so carries its own copy of the shapes it renders. */
-  webFile?: string;
-  /** Label for the test name, so a failure says WHICH mirror drifted. */
-  label?: string;
 }
 
 /** The web suite runs with cwd = web/, but never assume it: walk up until the repo root (the dir that
@@ -80,17 +75,11 @@ const PAIRS: MirrorPair[] = [
   // showThoughtsCli is optional on the web but always sent by the daemon — a tolerated relaxation the
   // mirror keeps honest (the web's test literals construct the settings without it).
   { web: 'TerminalSettings', daemonFile: `${DAEMON_ROOT}store/terminalSettings.ts`, daemon: 'TerminalSettings' },
-  // The task views moved into the work plugin's bundle, and a bundle may not import web/ — so the
-  // mirror moved with them. That copy is the one the register, the board and the detail pane actually
-  // render from, which makes it exactly the copy the /auth/me incident argues for guarding.
-  {
-    web: 'Task',
-    label: 'work bundle Task',
-    webFile: join(repoRoot(), 'plugins/work/web-src/types.ts'),
-    daemonFile: `${DAEMON_ROOT}store/types.ts`,
-    daemon: 'Task',
-    allowMissing: ['base_sha', 'head_sha', 'created_by'],
-  },
+  // NOTE: the work bundle's own `Task` mirror (plugins/work/web-src/types.ts) used to be pinned here.
+  // The work plugin moved to the plugin registry, so that file is not in this repo and the pin cannot
+  // live here any more. It is NOT covered by anything else: the registry's schema-parity suites pin SQL
+  // DDL, not the wire shape, and its UI tests only import the type. The registry depends on `elowen`,
+  // so the replacement pin belongs there, reading this daemon interface out of `elowen/dist`.
 ];
 
 const normalize = (type: string): string => type.replace(/\s+/g, ' ').trim();
@@ -163,7 +152,7 @@ function optionalityCompatible(daemon: Member, web: Member): boolean {
 
 function comparePair(pair: MirrorPair): string[] {
   const daemonParsed = load(pair.daemonFile);
-  const webParsed = load(pair.webFile ?? WEB_TYPES_FILE);
+  const webParsed = load(WEB_TYPES_FILE);
   const daemonMembers = interfaceMembers(daemonParsed, pair.daemon);
   const webMembers = interfaceMembers(webParsed, pair.web);
 
@@ -192,7 +181,7 @@ function comparePair(pair: MirrorPair): string[] {
 }
 
 describe('web DTO mirrors of daemon shapes', () => {
-  it.each(PAIRS.map((p) => [p.label ?? p.web, p] as const))('%s mirrors the daemon shape', (_label, pair) => {
+  it.each(PAIRS.map((p) => [p.web, p] as const))('%s mirrors the daemon shape', (_label, pair) => {
     const errors = comparePair(pair);
     expect(errors, errors.join('\n')).toEqual([]);
   });

@@ -29,29 +29,43 @@ const DYNAMIC: { prefix: string; builtIn: string }[] = [
   { prefix: 'spatial-mascot-fallback--', builtIn: 'components/ui/SpatialMascot.tsx' },
 ];
 
-/** Core CSS whose only consumer is a plugin bundle. See the note above: a ledger, not an allowlist. */
-const PLUGIN_ONLY: string[] = [
-  'card-interactive',
-  'escalation-register-row',
-  'flow-active',
-  'task-day-section',
-  'task-register-row',
-  'tasks-control-surface',
-];
+/** Core CSS whose only consumer is a plugin bundle that IS in this repository, so the scan below can
+ *  see the usage. See the note above: a ledger, not an allowlist.
+ *
+ *  Empty today — `subagent` is the last bundled `web-src/` and it styles itself. That is a real state,
+ *  not a disabled check: the equality assertion below turns a NEW entry into a failure, so a bundled
+ *  bundle that starts leaning on a core class has to record the debt here to go green. */
+const PLUGIN_ONLY: string[] = [];
 
-/** The same debt, for a plugin that no longer lives in this repository.
+/** The same debt, for plugins that no longer live in this repository.
  *
- *  The editor moved to the plugin registry, so its `web-src/` is not on disk here and the scan below
- *  cannot see it using these. Without this list they would read as DEAD and the obvious fix — deleting
- *  them — would strip the styling off an installed editor, exactly the trap the string dictionary hit.
+ *  `editor`, `work` and `agents` moved to the plugin registry, so their `web-src/` is not on disk here
+ *  and the scan below cannot see them using these. Without this list they read as DEAD and the obvious
+ *  fix — deleting them — strips the styling off the installed plugin. That is not hypothetical: it is
+ *  what a previous pass at this file did, and it would have cost the Tasks page its width and centring
+ *  (`tasks-control-surface`), its row borders and its running-phase pulse the moment `work` was
+ *  installed. Core references none of them, which is exactly why they look dead.
  *
- *  Unlike PLUGIN_ONLY this cannot be verified locally, which makes it the weaker of the two records and
- *  worth keeping short. It is the same debt either way: core ships styling for a page it does not own,
- *  and it goes away when a bundle can carry its own stylesheet. */
-const EXTERNAL_PLUGIN_ONLY: string[] = [
-  'editor-control-surface',
-  'markdown-preview',
+ *  Each entry therefore carries WHERE the consumer is, in the registry checkout, so the claim is
+ *  auditable instead of a bare string — the same reason DYNAMIC records its construction site. To
+ *  re-verify an entry against a registry checkout, grep the class in BOTH the plugin's `web-src` and
+ *  its built `web/index.js` — the built bundle is what the marketplace actually installs, and it is the
+ *  one that decides whether an installed page is styled.
+ *
+ *  Unlike PLUGIN_ONLY the "still used" half cannot be verified from this repo, which makes it the
+ *  weaker of the two records and worth keeping short. It is the same debt either way: core ships
+ *  styling for a page it does not own, and it goes away when a bundle can carry its own stylesheet. */
+const EXTERNAL_PLUGIN_ONLY: { class: string; plugin: string; usedIn: string }[] = [
+  { class: 'editor-control-surface', plugin: 'editor', usedIn: 'web-src/EditorPage.tsx' },
+  { class: 'markdown-preview', plugin: 'editor', usedIn: 'web-src/editor/MarkdownPreview.tsx' },
+  { class: 'card-interactive', plugin: 'work', usedIn: 'web-src/timeline/ChangesOverTime.tsx' },
+  { class: 'tasks-control-surface', plugin: 'work', usedIn: 'web-src/tasks/TasksView.tsx' },
+  { class: 'task-day-section', plugin: 'work', usedIn: 'web-src/tasks/TasksView.tsx' },
+  { class: 'task-register-row', plugin: 'work', usedIn: 'web-src/tasks/TaskCard.tsx' },
+  { class: 'flow-active', plugin: 'work', usedIn: 'web-src/tasks/PhaseLogRow.tsx' },
+  { class: 'escalation-register-row', plugin: 'agents', usedIn: 'web-src/escalations/EscalationsView.tsx' },
 ];
+const externalOnly = new Set(EXTERNAL_PLUGIN_ONLY.map((entry) => entry.class));
 
 function walk(dir: string, match: RegExp, out: string[] = []): string[] {
   let entries;
@@ -107,16 +121,40 @@ describe('core stylesheet ownership', () => {
   it('defines no class that nothing uses', () => {
     const dead = [...defined].filter(([name]) =>
       !isDynamic(name) && !coreSources.includes(name) && !pluginSources.includes(name)
-      && !EXTERNAL_PLUGIN_ONLY.includes(name));
+      && !externalOnly.has(name));
     expect(dead.map(([name, file]) => `${file}: .${name}`)).toEqual([]);
   });
 
   it('still defines the classes an out-of-repo plugin depends on', () => {
     // The other direction: an entry here must name a rule that actually exists, or the record is a
     // comforting fiction and the installed plugin is already unstyled.
-    const missing = EXTERNAL_PLUGIN_ONLY.filter((name) => !defined.has(name));
+    const missing = EXTERNAL_PLUGIN_ONLY.filter((entry) => !defined.has(entry.class)).map((e) => e.class);
     expect(missing, `recorded for an external plugin but no longer in the stylesheets: ${missing.join(', ')}`)
       .toEqual([]);
+  });
+
+  it('records nothing as external-only that this repo turned out to use', () => {
+    // The half of EXTERNAL_PLUGIN_ONLY that IS checkable here. An entry is a claim of two things: the
+    // rule exists (above), and its only consumer is out of reach of this scan. The moment core or a
+    // bundled plugin starts using one, the second claim is false — the entry is now buying a DEAD
+    // exemption it no longer needs, and it hides the class from the ledger that should be tracking it.
+    // Without this the list can only ever grow and no failure ever asks for an entry back.
+    const stale = EXTERNAL_PLUGIN_ONLY
+      .filter((entry) => coreSources.includes(entry.class) || pluginSources.includes(entry.class))
+      .map((entry) => entry.class);
+    expect(stale, `recorded as external-plugin-only but used inside this repo: ${stale.join(', ')}`)
+      .toEqual([]);
+  });
+
+  it('names a real consumer for every external-only entry', () => {
+    // The registry checkout is not on disk in CI, so the usage itself cannot be re-derived here. What
+    // CAN be pinned is that the record stays auditable: a bare class name with no plugin and no file is
+    // an unfalsifiable exemption, and this list is the one place where an unfalsifiable exemption
+    // silently keeps dead CSS alive forever.
+    for (const entry of EXTERNAL_PLUGIN_ONLY) {
+      expect(entry.plugin, `${entry.class} records no owning plugin`).toMatch(/^[a-z][a-z0-9-]*$/);
+      expect(entry.usedIn, `${entry.class} records no consumer file`).toMatch(/^web-src\/.+\.tsx?$/);
+    }
   });
 
   it('ships exactly the recorded set of classes only a plugin bundle uses', () => {
