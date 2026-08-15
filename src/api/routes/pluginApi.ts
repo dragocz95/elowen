@@ -170,7 +170,7 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
   // hitting one of these answers an explicit 503 instead of a bare 404, so a CLI or spawned agent
   // can tell "subsystem off" from "no such endpoint". Recomputed per generation: enabling/disabling
   // a plugin reloads the registry, so the disk scan runs once per toggle, not per request.
-  let declaredInactive: { plugin: string; segs: string[] }[] = [];
+  let declaredInactive: { plugin: string; reason: 'disabled' | 'missing'; segs: string[] }[] = [];
   const validate = (registry: { rootApiRoutes: Map<string, { plugin: string; routes: { method?: string }[] }> }) => {
     if (registry === validatedFor) return;
     validatedFor = registry;
@@ -191,18 +191,32 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
         }
       }
     }
-    declaredInactive = discoverPlugins(d.pluginDirs ?? [])
-      .flatMap((p) => (p.manifest.provides?.apiRoutes ?? []).map((mount) => ({ plugin: p.manifest.name, mount })))
+    const onDisk = discoverPlugins(d.pluginDirs ?? []);
+    const onDiskNames = new Set(onDisk.map((p) => p.manifest.name));
+    const declared: { plugin: string; mount: string; reason: 'disabled' | 'missing' }[] = onDisk
+      .flatMap((p) => (p.manifest.provides?.apiRoutes ?? []).map((mount) => ({ plugin: p.manifest.name, mount, reason: 'disabled' as const })));
+    // A plugin that is ENABLED but absent from every plugin dir has no manifest to read here, so the
+    // loop above cannot see the mounts it owns — the request would fall through to a bare 404 claiming
+    // the endpoint never existed. That is the state a user lands in when a subsystem has moved to the
+    // registry and the boot reconciler could not reach it, so the mounts are recovered from the registry
+    // cache instead. Cache miss simply yields nothing and the 404 stands.
+    for (const name of d.config.get().plugins.enabled) {
+      if (onDiskNames.has(name)) continue;
+      for (const mount of d.marketplace?.declaredRootRoutes(name) ?? []) {
+        declared.push({ plugin: name, mount, reason: 'missing' });
+      }
+    }
+    declaredInactive = declared
       .filter((m) => !registry.rootApiRoutes.has(m.mount))
-      .map((m) => ({ plugin: m.plugin, segs: m.mount.split('/').filter(Boolean) }));
+      .map((m) => ({ plugin: m.plugin, reason: m.reason, segs: m.mount.split('/').filter(Boolean) }));
   };
   // Does the request path fall under a declared-but-inactive mount? Same prefix semantics as the live
   // resolver: every mount segment must match (':param' matches any one segment), extra trailing
   // request segments are the handler's sub-path.
-  const inactiveOwner = (path: string): string | undefined => {
+  const inactiveOwner = (path: string): { plugin: string; reason: 'disabled' | 'missing' } | undefined => {
     const segs = path.split('/').filter(Boolean);
     return declaredInactive.find((m) =>
-      m.segs.length <= segs.length && m.segs.every((seg, i) => seg.startsWith(':') || seg === segs[i]))?.plugin;
+      m.segs.length <= segs.length && m.segs.every((seg, i) => seg.startsWith(':') || seg === segs[i]));
   };
   // Middleware with fall-through, NOT a terminal `app.all('*')`: an unmatched path must continue to
   // whatever is registered AFTER this dispatcher (daemon/index.ts adds the /ws/terminal upgrade on the
@@ -218,7 +232,16 @@ export function registerRootPluginApiRoutes(app: ElowenApp, ctx: RouteContext): 
       // merely off: answer an explicit 503 so callers (CLI, spawned agents, MCP tools) get a reason
       // instead of a bare 404. An undeclared path still falls through to Hono's notFound.
       const owner = inactiveOwner(c.req.path);
-      if (owner) return c.json({ error: `${owner} plugin is disabled` }, 503);
+      if (owner) {
+        // Same status, different cause: "disabled" is a setting the user can flip, "missing" means the
+        // plugin is switched ON but its code is not on this host — usually a registry that was
+        // unreachable at boot. Saying which one it is turns an opaque 503 into an actionable one.
+        return c.json({
+          error: owner.reason === 'missing'
+            ? `${owner.plugin} plugin is enabled but not installed`
+            : `${owner.plugin} plugin is disabled`,
+        }, 503);
+      }
       return next();
     }
     return dispatchPluginApi(c, ctx, { ...match, userGrantable: registry.userGrantable.has(match.plugin) });
