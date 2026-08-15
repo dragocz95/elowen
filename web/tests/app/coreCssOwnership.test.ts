@@ -32,13 +32,25 @@ const DYNAMIC: { prefix: string; builtIn: string }[] = [
 /** Core CSS whose only consumer is a plugin bundle. See the note above: a ledger, not an allowlist. */
 const PLUGIN_ONLY: string[] = [
   'card-interactive',
-  'editor-control-surface',
   'escalation-register-row',
   'flow-active',
-  'markdown-preview',
   'task-day-section',
   'task-register-row',
   'tasks-control-surface',
+];
+
+/** The same debt, for a plugin that no longer lives in this repository.
+ *
+ *  The editor moved to the plugin registry, so its `web-src/` is not on disk here and the scan below
+ *  cannot see it using these. Without this list they would read as DEAD and the obvious fix — deleting
+ *  them — would strip the styling off an installed editor, exactly the trap the string dictionary hit.
+ *
+ *  Unlike PLUGIN_ONLY this cannot be verified locally, which makes it the weaker of the two records and
+ *  worth keeping short. It is the same debt either way: core ships styling for a page it does not own,
+ *  and it goes away when a bundle can carry its own stylesheet. */
+const EXTERNAL_PLUGIN_ONLY: string[] = [
+  'editor-control-surface',
+  'markdown-preview',
 ];
 
 function walk(dir: string, match: RegExp, out: string[] = []): string[] {
@@ -94,8 +106,17 @@ describe('core stylesheet ownership', () => {
 
   it('defines no class that nothing uses', () => {
     const dead = [...defined].filter(([name]) =>
-      !isDynamic(name) && !coreSources.includes(name) && !pluginSources.includes(name));
+      !isDynamic(name) && !coreSources.includes(name) && !pluginSources.includes(name)
+      && !EXTERNAL_PLUGIN_ONLY.includes(name));
     expect(dead.map(([name, file]) => `${file}: .${name}`)).toEqual([]);
+  });
+
+  it('still defines the classes an out-of-repo plugin depends on', () => {
+    // The other direction: an entry here must name a rule that actually exists, or the record is a
+    // comforting fiction and the installed plugin is already unstyled.
+    const missing = EXTERNAL_PLUGIN_ONLY.filter((name) => !defined.has(name));
+    expect(missing, `recorded for an external plugin but no longer in the stylesheets: ${missing.join(', ')}`)
+      .toEqual([]);
   });
 
   it('ships exactly the recorded set of classes only a plugin bundle uses', () => {

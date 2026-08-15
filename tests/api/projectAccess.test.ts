@@ -36,11 +36,11 @@ function setup() {
     project: { id: 1, path: process.cwd() }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,
     users, projects, userProjects: new UserProjectStore(db),
-    // The editor's /projects/:id/files AND the whole /tasks surface are plugin-served now — the work
+    // The /tasks surface is plugin-served now — the work
     // plugin owns the task routes, so it has to be loaded for this file's task assertions to mean
     // anything. The agents plugin stays off: nothing here asserts a mission surface.
     plugins: new PluginRegistryProvider(() => loadPlugins({
-      dirs: [join(process.cwd(), 'plugins')], enabled: ['editor', 'work'], logger: { info() {}, warn() {}, error() {} },
+      dirs: [join(process.cwd(), 'plugins')], enabled: ['work'], logger: { info() {}, warn() {}, error() {} },
       delegatedTurnsOutOfProcess: () => false,
       pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
       publishEvent: (e) => bus.publish(e),
@@ -74,15 +74,13 @@ describe('project access gating', () => {
     expect(((await (await app.request('/tasks/ready', auth(adminTok))).json()) as unknown[]).length).toBe(1);
   });
 
-  it('non-admin is 403 on the editor + task surface until the admin assigns them', async () => {
+  it('non-admin is 403 on the task surface until the admin assigns them', async () => {
     const { app, adminTok, bobTok, bob } = setup();
-    expect((await app.request('/projects/1/files', auth(bobTok))).status).toBe(403);
     expect((await app.request('/tasks', auth(bobTok))).status).toBe(403);
     expect((await app.request('/missions', auth(bobTok))).status).toBe(403);
 
     expect((await app.request(`/users/${bob.id}/projects`, post(adminTok, { projectId: 1 }))).status).toBe(200);
 
-    expect((await app.request('/projects/1/files', auth(bobTok))).status).toBe(200);
     expect((await app.request('/tasks', auth(bobTok))).status).toBe(200);
   });
 
@@ -94,8 +92,8 @@ describe('project access gating', () => {
 
   it('the admin passes everywhere', async () => {
     const { app, adminTok } = setup();
-    expect((await app.request('/projects/1/files', auth(adminTok))).status).toBe(200);
     expect((await app.request('/tasks', auth(adminTok))).status).toBe(200);
+    expect((await app.request('/tasks/ready', auth(adminTok))).status).toBe(200);
   });
 
   it('also gates the activity log and the live event stream (no cross-tenant leak)', async () => {

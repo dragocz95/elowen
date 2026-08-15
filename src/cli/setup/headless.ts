@@ -145,6 +145,12 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
   //    installs into ITS OWN prefix, which is the only prefix the diagnostics tool resolves from. A
   //    failure warns but never fails the run. ────────────────────────────────────────────────────────
   if (o.lsp) {
+    // The lsp plugin ships from the registry now, not in this package, so a fresh install does not have
+    // it on disk and every call below would fail with "subsystem off". Asking for --lsp is asking for the
+    // subsystem, so fetch it first. Already-installed is not a failure: the endpoint answers 409 and the
+    // server probe underneath is what actually decides whether there is work to do.
+    const got = await apiJson(ctx, 'POST', '/plugins/marketplace/lsp/install', {});
+    if (!got.ok && got.status !== 409) warn('lsp', `couldn't install the lsp plugin (${got.status}) — skipping the language server`);
     const probe = await tsServerRow(ctx);
     if ('error' in probe) warn('lsp', `skipped — ${probe.error}`);
     else if (probe.row.installed) ok('lsp', `${TS_SERVER_COMMAND} already installed`);

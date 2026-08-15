@@ -1,9 +1,0 @@
-{
-  "description": "Kódová inteligence přes language servery: zkontroluje úpravu hned, jak vznikne (LspDiagnostics), skočí na definici, najde všechny reference, ukáže signaturu z hoveru a vypíše symboly dokumentu i celého workspace — vše odpovídá skutečný language server daného souboru, ne textové hledání. Elowen řídí servery, které zná (TypeScript, Pyright, gopls, rust-analyzer, clangd, …) a ty npm-ové si umí nainstalovat do vlastního prefixu. Vypnutím se zastaví všechny language servery a nástroje zmizí.",
-  "fields": {
-    "diagnosticsEnabled": {
-      "label": "Živá diagnostika",
-      "hint": "Kontroluje úpravy přes language servery. Vypnutí zastaví všechny běžící servery; nástroje zůstanou vypsané a nahlásí, že je LSP vypnuté. Příkaz `/lsp` přepíná totéž."
-    }
-  }
-}

@@ -122,9 +122,11 @@ describe('chat production architecture boundaries', () => {
     expect(model).not.toMatch(/\b(fromView|currentView|withChatViewChange)\b/);
   });
 
-  it('has no dead scheduler/LSP/view introspection branches', () => {
+  it('has no dead scheduler/view introspection branches', () => {
+    // The LSP manager's `fresh:` branch was pinned here too, until that plugin moved to the registry.
+    // The assertion went with it rather than being dropped: this repo can no longer see that source,
+    // and a check that silently stops looking at anything is worse than one that is honestly absent.
     expect(source('frameScheduler.ts')).not.toMatch(/background(?:IntervalMs)?/);
-    expect(sourceFromRoot('plugins/lsp/src/manager.ts')).not.toMatch(/fresh:\s*(?:true|false)|fresh:\s*boolean/);
     expect(source('chatViewport.ts')).not.toMatch(/\b(indexedHistoryTurns|cachedHistoryRows|setScrollFromRow)\s*\(/);
   });
 

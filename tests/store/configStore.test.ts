@@ -523,7 +523,11 @@ describe('ConfigStore lsp plugin migration', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     cs.migrateLspPlugin();
     expect(cs.pluginConfig('lsp')).toEqual({}); // unset → the plugin's own default (on)
-    expect(cs.get().plugins.enabled).toContain('lsp'); // from the fresh-install defaults, not the migration
+    // A fresh install does NOT get lsp: it ships from the plugin registry now, so it is not on disk
+    // until someone asks for it. The migration must stay clear of that decision — it exists to carry
+    // EXISTING installs across (the cases above), not to reinstate a default that was deliberately
+    // dropped. Enabling it here would leave every new instance pointing at a plugin it does not have.
+    expect(cs.get().plugins.enabled).not.toContain('lsp');
   });
 });
 

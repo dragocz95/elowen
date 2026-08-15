@@ -36,8 +36,6 @@ web-dist/
 # Built plugin output (each TypeScript plugin is its own compile unit — tsconfig.plugins.<name>.json,
 # all built by npm run build:ts)
 plugins/agents/dist/
-plugins/lsp/dist/
-plugins/editor/dist/
 plugins/work/dist/
 *.tsbuildinfo
 
@@ -45,9 +43,5 @@ plugins/work/dist/
 # one rather than a blanket plugins/*/web/, so a plugin that ships a hand-written (build-free) bundle
 # stays tracked instead of being silently ignored.
 plugins/agents/web/
-plugins/editor/web/
-plugins/cronjob/web/
-plugins/skills/web/
 plugins/subagent/web/
-plugins/whatsapp/web/
 plugins/work/web/

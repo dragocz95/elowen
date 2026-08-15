@@ -15,7 +15,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
  *  so a fresh install does not have them on disk to enable. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp', 'lsp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
@@ -66,7 +66,7 @@ describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {
 /** The rule a fresh install must satisfy, derived MECHANICALLY from each manifest rather than from a
  *  name list somebody has to remember to update: a plugin that contributes its own pages to the main
  *  navigation (`web.nav`) owns a domain vertical — its own world in the dashboard, its own objects, its
- *  own lifecycle (agents → Sessions/Escalations, work → Tasks/Kanban/Timeline/Stats, editor → Editor).
+ *  own lifecycle (agents → Sessions/Escalations, work → Tasks/Kanban/Timeline/Stats).
  *  Elowen out of the box is an assistant, not somebody else's product, so none of those ship enabled;
  *  the owner installs them from Settings → Plugins. A plugin contributing only a SETTINGS section
  *  (subagent) configures the assistant itself and is fine. */
@@ -83,8 +83,11 @@ describe('a fresh install enables no plugin that owns a domain vertical', () => 
   }
 
   it('the plugins that do own one are absent from the fresh set (and are the ones the rule catches)', () => {
-    const vertical = ['agents', 'work', 'editor'].filter((n) => (manifest(n).web?.nav ?? []).length > 0);
-    expect(vertical).toEqual(['agents', 'work', 'editor']); // guard: they still declare nav
+    // editor used to be named here too. It has moved to the plugin registry, so this package no longer
+    // has a manifest to read — and cannot accidentally ship it enabled either, which is what the rule
+    // was protecting against. The registry carries its own catalogue checks.
+    const vertical = ['agents', 'work'].filter((n) => (manifest(n).web?.nav ?? []).length > 0);
+    expect(vertical).toEqual(['agents', 'work']); // guard: they still declare nav
     for (const name of vertical) expect(enabled).not.toContain(name);
   });
 });

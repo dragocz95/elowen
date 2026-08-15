@@ -67,8 +67,10 @@ describe('plugin copies of core runtime code', () => {
 
   it('finds the git-sha copies it is meant to guard', () => {
     // A guard that silently matches nothing is worse than no guard: it reports green forever.
+    // The editor's copy left with the plugin when it moved to the registry; the equivalent check lives
+    // there now (tests/editorGitShaParity.test.ts), comparing BEHAVIOUR against the published package,
+    // because a registry checkout has the daemon's compiled dist/ but not its TypeScript sources.
     expect(copies.map((f) => relative(repoRoot, f)).sort()).toEqual([
-      'plugins/editor/src/files.ts',
       'plugins/work/src/lib/gitSha.ts',
     ]);
   });
