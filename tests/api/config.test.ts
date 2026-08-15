@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { makeTestApp } from '../helpers/testApp.js';
@@ -8,6 +8,7 @@ import { brainLimitsPatchSchema, runtimeLimitsPatchSchema, memoryRetentionPatchS
 import { buildToolDeferralCatalog, type ToolDeferralGroup } from '../../src/api/routes/config.js';
 import { resolveToolDeferralDecisions } from '../../src/brain/toolSearch/deferralPolicy.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { fixturePlugins } from '../helpers/fixturePlugin.js';
 
 const put = (token: string, body: unknown) => ({
   method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -125,8 +126,20 @@ describe('patch schemas accept exactly the store defaults\u2019 keys', () => {
 describe('GET /config/tool-deferral', () => {
   const auth = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
+  // A plugin-owned tool whose NAME matches a never-defer pattern ('Elowen*'). The lock lives in core's
+  // deferral policy and is keyed on the name alone, so a tool arriving from a plugin must be locked
+  // exactly as a built-in of the same name would be — moving a control plane out of the daemon must not
+  // quietly make it deferrable.
+  let fixture: { cleanup: () => void } | undefined;
+  afterEach(() => { fixture?.cleanup(); fixture = undefined; });
+
   it('returns effective modes from the shared policy and preserves security locks', async () => {
-    const { app, token, deps } = await makeTestApp({});
+    fixture = fixturePlugins([{
+      name: 'ledger',
+      provides: { tools: ['ElowenLedgerCreate'] },
+      register: "ctx.registerTool({ name: 'ElowenLedgerCreate', label: 'Create ledger entry', description: 'Creates a ledger entry.', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }) });",
+    }]);
+    const { app, token, deps } = await makeTestApp({ extra: { plugins: fixture.provider } });
     deps.config.update({
       runtime: {
         toolDeferralOverrides: {
@@ -158,10 +171,8 @@ describe('GET /config/tool-deferral', () => {
     }
 
     const builtin = groups.find((group) => group.sourceId === 'builtin')!;
-    // The control plane is plugin-owned now (work), but the never-defer lock is keyed on the tool NAME,
-    // so moving its owner must not make it deferrable.
-    const work = groups.find((group) => group.sourceId === 'plugin:work')!;
-    const pinned = work.tools.find((tool) => tool.name === 'ElowenCreateTask')!;
+    const plugin = groups.find((group) => group.sourceId === 'plugin:ledger')!;
+    const pinned = plugin.tools.find((tool) => tool.name === 'ElowenLedgerCreate')!;
     expect(pinned).toMatchObject({ eligible: false, lockedReason: 'never-defer', effective: 'immediate', reason: 'never-defer' });
     expect(builtin.tools.find((tool) => tool.name === 'EditImage')).toMatchObject({ override: 'immediate', effective: 'immediate', reason: 'tool-override' });
     expect(builtin.tools.find((tool) => tool.name === 'GenerateImage')).toMatchObject({ defaultMode: 'deferred', effective: 'deferred', reason: 'source-override' });

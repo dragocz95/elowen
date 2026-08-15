@@ -6,8 +6,8 @@ import { compactionReserveTokens } from '../../src/brain/session/factory.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { openWorkDb } from '../helpers/workDb.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { EventBus } from '../../src/api/sse.js';
+import { RefTaskStore } from '../helpers/refStores.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -181,7 +181,7 @@ describe('auto-compact threshold on task workers', () => {
   function workerHarness(userSettings?: (userId: number) => CliSettings) {
     const db = openWorkDb(':memory:');
     db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
-    const tasks = new TaskStore(db);
+    const tasks = new RefTaskStore(db);
     tasks.create({ id: 'T-1', project_id: 1, title: 'Fix bug' });
     tasks.setStatus('T-1', 'in_progress');
     const spawned: { settings: SettingsManager }[] = [];

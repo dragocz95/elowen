@@ -6,7 +6,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { EventStore } from '../../src/store/eventStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
+import { refEventRow } from '../helpers/refStores.js';
 
 /** The fresh-install ON/OFF matrix for the core paths that still touch the WORK-PLUGIN-owned tables
  *  (tasks/task_deps/task_usage). OFF = plain openDb, whose schema no longer carries them; ON = openWorkDb,
@@ -49,7 +49,7 @@ describe('work tables tolerance (fresh install, plugin OFF)', () => {
 
   it('the timeline still records an event whose label would have come from a task', () => {
     const db = openDb(':memory:');
-    const events = new EventStore(db, () => [agentsEventRow]);
+    const events = new EventStore(db, () => [refEventRow]);
     events.record({ type: 'task', taskId: 't-1', status: 'open' });
     const [row] = events.list();
     expect(row!.type).toBe('task');
@@ -106,7 +106,7 @@ describe('work tables purge (plugin ON — tables exist)', () => {
     const db = openWorkDb();
     db.prepare("INSERT INTO projects (id, slug, path) VALUES (7, 'proj', '/p')").run();
     db.prepare("INSERT INTO tasks (id, project_id, title, type) VALUES ('t-1', 7, 'Rewrite docs', 'task')").run();
-    const events = new EventStore(db, () => [agentsEventRow]);
+    const events = new EventStore(db, () => [refEventRow]);
     events.record({ type: 'task', taskId: 't-1', status: 'open' });
     const [row] = events.list();
     expect(row!.project_id).toBe(7);

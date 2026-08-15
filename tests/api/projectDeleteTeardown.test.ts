@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -9,6 +8,7 @@ import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import type { AgentsMissionGit } from '../../src/plugins/api.js';
+import { RefMissions } from '../helpers/refStores.js';
 
 /** DELETE /projects/:id must free every mission's on-disk worktree BEFORE the cascade erases the rows
  *  that point at it — the epic task row is how missionGit resolves the worktree, so once it is gone the
@@ -24,7 +24,7 @@ function makeApp(opts: { missionGit?: AgentsMissionGit; engine?: undefined } = {
   const bus = new EventBus();
   const app = createServer({
     taskRefs: new TaskRefs(db),
-    missions: new MissionStore(db), bus, tmux: new FakeTmuxDriver(),
+    missions: new RefMissions(db), bus, tmux: new FakeTmuxDriver(),
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), projects: new ProjectStore(db),
     ...(opts.missionGit ? { missionGit: opts.missionGit } : {}),

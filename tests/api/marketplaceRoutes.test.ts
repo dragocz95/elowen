@@ -2,9 +2,6 @@ import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -18,6 +15,7 @@ import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { BrainCredentialAccess } from '../../src/brain/providerUsage.js';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 const noCreds: BrainCredentialAccess = { get: () => undefined, getApiKey: async () => undefined };
 let sharedRuntime: ModelRuntime;
@@ -52,7 +50,7 @@ function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [])
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

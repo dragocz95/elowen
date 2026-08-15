@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** Copy that ONLY a plugin's own views render lives in that plugin's manifest `web.strings`, and the
@@ -20,18 +21,18 @@ const PLUGINS = join(process.cwd(), 'plugins');
 
 /** Computed reads (`s[expr]`) cannot be resolved statically. Rather than silently falling outside the
  *  check, each one is listed here with the keys it can produce — so the read is still verified, a site
- *  that disappears fails as a stale entry, and a new computed read fails until it is declared. */
-const COMPUTED_READS: { file: string; keys: string[] }[] = [
-  {
-    // KanbanBoard: `s[col.labelKey]` over the fixed COLUMNS table.
-    file: 'work/web-src/kanban/KanbanBoard.tsx',
-    keys: ['kbColumnOpen', 'kbColumnInProgress', 'kbColumnBlocked', 'kbColumnClosed', 'kbColumnCancelled'],
-  },
-];
+ *  that disappears fails as a stale entry, and a new computed read fails until it is declared.
+ *
+ *  Empty today: the one entry was work's KanbanBoard (`s[col.labelKey]` over its COLUMNS table) and that
+ *  plugin has moved to the plugin registry. An empty list is not an idle check — it is the assertion
+ *  that NO bundle currently reads a key the scan cannot resolve, and the first one to do so fails here
+ *  until it is declared. What that costs is the proof that the scan can still SEE a computed read, so
+ *  the scanner is exercised against a fixture bundle at the bottom of this file. */
+const COMPUTED_READS: { file: string; keys: string[] }[] = [];
 
 interface Manifest { web?: { strings?: Record<string, string> } }
 
-function bundleFiles(plugin: string): string[] {
+function bundleFiles(pluginsDir: string, plugin: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir)) {
@@ -40,8 +41,17 @@ function bundleFiles(plugin: string): string[] {
       else if (/\.tsx?$/.test(entry)) out.push(path);
     }
   };
-  try { walk(join(PLUGINS, plugin, 'web-src')); } catch { /* plugin ships no bundle */ }
+  try { walk(join(pluginsDir, plugin, 'web-src')); } catch { /* plugin ships no bundle */ }
   return out;
+}
+
+/** Plugins whose manifest declares its own `web.strings` — every one of them must show up in the scan.
+ *  Derived from the manifests because the count is now one (`subagent`; agents, work and editor took
+ *  their bundles to the plugin registry), and a hard-coded number over a single subject says nothing. */
+function pluginsDeclaringStrings(): string[] {
+  return readdirSync(PLUGINS).filter((name) => {
+    try { return Object.keys((JSON.parse(readFileSync(join(PLUGINS, name, 'elowen-plugin.json'), 'utf-8')) as Manifest).web?.strings ?? {}).length > 0; } catch { return false; }
+  }).sort();
 }
 
 function manifestStrings(plugin: string): Set<string> {
@@ -70,19 +80,19 @@ const foreignDeclaration = (name: string): RegExp =>
   // backtracks to zero and the negative lookahead passes on every declaration, including the intended ones.
   new RegExp(`(?:const|let|var)\\s+${name}\\s*=(?!\\s*(?:[\\w$.]+\\.)?usePluginStrings\\()`, 'g');
 
-function collect(): { statik: Read[]; computed: { plugin: string; where: string }[]; shadowed: string[]; sites: number } {
+function collect(pluginsDir: string = PLUGINS): { statik: Read[]; computed: { plugin: string; where: string }[]; shadowed: string[]; sites: number } {
   const statik: Read[] = [];
   const computed: { plugin: string; where: string }[] = [];
   const shadowed: string[] = [];
   let sites = 0;
-  for (const plugin of readdirSync(PLUGINS)) {
-    for (const file of bundleFiles(plugin)) {
+  for (const plugin of readdirSync(pluginsDir)) {
+    for (const file of bundleFiles(pluginsDir, plugin)) {
       const source = stripComments(readFileSync(file, 'utf-8'));
       const bindings = new Map<string, string>(); // variable → plugin it reads
       for (const [, name, owner] of source.matchAll(BINDING)) bindings.set(name!, owner!);
       if (bindings.size === 0) continue;
       sites += bindings.size;
-      const where = file.slice(PLUGINS.length + 1);
+      const where = file.slice(pluginsDir.length + 1);
       for (const [name, owner] of bindings) {
         if (foreignDeclaration(name).test(source)) { shadowed.push(`${where}: "${name}"`); continue; }
         for (const [, key] of source.matchAll(new RegExp(`\\b${name}\\.([A-Za-z_$][\\w$]*)`, 'g'))) {
@@ -105,7 +115,13 @@ describe('plugin web bundles against their own manifest strings', () => {
   });
 
   it('read only keys their manifest declares', () => {
-    expect(sites).toBeGreaterThan(0); // the scan really found the bundles
+    // The scan really found the bundles: every plugin that declares strings of its own has a read site.
+    // A plugin whose manifest carries copy nothing reads is dead weight the other direction, and would
+    // hide a scan that has stopped seeing that bundle.
+    const declaring = pluginsDeclaringStrings();
+    expect(declaring.length).toBeGreaterThan(0);
+    expect(declaring.filter((name) => !statik.some((read) => read.plugin === name))).toEqual([]);
+    expect(sites).toBeGreaterThan(0);
 
     const byPlugin = new Map<string, Set<string>>();
     const missing: string[] = [];
@@ -132,5 +148,58 @@ describe('plugin web bundles against their own manifest strings', () => {
       for (const key of entry.keys) if (!strings.has(key)) missing.push(`${entry.file}: ${plugin}.${key}`);
     }
     expect(missing).toEqual([]);
+  });
+});
+
+/** Everything above is the SCAN's verdict on the bundles this package ships, and there is one of those
+ *  left. Three of the four assertions read empty lists today — no undeclared computed read, no stale
+ *  declaration, no shadowed binding — and an empty list means "clean" only for as long as the scanner
+ *  still sees what it is looking at. A regex that stops matching would report exactly the same green.
+ *  So the scanner is run over a bundle written here, holding one of each thing it must catch. */
+describe('the scan itself still sees what it is looking for', () => {
+  let dir: string | undefined;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined; });
+
+  const scan = (files: Record<string, string>) => {
+    dir = mkdtempSync(join(tmpdir(), 'plugin-strings-scan-'));
+    for (const [path, source] of Object.entries(files)) {
+      const full = join(dir, 'ledger', 'web-src', path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, source);
+    }
+    return collect(dir);
+  };
+
+  it('resolves a static read, and ignores prose naming a key', () => {
+    const found = scan({
+      'Panel.tsx': [
+        "const s = hooks.usePluginStrings('ledger');",
+        'export const Panel = () => <h1>{s.title}</h1>;',
+        '// s.commentedOut is prose, not a call site',
+      ].join('\n'),
+    });
+    expect(found.statik.map((r) => `${r.plugin}.${r.key}`)).toEqual(['ledger.title']);
+    expect(found.sites).toBe(1);
+  });
+
+  it('reports a computed read rather than passing over it', () => {
+    const found = scan({
+      'Board.tsx': [
+        "const s = hooks.usePluginStrings('ledger');",
+        'export const Board = ({ col }) => <span>{s[col.labelKey]}</span>;',
+      ].join('\n'),
+    });
+    expect(found.computed.map((r) => `${r.plugin}: ${r.where}`)).toEqual(['ledger: ledger/web-src/Board.tsx']);
+  });
+
+  it('reports a binding name reused for something else instead of misreading its properties', () => {
+    const found = scan({
+      'Totals.tsx': [
+        "const s = hooks.usePluginStrings('ledger');",
+        'export const Totals = ({ rows }) => { const s = rows.summary; return <span>{s.amount}</span>; };',
+      ].join('\n'),
+    });
+    expect(found.shadowed).toEqual(['ledger/web-src/Totals.tsx: "s"']);
+    expect(found.statik).toEqual([]); // …and the misread properties never reach the key comparison
   });
 });

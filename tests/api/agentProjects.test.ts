@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createRouteContext } from '../../src/api/context.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 // agentProjects() is the confinement boundary for agent-scoped tokens (canAccessProject /
 // accessibleProjects never admin-bypass them). It was rewritten from a per-mission/per-child
@@ -19,10 +17,10 @@ function setup() {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'p2','/p2')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (3,'p3','/p3')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (4,'p4','/p4')").run();
-  const tasks = new TaskStore(db);
-  const missions = new MissionStore(db);
+  const tasks = new RefTaskStore(db);
+  const missions = new RefMissions(db);
   const ctx = createRouteContext({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions, bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness: new RefReadiness(db), missions, bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/p1' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),

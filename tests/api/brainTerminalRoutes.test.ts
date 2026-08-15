@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
-import { agentsPluginProvider } from '../helpers/testApp.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -17,6 +13,7 @@ import { BrainTerminalService } from '../../src/brain/terminalService.js';
 import { classifySession } from '../../src/shared/sessionInfo.js';
 import { freshUserSessionId, brainTerminalName } from '../../src/brain/sessionId.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function setup() {
   const db = openPluginTablesDb(':memory:');
@@ -37,23 +34,17 @@ function setup() {
     tmux, users, store: brainStore, url: 'http://localhost:4400', cliArgv: ['elowen'],
     terminalDir: (id) => `/tmp/terminal/${id}`,
   });
-  const tasks = new TaskStore(db);
-  const readiness = new Readiness(db);
+  const tasks = new RefTaskStore(db);
+  const readiness = new RefReadiness(db);
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db), bus: new EventBus(),
+    tasks, taskRefs: new TaskRefs(db), readiness, missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config,
     users, projects, userProjects,
     brain: {} as never, brainTerminal, brainStore,
-    // '/sessions' is plugin-served now — DELETE of a chat terminal routes to THIS service.
-    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users, tmux, terminals: {
-      chatTerminalStop: (userId, session) => brainTerminal.stop(userId, session),
-      brainWorkerLive: () => false, brainWorkerAbort: async () => {},
-      ticketIssue: () => 'test-ticket',
-    } }),
   });
   return {
     app, brainTerminal, tmux, users, brainStore, sessionId,
@@ -122,40 +113,10 @@ describe('POST /brain/terminal RBAC + idempotence', () => {
   });
 });
 
-describe('derived running state via GET /sessions', () => {
-  const names = async (app: ReturnType<typeof setup>['app'], tok: string) =>
-    ((await (await app.request('/sessions', { headers: auth(tok) })).json()) as { name: string }[]).map((s) => s.name);
-
-  it('shows the chat terminal to its owner admin and hides it from a foreign admin / non-admin', async () => {
-    const { app, adminTok, admin2Tok, bobTok, sessionId, adminId } = setup();
-    await post(app, adminTok, { session: sessionId });
-    const terminal = brainTerminalName(adminId, sessionId);
-    expect(await names(app, adminTok)).toContain(terminal);
-    expect(await names(app, admin2Tok)).not.toContain(terminal); // invariant 4: no admin bypass on chat
-    expect(await names(app, bobTok)).not.toContain(terminal);
-  });
-});
-
-describe('DELETE /sessions/:name tears the chat terminal down', () => {
-  const del = (app: ReturnType<typeof setup>['app'], tok: string, name: string) =>
-    app.request(`/sessions/${name}`, { method: 'DELETE', headers: auth(tok) });
-
-  it('refuses a non-owner (403) and, for the owner, revokes the token + drops the binding', async () => {
-    const { app, adminTok, admin2Tok, tmux, users, brainStore, sessionId, adminId } = setup();
-    await post(app, adminTok, { session: sessionId });
-    const terminal = brainTerminalName(adminId, sessionId);
-    const token = tmux.argvSpawnFor(terminal)!.env.ELOWEN_TOKEN;
-
-    expect((await del(app, admin2Tok, terminal)).status).toBe(403); // foreign admin refused
-    expect(brainStore.getBrainTerminal(terminal)).toBeDefined();     // still intact
-
-    expect((await del(app, adminTok, terminal)).status).toBe(200);   // owner tears it down
-    expect(await tmux.list()).not.toContain(terminal);
-    expect(users.principalForToken(token)).toBeNull();
-    expect(brainStore.getBrainTerminal(terminal)).toBeUndefined();
-  });
-});
-
+// The `/sessions` listing and the DELETE that tears a chat terminal down are served by the agents
+// plugin's root mount, so those two describes moved to that plugin's suite in the registry
+// (tests/agents-brainTerminalSessions.test.ts). What stays here is the daemon's own surface: the
+// POST /brain/terminal RBAC above and the session-name classifier below.
 describe('classifySession chat role', () => {
   it('extracts the owner userId', () => {
     expect(classifySession('elowen-chat-7-abc')).toMatchObject({ role: 'chat', userId: 7 });

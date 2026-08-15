@@ -5,11 +5,9 @@ import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 import { builtinToolMetas, BUILTIN_TOOL_PLAN_SAFE } from '../../src/brain/tools/index.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
-import { agentsTestHost } from '../helpers/testApp.js';
+import { pluginTestHost } from '../helpers/testApp.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -29,12 +27,14 @@ const CONFIG = {
 
 async function loadEveryBundledPlugin() {
   const names = discoverPlugins([pluginDir]).map((p) => p.manifest.name);
-  // The agents plugin needs a database and host seams at register() time (schema migration, tmux for
-  // its '/sessions' surface) — without them it fails load and its declared tools would silently drop
-  // out of the parity comparison below. Everything deeper is resolved lazily and never touched here.
+  // A plugin that reaches for a host seam at register() time (a database to migrate, tmux, the core
+  // stores) and does not find it is SKIPPED with a logged error — its declared tools would then drop
+  // silently out of the parity comparison below and this file would audit a shorter list than it says.
+  // So the FULL host seam is wired, for whatever the package happens to bundle. Everything deeper is
+  // resolved lazily and never touched here.
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const host = agentsTestHost({ db, tasks: new TaskStore(db), readiness: new Readiness(db), config: new ConfigStore(db), projects: new ProjectStore(db) });
+  const host = pluginTestHost({ db, config: new ConfigStore(db), projects: new ProjectStore(db) });
   return loadPlugins({
     dirs: [pluginDir], enabled: names, logger: log, config: CONFIG,
     pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
@@ -51,9 +51,11 @@ describe('tool naming convention', () => {
     const reg = await loadEveryBundledPlugin();
     // Guards the guard: a config/loader regression that registers nothing must fail loudly rather than
     // vacuously pass an empty list. The floor tracks what the package still contains and has dropped
-    // twice as plugins moved to the registry — first the chat adapters (discord alone shipped 25
-    // tools), then lsp's six.
-    expect(reg.tools.length).toBeGreaterThan(35);
+    // three times as plugins moved to the registry — first the chat adapters (discord alone shipped 25
+    // tools), then lsp's six, now agents and work. The eight remaining bundled plugins register 30, so
+    // 25 is the honest floor: it survives one plugin trimming a tool or two, and still fails the moment
+    // a whole plugin stops registering — which is the silent regression the number is here to catch.
+    expect(reg.tools.length).toBeGreaterThan(25);
     expect(reg.tools.map((t) => t.name).filter((n) => !TITLE_CASE.test(n))).toEqual([]);
   });
 

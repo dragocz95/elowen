@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -10,13 +7,13 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { AdvisorService } from '../../plugins/agents/src/advisor/service.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { advisorHostFor } from '../helpers/testApp.js';
+import { RefAdvisorHooks, RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
-/** Server wired with a real AdvisorService (fake tmux) plus a brain stub that records how much of the
- *  user's durable state is still visible at the moment live teardown runs — that ordering is the whole
- *  point of the delete route. */
+/** Server wired with the reference advisor hooks (refStores.ts, over a fake tmux) plus a brain stub
+ *  that records how much of the user's durable state is still visible at the moment live teardown runs
+ *  — that ordering is the whole point of the delete route. The advisor SERVICE is plugin-owned; what
+ *  the daemon owns, and what is measured here, is calling its two hooks before the row is gone. */
 function setup() {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -25,14 +22,7 @@ function setup() {
   const carol = users.create('carol', 'pw');
   const config = new ConfigStore(db);
   const tmux = new FakeTmuxDriver();
-  // The plugin-owned advisor service (nothing spawns here — the delete route only needs stop()).
-  const svc = new AdvisorService({
-    spawn: () => undefined, tmux, host: advisorHostFor(users),
-    config: config as never, prompts: { render: () => '', rawTemplate: () => '' },
-    fallback: { program: 'claude-code', model: 'sonnet' },
-    url: 'http://localhost:4400', mcpUrl: 'http://localhost:4400/mcp', prepareMcp: () => {},
-  });
-  const advisor = { ensureOnLogin: (id: number) => svc.ensureOnLogin(id), stop: (id: number) => svc.stop(id) };
+  const advisor = new RefAdvisorHooks(tmux, users);
   /** Terminal bindings still resolvable when deleteAllManagedSessions was invoked (-1 = never invoked). */
   let bindingsAtTeardown = -1;
   const brain = {
@@ -42,26 +32,29 @@ function setup() {
     },
   };
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: tmux as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     advisor, brain: brain as never,
   });
-  return { app, db, users, tmux, carol, adminTok: users.issueToken(admin.id), bindings: () => bindingsAtTeardown };
+  return { app, db, users, tmux, carol, advisor, adminTok: users.issueToken(admin.id), bindings: () => bindingsAtTeardown };
 }
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('DELETE /users/:id tears down what is running before it deletes what is stored', () => {
   it('kills the deleted user\'s advisor tmux instead of orphaning it', async () => {
-    const { app, tmux, carol, adminTok } = setup();
-    const session = `elowen-advisor-${carol.id}`;
+    const { app, tmux, carol, advisor, adminTok } = setup();
+    const session = RefAdvisorHooks.session(carol.id);
     tmux.setPane(session, ''); // carol's advisor is live — a full agent CLI with shell access
     expect(await tmux.list()).toContain(session);
 
     expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
     expect(await tmux.list()).not.toContain(session); // nothing else ever reaps this session
+    // …and the hook ran while the row was still there: stop() persists advisor_autostart=false, which
+    // is a no-op against a deleted user, so calling it after the delete would silently do nothing.
+    expect(advisor.stoppedAfterDelete).toEqual([]);
   });
 
   it('runs brain-session teardown while the user\'s brain_terminals bindings still exist', async () => {

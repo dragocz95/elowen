@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function makeApp() {
   const db = openPluginTablesDb(':memory:');
@@ -15,7 +13,7 @@ function makeApp() {
   const users = new UserStore(db);
   users.create('alice', 'secret');
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db),
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db),
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db), users,

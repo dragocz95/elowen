@@ -33,12 +33,15 @@ const ALWAYS_RENDERED = ['elowen', 'elowen-platform', 'scheduled', 'worker-brain
 
 /** A core template is read with no knowledge of which plugins the instance runs. Naming a plugin-owned
  *  tool in one therefore instructs the model to prefer a tool it may not have been given — which is
- *  exactly what an instance with `agents` or `work` disabled gets. */
+ *  exactly what an instance gets when the owning plugin is disabled or, since the domain plugins moved to
+ *  the registry, simply not installed. */
 describe('core prompt templates', () => {
   it('name no tool that a plugin owns', () => {
     const owned = pluginToolNames();
-    // The scan must actually find the plugin tools, or the assertion below passes vacuously.
-    for (const known of ['ElowenListTasks', 'ElowenListMissions', 'ElowenListSessions', 'AskUserQuestion']) {
+    // The scan must actually find the plugin tools, or the assertion below passes vacuously. These four
+    // come from four different bundled plugins (askuser, terminal, subagent, files), so a scan that
+    // silently stops walking part of the tree fails here rather than reporting a clean prompt.
+    for (const known of ['AskUserQuestion', 'Bash', 'Delegate', 'Read']) {
       expect(owned).toContain(known);
     }
 

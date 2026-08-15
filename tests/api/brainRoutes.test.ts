@@ -5,9 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
@@ -19,6 +16,7 @@ import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { ProcessInfo } from '../../src/brain/processRegistry.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 const proc = (id: string, sessionId: string | null): ProcessInfo => ({
   id, command: `sleep ${id}`, cwd: '/w', startedAt: '2026-01-01T00:00:00Z', sessionId, running: true, exitCode: null,
@@ -324,7 +322,7 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
   const config = new ConfigStore(db);
   const brain = fakeBrain();
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -1026,7 +1024,7 @@ describe('GET /brain/models allow-list', () => {
       { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['kimi', 'glm'], apiKey: 'k' },
     ] } } as never);
     const app = createServer({
-      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

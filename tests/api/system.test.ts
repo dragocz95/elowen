@@ -1,7 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { EventBus } from '../../src/api/sse.js';
@@ -9,18 +6,19 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function makeApp(over: { latestVersion?: () => Promise<string | null>; startUpdate?: () => void; startRestart?: (target: 'daemon' | 'web') => void; autoUpdate?: boolean; withUsers?: boolean } = {}) {
   const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
   if (over.autoUpdate) config.update({ autoUpdate: true });
-  const missions = new MissionStore(db);
+  const missions = new RefMissions(db);
   // Gated mode on demand: the first user is the admin, the second is a plain user.
   const users = over.withUsers ? new UserStore(db) : undefined;
   const adminTok = users ? users.issueToken(users.create('admin', 'pw').id) : undefined;
   const userTok = users ? users.issueToken(users.create('amy', 'pw').id) : undefined;
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions,
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions,
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects: new ProjectStore(db), git: null as any, users,

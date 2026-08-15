@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
@@ -19,12 +19,18 @@ const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context',
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
-  web?: { label?: string; nav?: { label: string; route?: string }[] };
+  web?: { label?: string; nav?: { label: string; route?: string }[]; settings?: { id: string }[] };
 }
 
 function manifest(name: string): Manifest {
   return JSON.parse(readFileSync(join(process.cwd(), 'plugins', name, 'elowen-plugin.json'), 'utf-8')) as Manifest;
 }
+
+/** The rule itself, in one place so the fresh set below and the teeth check are measured by the SAME
+ *  predicate — a rule that is re-spelled per test can be weakened in one copy and stay green in the
+ *  other. `nav` is a plugin's own pages in the main navigation; `label` names the WORLD those pages
+ *  live in, so either one on its own means the plugin owns a vertical. */
+const ownsVertical = (m: Manifest): boolean => (m.web?.nav?.length ?? 0) > 0 || (m.web?.label ?? null) !== null;
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {
@@ -76,19 +82,37 @@ describe('a fresh install enables no plugin that owns a domain vertical', () => 
 
   for (const name of enabled) {
     it(`${name}: contributes no top-level navigation of its own`, () => {
-      const web = manifest(name).web;
-      expect(web?.nav ?? []).toEqual([]);
-      expect(web?.label ?? null).toBeNull(); // `label` names a plugin's nav WORLD — same signal
+      expect({ plugin: name, ownsVertical: ownsVertical(manifest(name)) }).toEqual({ plugin: name, ownsVertical: false });
     });
   }
 
-  it('the plugins that do own one are absent from the fresh set (and are the ones the rule catches)', () => {
-    // editor used to be named here too. It has moved to the plugin registry, so this package no longer
-    // has a manifest to read — and cannot accidentally ship it enabled either, which is what the rule
-    // was protecting against. The registry carries its own catalogue checks.
-    const vertical = ['agents', 'work'].filter((n) => (manifest(n).web?.nav ?? []).length > 0);
-    expect(vertical).toEqual(['agents', 'work']); // guard: they still declare nav
-    for (const name of vertical) expect(enabled).not.toContain(name);
+  // Every default must be a plugin this package actually SHIPS — the loop above reads each manifest from
+  // disk, so a default naming a plugin that is not here would make it throw rather than pass, but only
+  // by accident. Stated outright it also holds the other half: a fresh install cannot enable a name the
+  // installer has no folder for, which is how the departed plugins would have to come back.
+  it('every fresh default is a plugin on disk', () => {
+    const onDisk = readdirSync(join(process.cwd(), 'plugins'));
+    expect(enabled.filter((name) => !onDisk.includes(name))).toEqual([]);
+  });
+
+  // agents, work and editor used to be named here as the plugins the rule catches. All three moved to
+  // the plugin registry, so this package has no manifest to read — and cannot accidentally ship one
+  // enabled either. That leaves the rule with no positive subject on disk, which would make the loop
+  // above pass by having nothing to reject, so the discrimination is proved directly instead: on the
+  // real manifest of the one bundled plugin that HAS a web block, and on that same manifest with a nav
+  // entry added. Nothing here is hand-written scenery — it is what ships, and what ships plus a page.
+  it('the rule still catches a plugin that owns a vertical', () => {
+    const settingsOnly = manifest('subagent');
+    expect(settingsOnly.web?.settings?.length ?? 0).toBeGreaterThan(0); // a real web block, not an absent one
+    expect(ownsVertical(settingsOnly)).toBe(false); // configuring the assistant itself is fine
+
+    const withNav = { ...settingsOnly, web: { ...settingsOnly.web, nav: [{ label: 'Sub-agents', route: '/subagents' }] } };
+    expect(ownsVertical(withNav)).toBe(true);
+    const withLabel = { ...settingsOnly, web: { ...settingsOnly.web, label: 'Sub-agents' } };
+    expect(ownsVertical(withLabel)).toBe(true);
+
+    // …and a plugin the rule catches is one the fresh set would then have to exclude.
+    expect(enabled.filter((name) => ownsVertical(manifest(name)))).toEqual([]);
   });
 });
 

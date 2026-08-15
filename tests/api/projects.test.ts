@@ -3,9 +3,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { FakeGitReader } from '../../src/git/gitReader.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
@@ -14,15 +11,16 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 function makeApp(extra: { engine?: unknown; missionGit?: unknown; tmux?: unknown } = {}) {
   const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const projects = new ProjectStore(db);
-  const tasks = new TaskStore(db);
-  const missions = new MissionStore(db);
+  const tasks = new RefTaskStore(db);
+  const missions = new RefMissions(db);
   const git = new FakeGitReader({ isRepo: true, status: { branch: 'main', ahead: 0, behind: 0, dirty: 2, clean: false }, branches: [{ name: 'main', current: true }], commits: [{ hash: 'abc123', subject: 'init', author: 'me', relative: '1 hour ago' }] });
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions,
+    tasks, taskRefs: new TaskRefs(db), readiness: new RefReadiness(db), missions,
     bus: new EventBus(), engine: (extra.engine ?? null) as any, spawn: null as any, tmux: (extra.tmux ?? null) as any,
     missionGit: extra.missionGit as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },

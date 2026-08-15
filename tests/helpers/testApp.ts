@@ -1,183 +1,52 @@
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { mkdirSync } from 'node:fs';
-import { openDb } from '../../src/store/db.js';
-import { openWorkDb } from './workDb.js';
-import { makePluginDb } from '../../src/store/pluginDb.js';
-import { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff } from '../../src/integrations/projectFiles.js';
-import { render, setPluginPromptSources } from '../../src/prompts/index.js';
-import { setPluginPromptCatalog } from '../../src/prompts/catalog.js';
+import type { Db } from '../../src/store/db.js';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
+import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { EventBus } from '../../src/api/sse.js';
-import { PlanJobStore } from '../../plugins/agents/src/overseer/planJob.js';
-import { FakeInference } from '../../src/inference/client.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { FakeClock } from '../../src/shared/clock.js';
+import { FakeInference } from '../../src/inference/client.js';
 import { createServer } from '../../src/api/server.js';
-import { loadPlugins } from '../../src/plugins/loader.js';
-import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import type { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import type { PlanJob } from '../../plugins/agents/src/overseer/planJob.js';
-import type { PluginHostAdvisor, PluginHostConfig, PluginHostTerminals } from '../../src/plugins/api.js';
-
-/** The host seam wiring the agents plugin needs to load in tests — brainCore's shape with fakes for
- *  tmux/inference/push. Shared by agentsPluginProvider below and by tests that load EVERY bundled
- *  plugin (toolNaming) and only need the agents plugin to get past register(). */
-export function agentsTestHost(w: {
-  db: ReturnType<typeof openDb>;
-  tasks: TaskStore;
-  readiness: Readiness;
-  config: ConfigStore;
-  projects: ProjectStore;
-  users?: UserStore;
-  tmux?: FakeTmuxDriver;
-  terminals?: PluginHostTerminals;
-  /** Override the advisor collaborators seam (default: a real one over `users`, tmp working dirs). */
-  advisorHost?: PluginHostAdvisor;
-  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string; userOverride?(userId: number, name: string): string | null };
-  /** Raw LLM output the relay path returns from `decompose` (a JSON array of phases) — the work
-   *  plugin's planning route reaches its inference client through THIS seam, like the daemon does. */
-  fakePlan?: string;
-}) {
-  return {
-    tmux: w.tmux ?? new FakeTmuxDriver(),
-    brainWorker: () => undefined,
-    elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't', tokenForTask: () => undefined, tokenForUser: () => undefined },
-    stores: {
-      tasks: w.tasks,
-      projects: w.projects,
-      homeProject: () => w.projects.list()[0] ?? { id: 1, slug: 'elowen', path: '/o', notes: '', icon: '', pr_enabled: null },
-      usersRead: {
-        list: () => (w.users?.list() ?? []).map((u) => ({ id: u.id, username: u.username, isAdmin: u.is_admin })),
-        isAdmin: (id: number) => w.users?.isAdmin(id) ?? true,
-        allowedExecs: (id: number) => w.users?.list().find((u) => u.id === id)?.allowed_execs ?? null,
-      },
-      readiness: w.readiness,
-      taskUsage: new TaskUsageStore(w.db),
-      // These wirings hand the plugin a real task store, so the domain HAS an owner — the question a
-      // dependent plugin asks before it builds anything. tests/plugins/agents/withoutWork.test.ts wires
-      // the opposite answer on purpose.
-      tasksAvailable: () => true,
-    },
-    prompts: {
-      // Forward the resolved userId too: a test that overrides this seam is usually asserting exactly
-      // that the route passed the right owner through.
-      render: (n: string, v?: Record<string, string>, userId?: number | null) => (w.prompts ? w.prompts.render(n, v, userId ?? undefined) : render(n, v)),
-      rawTemplate: (n: string) => w.prompts?.rawTemplate(n) ?? '',
-      // No per-user overrides by default: the planner prompt then falls back to the workspace template,
-      // exactly like a daemon whose users never edited theirs.
-      userOverride: (userId: number, n: string) => w.prompts?.userOverride?.(userId, n) ?? null,
-    },
-    config: w.config as unknown as PluginHostConfig,
-    relayClient: () => new FakeInference(w.fakePlan ?? '[{"title":"Phase A","type":"task"}]'),
-    git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff } as never,
-    push: () => ({ sendToUsers: async () => {} }),
-    terminals: () => w.terminals ?? {
-      chatTerminalStop: async () => {},
-      brainWorkerLive: () => false,
-      brainWorkerAbort: async () => {},
-      ticketIssue: () => 'test-ticket',
-    },
-    advisor: () => w.advisorHost ?? (w.users ? advisorHostFor(w.users) : undefined),
-  };
-}
-
-/** A real PluginHostAdvisor over a test UserStore — the same shape bootstrap wires in the daemon,
- *  with a tmp working dir and fixed personality/brand. Shared by the plugin-served /advisor route
- *  tests and the AdvisorService unit tests. */
-export function advisorHostFor(users: UserStore): PluginHostAdvisor {
-  return {
-    users: {
-      get: (id) => {
-        const u = users.get(id);
-        return u ? { name: u.name, username: u.username, isAdmin: u.is_admin, allowedExecs: u.allowed_execs, advisorExec: u.advisor_exec ?? '', advisorAutostart: u.advisor_autostart ?? false } : null;
-      },
-      setExec: (id, exec) => { users.setAdvisorExec(id, exec); },
-      setAutostart: (id, on) => { users.setAdvisorAutostart(id, on); },
-      ensureToken: (id) => users.ensureAdvisorToken(id),
-    },
-    dir: (id) => { const p = join(tmpdir(), 'elowen-test-advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
-    personality: () => 'Test personality paragraph.',
-    brand: () => ({ agentName: 'Elowen', productName: 'Elowen' }),
-  };
-}
-
-/** Build a PluginRegistryProvider that loads the REAL agents plugin (its dist build) over the given
- *  stores — the host wiring shape brainCore builds, with test fakes for tmux/inference/push. Local
- *  createServer tests pass the result as `plugins` so the root-mounted '/missions' (…) surfaces serve;
- *  loading is lazy (first dispatched request). */
-export function agentsPluginProvider(w: {
-  db: ReturnType<typeof openDb>;
-  tasks: TaskStore;
-  readiness: Readiness;
-  config: ConfigStore;
-  projects: ProjectStore;
-  users?: UserStore;
-  bus?: EventBus;
-  tmux?: FakeTmuxDriver;
-  /** Core terminal controls (chat teardown, brain workers, ws tickets). Tests exercising those
-   *  paths pass their real services here; the default is a no-op fake. */
-  terminals?: PluginHostTerminals;
-  /** Override the advisor collaborators seam (default: a real one over `users`). */
-  advisorHost?: PluginHostAdvisor;
-  /** Override the prompt seam (default: the core file renderer, no per-user overrides). */
-  prompts?: { render(name: string, vars?: Record<string, string>, userId?: number): string; rawTemplate(name: string): string; userOverride?(userId: number, name: string): string | null };
-  /** Raw LLM output the relay planning path returns (see agentsTestHost). */
-  fakePlan?: string;
-  /** Activity-log purge sink (ctx.deleteEventsForTarget) — the task DELETE route's history purge. */
-  deleteEvents?: (target: string) => void;
-}): PluginRegistryProvider {
-  const bus = w.bus ?? new EventBus();
-  return new PluginRegistryProvider(() => loadPlugins({
-    dirs: [join(process.cwd(), 'plugins')],
-    enabled: ['agents', 'work'],
-    delegatedTurnsOutOfProcess: () => false,
-    pluginDb: (plugin) => makePluginDb(w.db, plugin, { canMigrate: true }),
-    publishEvent: (e) => bus.publish(e),
-    subscribeEvents: (fn) => bus.subscribe(fn),
-    ...(w.deleteEvents ? { deleteEvents: w.deleteEvents } : {}),
-    host: agentsTestHost(w),
-    logger: { info() {}, warn() {}, error() {} },
-  }).then((registry) => {
-    // Mirror brainCore's post-load snapshot: the plugin owns the agents templates now, so the core
-    // renderer needs the source overlay before the first worker/guide render.
-    setPluginPromptCatalog(registry.promptEntries.map((p) => p.entry));
-    setPluginPromptSources(new Map([...registry.promptSources].map(([n, s]) => [n, s.file])));
-    return registry;
-  }));
-}
+import { render } from '../../src/prompts/index.js';
+import {
+  projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff, safeProjectPath,
+} from '../../src/integrations/projectFiles.js';
+import type { PluginHostConfig } from '../../src/plugins/api.js';
+import { openPluginTablesDb } from './pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore, RefTaskUsage } from './refStores.js';
 
 export interface TestAppOpts {
-  /** Raw LLM output the relay path returns from `decompose` (a JSON array of phases). */
-  fakePlan?: string;
-  /** Autopilot API key; set non-empty to enable the relay planning path. */
+  /** Autopilot API key; set non-empty for routes whose behaviour depends on the relay being configured. */
   apiKey?: string;
-  /** Stub a mission's isolated worktree dir (mirrors MissionGit.worktreeFor) so launch-path tests can
-   *  assert that a mission phase runs in its worktree rather than the shared project checkout. */
-  worktreeFor?: (missionId: string) => string | null | undefined;
-  /** Activity-log purge sink the task DELETE route calls (ctx.deleteEventsForTarget). */
-  deleteEvents?: (target: string) => void;
-  /** Extra ServerDeps spread over the defaults — for routes whose collaborators (themes, brain stubs…)
-   *  the standard wiring does not construct. */
+  /** Register a `userProjects` store so the coarse tenancy gate is live (default: absent = ungated). */
+  userProjects?: boolean;
+  /** Extra ServerDeps spread over the defaults — for routes whose collaborators (themes, brain stubs,
+   *  a plugin registry provider…) the standard wiring does not construct. */
   extra?: Partial<Parameters<typeof createServer>[0]>;
 }
 
-/** Wire a real in-memory daemon app with a bootstrapped admin token, composed EXACTLY like the daemon:
- *  the REAL agents plugin is loaded from disk (its dist build) over the shared in-memory DB, and the
- *  server reaches the subsystem through the loaded registry's 'missions' control — the same instances the
- *  plugin's root-mounted routes use. Exposes the live stores/queues so tests can arrange state and
- *  assert side effects. */
+/** Wire an in-memory daemon app with a bootstrapped admin token — composed like the daemon MINUS its
+ *  plugins. `work` and `agents` install from the plugin registry now, so a daemon test cannot load them:
+ *  the task and mission domains are served by the reference contract implementations in refStores.ts,
+ *  over a database carrying the frozen plugin DDL (tests/fixtures/pluginSchema.ts).
+ *
+ *  What this app therefore HAS: every daemon-owned route family, a task domain that really stores and
+ *  really enforces its invariants, and mission rows for the tenancy and teardown paths to read. What it
+ *  does NOT have: the plugins' own root-mounted surfaces (`/tasks`, `/missions`, `/sessions`, `/notes`,
+ *  `/advisor`, `/plan/*`) and the mission engine behind them. A suite that needs one of those is testing
+ *  a plugin, and lives in the plugin registry beside it — see the `agents-*` / `work-*` suites there.
+ *
+ *  Pass `extra.plugins` to give the app a registry provider (a fixture plugin, an intentionally empty
+ *  one) when the SUBJECT is the daemon's plugin machinery rather than any particular plugin. */
 export async function makeTestApp(opts: TestAppOpts = {}) {
-  const db = openWorkDb(':memory:');
+  const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
-  const tasks = new TaskStore(db);
-  const readiness = new Readiness(db);
+  const tasks = new RefTaskStore(db);
+  const readiness = new RefReadiness(db);
+  const taskUsage = new RefTaskUsage(db);
+  const missions = new RefMissions(db);
   const config = new ConfigStore(db);
   const projects = new ProjectStore(db);
   const users = new UserStore(db);
@@ -188,68 +57,61 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   const tmux = new FakeTmuxDriver();
   const bus = new EventBus();
 
-  // The REAL agents plugin over this app's stores. One provider per app: each test gets its own
-  // runtime generation over its own :memory: DB.
-  const provider = agentsPluginProvider({ db, tasks, readiness, config, projects, users, bus, tmux, ...(opts.fakePlan ? { fakePlan: opts.fakePlan } : {}), ...(opts.deleteEvents ? { deleteEvents: opts.deleteEvents } : {}) });
-  const registry = await provider.get();
-  const control = registry.control('missions');
-  if (!control) throw new Error('agents plugin failed to load in makeTestApp');
-
-  // The ONE subsystem instance set — server deps and the plugin's root-mounted routes share it, exactly
-  // like the daemon's live control getters.
-  const missions = control.missions() as MissionStore;
-  // Launch-path tests stub the mission worktree resolution — the plugin's manual-launch handler calls
-  // the runtime's REAL MissionGit, so patch that exact instance (own-property assignment over the
-  // class method), keeping the core-facing deps.missionGit override below in sync.
-  if (opts.worktreeFor) (control.missionGit() as { worktreeFor: (id: string) => string | null | undefined }).worktreeFor = opts.worktreeFor;
-  const engine = control.engine();
-  const spawn = control.spawn();
-  const decisionQueue = control.decisionQueue();
-  const planJobs = control.planJobs() as PlanJobStore;
-  // No-op pilot backend on the LIVE control the work plugin resolves: whenever the REAL flow would
-  // pick the agent backend, park the job instead — it stays 'planning' until a test calls
-  // /plan/:id/submit. Every other planFlow decision is real. Patched as an own property on the very
-  // instance the routes reach, since they resolve planFlow() through the registry, not through deps.
-  const realPlanFlow = control.planFlow();
-  const realPilotBackend = realPlanFlow.pilotBackend.bind(realPlanFlow);
-  (realPlanFlow as { pilotBackend: typeof realPlanFlow.pilotBackend }).pilotBackend =
-    (exec) => realPilotBackend(exec) ? async (_job: PlanJob, _projectPath: string) => { /* parked */ } : null;
-
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), missions, engine, tmux, bus,
+    tasks, taskRefs: new TaskRefs(db), missions, tmux, bus, taskUsage,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects,
-    missionGit: control.missionGit(),
-    plugins: provider,
-    // Mirror bootstrap: login autostart/user-deletion advisor hooks resolve through the control.
-    advisor: control.advisor(),
-    // Mirror bootstrap: the SSE gate consults the plugin-registered event resolvers (signal/plan tenancy).
-    eventProjectResolvers: () => registry.eventProjectResolvers.map((r) => r.fn),
-    ...(opts.worktreeFor ? { missionGit: { worktreeFor: opts.worktreeFor } as never } : {}),
+    ...(opts.userProjects ? { userProjects: new UserProjectStore(db) } : {}),
     ...(opts.extra ?? {}),
   });
 
-  /** Seed an epic + one in-progress child phase + an active mission `m-<epic>`. */
-  const seedMissionWithChild = () => {
-    const epic = tasks.create({ id: 'elowen-ep', project_id: 1, title: 'Epic', type: 'epic', description: 'epic' });
-    const child = tasks.create({ id: 'elowen-c1', project_id: 1, title: 'Child phase', type: 'task', parent_id: epic.id, description: 'child' });
-    tasks.setStatus(child.id, 'in_progress');
-    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy: 'L3', max_sessions: 1 });
-    return { missionId: mission.id, epicId: epic.id, childId: child.id };
-  };
+  return { app, token, db, deps: { tasks, readiness, taskUsage, missions, config, users, projects, bus, tmux } };
+}
 
-  /** Seed an epic with two chained phases (P1 in_progress, P2 open depends on P1) + active mission.
-   *  `autonomy` defaults to L3 so the existing self-heal/review tests get full autonomy; pass L1/L2
-   *  to exercise the human-in-the-loop branch (no auto self-heal). */
-  const seedMissionWithChain = (autonomy = 'L3') => {
-    const epic = tasks.create({ id: 'elowen-ep2', project_id: 1, title: 'Epic2', type: 'epic', description: 'epic' });
-    const p1 = tasks.create({ id: 'elowen-p1', project_id: 1, title: 'Phase 1', type: 'task', parent_id: epic.id, description: 'p1' });
-    const p2 = tasks.create({ id: 'elowen-p2', project_id: 1, title: 'Phase 2', type: 'task', parent_id: epic.id, description: 'p2' });
-    tasks.addDep(p2.id, p1.id);
-    tasks.setStatus(p1.id, 'in_progress');
-    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy, max_sessions: 1 });
-    return { missionId: mission.id, epicId: epic.id, childId: p1.id, nextId: p2.id };
+/** The daemon's PLUGIN HOST seam, wired end to end with fakes — the shape `loadPlugins({ host })` hands
+ *  every plugin at register() time.
+ *
+ *  It is deliberately generic: the contract is core's (src/plugins/api.ts), and a plugin that throws in
+ *  register() because a seam it declared is missing gets SKIPPED with a logged error, silently
+ *  contributing no tools, no routes and no migrations. A suite that loads real plugins off disk to audit
+ *  them therefore needs the whole seam present, or it audits a shorter list than it thinks it does. The
+ *  task-domain stores are the reference implementations (refStores.ts) over the frozen plugin DDL. */
+export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: ProjectStore; tmux?: FakeTmuxDriver }) {
+  const config = w.config ?? new ConfigStore(w.db);
+  const projects = w.projects ?? new ProjectStore(w.db);
+  const tasks = new RefTaskStore(w.db);
+  return {
+    tmux: w.tmux ?? new FakeTmuxDriver(),
+    brainWorker: () => undefined,
+    elowenCli: {
+      cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:0', token: 't',
+      tokenForTask: () => undefined, tokenForUser: () => undefined,
+    },
+    stores: {
+      tasks,
+      projects,
+      homeProject: () => projects.list()[0] ?? { id: 1, slug: 'elowen', path: '/o', notes: '', icon: '', pr_enabled: null },
+      usersRead: { list: () => [], isAdmin: () => true, allowedExecs: () => null },
+      readiness: new RefReadiness(w.db),
+      taskUsage: new RefTaskUsage(w.db),
+      tasksAvailable: () => true,
+    },
+    prompts: {
+      render: (n: string, v?: Record<string, string>) => render(n, v),
+      rawTemplate: () => '',
+      userOverride: () => null,
+    },
+    config: config as unknown as PluginHostConfig,
+    relayClient: () => new FakeInference('[]'),
+    git: { projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff },
+    push: () => ({ sendToUsers: async () => {} }),
+    projectFiles: { safe: safeProjectPath },
+    terminals: () => ({
+      chatTerminalStop: async () => {},
+      brainWorkerLive: () => false,
+      brainWorkerAbort: async () => {},
+      ticketIssue: () => 'test-ticket',
+    }),
+    advisor: () => undefined,
   };
-
-  return { app, token, control, db, deps: { tasks, readiness, missions, config, users, planJobs, decisionQueue, bus, tmux, engine, spawn, seedMissionWithChild, seedMissionWithChain } };
 }

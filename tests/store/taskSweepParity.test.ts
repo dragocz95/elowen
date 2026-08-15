@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { deleteAllTaskRows } from '../../src/store/cascade.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import type { Db } from '../../src/store/db.js';
+import { RefTaskStore } from '../helpers/refStores.js';
 
 /** The admin wipe has two implementations on purpose: the owner's own store when the work plugin is
  *  loaded, and core's tolerant sweep when nothing owns the domain (core cannot import the plugin, and
@@ -33,7 +33,7 @@ describe('the admin task wipe', () => {
     const owned = seeded();
     const unowned = seeded();
     try {
-      const viaOwner = new TaskStore(owned).deleteAll();
+      const viaOwner = new RefTaskStore(owned).deleteAll();
       const viaCore = deleteAllTaskRows(unowned);
       expect(viaCore).toEqual(viaOwner);
       expect(counts(unowned)).toEqual(counts(owned));

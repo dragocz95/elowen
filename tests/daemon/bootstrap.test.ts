@@ -8,20 +8,38 @@ import { openDb } from '../../src/store/db.js';
 import { dbWithPlugins } from '../helpers/bootstrapDb.js';
 import { MarketplaceService } from '../../src/plugins/marketplace.js';
 import { BrainService } from '../../src/brain/brainService.js';
+import { fixturePlugins, type FixturePluginSpec } from '../helpers/fixturePlugin.js';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
+/** A domain plugin in the only shape this file cares about: it owns a root mount of its own, declared in
+ *  the manifest and registered by the entry. The subject is the DAEMON's composition — that buildApp
+ *  puts a plugin's root mount on the real app, and what that mount answers when the plugin is not
+ *  enabled — so it is a fixture rather than whichever product plugin happens to sit in plugins/. The
+ *  tests used to ride on the agents plugin's /sessions; that plugin has moved to the registry, and
+ *  pinning them to another one would only queue up the same breakage.
+ *
+ *  '/ledger' is deliberately a name core does not serve, so a 404 means "no such route" and nothing else. */
+const LEDGER: FixturePluginSpec = {
+  name: 'ledger',
+  provides: { apiRoutes: ['/ledger'] },
+  register: "ctx.registerApiRoute({ rootMount: '/ledger', path: '', access: 'user', handler: async () => ({ body: { entries: [] } }) });",
+};
+
 describe('buildApp', () => {
   it('wires a healthy app with an injected tmux fake', async () => {
-    // /sessions lives on the agents plugin's root mount now, and a fresh install no longer enables that
-    // plugin — so boot against a database whose owner installed it (with `work`, since the mission
-    // subsystem stands on task tracking), and point the loader at the repo plugins. /health is core.
-    const { dbPath, cleanup } = dbWithPlugins(['agents', 'work']);
+    // A root mount only exists on an install whose owner enabled the plugin that declares it, so the
+    // database is seeded that way and the loader is pointed at the fixture. /health is core.
+    const plugin = fixturePlugins([LEDGER]);
+    const { dbPath, cleanup } = dbWithPlugins(['ledger']);
     try {
-      const { app } = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
+      const { app } = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [plugin.dir] });
       expect((await app.request('/health')).status).toBe(200);
-      expect((await app.request('/sessions')).status).toBe(200);
-    } finally { cleanup(); }
+      const ledger = await app.request('/ledger');
+      expect(ledger.status).toBe(200);
+      // Served by the PLUGIN, not by an empty core stub that happens to answer 200.
+      expect(await ledger.json()).toEqual({ entries: [] });
+    } finally { cleanup(); plugin.cleanup(); }
   });
 
   it('does not start plugin platforms until the boot marketplace reconcile settles', async () => {
@@ -83,11 +101,25 @@ describe('buildApp', () => {
   });
 
   it('a fresh install serves core but answers 503 on a domain plugin\'s root mount (nothing 404s)', async () => {
-    // The bare-assistant default: /sessions is still MOUNTED (the daemon knows the route belongs to a
-    // plugin) and reports the plugin as inactive, rather than looking like a missing endpoint.
-    const { app } = await buildApp({ dbPath: ':memory:', tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
-    expect((await app.request('/health')).status).toBe(200);
-    expect((await app.request('/sessions')).status).toBe(503);
+    // The bare-assistant default enables no domain plugin, but a DISCOVERABLE one's mount still exists:
+    // the daemon knows the route belongs to a plugin and reports that plugin as inactive, rather than
+    // letting it look like a missing endpoint. 404 here would tell the CLI, the web UI and a spawned
+    // agent that this build has no such feature at all.
+    const plugin = fixturePlugins([LEDGER], []); // present on disk, enabled by nobody
+    // A database file that does not exist yet — buildApp creates it, so there is no settings row and the
+    // fresh-install defaults are what actually decide. On disk rather than ':memory:' because the
+    // marketplace cache is placed next to the database (bootstrap.ts → dirname(dbPath)), and ':memory:'
+    // has no directory: its cache, and the clone temp dir beside it, land in the process CWD instead.
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-fresh-install-'));
+    try {
+      const { app } = await buildApp({ dbPath: join(dir, 'elowen.db'), tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [plugin.dir] });
+      expect((await app.request('/health')).status).toBe(200);
+      const off = await app.request('/ledger');
+      expect(off.status).toBe(503);
+      expect(await off.json()).toEqual({ error: 'ledger plugin is disabled' });
+      // The gate is scoped to DECLARED mounts: a neighbouring path nobody declares stays a plain 404.
+      expect((await app.request('/ledgerfoo')).status).toBe(404);
+    } finally { plugin.cleanup(); rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('resolves the daemon home project by path instead of locking id 1', async () => {

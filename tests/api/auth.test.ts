@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -10,25 +7,20 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PushSubscriptionStore } from '../../src/store/pushSubscriptionStore.js';
-import { agentsPluginProvider } from '../helpers/testApp.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 function makeAuthedApp() {
   const db = openPluginTablesDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db); users.create('alice', 'secret');
   const brainStore = new BrainStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);
-  const tasks = new TaskStore(db);
-  const readiness = new Readiness(db);
-  const config = new ConfigStore(db);
-  const projects = new ProjectStore(db);
   const app = createServer({
-    tasks, missions: new MissionStore(db),
+    tasks: new RefTaskStore(db), missions: new RefMissions(db),
     bus: new EventBus(), engine: null as any, spawn: null as any, tmux: null as any,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config, users, brainStore, pushSubscriptions,
-    // The /tasks surface is served by the work plugin's root-mounted routes now.
-    plugins: agentsPluginProvider({ db, tasks, readiness, config, projects, users }),
+    clock: new FakeClock(0), config: new ConfigStore(db), users, brainStore, pushSubscriptions,
+    projects: new ProjectStore(db),
   });
   return { app, users, brainStore, pushSubscriptions };
 }
@@ -68,18 +60,21 @@ describe('auth', () => {
   });
 
   it('protects routes: 401 without token, 200 with Bearer; rejects a ?token= query token', async () => {
+    // Probed on DAEMON-owned routes. `/tasks` would read better as the example, but that surface is a
+    // plugin root mount now: with no plugin loaded it answers 404 whatever the credentials say, which
+    // cannot tell an authenticated request from a rejected one. /projects and /activity are core's own
+    // and pass through the very same guard.
     const { app } = makeAuthedApp();
-    expect((await app.request('/tasks')).status).toBe(401);
-    // /projects (incl. mutating POST + git shell-out) and /activity must be gated too
+    // /projects (incl. mutating POST + git shell-out) and /activity must be gated
     expect((await app.request('/projects')).status).toBe(401);
     expect((await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401);
     expect((await app.request('/activity')).status).toBe(401);
     const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'alice', password: 'secret' }) })).json();
     const t = login.token as string;
-    expect((await app.request('/tasks', { headers: { authorization: `Bearer ${t}` } })).status).toBe(200);
+    expect((await app.request('/projects', { headers: { authorization: `Bearer ${t}` } })).status).toBe(200);
     // A token in the query string is no longer accepted — it leaks into logs/Referer and nothing uses
     // it (the web app authenticates via the BFF-injected Bearer header). Only the header is honoured.
-    expect((await app.request(`/tasks?token=${t}`)).status).toBe(401);
+    expect((await app.request(`/projects?token=${t}`)).status).toBe(401);
   });
 
   it('keeps /health public without a token', async () => {

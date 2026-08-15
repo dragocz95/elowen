@@ -7,9 +7,10 @@ const dep = (name: string) => fileURLToPath(new URL(`./node_modules/${name}`, im
 
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],
-  // Plugin-bundle sources under ../plugins/*/web-src are tested here against the real
-  // window.ElowenUiRuntime; they live outside web/, so their react/lucide imports must resolve to
-  // THIS app's node_modules (one React instance — the same guarantee the production build shim gives).
+  // Plugin-bundle sources under ../plugins/*/web-src are imported by suites in tests/pluginUi/ and
+  // exercised against the real window.ElowenUiRuntime; they live outside web/, so their react/lucide
+  // imports must resolve to THIS app's node_modules (one React instance — the same guarantee the
+  // production build shim gives).
   server: { fs: { allow: ['..'] } },
   resolve: {
     alias: {
@@ -30,7 +31,12 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./tests/setup.ts'],
-    include: ['tests/**/*.test.{ts,tsx}', '../plugins/*/web-src/**/*.test.{ts,tsx}'],
+    // A plugin's own bundle tests are NOT collected from ../plugins/*/web-src any more: every plugin that
+    // shipped them has moved to the registry, which runs them itself. The glob that used to reach in there
+    // matched nothing once work left, and a glob matching nothing is how 26 suites go quiet without a word.
+    // tests/contract/pluginWebTestHoming.test.ts fails if a bundled plugin grows a test file again, so the
+    // choice stays visible instead of silently dropping it.
+    include: ['tests/**/*.test.{ts,tsx}'],
     exclude: ['tests/e2e/**'],
   },
 });

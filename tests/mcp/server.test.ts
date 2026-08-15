@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { handleMcpRequest, type McpDeps } from '../../src/mcp/server.js';
-import { AGENTS_MCP_TOOLS } from '../../plugins/agents/src/mcpTools.js';
-import { WORK_MCP_TOOLS } from '../../plugins/work/src/mcpTools.js';
+import type { PluginMcpTool } from '../../src/plugins/api.js';
 
 /** A minimal MCP `initialize` JSON-RPC request — enough to prove the server stands up, advertises the
  *  elowen server, and responds without error. The tool layer itself is covered by tools.test.ts. */
@@ -32,13 +31,17 @@ async function ssePayload(res: Response): Promise<any> {
   return JSON.parse(dataLine!.replace(/^data:\s*/, ''));
 }
 
-const AGENTS_NAMES = AGENTS_MCP_TOOLS.map((t) => t.name);
-const WORK_NAMES = WORK_MCP_TOOLS.map((t) => t.name);
-const withAgents: McpDeps = {
+/** Two plugins' worth of contributed tools. What the transport does with them is the subject, so they
+ *  are fixtures: pinning this file to the real tool lists of whichever plugins happen to be installed
+ *  would make it fail on their releases, and those lists are pinned beside them anyway. */
+const fake = (name: string): PluginMcpTool => ({ name, description: `${name} does a thing.`, inputSchema: {}, run: async () => ({ ok: name }) });
+const LEDGER_NAMES = ['ledger_list', 'ledger_create', 'ledger_close'];
+const AUDIT_NAMES = ['audit_sign', 'audit_report'];
+const withPlugins: McpDeps = {
   url: 'http://localhost:4400', token: 'tok',
   pluginTools: [
-    ...WORK_MCP_TOOLS.map((tool) => ({ plugin: 'work', tool })),
-    ...AGENTS_MCP_TOOLS.map((tool) => ({ plugin: 'agents', tool })),
+    ...LEDGER_NAMES.map((n) => ({ plugin: 'ledger', tool: fake(n) })),
+    ...AUDIT_NAMES.map((n) => ({ plugin: 'audit', tool: fake(n) })),
   ],
 };
 
@@ -51,15 +54,12 @@ describe('handleMcpRequest', () => {
     expect(body).toContain('protocolVersion'); // a real initialize result
   });
 
-  it('tools/list with the work + agents plugins composes all 19 tools (core + plugins)', async () => {
-    const res = await handleMcpRequest(rpc('tools/list', {}), withAgents);
+  it('tools/list composes the core escape hatch with every plugin-contributed tool', async () => {
+    const res = await handleMcpRequest(rpc('tools/list', {}), withPlugins);
     expect(res.status).toBe(200);
     const parsed = await ssePayload(res);
-    const names = parsed.result?.tools?.map((t: { name: string }) => t.name) ?? [];
-    for (const n of ['elowen_request', ...WORK_NAMES, ...AGENTS_NAMES]) {
-      expect(names).toContain(n);
-    }
-    expect(names).toHaveLength(19);
+    const names: string[] = parsed.result?.tools?.map((t: { name: string }) => t.name) ?? [];
+    expect([...names].sort()).toEqual(['elowen_request', ...LEDGER_NAMES, ...AUDIT_NAMES].sort());
   });
 
   it('tools/list WITHOUT the plugins keeps only the generic escape hatch', async () => {
@@ -68,15 +68,15 @@ describe('handleMcpRequest', () => {
     const names: string[] = parsed.result?.tools?.map((t: { name: string }) => t.name) ?? [];
     expect(names).toEqual(['elowen_request']);
     // Both plugin families vanish from the listing rather than lingering as tools that could only fail.
-    for (const n of [...AGENTS_NAMES, ...WORK_NAMES]) expect(names).not.toContain(n);
+    for (const n of [...LEDGER_NAMES, ...AUDIT_NAMES]) expect(names).not.toContain(n);
   });
 
   it('calling an absent (plugin-off) tool returns a clear JSON-RPC error, not a crash', async () => {
-    const res = await handleMcpRequest(rpc('tools/call', { name: 'elowen_missions', arguments: {} }), { url: 'http://localhost:4400', token: 'tok' });
+    const res = await handleMcpRequest(rpc('tools/call', { name: 'ledger_close', arguments: {} }), { url: 'http://localhost:4400', token: 'tok' });
     const parsed = await ssePayload(res);
     // The SDK answers with an isError tool result naming the unknown tool — the client sees exactly why.
     expect(parsed.result?.isError).toBe(true);
-    expect(String(parsed.result?.content?.[0]?.text)).toMatch(/Tool elowen_missions not found/);
+    expect(String(parsed.result?.content?.[0]?.text)).toMatch(/Tool ledger_close not found/);
   });
 
   it('a plugin tool colliding with a core name is skipped (core wins)', async () => {

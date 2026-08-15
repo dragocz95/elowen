@@ -9,7 +9,6 @@ import { readFileSync } from 'node:fs';
 import { openDb } from '../../src/store/db.js';
 import { UserPromptStore } from '../../src/store/userPromptStore.js';
 import { PromptService } from '../../src/prompts/promptService.js';
-import { AGENTS_PROMPTS, AGENTS_PROMPTS_DIR } from '../../plugins/agents/src/promptCatalog.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 
@@ -79,29 +78,30 @@ describe('prompt catalog + renderer overlay', () => {
   });
 });
 
-describe('agents plugin templates (moved out of core in F2)', () => {
-  // Re-install the real overlay (the shared setup file did too, but the afterEach above swaps it out).
-  const installAgentsOverlay = () => {
-    setPluginPromptCatalog(AGENTS_PROMPTS.map((e) => ({ ...e })));
-    setPluginPromptSources(new Map(AGENTS_PROMPTS.map((e) => [e.name, join(AGENTS_PROMPTS_DIR, `${e.name}.md`)])));
+describe('a plugin template under the daemon\'s prompt service', () => {
+  /** A template a plugin ships: registered into the catalog and sourced from ITS directory, exactly as
+   *  the loader wires a real one. What the daemon owns is what happens around it — that the registered
+   *  name resolves to the plugin's file, that it counts as editable, and that a per-user override in
+   *  user_prompts still wins. Which templates any particular plugin ships is pinned beside it. */
+  const installOverlay = () => {
+    writeFileSync(join(tmp, 'crew.md'), 'Briefing for {{agentName}}');
+    setPluginPromptCatalog([{ name: 'crew', group: 'demo', vars: ['agentName'], jsonContract: false }]);
+    setPluginPromptSources(new Map([['crew', join(tmp, 'crew.md')]]));
   };
 
-  it('every registered template resolves to the plugin file, byte-identical to disk', () => {
-    installAgentsOverlay();
-    for (const e of AGENTS_PROMPTS) {
-      const onDisk = readFileSync(join(AGENTS_PROMPTS_DIR, `${e.name}.md`), 'utf-8').trim();
-      expect(rawTemplate(e.name), e.name).toBe(onDisk);
-      expect(isEditablePrompt(e.name), e.name).toBe(true);
-    }
+  it('the registered template resolves to the plugin file, byte-identical to disk, and is editable', () => {
+    installOverlay();
+    expect(rawTemplate('crew')).toBe(readFileSync(join(tmp, 'crew.md'), 'utf-8').trim());
+    expect(isEditablePrompt('crew')).toBe(true);
   });
 
   it('a user override in user_prompts still wins over the plugin file', () => {
-    installAgentsOverlay();
+    installOverlay();
     const store = new UserPromptStore(openDb(':memory:'));
     const prompts = new PromptService(store);
-    store.set(1, 'worker', 'my worker override for {{agentName}}');
-    expect(prompts.render('worker', { agentName: 'Ada' }, 1)).toBe('my worker override for Ada');
+    store.set(1, 'crew', 'my crew override for {{agentName}}');
+    expect(prompts.render('crew', { agentName: 'Ada' }, 1)).toBe('my crew override for Ada');
     // Another user without an override gets the plugin file default.
-    expect(prompts.render('worker', { agentName: 'Ada' }, 2)).toBe(applyVars(rawTemplate('worker'), { agentName: 'Ada' }));
+    expect(prompts.render('crew', { agentName: 'Ada' }, 2)).toBe(applyVars(rawTemplate('crew'), { agentName: 'Ada' }));
   });
 });

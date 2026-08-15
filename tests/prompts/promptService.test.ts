@@ -69,14 +69,17 @@ describe('PromptService.render', () => {
     expect(prompts.render('elowen', { userName: 'Bob' })).toContain('<elowen_advisor>'); // default elowen text, not CUSTOM
   });
 
+  // 'worker-brain' is the embedded worker's template — the one that stayed core when the tmux-agent
+  // templates left with the agents plugin. It takes the same vars, so these two keep testing override
+  // resolution over a template with substitutions rather than a bare advisor prompt.
   it("uses the user's override and substitutes vars", () => {
-    store.set(1, 'worker', 'Hello {{agentName}}, do {{taskId}}.');
-    expect(prompts.render('worker', { agentName: 'a1', taskId: 't9' }, 1)).toBe('Hello a1, do t9.');
+    store.set(1, 'worker-brain', 'Hello {{agentName}}, do {{taskId}}.');
+    expect(prompts.render('worker-brain', { agentName: 'a1', taskId: 't9' }, 1)).toBe('Hello a1, do t9.');
   });
 
   it('isolates overrides per user', () => {
-    store.set(1, 'worker', 'USER ONE');
-    expect(prompts.render('worker', {}, 2)).toBe(rawTemplate('worker'));
+    store.set(1, 'worker-brain', 'USER ONE');
+    expect(prompts.render('worker-brain', {}, 2)).toBe(rawTemplate('worker-brain'));
   });
 
   it('renders nested CLI prompt templates', () => {

@@ -4,14 +4,12 @@
     ".": {
       "entry": [
         "plugins/**/index.mjs",
-        "plugins/*/src/index.ts",
         "plugins/*/web-src/index.tsx"
       ],
       "project": [
         "src/**/*.ts",
         "tests/**/*.ts",
         "plugins/**/*.mjs",
-        "plugins/**/src/**/*.ts",
         "plugins/**/web-src/**/*.{ts,tsx}"
       ]
     },
@@ -48,9 +46,6 @@
     ],
     "packages/plugin-shared/lifecycle.mjs": [
       "exports"
-    ],
-    "plugins/agents/src/lib/execs.ts": [
-      "exports"
     ]
   },
   "ignore": [
@@ -58,10 +53,7 @@
   ],
   "ignoreDependencies": [
     "@types/react",
-    "@types/react-dom",
     "lucide-react",
-    "@testing-library/react",
-    "msw",
     "jose",
     "grammy",
     "baileys",

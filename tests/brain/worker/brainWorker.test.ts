@@ -8,11 +8,11 @@ beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
 import { openWorkDb } from '../../helpers/workDb.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
 import { TaskRefs } from '../../../src/store/taskRefs.js';
-import { TaskStore } from '../../../plugins/work/src/store/taskStore.js';
 import { EventBus } from '../../../src/api/sse.js';
 import { currentWorkDir, currentSessionId } from '../../../src/plugins/policyContext.js';
 import { UserPromptStore } from '../../../src/store/userPromptStore.js';
 import { PromptService } from '../../../src/prompts/promptService.js';
+import { RefTaskStore } from '../../helpers/refStores.js';
 
 /** A controllable fake PI session: prompt() blocks until the test releases it, so we can order
  *  tool calls / agent settlement deterministically. Each prompt records the turn's bound workDir and
@@ -41,7 +41,7 @@ function fakeSession() {
 function setup(opts: { idleMs?: number; prompts?: unknown } = {}) {
   const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
-  const tasks = new TaskStore(db);
+  const tasks = new RefTaskStore(db);
   tasks.create({ id: 'T-1', project_id: 1, title: 'Fix bug' });
   tasks.setStatus('T-1', 'in_progress');
   const bus = new EventBus();
@@ -195,7 +195,7 @@ describe('BrainWorkerService', () => {
     const first = setup();
     await first.svc.launch(first.launchInput);
     // Simulate daemon restart: fresh service over the SAME db.
-    const tasks2 = new TaskStore(first.db);
+    const tasks2 = new RefTaskStore(first.db);
     const { session: s2 } = fakeSession();
     const svc2 = new BrainWorkerService({
       store: new BrainStore(first.db), runtime: sharedRuntime, tasks: () => tasks2, bus: new EventBus(),

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import type { Db } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { modelsBlock } from '../../plugins/work/src/api/planner.js';
 
 let db: Db;
 let cfg: ConfigStore;
@@ -339,8 +338,10 @@ describe('ConfigStore element-level sanitisation on corrupt stored JSON (finding
     expect(notes.opus).toBe('great for review'); // valid entry survives
     expect(notes.sonnet).not.toBe(7); // the number never reaches a consumer
     expect(typeof notes.sonnet).toBe('string'); // falls back to the built-in seed
-    // The actual downstream crash this closes: modelsBlock() calls .trim() on every listed note.
-    expect(() => modelsBlock(['sonnet', 'opus'], notes)).not.toThrow();
+    // The actual downstream crash this closes: every consumer that renders the notes into a prompt
+    // block calls .trim() on each listed note, which throws on a number. (The planner's modelsBlock is
+    // one such consumer and lives in the work plugin now — the sanitisation that saves it is here.)
+    expect(() => ['sonnet', 'opus'].map((m) => `${m}: ${notes[m]!.trim()}`).join('\n')).not.toThrow();
   });
 
   it('drops non-string allowedExecs elements on read', () => {

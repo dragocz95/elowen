@@ -1,12 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ProjectStore } from '../../src/store/projectStore.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
 
 let store: ProjectStore;
 beforeEach(() => { store = new ProjectStore(openPluginTablesDb(':memory:')); });
@@ -87,9 +85,8 @@ describe('ProjectStore.remove (cascade)', () => {
   it('detaches the project and everything scoped to it, leaving siblings untouched', () => {
     const db = openPluginTablesDb(':memory:');
     const projects = new ProjectStore(db);
-    const tasks = new TaskStore(db);
-    const missions = new MissionStore(db);
-    const agents = new AgentStore(db);
+    const tasks = new RefTaskStore(db);
+    const missions = new RefMissions(db);
     const up = new UserProjectStore(db);
     db.prepare("INSERT INTO users (id,username,password_hash) VALUES (1,'u','h')").run();
 
@@ -100,7 +97,10 @@ describe('ProjectStore.remove (cascade)', () => {
     const child = tasks.create({ id: 'd-child', project_id: doomed.id, title: 'C' });
     tasks.addDep(child.id, epic.id);
     missions.create({ id: 'm1', epic_id: epic.id, autonomy: 'L3', max_sessions: 1 });
-    agents.upsert({ project_id: doomed.id, name: 'Nova', program: 'claude-code', model: 'sonnet' });
+    // A plugin-owned row keyed on the project. Written as SQL against the frozen plugin DDL
+    // (tests/fixtures/pluginSchema.ts) rather than through the plugin's own store: the cascade is
+    // core's (store/cascade.ts) and must clear plugin tables whether or not their owner is installed.
+    db.prepare("INSERT INTO agents (project_id,name,program,model) VALUES (?,'Nova','claude-code','sonnet')").run(doomed.id);
     up.assign(1, doomed.id);
 
     const keepTask = tasks.create({ id: 'k-task', project_id: keep.id, title: 'K' });
@@ -114,6 +114,7 @@ describe('ProjectStore.remove (cascade)', () => {
     expect(tasks.depsFor('d-child')).toEqual([]);
     expect(missions.get('m1')).toBeNull();
     expect(up.forUser(1)).not.toContain(doomed.id);
+    expect(db.prepare('SELECT COUNT(*) c FROM agents WHERE project_id = ?').get(doomed.id)).toEqual({ c: 0 });
     expect(tasks.get(keepTask.id)).not.toBeNull(); // sibling project's data survives
   });
 });

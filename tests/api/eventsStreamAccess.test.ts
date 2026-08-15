@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { EventBus } from '../../src/api/sse.js';
 import type { ElowenEvent } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -12,6 +9,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 // The live SSE channel broadcasts every bus event; without per-subscriber scoping a tenant would see
 // cross-project task statuses in real time. Each subscriber must receive only its projects' events.
@@ -24,12 +22,12 @@ function setup(eventProjectResolvers?: () => readonly ((e: ElowenEvent) => numbe
   const bob = users.create('bob', 'pw');
   const userProjects = new UserProjectStore(db);
   userProjects.assign(bob.id, 1);
-  const tasks = new TaskStore(db);
+  const tasks = new RefTaskStore(db);
   tasks.create({ id: 't1', project_id: 1, title: 'home task' });
   tasks.create({ id: 't2', project_id: 2, title: 'foreign task' });
   const bus = new EventBus();
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness: new Readiness(db), missions: new MissionStore(db), bus,
+    tasks, taskRefs: new TaskRefs(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),

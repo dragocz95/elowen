@@ -1,9 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
-import { AgentStore } from '../../plugins/agents/src/store/agentStore.js';
-import { SpawnService } from '../../plugins/agents/src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { EventBus } from '../../src/api/sse.js';
 import { createServer } from '../../src/api/server.js';
@@ -12,10 +7,10 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
-import { TaskUsageStore } from '../../plugins/work/src/store/taskUsageStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { TaskRefs } from '../../src/store/taskRefs.js';
+import { RefMissions, RefReadiness, RefTaskStore, RefTaskUsage } from '../helpers/refStores.js';
 
 const usage = { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165, reasoning: 0, costUsd: 0.5, currency: 'USD', costSource: 'provider_reported' as const };
 
@@ -26,11 +21,11 @@ function setup() {
   const admin = users.create('admin', 'pw'); // first user → is_admin
   const bob = users.create('bob', 'pw');
   const tmux = new FakeTmuxDriver();
-  const taskUsage = new TaskUsageStore(db);
+  const taskUsage = new RefTaskUsage(db);
   const brainStore = new BrainStore(db);
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: { disengage: async () => {} } as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    engine: { disengage: async () => {} } as never, tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), taskUsage, brainStore,
@@ -111,11 +106,11 @@ function setupWithoutOwner() {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
-  const taskUsage = new TaskUsageStore(db);
+  const taskUsage = new RefTaskUsage(db);
   const tmux = new FakeTmuxDriver();
   const app = createServer({
-    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: { disengage: async () => {} } as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    engine: { disengage: async () => {} } as never, tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),

@@ -2,14 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { Db } from '../../src/store/db.js';
 import { openWorkDb } from '../helpers/workDb.js';
 import { EventStore } from '../../src/store/eventStore.js';
-import { agentsEventRow } from '../../plugins/agents/src/events/rows.js';
+import { refEventRow } from '../helpers/refStores.js';
 
-// The store is wired the way brainCore wires it with the agents plugin ENABLED: the plugin's REAL row
-// resolver maps mission/review/decision/message/signal, so these tests pin the exact legacy row format
-// (type strings, details, labels) across the extraction. The plugin-OFF degradation is covered below.
+// The store is wired the way brainCore wires it with a domain plugin ENABLED: a registered row resolver
+// (here the reference one from refStores.ts) maps mission/review/decision/message/signal, so these
+// tests can pin the row format core persists around them — type strings, details, label snapshots. The
+// resolver-ABSENT degradation is covered below.
 let db: Db;
 let events: EventStore;
-beforeEach(() => { db = openWorkDb(':memory:'); events = new EventStore(db, () => [agentsEventRow]); });
+beforeEach(() => { db = openWorkDb(':memory:'); events = new EventStore(db, () => [refEventRow]); });
 
 describe('EventStore', () => {
   it('records each event kind to the right row', () => {
@@ -147,7 +148,7 @@ describe('EventStore without the agents plugin resolver (plugin disabled)', () =
   });
 
   it('skips a throwing resolver instead of crashing the recorder', () => {
-    const store = new EventStore(db, () => [() => { throw new Error('boom'); }, agentsEventRow]);
+    const store = new EventStore(db, () => [() => { throw new Error('boom'); }, refEventRow]);
     store.record({ type: 'mission', missionId: 'm1', state: 'active' });
     expect(store.list().map((e) => [e.type, e.target, e.detail])).toEqual([['mission', 'm1', 'active']]);
   });

@@ -24,7 +24,6 @@ import { HookAuditBuffer } from '../../src/shared/hookAudit.js';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
-import { registerWorkTools } from '../../plugins/work/src/tools.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -580,10 +579,19 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-1').map((row) => row.role)).toEqual(['user', 'assistant']);
   });
 
-  /** The Elowen* task control plane is a PLUGIN surface now (work). Registering it into a test's own
-   *  registry is what a real daemon does at load, and keeps these assertions about the real tools. */
-  function withWorkTools(reg: PluginRegistry): void {
-    registerWorkTools(reg.contextFor('work', {}, { info() {}, warn() {}, error() {} }));
+  /** The Elowen* control plane is a PLUGIN surface now. What the daemon owns — and what these
+   *  assertions are about — is that the `Elowen*` NAME prefix is never plan-safe by default and never
+   *  reaches a channel session, and that a plugin's own `planSafe` declaration is honoured for the one
+   *  tool it vouches for. So the plugin here is a fixture registering that exact tool shape: pinning
+   *  these rules to a particular plugin's real toolset would make them fail on its releases. */
+  function withControlPlaneTools(reg: PluginRegistry): void {
+    const ctx = reg.contextFor('work', {}, { info() {}, warn() {}, error() {} });
+    for (const name of ['ElowenListTasks', 'ElowenCreateTask', 'ElowenPlan']) {
+      ctx.registerTool(defineTool({
+        name, label: name, description: `${name} operation`, parameters: Type.Object({}),
+        execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
+      }));
+    }
     reg.setPlanSafe(['ElowenListTasks'], undefined);
   }
 
@@ -596,7 +604,7 @@ describe('BrainService', () => {
       execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
     }));
     ctx.registerSystemPromptFragment('Follow house style.');
-    withWorkTools(reg);
+    withControlPlaneTools(reg);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
     let seenAppend: string[] | undefined;
@@ -2723,7 +2731,7 @@ describe('BrainService', () => {
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
     );
     const reg = new PluginRegistry();
-    withWorkTools(reg);
+    withControlPlaneTools(reg);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -2845,7 +2853,7 @@ describe('BrainService', () => {
       }));
     }
     reg.setPlanSafe(['ShowStatus'], undefined); // the plugin vouches for exactly one of its tools
-    withWorkTools(reg); // …and the work plugin vouches for its own read-only ElowenListTasks
+    withControlPlaneTools(reg); // …and the plugin vouches for its own read-only ElowenListTasks
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);

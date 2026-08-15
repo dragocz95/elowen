@@ -4,9 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { TaskRefs } from '../../src/store/taskRefs.js';
-import { TaskStore } from '../../plugins/work/src/store/taskStore.js';
-import { Readiness } from '../../plugins/work/src/store/readiness.js';
-import { MissionStore } from '../../plugins/agents/src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { EventBus } from '../../src/api/sse.js';
@@ -14,12 +11,31 @@ import { createServer } from '../../src/api/server.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore, type ConfigPatch } from '../../src/store/configStore.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
-import { agentsPluginProvider } from '../helpers/testApp.js';
+import { fixturePlugins } from '../helpers/fixturePlugin.js';
+import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
 
 interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
-function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; agents?: boolean } = {}) {
+/** A plugin contributing ONE readiness row, and one whose check throws. The row's own content is that
+ *  plugin's business — what the daemon owns is the slot it lands in, and what happens when it is gone
+ *  or broken. (The real 'missions' row is the agents plugin's; its content is pinned beside it in the
+ *  plugin registry, tests/agents-readiness.test.ts there.) */
+let fixtures: { cleanup: () => void }[] = [];
+afterEach(() => { for (const f of fixtures) f.cleanup(); fixtures = []; });
+
+function contributedRow(kind: 'ok' | 'throws') {
+  const f = fixturePlugins([{
+    name: 'widgets',
+    register: kind === 'ok'
+      ? "ctx.registerReadinessCheck(() => ({ id: 'widgets', label: 'Widgets', ok: true, detail: 'contributed' }));"
+      : "ctx.registerReadinessCheck(() => { throw new Error('this check is broken'); });",
+  }]);
+  fixtures.push(f);
+  return f.provider;
+}
+
+function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: ConfigPatch; contributor?: 'ok' | 'throws' | false } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const config = new ConfigStore(db);
@@ -29,16 +45,14 @@ function makeApp(over: { model?: string | null; withUsers?: boolean; patch?: Con
   const userTok = users ? users.issueToken(users.create('amy', 'pw').id) : undefined;
   // Only resolvableModel() is exercised by the route — a minimal fake stands in for BrainService.
   const brain = { resolvableModel: () => (over.model === undefined ? null : over.model) };
-  const tasks = new TaskStore(db);
-  const readiness = new Readiness(db);
+  const tasks = new RefTaskStore(db);
+  const readiness = new RefReadiness(db);
   const projects = new ProjectStore(db);
-  // The 'missions' row is contributed by the agents plugin's registered readiness check now — load
-  // the REAL plugin by default so the report matches a stock install; `agents: false` covers the
-  // disabled degradation (the row disappears with the plugin).
-  const provider = over.agents === false ? undefined
-    : agentsPluginProvider({ db, tasks, readiness, config, projects, ...(users ? { users } : {}) });
+  // A plugin contributes its row by default (the stock shape: some plugin owns some subsystem);
+  // `contributor: false` covers the degradation, `'throws'` the broken-check path.
+  const provider = over.contributor === false ? undefined : contributedRow(over.contributor ?? 'ok');
   const app = createServer({
-    tasks, taskRefs: new TaskRefs(db), readiness, missions: new MissionStore(db),
+    tasks, taskRefs: new TaskRefs(db), readiness, missions: new RefMissions(db),
     bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, projects, users,
@@ -54,16 +68,27 @@ async function getChecks(app: ReturnType<typeof makeApp>['app'], tok?: string): 
 }
 
 describe('GET /system/readiness', () => {
-  it('returns the six checks in order (agents plugin enabled contributes missions)', async () => {
+  it("slots a plugin's contributed row between the daemon's own, in order", async () => {
     const { app } = makeApp({ model: 'kimi' });
     const { status, body } = await getChecks(app);
     expect(status).toBe(200);
-    expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'missions', 'memory', 'platforms', 'plugins']);
+    expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'widgets', 'memory', 'platforms', 'plugins']);
+    expect(body.checks[2]).toEqual({ id: 'widgets', label: 'Widgets', ok: true, detail: 'contributed' });
   });
 
-  it('drops the missions row when the agents plugin is disabled — the rest keeps its order', async () => {
-    const { app } = makeApp({ model: 'kimi', agents: false });
+  it('drops the contributed row when no plugin is loaded — the rest keeps its order', async () => {
+    const { app } = makeApp({ model: 'kimi', contributor: false });
     const { body } = await getChecks(app);
+    expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'memory', 'platforms', 'plugins']);
+  });
+
+  // A first-run report is what an operator reads to find out why nothing works. A plugin whose check
+  // throws must cost its own row and nothing else — a 500 here would hide every OTHER answer behind
+  // one broken contributor.
+  it('drops a THROWING plugin check without failing the report', async () => {
+    const { app } = makeApp({ model: 'kimi', contributor: 'throws' });
+    const { status, body } = await getChecks(app);
+    expect(status).toBe(200);
     expect(body.checks.map((c) => c.id)).toEqual(['chat', 'tasks', 'memory', 'platforms', 'plugins']);
   });
 
@@ -124,27 +149,6 @@ describe('GET /system/readiness', () => {
         id: 'tasks', label: 'Tasks', ok: false, detail: 'pi:some-model',
         hint: 'The setup wizard points this at the built-in engine — re-run `elowen setup`.',
       });
-    });
-  });
-
-  it('missions: ok via the autopilot relay (legacy top-level key)', async () => {
-    const { app } = makeApp({ model: 'm', patch: { autopilot: { apiKey: 'sk-test' } } });
-    const { body } = await getChecks(app);
-    expect(body.checks[2]).toEqual({ id: 'missions', label: 'Missions', ok: true, detail: 'relay configured' });
-  });
-
-  it('missions: ok via a configured pilot CLI exec when no relay is set', async () => {
-    const { app } = makeApp({ model: 'm', patch: { autopilot: { pilotExec: 'claude:sonnet' } } });
-    const { body } = await getChecks(app);
-    expect(body.checks[2]).toEqual({ id: 'missions', label: 'Missions', ok: true, detail: 'claude:sonnet' });
-  });
-
-  it('missions: not ok when neither the relay nor a pilot exec is configured', async () => {
-    const { app } = makeApp({ model: 'm' });
-    const { body } = await getChecks(app);
-    expect(body.checks[2]).toEqual({
-      id: 'missions', label: 'Missions', ok: false, detail: 'not set',
-      hint: 'Missions need an OpenAI-compatible key or an installed agent CLI.',
     });
   });
 
