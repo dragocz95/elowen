@@ -50,7 +50,7 @@ export default function PluginHostPage() {
   useEffect(() => {
     if (!entry || !compatible) return;
     let alive = true;
-    void loadPluginUi(entry.name, entry.url).then((reg) => { if (alive) setRegistration(reg); });
+    void loadPluginUi(entry.name, entry.url, entry.cssUrl).then((reg) => { if (alive) setRegistration(reg); });
     return () => { alive = false; };
   }, [entry, compatible]);
 

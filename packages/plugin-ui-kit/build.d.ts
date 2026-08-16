@@ -12,3 +12,15 @@ export interface BuildPluginUiBundleOptions {
 
 /** Bundle `entry` into the ESM file at `outfile`. Throws on any build error. */
 export declare function buildPluginUiBundle(options: BuildPluginUiBundleOptions): Promise<void>;
+
+export interface BuildPluginUiCssOptions {
+  /** The FINISHED bundle to scan for utility classes (the output of `buildPluginUiBundle`). */
+  bundle: string;
+  /** Where to write the compiled stylesheet (the plugin manifest's `web.css`). */
+  outfile: string;
+}
+
+/** Compile the plugin's own stylesheet from its built bundle. Utilities only, no preflight, no prefix,
+ *  and the host's design tokens are referenced (`var(--token, fallback)`) rather than inlined, so the
+ *  plugin follows the host's skin. Resolves to the emitted CSS. */
+export declare function buildPluginUiCss(options: BuildPluginUiCssOptions): Promise<string>;

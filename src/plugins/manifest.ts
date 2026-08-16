@@ -122,6 +122,15 @@ export interface PluginManifest {
    *  come from `i18n/<lang>.json` under a `web` key. Icons are lucide names resolved by the web app. */
   web?: {
     entry: string;
+    /** The plugin's OWN compiled stylesheet (relative to the plugin folder), served next to the bundle
+     *  on its own content-hash URL and linked before the bundle's registration resolves.
+     *
+     *  Elowen is distributed as a PREBUILT web app, so on a user's machine there is no Tailwind and no
+     *  Next build: the host's CSS is frozen at publish time and carries only the utilities the host
+     *  itself uses. A registry plugin reaching for any other one rendered UNSTYLED there, with nothing
+     *  the operator could do about it. Declaring `css` is how a plugin brings the rules it needs.
+     *  Optional: a plugin without it behaves exactly as before (host utilities only). */
+    css?: string;
     /** The window.ElowenUiRuntime major the bundle needs; an unsupported one renders a placeholder. */
     requiresApiVersion?: number;
     /** Name of the plugin's WORLD in the main navigation — the group its pages hang under. Without it
@@ -214,6 +223,7 @@ const ManifestSchema = Type.Object({
   })),
   web: Type.Optional(Type.Object({
     entry: Type.String({ minLength: 1 }),
+    css: Type.Optional(Type.String({ minLength: 1 })),
     requiresApiVersion: Type.Optional(Type.Number()),
     label: Type.Optional(Type.String({ minLength: 1 })),
     nav: Type.Optional(Type.Array(Type.Object({

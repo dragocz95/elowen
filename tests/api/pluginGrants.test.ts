@@ -30,9 +30,10 @@ function grantablePluginDir(opts: { userGrantable?: boolean } = {}): { dir: stri
     name: 'grantdemo', version: '1.0.0', apiVersion: '1', description: 'grant demo', entry: 'index.mjs',
     ...(opts.userGrantable === false ? {} : { userGrantable: true }),
     provides: { apiRoutes: ['/grantdemo'] },
-    web: { entry: 'web/index.js', nav: [{ label: 'Grant demo', route: 'demo' }] },
+    web: { entry: 'web/index.js', css: 'web/index.css', nav: [{ label: 'Grant demo', route: 'demo' }] },
   }));
   writeFileSync(join(dir, 'web', 'index.js'), 'export const ok = 1;\n');
+  writeFileSync(join(dir, 'web', 'index.css'), '@layer utilities{.w-\\[137px\\]{width:137px}}\n');
   writeFileSync(join(dir, 'index.mjs'), `
 import { appendFileSync } from 'node:fs';
 export function register(ctx) {
@@ -107,21 +108,29 @@ describe('per-user plugin grants', () => {
     expect(body.identity.owner).toBe(true);
   });
 
-  it('hides a grant-gated plugin from the UI listing and refuses its bundle', async () => {
+  it('hides a grant-gated plugin from the UI listing and refuses its bundle AND its stylesheet', async () => {
     const { app, users, amy, adminTok, amyTok } = setup();
-    const listFor = async (tok: string) => (await (await app.request('/plugins/ui', auth(tok))).json()) as { name: string; url: string }[];
+    const listFor = async (tok: string) => (await (await app.request('/plugins/ui', auth(tok))).json()) as { name: string; url: string; cssUrl?: string }[];
     const adminList = await listFor(adminTok);
     expect(adminList.map((p) => p.name)).toContain('grantdemo');
     expect(await listFor(amyTok)).toEqual([]);
 
-    const bundleUrl = adminList.find((p) => p.name === 'grantdemo')!.url;
+    const entry = adminList.find((p) => p.name === 'grantdemo')!;
+    const bundleUrl = entry.url;
+    // The stylesheet is a SECOND door into the same plugin, added later than the bundle — exactly the
+    // kind of asset a grant check gets forgotten on. It must be gated identically.
+    const cssUrl = entry.cssUrl!;
+    expect(cssUrl).toMatch(/\.css$/);
     expect((await app.request(bundleUrl, auth(adminTok))).status).toBe(200);
-    // Hiding the menu entry is worthless if the bundle itself is still downloadable by URL.
+    expect((await app.request(cssUrl, auth(adminTok))).status).toBe(200);
+    // Hiding the menu entry is worthless if the assets are still downloadable by URL.
     expect((await app.request(bundleUrl, auth(amyTok))).status).toBe(403);
+    expect((await app.request(cssUrl, auth(amyTok))).status).toBe(403);
 
     users.setGrantedPlugins(amy.id, ['grantdemo']);
     expect((await listFor(amyTok)).map((p) => p.name)).toEqual(['grantdemo']);
     expect((await app.request(bundleUrl, auth(amyTok))).status).toBe(200);
+    expect((await app.request(cssUrl, auth(amyTok))).status).toBe(200);
   });
 
   it('clamps a grant patch to plugins that actually declare userGrantable', async () => {

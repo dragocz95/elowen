@@ -37,26 +37,37 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
     return c.json(visible.map((w) => ({
       name: w.plugin,
       url: `/plugins/${w.plugin}/web/${w.hash}.js`,
+      // The plugin's own stylesheet, when it ships one. Absent for every plugin that does not, so an
+      // older plugin (and an older listing consumer) is untouched.
+      ...(w.cssHash ? { cssUrl: `/plugins/${w.plugin}/web/${w.cssHash}.css` } : {}),
       apiVersion: w.requiresApiVersion,
       ...localized(w, lang),
     })));
   });
 
-  // The built ESM bundle. The URL embeds the content hash, so it caches immutably for a year; a hash
-  // that is not the CURRENT one 404s (same rule as themed assets: after a reload swaps the bundle, a
-  // stale cached URL must fail loudly rather than serve mixed generations).
+  // The built ESM bundle, and the plugin's own stylesheet when it ships one. Both URLs embed the
+  // content hash, so they cache immutably for a year; a hash that is not the CURRENT one 404s (same
+  // rule as themed assets: after a reload swaps the asset, a stale cached URL must fail loudly rather
+  // than serve mixed generations). One route for both so the grant check below cannot be forgotten on
+  // one of them — a stylesheet is a second door into the same plugin.
   app.get('/plugins/:name/web/:file', async (c) => {
     const registry = await d.plugins?.get().catch(() => undefined);
     const w = registry?.webUi.get(c.req.param('name'));
-    if (!w || c.req.param('file') !== `${w.hash}.js`) return c.json({ error: 'not found' }, 404);
-    // Same grant as the listing: hiding a plugin from the menu is worthless if its bundle is still
-    // downloadable, since the bundle carries the plugin's whole UI.
+    const file = c.req.param('file');
+    const asset = w && file === `${w.hash}.js`
+      ? { path: w.file, type: 'text/javascript; charset=utf-8', missing: 'bundle missing' }
+      : w?.cssHash && w.cssFile && file === `${w.cssHash}.css`
+        ? { path: w.cssFile, type: 'text/css; charset=utf-8', missing: 'stylesheet missing' }
+        : undefined;
+    if (!w || !asset) return c.json({ error: 'not found' }, 404);
+    // Same grant as the listing: hiding a plugin from the menu is worthless if its assets are still
+    // downloadable, since together they carry the plugin's whole UI.
     if (!isPluginAllowedForUser(c.get('user'), { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) })) {
       return c.json({ error: 'forbidden' }, 403);
     }
-    if (!existsSync(w.file)) return c.json({ error: 'bundle missing' }, 404);
-    return c.body(readFileSync(w.file, 'utf8'), 200, {
-      'Content-Type': 'text/javascript; charset=utf-8',
+    if (!existsSync(asset.path)) return c.json({ error: asset.missing }, 404);
+    return c.body(readFileSync(asset.path, 'utf8'), 200, {
+      'Content-Type': asset.type,
       'Cache-Control': 'public, max-age=31536000, immutable',
     });
   });

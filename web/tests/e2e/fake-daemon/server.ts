@@ -13,6 +13,7 @@ import { registerAuthRoutes } from './handlers/auth.ts';
 import { registerCoreRoutes } from './handlers/core.ts';
 import { registerBrainRoutes } from './handlers/brain.ts';
 import { registerControlRoutes } from './handlers/control.ts';
+import { registerPluginRoutes } from './handlers/plugins.ts';
 
 const app = new Hono();
 
@@ -37,6 +38,7 @@ registerAuthRoutes(app);
 registerCoreRoutes(app);
 registerBrainRoutes(app);
 registerControlRoutes(app);
+registerPluginRoutes(app);
 
 // Anything the shell polls that we haven't modeled: answer 200 [] rather than 404, so an unmodeled
 // ambient GET never throws in the UI. Non-GET unknowns still 404 (a real missing write is a test bug).

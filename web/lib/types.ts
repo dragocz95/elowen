@@ -280,6 +280,10 @@ export interface TerminalSettings {
 export interface PluginUiListing {
   name: string;
   url: string;
+  /** Immutable content-hash URL of the plugin's OWN stylesheet, when it ships one. The app is
+   *  distributed PREBUILT, so its CSS carries only the utilities the host itself uses — a plugin that
+   *  needs any other one has to bring it. Absent for a plugin (or a daemon) that ships none. */
+  cssUrl?: string;
   apiVersion: number;
   /** Name of the plugin's world in the main navigation (manifest `web.label`, localized). Absent = the
    *  world borrows its first page's name. */

@@ -25,11 +25,15 @@
     "build.d.ts",
     "bin.js",
     "shims/",
+    "theme.css",
     "README.md"
   ],
   "dependencies": {
+    "@tailwindcss/node": "^4.3.3",
+    "@tailwindcss/oxide": "^4.3.3",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3"
   }
 }

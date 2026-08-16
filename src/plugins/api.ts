@@ -699,6 +699,12 @@ export interface PluginWebUi {
   file: string;
   /** Short content hash of the bundle — part of the serving URL, so clients cache immutably. */
   hash: string;
+  /** Absolute path of the plugin's OWN compiled stylesheet, when the manifest declared one and the file
+   *  exists. Absent = the plugin paints with the host's utilities alone (how every plugin worked before
+   *  this existed), which is unstyled for anything the prebuilt host CSS does not happen to carry. */
+  cssFile?: string;
+  /** Content hash of that stylesheet — its own immutable serving URL, independent of the bundle's. */
+  cssHash?: string;
   requiresApiVersion: number;
   /** Name of the plugin's world in the main navigation; absent = the world borrows its first page's. */
   label?: string;

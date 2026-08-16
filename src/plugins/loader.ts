@@ -262,12 +262,29 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
             opts.logger.warn(`[plugin:${name}] web bundle missing at ${manifest.web.entry} — UI skipped`);
           } else {
             const hash = createHash('sha256').update(readFileSync(webPath)).digest('hex').slice(0, 16);
+            // The plugin's own stylesheet, resolved and hashed exactly like the bundle. A prebuilt host
+            // web app cannot generate the utilities a plugin needs, so a registry plugin ships them; a
+            // plugin without `css` keeps the old behaviour (host utilities only) with no undefined URL.
+            let css: { cssFile: string; cssHash: string } | undefined;
+            if (manifest.web.css) {
+              const cssPath = resolve(pluginDir, manifest.web.css);
+              if (cssPath !== pluginDir && !cssPath.startsWith(pluginDir + sep)) throw new Error(`web css "${manifest.web.css}" escapes plugin dir`);
+              if (!existsSync(cssPath)) {
+                // Same shape as the missing-bundle warning above: the UI still loads, it just paints
+                // with whatever the host happens to carry — which is precisely the silent breakage this
+                // whole path exists to end, so it has to be audible in the log.
+                opts.logger.warn(`[plugin:${name}] web stylesheet missing at ${manifest.web.css} — styles skipped`);
+              } else {
+                css = { cssFile: cssPath, cssHash: createHash('sha256').update(readFileSync(cssPath)).digest('hex').slice(0, 16) };
+              }
+            }
             const i18n = loadPluginI18n(pluginDir);
             const webI18n = i18n
               ? Object.fromEntries(Object.entries(i18n).flatMap(([lang, v]) => (v.web ? [[lang, v.web]] : [])))
               : {};
             registry.webUi.set(name, {
               plugin: name, file: webPath, hash,
+              ...(css ?? {}),
               requiresApiVersion: manifest.web.requiresApiVersion ?? 1,
               nav: manifest.web.nav ?? [], settings: manifest.web.settings ?? [],
               ...(manifest.web.label ? { label: manifest.web.label } : {}),

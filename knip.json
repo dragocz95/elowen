@@ -30,7 +30,11 @@
     },
     "packages/plugin-ui-kit": {
       "entry": [
-        "shims/*.cjs"
+        "shims/*.cjs",
+        "theme.css"
+      ],
+      "ignoreDependencies": [
+        "tailwindcss"
       ]
     }
   },

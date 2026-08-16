@@ -18,7 +18,10 @@ export type OverrideKey =
   | 'brain/status'
   | 'brain/sessions'
   | 'brain/models'
-  | 'brain/commands';
+  | 'brain/commands'
+  // The plugin browser-UI listing. Empty by default, so the plugin-less shell every other spec was
+  // written against is unchanged; `specs/plugin.css.e2e.ts` arms it with the fixture plugin.
+  | 'plugins/ui';
 
 const responses = new Map<OverrideKey, unknown>();
 /** `undefined` = no override (serve the seed transcript); an array (incl. empty) = replace it wholesale. */

@@ -346,6 +346,7 @@ web app as ONE built ESM bundle:
 ```json
 "web": {
   "entry": "web/index.js",
+  "css": "web/index.css",
   "requiresApiVersion": 1,
   "nav": [{ "label": "Sessions", "icon": "SquareTerminal", "route": "sessions" }],
   "settings": [{ "id": "agents", "label": "Agents & Autopilot", "icon": "Bot" }]
@@ -357,6 +358,27 @@ The daemon serves the bundle on an immutable content-hash URL and lists it via
 localized per the `web` block in `i18n/<lang>.json`) and loads the bundle only
 when a page is visited. Pages render under `/p/<plugin>/<route>` inside the
 app shell; a disabled plugin's pages show an unavailable placeholder.
+
+**Ship your own CSS.** Elowen is distributed as a PREBUILT web app, so on a
+user's machine there is no Tailwind and no Next build: the host stylesheet is
+frozen at publish time and carries only the utilities the HOST itself uses. Any
+other one your markup asks for does not exist there, and your page renders
+unstyled with nothing the operator can do about it. So declare `web.css` and
+build it with the kit's `buildPluginUiCss({ bundle, outfile })` — it compiles
+Tailwind over the FINISHED bundle (class names survive minification as string
+literals) and the daemon serves the result on its own content-hash URL, linked
+before your page paints. `web.css` is optional; without it a plugin keeps the
+old behaviour and is limited to whatever utilities the host happens to carry.
+
+The compiled sheet is deliberately scoped: utilities only, inside
+`@layer utilities` (so it cannot outrank the host globally), no preflight (it
+must never reset the host's elements) and no class prefix (you share class
+names with the shared components you render from `window.ElowenUiRuntime`). The
+host design tokens are `@reference`d, not imported, so every rule comes out as
+`var(--color-surface, #070707)` — your page reads the host's live variables and
+follows the active skin instead of freezing on the palette you built against.
+`tests/contract/pluginUiKitTheme.test.ts` fails if the kit's token mirror ever
+drifts from `web/app/styles/tokens.css`.
 
 The bundle registers itself on load:
 

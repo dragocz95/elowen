@@ -356,23 +356,53 @@ export function ensurePluginUiRuntime(): void {
   window.__elowenRegisterPluginUi = (plugin, registration) => { registrations.set(plugin, registration); };
 }
 
+/** Link a plugin's own stylesheet into the document, once per URL, and resolve when the browser has
+ *  APPLIED it. The app is shipped prebuilt, so its CSS carries only the utilities the host itself uses;
+ *  anything else a plugin's markup asks for exists only in this sheet. An `error` resolves too — a
+ *  missing sheet must degrade to an unstyled page, never to a page that never renders. */
+const pendingCss = new Map<string, Promise<void>>();
+function ensurePluginCss(cssUrl: string): Promise<void> {
+  const href = `${BASE}${cssUrl}`;
+  const pending = pendingCss.get(href);
+  if (pending) return pending;
+  const load = new Promise<void>((done) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.addEventListener('load', () => done());
+    link.addEventListener('error', () => done());
+    document.head.appendChild(link);
+  });
+  pendingCss.set(href, load);
+  return load;
+}
+
 /** Load a plugin's bundle (once) and return its registration. `null` = the script loaded (or failed)
- *  without registering — the caller renders its unavailable placeholder. */
-export function loadPluginUi(plugin: string, url: string): Promise<PluginUiRegistration | null> {
+ *  without registering — the caller renders its unavailable placeholder.
+ *
+ *  This is the ONLY place a plugin bundle is loaded, so it is also the only place its stylesheet can be
+ *  linked. The returned promise waits for BOTH: the caller renders nothing until it settles, and a page
+ *  painted before its stylesheet applied is a visible flash of unstyled plugin. */
+export function loadPluginUi(plugin: string, url: string, cssUrl?: string): Promise<PluginUiRegistration | null> {
   ensurePluginUiRuntime();
-  const existing = registrations.get(plugin);
-  if (existing) return Promise.resolve(existing);
+  // Keyed by bundle URL and checked BEFORE the registration map: a bundle registers synchronously as it
+  // executes, so an already-registered plugin whose sheet is still in flight must keep waiting here.
   const pending = pendingLoads.get(url);
   if (pending) return pending;
-  const load = new Promise<PluginUiRegistration | null>((resolveLoad) => {
-    const script = document.createElement('script');
-    script.type = 'module';
-    script.src = `${BASE}${url}`;
+  const existing = registrations.get(plugin);
+  if (existing) return Promise.resolve(existing);
+  // Started first so the sheet downloads in parallel with the bundle, not after it.
+  const css = cssUrl ? ensurePluginCss(cssUrl) : Promise.resolve();
+  const script = new Promise<PluginUiRegistration | null>((resolveLoad) => {
+    const el = document.createElement('script');
+    el.type = 'module';
+    el.src = `${BASE}${url}`;
     // A module script executes after load fires; resolve from the registration map either way.
-    script.addEventListener('load', () => resolveLoad(registrations.get(plugin) ?? null));
-    script.addEventListener('error', () => resolveLoad(null));
-    document.head.appendChild(script);
+    el.addEventListener('load', () => resolveLoad(registrations.get(plugin) ?? null));
+    el.addEventListener('error', () => resolveLoad(null));
+    document.head.appendChild(el);
   });
+  const load = Promise.all([script, css]).then(([registration]) => registration);
   pendingLoads.set(url, load);
   return load;
 }
