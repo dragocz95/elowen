@@ -13,7 +13,7 @@ import { LOG_DIR, logger } from '../../shared/logger.js';
 import { listLogFiles, readLogFile, deleteLogFile, deleteAllLogFiles, DEFAULT_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES } from '../../integrations/logFiles.js';
 import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema, configPatchSchema } from '../schemas/config.js';
 import { resolveExecutor } from '../../shared/execRouting.js';
-import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseElowenExec } from '../../shared/execs.js';
+import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseExecRef } from '../../shared/execs.js';
 import type { ElowenEvent } from '../sse.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import { readSystemDiagnostics } from '../systemDiagnostics.js';
@@ -349,17 +349,20 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     checks.push({ id: 'chat', label: 'Chat', ok: model != null, detail: model ?? 'no provider',
       ...(model ? {} : { hint: 'Run `elowen setup` to connect an AI provider.' }) });
 
-    // tasks — the embedded `elowen:` engine is always runnable; any other exec must name an installed CLI.
+    // tasks — the embedded engine is always runnable; any other exec must name an installed CLI.
     // Reported only while the task domain HAS an owner: `d.tasks` is absent when no plugin provides it,
     // and a green "Tasks: sonnet" on an install with no task subsystem is worse than no row at all — it
     // sends someone debugging a configured executor when the answer is that nothing can run a task. The
     // row disappearing is the same honest answer the extracted 'missions' check gives.
     const exec = cfg.defaults.exec;
     if (d.tasks) {
-      const elowenSpec = parseElowenExec(exec); // embedded engine: runnable iff the provider it names still exists
-      const tasksOk = elowenSpec ? cfg.brain.providers.some((pr) => pr.id === elowenSpec.provider) : execCliInstalled(exec, cfg.providers);
+      // Embedded engine: runnable iff the provider its identity names still exists. Which engine it is
+      // comes from the shared parser — readiness must not re-derive "is this the brain?" on its own.
+      const ref = parseExecRef(exec);
+      const brainRef = ref?.program === 'elowen' ? ref : null;
+      const tasksOk = brainRef ? cfg.brain.providers.some((pr) => pr.id === brainRef.provider) : execCliInstalled(exec, cfg.providers);
       checks.push({ id: 'tasks', label: 'Tasks', ok: tasksOk, detail: exec || 'not set',
-        ...(tasksOk ? {} : { hint: elowenSpec ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
+        ...(tasksOk ? {} : { hint: brainRef ? 'The provider its executor points at is gone — re-run `elowen setup`.' : 'The setup wizard points this at the built-in engine — re-run `elowen setup`.' }) });
     }
 
     // Plugin-contributed rows slot in here (where the extracted 'missions' check used to sit): the
