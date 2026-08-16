@@ -389,11 +389,13 @@ const DEFAULT_SUBAGENT_RUNNER_POOL_MAX: number | null = null;
 
 /** Whether a ChatGPT-account session compacts through the provider's opaque compaction instead of a text
  *  summary. OFF: the endpoint is an undocumented beta, and the trade is real in both directions — the
- *  blob carries the compacted stretch far more faithfully than prose, but it also replaces the summary
- *  the CLI and web clients render with a marker no human can read. That is an operator's call to make
- *  deliberately, not one an upgrade should make for every existing conversation. Turning it off restores
- *  the text-summary path byte for byte, because that path never stopped being the fallback. */
-const DEFAULT_REMOTE_COMPACTION_ENABLED = false;
+ *  blob carries the compacted stretch far more faithfully than prose, so it is on by default: the session
+ *  factory already narrows it to openai-codex, and a provider that cannot produce a blob falls back to the
+ *  very text summary this replaces, which makes trying it strictly better than not. The cost is that the
+ *  compaction note clients render is a marker no human can read. The switch stays as the kill switch for
+ *  an endpoint OpenAI does not document; turning it off restores the text-summary path byte for byte,
+ *  because that path never stopped being the fallback. */
+const DEFAULT_REMOTE_COMPACTION_ENABLED = true;
 
 /** Normalize the pool knob off a patch. Anything that is not `null` or a non-negative integer is not an
  *  answer to "how many runners" — it is corruption or a typo, and taking it would silently resize the

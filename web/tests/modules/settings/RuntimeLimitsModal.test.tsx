@@ -4,7 +4,7 @@ import { LanguageProvider } from '../../../lib/i18n';
 import { RuntimeLimitsModal, RUNTIME_LIMIT_DEFAULTS } from '../../../modules/settings/RuntimeLimitsModal';
 import type { RuntimeConfig } from '../../../lib/types';
 
-const CONFIG: RuntimeConfig = { limits: RUNTIME_LIMIT_DEFAULTS, toolDeferralEnabled: true, subagentRunnerEnabled: false, subagentRunnerPoolMax: null };
+const CONFIG: RuntimeConfig = { limits: RUNTIME_LIMIT_DEFAULTS, toolDeferralEnabled: true, remoteCompactionEnabled: false, subagentRunnerEnabled: false, subagentRunnerPoolMax: null };
 
 /** Collects what the editor writes back — the caller holds the draft, so an update is a function. */
 function renderModal(runtime: RuntimeConfig = CONFIG) {

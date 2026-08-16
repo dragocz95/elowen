@@ -28,6 +28,7 @@ const CATALOG = [
 const runtime = (overrides: RuntimeConfig['toolDeferralOverrides'] = { sources: {}, tools: {} }): RuntimeConfig => ({
   limits: RUNTIME_LIMIT_DEFAULTS,
   toolDeferralEnabled: true,
+  remoteCompactionEnabled: false,
   toolDeferralOverrides: overrides,
   subagentRunnerEnabled: false,
   subagentRunnerPoolMax: null,
