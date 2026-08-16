@@ -12,10 +12,12 @@ function renderOverlay(o: {
   usage?: Partial<BrainUsageView>;
   section?: 'conversation' | 'models' | 'context';
   keys?: string[];
+  /** Terminal height the overlay sizes itself against; `null` models a terminal that reports none. */
+  rows?: number | null;
 }): string[] {
   const shown: Overlay[] = [];
   const tui = {
-    terminal: { columns: 120 },
+    terminal: { columns: 120, ...(o.rows === null ? {} : { rows: o.rows ?? 40 }) },
     setFocus: vi.fn(),
     requestRender: vi.fn(),
     showOverlay: vi.fn((c: Overlay) => { shown.push(c); return { hide: vi.fn(), focus: vi.fn() }; }),
@@ -61,6 +63,55 @@ describe('stats overlay — Σ speed', () => {
     const row = sigmaRow([model('elowen:x', { output: 100, total: 100, costUsd: 1.5, outputTps: 40 })]);
     expect(row).toContain('—');
     expect(row).not.toMatch(/\s40\s/);
+  });
+});
+
+describe('stats overlay — scrolling', () => {
+  const DOWN = '\x1b[B', UP = '\x1b[A', RIGHT = '\x1b[C';
+  // Eight models on a 20-row terminal: more rows than the viewport can hold, so the tail is off-screen
+  // until it is scrolled to. Before this was scrollable the overflow was simply clipped and unreachable.
+  const many = Array.from({ length: 8 }, (_, i) => model(`elowen:m${i}`, { total: (8 - i) * 1000 }));
+  const models = (keys: string[]): string => renderOverlay({ models: many, rows: 20, keys: [RIGHT, ...keys] }).join('\n');
+
+  it('reveals content below the fold when the down arrow is pressed', () => {
+    const top = models([]);
+    expect(top).toContain('elowen:m0');
+    expect(top).not.toContain('elowen:m7'); // the tail does not fit
+
+    const scrolled = models(Array(6).fill(DOWN));
+    expect(scrolled).toContain('elowen:m7'); // ...and the arrow brings it into view
+    expect(scrolled).not.toContain('elowen:m0'); // the window really moved, not just grew
+  });
+
+  it('stops at the end instead of scrolling past the last row', () => {
+    const far = models(Array(50).fill(DOWN));
+    expect(far).toContain('Σ'); // the total row is the last thing there is
+    const once = models(Array(51).fill(DOWN));
+    expect(once).toBe(far);
+  });
+
+  it('comes back to the top with the up arrow and never scrolls above it', () => {
+    expect(models([...Array(4).fill(DOWN), ...Array(20).fill(UP)])).toBe(models([]));
+  });
+
+  it('announces the position only while there is something to scroll to', () => {
+    expect(models([])).toMatch(/↑ ↓ scroll/);
+    // One model fits, so the hint stays a plain legend with no position counter.
+    const short = renderOverlay({ models: [model('elowen:only', { total: 1 })], rows: 20, keys: [RIGHT] }).join('\n');
+    expect(short).not.toMatch(/↑ ↓ scroll/);
+  });
+
+  it('resets the offset when switching sections, so a shorter one is not shown mid-air', () => {
+    // Scroll the long Models section, then cycle round to Conversation and back.
+    const cycled = models([...Array(6).fill(DOWN), RIGHT, RIGHT, RIGHT]);
+    expect(cycled).toContain('elowen:m0');
+  });
+
+  it('still renders a usable modal when the terminal reports no height', () => {
+    // NaN arithmetic would slice the body to nothing — a blank panel is worse than a clipped one.
+    const lines = renderOverlay({ models: many, rows: null, keys: [RIGHT] });
+    expect(lines.join('\n')).toContain('elowen:m0');
+    expect(lines.length).toBeGreaterThan(8);
   });
 });
 
