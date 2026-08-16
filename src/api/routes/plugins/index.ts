@@ -227,8 +227,11 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       // refused enable leaves something the operator can inspect and switch on deliberately, rather than
       // a half-done install. Enabling then goes through the SAME gate as the toggle — one-click install
       // was the hole: it enabled by default and never asked.
-      await d.marketplace.install(name, { enable: false });
-      if (!wantEnabled) return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+      const outcome = await d.marketplace.install(name, { enable: false });
+      // `deferred` means the files are installed and the runtime picks them up when the running work
+      // settles — a 202, exactly like a deferred toggle. Reporting it as an error would deny an install
+      // that DID land, and an install asked for from a conversation is deferred by construction.
+      if (!wantEnabled) return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, outcome !== 'deferred');
       const needed = consentRequiredFor(name);
       const missing = missingConsent(needed, body.acknowledgeGrants);
       if (missing.length) return c.json({ error: 'grants require consent', grants: needed, installed: true }, 409);
@@ -241,8 +244,8 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
     const name = c.req.param('name');
     try {
-      await d.marketplace.update(name);
-      return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+      const outcome = await d.marketplace.update(name);
+      return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, outcome !== 'deferred');
     } catch (e) { return marketplaceFail(c, e); }
   });
 

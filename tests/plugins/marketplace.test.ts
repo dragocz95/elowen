@@ -68,6 +68,10 @@ interface Harness {
   cacheDir: string;
   enabled: string[];
   reload: ReturnType<typeof vi.fn>;
+  loadedNames: ReturnType<typeof vi.fn>;
+  /** What the fake daemon currently has LOADED. Rebuilt only by a reload that actually applies, so
+   *  "is it live" stays a real question a deferred reload cannot answer yes to. */
+  loaded: Set<string>;
   exec: ReturnType<typeof vi.fn>;
   /** Flip `offline` to make every network-touching git command fail from that point on. */
   net: { offline: boolean };
@@ -105,7 +109,15 @@ function setup(opts: {
   }
 
   const enabled: string[] = [...(opts.installed ?? []).map((p) => p.name)];
-  const reload = vi.fn(async () => {});
+  // The fake registry rebuild reads the same two facts the real loader does — what is enabled and what is
+  // on disk — so a rolled-back or never-applied swap genuinely fails to load.
+  const loaded = new Set<string>((opts.installed ?? []).map((p) => p.name));
+  const reload = vi.fn(async (): Promise<'applied' | 'deferred'> => {
+    loaded.clear();
+    for (const p of discoverPlugins([bundledDir, userDir])) if (enabled.includes(p.manifest.name)) loaded.add(p.manifest.name);
+    return 'applied';
+  });
+  const loadedNames = vi.fn(async () => loaded as ReadonlySet<string>);
   const net = { offline: !!opts.offline };
   const exec = fakeGit(fixture, { failRevParse: opts.failRevParse, calls: opts.calls, net });
 
@@ -119,9 +131,10 @@ function setup(opts: {
     getEnabled: () => enabled,
     setEnabled: (names) => { enabled.length = 0; enabled.push(...names); },
     reload,
+    loadedNames,
     io: { exec, now: () => 1_000_000, rand: () => 'rnd' },
   });
-  return { svc, bundledDir, userDir, dataRoot, cacheDir, enabled, reload, exec, net };
+  return { svc, bundledDir, userDir, dataRoot, cacheDir, enabled, reload, loadedNames, loaded, exec, net };
 }
 
 describe('parseRegistry', () => {
@@ -201,12 +214,15 @@ describe('MarketplaceService.catalog', () => {
 
 describe('MarketplaceService.install', () => {
   it('installs a registry plugin as a user source, enables it, and reloads', async () => {
-    const { svc, bundledDir, userDir, enabled, reload } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
-    await svc.install('weather');
+    const { svc, bundledDir, userDir, enabled, reload, loaded } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    await expect(svc.install('weather')).resolves.toBe('applied');
     expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
     expect(enabled).toContain('weather');
     expect(reload).toHaveBeenCalledOnce();
-    expect(reload).toHaveBeenCalledWith('weather');
+    // Applied means PROVEN live, not merely attempted: the rebuilt registry carries the plugin and
+    // nothing is left waiting on a later apply.
+    expect(loaded.has('weather')).toBe(true);
+    expect(svc.pendingApplies()).toEqual([]);
     const disk = discoverPlugins([bundledDir, userDir]).find((p) => p.manifest.name === 'weather');
     expect(disk?.source).toBe('user');
   });
@@ -226,10 +242,13 @@ describe('MarketplaceService.install', () => {
   });
 
   it('honors { enable:false } without requiring the inert plugin in the rebuilt registry', async () => {
-    const { svc, enabled, reload } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
-    await svc.install('weather', { enable: false });
+    const { svc, userDir, enabled, loaded } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    // An inert plugin is not supposed to be in the rebuilt registry, so demanding it there would fail
+    // every deliberate install-but-do-not-enable — including the first half of the install route.
+    await expect(svc.install('weather', { enable: false })).resolves.toBe('applied');
     expect(enabled).not.toContain('weather');
-    expect(reload).toHaveBeenCalledWith(undefined);
+    expect(loaded.has('weather')).toBe(false);
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
   });
 
   it('rejects a name not in the registry (404)', async () => {
@@ -347,7 +366,7 @@ describe('MarketplaceService.update', () => {
     const manifest = JSON.parse(readFileSync(join(userDir, 'notion', 'elowen-plugin.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('1.0.0');
     expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(false); // backup consumed, no debris
-    expect(reload.mock.calls).toEqual([['notion'], []]); // rollback reloads without requiring the rejected version
+    expect(reload).toHaveBeenCalledTimes(2); // the failed apply, then the rebuild around the restored version
   });
 
   it('refuses to update a built-in plugin (409)', async () => {
@@ -356,6 +375,126 @@ describe('MarketplaceService.update', () => {
       bundled: [{ name: 'memory', version: '1.0.0' }],
     });
     await expect(svc.update('memory')).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+/** The daemon parks a plugin reload while a turn is running and applies it once the turn settles. An
+ *  install asked for FROM a conversation therefore always meets a deferral — the turn being waited on is
+ *  the one that asked for the install — so treating a deferral as a failure rolled back every such
+ *  install and left the operator with `unknown plugin`. These cover the third outcome end to end: the
+ *  files land, the rollback copy is held rather than dropped, and the swap is judged when the rebuild
+ *  really happens. */
+describe('MarketplaceService deferred apply', () => {
+  const installedVersion = (userDir: string, name: string): string =>
+    (JSON.parse(readFileSync(join(userDir, name, 'elowen-plugin.json'), 'utf-8')) as { version: string }).version;
+
+  it('keeps an install that the busy daemon could not apply yet, and says so', async () => {
+    const { svc, userDir, enabled, loaded, reload } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    reload.mockResolvedValueOnce('deferred'); // the daemon is mid-turn — the swap is parked, not refused
+
+    await expect(svc.install('weather')).resolves.toBe('deferred');
+    // Installed for real — this is the exact assertion the bug failed: the folder used to be deleted.
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
+    expect(enabled).toContain('weather');
+    // …and honestly not live yet, rather than claimed as running.
+    expect(loaded.has('weather')).toBe(false);
+    expect(svc.pendingApplies()).toEqual(['weather']);
+  });
+
+  it('activates the deferred install once a reload actually rebuilds the registry', async () => {
+    const { svc, userDir, reload, loaded } = setup({ registryEntries: [{ name: 'weather', version: '1.0.0' }] });
+    reload.mockResolvedValueOnce('deferred');
+    await svc.install('weather');
+
+    // The turn settles: the daemon drains its deferred reload, then hands the marketplace its chance to
+    // judge what it parked (in the daemon this pairing is `brain.afterPluginsApplied`).
+    await reload();
+    await svc.settleDeferredApplies();
+
+    expect(loaded.has('weather')).toBe(true);
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
+    expect(svc.pendingApplies()).toEqual([]);
+  });
+
+  it('holds the only rollback copy across the deferral and drops it only once the apply is proven', async () => {
+    const { svc, userDir, reload, loaded } = setup({
+      registryEntries: [{ name: 'notion', version: '2.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    reload.mockResolvedValueOnce('deferred');
+
+    await expect(svc.update('notion')).resolves.toBe('deferred');
+    expect(installedVersion(userDir, 'notion')).toBe('2.0.0');
+    // Nothing has been proven yet, so the way back must still exist. Committing here is what would make
+    // a bad version unrecoverable.
+    expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(true);
+
+    await reload();
+    await svc.settleDeferredApplies();
+    expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(false);
+    expect(loaded.has('notion')).toBe(true);
+  });
+
+  it('restores the previous version when the deferred apply fails to load the plugin', async () => {
+    const { svc, userDir, reload, loadedNames } = setup({
+      registryEntries: [{ name: 'notion', version: '2.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    reload.mockResolvedValueOnce('deferred');
+    await svc.update('notion');
+
+    // The rebuild happens but the new version does not survive import/register.
+    loadedNames.mockResolvedValueOnce(new Set<string>());
+    await svc.settleDeferredApplies();
+
+    expect(installedVersion(userDir, 'notion')).toBe('1.0.0');
+    expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(false); // backup consumed, no debris
+    expect(reload).toHaveBeenCalledTimes(2); // the deferred attempt, then the rebuild around the restored version
+    expect(svc.pendingApplies()).toEqual([]);
+  });
+
+  it('survives the reload it triggers calling it straight back', async () => {
+    // The rollback path reloads, and in the daemon a reload fires the very hook that runs this. Waiting on
+    // a lock either way — its own, or the one the install above it holds — makes that a hang rather than a
+    // failed install, which is why the guard is a flag. Left unguarded this test times out instead of
+    // failing, so a regression is loud either way.
+    const { svc, userDir, reload, loadedNames } = setup({
+      registryEntries: [{ name: 'notion', version: '2.0.0' }, { name: 'weather', version: '1.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    reload.mockResolvedValueOnce('deferred');
+    await svc.update('notion');
+
+    // The rollback's reload does what the daemon does: another install parks in the meantime, and then the
+    // reload's post-apply hook calls back in — with the map no longer empty.
+    reload.mockImplementationOnce(async () => {
+      reload.mockResolvedValueOnce('deferred');
+      await svc.install('weather');
+      await svc.settleDeferredApplies();
+      return 'applied';
+    });
+    loadedNames.mockResolvedValueOnce(new Set<string>()); // forces the rollback, hence the nested call
+    await svc.settleDeferredApplies();
+
+    expect(installedVersion(userDir, 'notion')).toBe('1.0.0');
+    // The install parked mid-settle is not judged by the nested call; it waits for the next real apply.
+    expect(svc.pendingApplies()).toEqual(['weather']);
+  });
+
+  it('supersedes a still-pending swap when the same plugin is installed again', async () => {
+    const { svc, userDir, reload } = setup({
+      registryEntries: [{ name: 'notion', version: '2.0.0' }],
+      installed: [{ name: 'notion', version: '1.0.0' }],
+    });
+    reload.mockResolvedValueOnce('deferred');
+    await svc.update('notion');
+    // The operator retries and this one applies. The parked 1.0.0 backup is no longer anything to return
+    // to — the version it would restore over is the pending one — so it must be dropped, not orphaned.
+    await expect(svc.update('notion')).resolves.toBe('applied');
+
+    expect(svc.pendingApplies()).toEqual([]);
+    expect(installedVersion(userDir, 'notion')).toBe('2.0.0');
+    expect(existsSync(join(userDir, '.old-notion-rnd'))).toBe(false);
   });
 });
 

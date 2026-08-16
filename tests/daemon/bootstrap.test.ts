@@ -72,14 +72,27 @@ describe('buildApp', () => {
     }
   });
 
-  it('rejects a marketplace apply that was deferred or did not load the expected plugin', async () => {
-    const { dbPath, cleanup } = dbWithPlugins([]);
-    let marketplaceReload!: (expectedPlugin?: string) => Promise<void>;
+  it('reports a deferred plugin apply as deferred, and hangs the marketplace settle off the real one', async () => {
+    // A reload the daemon parked while work was running used to be turned into a throw here, which the
+    // marketplace could only read as "the daemon cannot run this version" — so it rolled the install back.
+    // Every install triggered from a conversation hit exactly that, because the work being waited on was
+    // the turn asking for the install. The outcome is reported as itself now, and the deferred half is
+    // finished by the brain's post-apply hook.
+    const { dbPath, cleanup } = dbWithPlugins(['files']);
+    type ReloadFn = () => Promise<'applied' | 'deferred'>;
+    let marketplaceReload!: ReloadFn;
+    let loadedNames!: () => Promise<ReadonlySet<string>>;
     vi.spyOn(MarketplaceService.prototype, 'reconcileEnabled').mockImplementation(function () {
-      marketplaceReload = (this as unknown as { opts: { reload: typeof marketplaceReload } }).opts.reload;
+      const opts = (this as unknown as { opts: { reload: ReloadFn; loadedNames: typeof loadedNames } }).opts;
+      marketplaceReload = opts.reload;
+      loadedNames = opts.loadedNames;
       return Promise.resolve([]);
     });
-    const reloadPlugins = vi.spyOn(BrainService.prototype, 'reloadPlugins').mockResolvedValue(true);
+    let brain: BrainService | undefined;
+    let swapped = true;
+    const reloadPlugins = vi.spyOn(BrainService.prototype, 'reloadPlugins')
+      .mockImplementation(async function (this: BrainService) { brain = this; return swapped; });
+    const settle = vi.spyOn(MarketplaceService.prototype, 'settleDeferredApplies').mockResolvedValue();
     try {
       await buildApp({
         dbPath,
@@ -90,11 +103,21 @@ describe('buildApp', () => {
         pluginDirs: [join(process.cwd(), 'plugins')],
       });
 
-      reloadPlugins.mockResolvedValueOnce(false);
-      await expect(marketplaceReload('discord')).rejects.toThrow(/deferred/);
+      swapped = false;
+      await expect(marketplaceReload()).resolves.toBe('deferred');
+      swapped = true;
+      await expect(marketplaceReload()).resolves.toBe('applied');
+      expect(reloadPlugins).toHaveBeenCalledTimes(2);
 
-      reloadPlugins.mockResolvedValueOnce(true);
-      await expect(marketplaceReload('not-loaded')).rejects.toThrow(/did not load/);
+      // The proof the marketplace drops a rollback copy on comes from the LIVE registry, not from a
+      // value the caller passed in — the plugin this install enables is in it.
+      expect([...await loadedNames()]).toContain('files');
+
+      // …and the post-apply hook the brain fires is the marketplace's settle, so a parked install is
+      // judged the moment a reload really lands.
+      expect(settle).not.toHaveBeenCalled();
+      await brain?.afterPluginsApplied?.();
+      expect(settle).toHaveBeenCalledOnce();
     } finally {
       cleanup();
     }

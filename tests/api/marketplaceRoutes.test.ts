@@ -42,7 +42,7 @@ function pluginDirsFixture(): string[] {
   return [bundled, user];
 }
 
-function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = []) {
+function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [], brain?: Record<string, unknown>) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
@@ -57,6 +57,7 @@ function setup(marketplace?: Record<string, unknown>, pluginDirs: string[] = [])
     pluginDirs, pluginDataRoot: '/tmp/none',
     brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     marketplace: marketplace as never,
+    brain: brain as never,
   });
   return { app, config, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
@@ -159,6 +160,39 @@ describe('marketplace routes', () => {
     const full = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { acknowledgeGrants: ['memory', 'workflow-dag'] }));
     expect(full.status).toBe(200);
     expect(config.get().plugins.enabled).toContain('weather');
+  });
+
+  // An install asked for from a conversation always meets a busy daemon: the turn the reload waits for is
+  // the one running the install. The plugin IS installed, so answering with an error (and, before the fix,
+  // rolling the folder back) denied a change that had landed and left the operator with `unknown plugin`.
+  it('reports an install the busy daemon has not applied yet as accepted, not failed', async () => {
+    const base = tmpDir('mp-deferred');
+    const user = join(base, 'user');
+    writePlugin(user, 'weather');
+    const install = vi.fn(async () => 'deferred');
+    // The brain is mid-turn, so the enable's registry swap is parked exactly like the install's was.
+    const reloadPlugins = vi.fn(async () => false);
+    const { app, config, adminTok } = setup({ install }, [user], { reloadPlugins });
+
+    const res = await app.request('/plugins/marketplace/weather/install', post(adminTok));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ name: 'weather', pending: true });
+    // The enable still persisted — "applies shortly" has to be true, not a softer word for "refused".
+    expect(config.get().plugins.enabled).toContain('weather');
+    expect(reloadPlugins).toHaveBeenCalled();
+  });
+
+  it('reports a deferred install-only the same way, without an enable to hide behind', async () => {
+    const base = tmpDir('mp-deferred-inert');
+    const user = join(base, 'user');
+    writePlugin(user, 'weather');
+    const install = vi.fn(async () => 'deferred');
+    const { app, config, adminTok } = setup({ install }, [user]);
+
+    const res = await app.request('/plugins/marketplace/weather/install', postBody(adminTok, { enable: false }));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ pending: true });
+    expect(config.get().plugins.enabled).not.toContain('weather');
   });
 
   it('installs without asking when the caller does not want it enabled', async () => {

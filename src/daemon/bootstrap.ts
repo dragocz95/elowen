@@ -460,19 +460,20 @@ export async function buildApp(opts: BuildOpts) {
     discovered: () => discoverPlugins(pluginDirs),
     getEnabled: () => config.get().plugins.enabled,
     setEnabled: (names) => { config.update({ plugins: { enabled: names } }); },
-    // An install keeps its rollback folder only until this proves that the swap happened and the exact
-    // plugin survived import/register. A deferred reload is not an apply: committing there would delete the
-    // only rollback copy before the daemon had ever rebuilt itself around the new folder.
-    reload: async (expectedPlugin) => {
-      let applied = true;
-      if (brain) applied = await brain.reloadPlugins();
-      else pluginProvider.invalidate();
-      if (!applied) throw new Error('plugin reload deferred while work was still running');
-      if (expectedPlugin && !(await pluginProvider.get()).loadedNames.has(expectedPlugin)) {
-        throw new Error(`plugin "${expectedPlugin}" did not load into the rebuilt registry`);
-      }
+    // Whether the registry was rebuilt NOW or parked until running work settles is reported as it is, not
+    // as a failure: the marketplace keeps its rollback folder either way and only drops it once the plugin
+    // is proven present in a rebuilt registry (`loadedNames`). Turning the deferral into an error here
+    // rolled back every install triggered from a conversation, because the work being waited on was that
+    // very turn.
+    reload: async () => {
+      if (!brain) { pluginProvider.invalidate(); return 'applied'; }
+      return await brain.reloadPlugins() ? 'applied' : 'deferred';
     },
+    loadedNames: async () => (await pluginProvider.get()).loadedNames,
   });
+  // The deferred half of the contract above: once a reload really lands, the marketplace gets to prove or
+  // undo the installs it parked. Late-bound for the same reason `restartHandler` is.
+  if (brain) brain.afterPluginsApplied = () => marketplace.settleDeferredApplies();
   marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
   // Restore any plugin that is enabled but no longer on disk — the case an upgrade creates when a
   // plugin moves out of the package into the registry. Start it now but do not await it from buildApp: a

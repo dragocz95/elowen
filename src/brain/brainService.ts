@@ -405,6 +405,12 @@ export class BrainService {
    *  (it needs the systemd units + marker path), so bootstrap sets it once ready. Undefined ⇒ unavailable. */
   restartHandler?: (byUserId: number) => Promise<void>;
 
+  /** Run after the registry has ACTUALLY been rebuilt — never after a deferral. The marketplace hangs its
+   *  deferred installs here: an install that arrives from chat can only ever be deferred (the turn it waits
+   *  for is the one that asked for it), so this is the moment its rollback copy can finally be judged.
+   *  Late-bound because the marketplace is constructed after the brain, like `restartHandler`. */
+  afterPluginsApplied?: () => Promise<void>;
+
   /** Tear down the admin chat terminal bound to a conversation before it is deleted (BrainTerminalService.
    *  stopForSession). Late-bound: the terminal service is constructed AFTER the brain (it needs store+users),
    *  so bootstrap attaches this once ready — avoids a constructor cycle (mirrors SpawnService.attachBrainWorker).
@@ -1315,6 +1321,12 @@ export class BrainService {
       // applies when the work finishes" learns the moment it did, rather than showing the old worlds
       // until someone reloads the page.
       this.d.onPluginsReloaded?.();
+      // Outside the swap lock on purpose: settling a deferred install may itself have to roll back and
+      // reload, which takes that same lock. Its failure is its own to report and must not turn a reload
+      // that DID happen into a failed one.
+      if (this.afterPluginsApplied) {
+        await this.afterPluginsApplied().catch((e) => logger('brain').error(`post-apply plugin hook failed: ${e instanceof Error ? e.message : String(e)}`));
+      }
       return true;
     } finally {
       this.pluginReloadWaiters -= 1;

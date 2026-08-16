@@ -438,6 +438,11 @@ describe('BrainService', () => {
       const invalidate = vi.spyOn(plugins, 'invalidate');
       (d as unknown as { plugins: unknown }).plugins = plugins;
       const svc = new BrainService(d as never);
+      // A marketplace install parked by this very deferral is finished through this hook, so it must fire
+      // when the swap REALLY happens and never on the deferral itself — judging a parked install before
+      // the daemon rebuilt itself around its folder is what would throw the install away again.
+      const afterPluginsApplied = vi.fn(async () => {});
+      svc.afterPluginsApplied = afterPluginsApplied;
       await svc.start(1);
 
       // The wait gives up rather than throwing: the config write behind this call already landed, so a
@@ -447,6 +452,7 @@ describe('BrainService', () => {
       await expect(reload).resolves.toBe(false);
       expect(invalidate).not.toHaveBeenCalled();
       expect(reset).not.toHaveBeenCalled();
+      expect(afterPluginsApplied).not.toHaveBeenCalled();
       // Admission reopened — a busy instance must not be left refusing turns over a pending toggle.
       runnerBusy = false;
       await expect(svc.send({ userId: 1, text: 'work survived', mode: 'build', session: 'brain-1' }))
@@ -457,6 +463,8 @@ describe('BrainService', () => {
       await vi.waitFor(() => {
         expect(invalidate).toHaveBeenCalledOnce();
         expect(reset).toHaveBeenCalledOnce();
+        // Only NOW is a deferred install provable — the registry the hook reads is the rebuilt one.
+        expect(afterPluginsApplied).toHaveBeenCalledOnce();
       });
     } finally {
       vi.useRealTimers();

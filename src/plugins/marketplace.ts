@@ -156,11 +156,21 @@ export interface MarketplaceServiceOptions {
   discovered: () => DiscoveredPlugin[];
   getEnabled: () => string[];
   setEnabled: (names: string[]) => void;
-  /** Drop the memoized registry + hot-reload running sessions (`brain.reloadPlugins`). When supplied,
-   *  `expectedPlugin` must be present in the rebuilt registry or the apply must reject and roll back. */
-  reload: (expectedPlugin?: string) => Promise<void>;
+  /** Drop the memoized registry + hot-reload running sessions (`brain.reloadPlugins`). Resolves
+   *  `applied` when the registry was actually rebuilt, and `deferred` when the daemon parked the swap
+   *  because work was still running — a deferral is NOT a failure and NOT an apply, so the caller keeps
+   *  its rollback copy and finishes when `settleDeferredApplies()` runs. Throws only when the rebuild
+   *  itself failed. */
+  reload: () => Promise<PluginApplyOutcome>;
+  /** The plugin names the CURRENT registry actually loaded. This is how an apply proves the new folder
+   *  survived import/register before the rollback copy is dropped — read after a reload, never cached. */
+  loadedNames: () => Promise<ReadonlySet<string>>;
   io?: Partial<MarketplaceIO>;
 }
+
+/** What a swap attempt achieved. `deferred` means the files are in place but the daemon has not rebuilt
+ *  itself around them yet: the change is not lost, it lands when running work settles. */
+export type PluginApplyOutcome = 'applied' | 'deferred';
 
 /** Downloads plugins from the curated registry into the writable user plugin dir and manages their
  *  lifecycle (install / update / uninstall), all live-applied via `reload()`. The registry is kept as a
@@ -174,6 +184,12 @@ export class MarketplaceService {
   private readonly ttlMs: number;
   private readonly lock = new KeyedMutex();
   private lastFetch = 0;
+  /** Swaps whose files are live but whose registry rebuild was deferred while work was running, keyed by
+   *  plugin name. Each holds the ONLY copy of the previous version, so it is kept until
+   *  `settleDeferredApplies()` can see whether the rebuild actually loaded the plugin. */
+  private readonly deferredApplies = new Map<string, { commit: () => void; rollback: () => void }>();
+  /** Reentrancy guard for `settleDeferredApplies` — its own rollback reload fires the hook that calls it. */
+  private settling = false;
 
   constructor(private readonly opts: MarketplaceServiceOptions) {
     this.io = { ...defaultIO, ...opts.io };
@@ -211,8 +227,11 @@ export class MarketplaceService {
 
   /** Install a registry plugin into the user dir and (by default) enable it. Rejects a name absent from the
    *  registry or owned by a built-in plugin. Atomic: a validated staging copy is swapped in, so a failure
-   *  never leaves a half-written folder under the real name. */
-  async install(name: string, opts: { enable?: boolean } = {}): Promise<void> {
+   *  never leaves a half-written folder under the real name.
+   *
+   *  Resolves `deferred` when the files landed but the daemon was too busy to rebuild its registry around
+   *  them yet — installed, activating shortly, not failed. */
+  async install(name: string, opts: { enable?: boolean } = {}): Promise<PluginApplyOutcome> {
     return this.lock.run('marketplace', async () => {
       this.ensureSafeName(name);
       // Same degradation as catalog(): the install payload comes from the cache on disk, so a failed
@@ -245,13 +264,14 @@ export class MarketplaceService {
         swap.rollback();
         throw new MarketplaceError(`installed "${name}" but it did not resolve as a user plugin`, 500);
       }
-      await this.applyOrRollback(name, swap);
+      const outcome = await this.applyOrRollback(name, swap);
       log.info(`plugin installed: ${name}`);
+      return outcome;
     });
   }
 
   /** Re-copy a newer version of an already-installed user plugin from the refreshed cache, then hot-reload. */
-  async update(name: string): Promise<void> {
+  async update(name: string): Promise<PluginApplyOutcome> {
     return this.lock.run('marketplace', async () => {
       this.ensureSafeName(name);
       const existing = this.opts.discovered().find((p) => p.manifest.name === name);
@@ -260,8 +280,9 @@ export class MarketplaceService {
       await this.ensureFresh(true);
       if (!this.readRegistry().some((e) => e.name === name)) throw new MarketplaceError(`"${name}" is not in the registry`, 404);
       const swap = this.copyFromCache(name);
-      await this.applyOrRollback(name, swap);
+      const outcome = await this.applyOrRollback(name, swap);
       log.info(`plugin updated: ${name}`);
+      return outcome;
     });
   }
 
@@ -342,7 +363,13 @@ export class MarketplaceService {
   }
 
   /** Clear leftover `.staging-*` / `.old-*` scratch dirs from an interrupted install. Called once on
-   *  daemon startup so the user plugin dir never accretes crash debris. */
+   *  daemon startup so the user plugin dir never accretes crash debris.
+   *
+   *  This is also what resolves a daemon that died between a deferred install landing on disk and its
+   *  apply being proven: the parked swap lives in memory only, so the reboot simply loads the new folder
+   *  from disk like any other, and its now-meaningless backup is swept here. A plugin that then fails to
+   *  load is reported by the loader and is disable-able, which is the same position an interrupted
+   *  daemon leaves every other half-finished write in — no separate recovery path to keep correct. */
   sweep(): void {
     if (!existsSync(this.opts.userPluginsDir)) return;
     for (const entry of readdirSync(this.opts.userPluginsDir)) {
@@ -357,16 +384,82 @@ export class MarketplaceService {
   /** Put a freshly swapped-in version into service, and keep the previous one only until that succeeds.
    *  A reload that throws means the daemon could not rebuild itself around the new version, so the old
    *  folder is restored and re-applied before the failure propagates — reporting the error while leaving
-   *  the failed version live and the backup deleted is what makes such an update unrecoverable. */
-  private async applyOrRollback(name: string, swap: { commit: () => void; rollback: () => void }): Promise<void> {
+   *  the failed version live and the backup deleted is what makes such an update unrecoverable.
+   *
+   *  A DEFERRED reload is a third outcome, and collapsing it into either of the other two is wrong. It is
+   *  not an apply (nothing has been proven, so the backup must stay), and it is not a failure: the files
+   *  are on disk and the daemon applies them the moment running work settles. Rolling back there made an
+   *  install from chat impossible by construction — the turn being waited on IS the one that asked for the
+   *  install, so the wait can never end in time and every such install undid itself. The swap is parked
+   *  instead and resolved by `settleDeferredApplies()`. */
+  private async applyOrRollback(name: string, swap: { commit: () => void; rollback: () => void }): Promise<PluginApplyOutcome> {
+    let outcome: PluginApplyOutcome;
     try {
-      await this.opts.reload(this.opts.getEnabled().includes(name) ? name : undefined);
+      outcome = await this.opts.reload();
+      if (outcome === 'applied') await this.verifyLoaded(name);
     } catch (e) {
       swap.rollback();
       await this.opts.reload().catch((re) => log.error(`plugin ${name}: reload after rollback failed: ${errMsg(re)}`));
       throw e;
     }
+    if (outcome === 'deferred') {
+      this.deferredApplies.set(name, swap);
+      log.info(`plugin ${name}: installed on disk; the daemon is busy, so it activates when the running work settles`);
+      return 'deferred';
+    }
     swap.commit();
+    return 'applied';
+  }
+
+  /** Finish the swaps that were parked while the daemon was busy — called once a plugin reload has ACTUALLY
+   *  rebuilt the registry (wired to the brain's post-apply hook). Only now can the same proof an immediate
+   *  apply demands be taken: the plugin is in the rebuilt registry, so the rollback copy is dropped; it is
+   *  not, so the previous version goes back in and the registry is rebuilt around it again.
+   *
+   *  Guarded by a flag rather than the `marketplace` mutex, because both ways of waiting here deadlock.
+   *  That mutex is held by the install this runs underneath. And a lock of its own would close on itself:
+   *  the rollback path reloads, the reload fires this hook again, and that nested call would wait for the
+   *  outer one that is waiting for the reload. The flag makes the nested call a no-op instead — anything
+   *  parked in the meantime is unproven either way and belongs to the next real apply, which the brain
+   *  already owes it (a deferral re-arms its pending reload). */
+  async settleDeferredApplies(): Promise<void> {
+    if (this.settling || !this.deferredApplies.size) return;
+    this.settling = true;
+    try {
+      const entries = [...this.deferredApplies];
+      this.deferredApplies.clear();
+      for (const [name, swap] of entries) {
+        try {
+          await this.verifyLoaded(name);
+          swap.commit();
+          log.info(`plugin ${name}: deferred apply landed — the daemon rebuilt itself around the new version`);
+        } catch (e) {
+          // The previous version comes back and the daemon is rebuilt around IT. What is enabled is not
+          // touched: that is the operator's setting, and an enabled name with nothing on disk is exactly
+          // the state `reconcileEnabled()` exists to repair on the next boot.
+          swap.rollback();
+          log.error(`plugin ${name}: deferred apply failed (${errMsg(e)}) — rolled back to the previous version`);
+          await this.opts.reload().catch((re) => log.error(`plugin ${name}: reload after rollback failed: ${errMsg(re)}`));
+        }
+      }
+    } finally {
+      this.settling = false;
+    }
+  }
+
+  /** Names still waiting for a deferred apply to be proven — the honest answer to "is this live yet". */
+  pendingApplies(): string[] {
+    return [...this.deferredApplies.keys()];
+  }
+
+  /** A plugin the operator has ENABLED must be in the rebuilt registry, or the daemon could not run the
+   *  version just swapped in and the swap has to come back out. A plugin installed inert (`enable:false`)
+   *  is not supposed to load, so there is nothing to prove about it. */
+  private async verifyLoaded(name: string): Promise<void> {
+    if (!this.opts.getEnabled().includes(name)) return;
+    if (!(await this.opts.loadedNames()).has(name)) {
+      throw new MarketplaceError(`plugin "${name}" did not load into the rebuilt registry`, 500);
+    }
   }
 
   /** Root API mounts that `name` DECLARES, read from the registry cache rather than from disk — for a
@@ -482,6 +575,14 @@ export class MarketplaceService {
   private copyFromCache(name: string): { commit: () => void; rollback: () => void } {
     const src = join(this.cacheDir, 'plugins', name);
     if (!existsSync(join(src, 'elowen-plugin.json'))) throw new MarketplaceError(`payload for "${name}" is missing from the registry`, 502);
+    // A new swap for a name that still has a parked one supersedes it: the version about to be backed up
+    // below IS that pending version, so the older backup is no longer anything to return to. Dropping it
+    // through commit() deletes the folder instead of leaving it as debris for sweep() to find.
+    const superseded = this.deferredApplies.get(name);
+    if (superseded) {
+      this.deferredApplies.delete(name);
+      superseded.commit();
+    }
 
     mkdirSync(this.opts.userPluginsDir, { recursive: true });
     const staging = join(this.opts.userPluginsDir, `.staging-${name}-${this.io.rand()}`);
