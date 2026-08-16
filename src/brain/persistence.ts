@@ -446,11 +446,49 @@ function withoutExternalizedImages(msg: { role: string; content: unknown }): { r
   return changed ? { ...msg, content } : msg;
 }
 
+/** Replay one stored row into a session manager, restoring a compaction divider as a real compaction
+ *  ENTRY rather than an ordinary message.
+ *
+ *  PI distinguishes the two by entry type, and several of its invariants are keyed on finding the
+ *  latest `type: "compaction"` entry. Replaying the divider through `appendMessage` produces a
+ *  `type: "message"` entry, so `getLatestCompactionEntry` returns null on every rehydrated session and
+ *  those invariants silently switch off. Measured on live sessions before this fix: three compacted
+ *  conversations rehydrated to branches of only `message` entries, all three reporting no compaction.
+ *
+ *  What that cost: the guard in `_checkCompaction` that skips an assistant older than the compaction
+ *  boundary — the one whose comment reads "prevents a stale pre-compaction usage/error from
+ *  retriggering compaction on the first prompt after compaction" — never fired, so the pre-prompt check
+ *  read the pre-compaction assistant's usage, which sits above the trigger by definition, and compacted
+ *  again immediately. `prepareCompaction` likewise found no previous summary and re-summarised from
+ *  scratch instead of updating, degrading the summary into a summary of a summary. It hit GPT hardest
+ *  because a 256k window at 90% makes compaction routine, where a 1M window at 40% almost never does.
+ *
+ *  `firstKeptEntryId` is deliberately empty. `buildContextEntries` only consults it for entries BEFORE
+ *  the compaction, and the divider is written first in the stored row order (`compactSessionMessages`
+ *  gives the summary the lowest rowid), so on a replay there is nothing before it and every kept row
+ *  arrives through the "after the compaction entry" branch. Passing a fabricated id would be worse: it
+ *  would look meaningful while matching nothing.
+ *
+ *  The entry is stamped with the replay time, not the divider's original timestamp, because PI takes no
+ *  timestamp here. That is the safe direction and arguably the honest one: after a replay no historical
+ *  message carries usage that still describes the current context, so treating them all as pre-boundary
+ *  is correct. The first genuinely new assistant reply is newer than the entry and is checked normally. */
+function replayRow(sm: SessionManager, msg: { role: string; content: unknown }): void {
+  if (msg.role !== 'compactionSummary') {
+    sm.appendMessage(msg as never);
+    return;
+  }
+  const divider = msg as unknown as { summary?: unknown; tokensBefore?: unknown };
+  const summary = typeof divider.summary === 'string' ? divider.summary : '';
+  const tokensBefore = typeof divider.tokensBefore === 'number' ? divider.tokensBefore : 0;
+  sm.appendCompaction(summary, '', tokensBefore, undefined, undefined, undefined);
+}
+
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:
  *  messages appended before createAgentSession appear as session.messages. */
 export function rehydrate(store: BrainStore, sessionId: string, cwd: string): SessionManager {
   const sm = SessionManager.inMemory(cwd);
-  for (const { msg } of parsedRows(store, sessionId)) sm.appendMessage(msg as never);
+  for (const { msg } of parsedRows(store, sessionId)) replayRow(sm, msg);
   return sm;
 }
 
@@ -461,7 +499,7 @@ export function rehydrateWithTimestamps(store: BrainStore, sessionId: string, cw
   const sm = SessionManager.inMemory(cwd);
   const timestamps: string[] = [];
   for (const { msg, createdAt } of parsedRows(store, sessionId)) {
-    sm.appendMessage(msg as never);
+    replayRow(sm, msg);
     // SQLite stores UTC `YYYY-MM-DD HH:MM:SS`; normalize to ISO 8601 so PI's exporter renders it.
     timestamps.push(dbTsToIso(createdAt));
   }

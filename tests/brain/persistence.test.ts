@@ -261,6 +261,37 @@ describe('brain persistence', () => {
     expect(messages.some((m) => m.role === 'assistant')).toBe(true);
   });
 
+  // PI keys several compaction invariants on finding the latest `type: "compaction"` ENTRY, not on the
+  // rendered message role. Replaying the divider as an ordinary message produced a branch of only
+  // `message` entries, so `getLatestCompactionEntry` returned null on every rehydrated session and the
+  // guard that ignores a pre-compaction assistant's stale usage stopped firing — the first prompt after
+  // a respawn then re-compacted immediately and re-summarised the summary. Measured on three live
+  // conversations before the fix; the rendered roles were identical either way, which is exactly why
+  // no existing assertion caught it.
+  it('rehydrate restores the divider as a compaction ENTRY, so PI still sees the compaction boundary', () => {
+    const raw = (id: string, role: string, content: string) =>
+      db.prepare('INSERT INTO brain_messages (id, session_id, parent_id, role, content) VALUES (?, ?, NULL, ?, ?)')
+        .run(id, 's1', role, content);
+    raw('divider', 'compaction', JSON.stringify({ role: 'compactionSummary', summary: 'earlier work summarized', tokensBefore: 210_000 }));
+    raw('kept-u', 'user', JSON.stringify({ role: 'user', content: 'what next?' }));
+    raw('kept-a', 'assistant', JSON.stringify({ role: 'assistant', content: 'this next', stopReason: 'stop' }));
+
+    const sm = rehydrate(store, 's1', process.cwd());
+    const compaction = sm.getBranch().find((entry: { type: string }) => entry.type === 'compaction') as
+      { type: string; summary: string; tokensBefore: number } | undefined;
+    expect(compaction, 'no compaction entry — PI would report this session as never compacted').toBeDefined();
+    expect(compaction?.summary).toBe('earlier work summarized');
+    expect(compaction?.tokensBefore).toBe(210_000);
+
+    // The boundary must still render to the model exactly as before: same roles, same summary text, and
+    // the kept tail intact. A fix that restored the entry but changed what the model reads would trade
+    // one silent defect for another.
+    const messages = sm.buildSessionContext().messages;
+    expect(messages.map((m) => m.role)).toEqual(['compactionSummary', 'user', 'assistant']);
+    expect(JSON.stringify(messages)).toContain('earlier work summarized');
+    expect(JSON.stringify(messages)).toContain('what next?');
+  });
+
   it('persistCompaction keeps the CLEAN store tail (never the live prompted text) + a divider, and rehydrate replays the shrunk context', () => {
     // A full pre-compaction log in the store — the CLEAN rows projectUserTurn/projectEvent wrote.
     projectUserTurn(store, 's1', 'q1');
