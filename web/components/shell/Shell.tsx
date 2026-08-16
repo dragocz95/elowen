@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT } from '../../lib/brainDock';
-import { Providers, type PluginUiSeed } from '../../app/providers';
+import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider } from '../../lib/i18n';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
@@ -182,10 +182,10 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children, theme, pluginUiSeed }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null }) {
+export function Shell({ children, theme, pluginUiSeed, meSeed }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null }) {
   return (
     <EffectsProvider>
-      <Providers pluginUiSeed={pluginUiSeed}>
+      <Providers pluginUiSeed={pluginUiSeed} meSeed={meSeed}>
         <ThemeProvider>
         <UiScaleProvider>
         <LanguageProvider>

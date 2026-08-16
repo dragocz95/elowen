@@ -1,0 +1,76 @@
+// Server-side only (imported from the root layout — never from client components).
+import { cache } from 'react';
+import { headers } from 'next/headers';
+import { daemonUrl, readCookieHeader, COOKIE_NAME } from './proxy';
+import type { PluginUiListing, User } from './types';
+
+/** After a failed fetch, requests skip the daemon for this long. Same reasoning as the theme payload
+ *  in brandServer.ts: a HANGING daemon would otherwise put the full abort timeout into every
+ *  document's TTFB, the login page included. Unlike the theme there is NO last-known-good fallback —
+ *  everything prefetched here is per-caller, so serving a cached copy could render one user's data
+ *  into another user's HTML. A failure simply means "render without the seed"; the client's own query
+ *  fills it in, exactly as before this prefetch existed. */
+const FAILURE_BACKOFF_MS = 5_000;
+/** Kept PER ENDPOINT, not as one shared flag: a plugin whose listing route is broken would otherwise
+ *  suppress the identity prefetch too, and the rail would go back to growing its admin destinations
+ *  after first paint — the exact flash the identity seed exists to remove. */
+const failedAt = new Map<string, number>();
+
+/** Fetch a per-caller daemon endpoint for the CURRENT request, translating the caller's own session
+ *  cookie into the daemon bearer exactly like the BFF proxy route does — never an ambient/admin
+ *  credential, or one user's data would leak into another user's document.
+ *
+ *  Returns null — never throws — for every non-happy path: no session cookie (logged-out visitor),
+ *  a 401/403 (a stale session is a NORMAL answer, not an error), a daemon failure, or a body that
+ *  fails `accept`. Null means "no server-seeded data": the page renders exactly as it does without
+ *  the prefetch and the client query refills it. */
+async function fetchForCaller<T>(path: string, accept: (body: unknown) => body is T): Promise<T | null> {
+  const token = readCookieHeader((await headers()).get('cookie') ?? '', COOKIE_NAME);
+  if (!token) return null; // logged-out: nothing to forward, nothing to fetch
+  const endpoint = path.split('?')[0];
+  const lastFailure = failedAt.get(endpoint);
+  if (lastFailure && Date.now() - lastFailure < FAILURE_BACKOFF_MS) return null;
+  try {
+    const res = await fetch(`${daemonUrl()}${path}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(2000),
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // A stale/revoked session is a normal "no seed", not a fetch failure — and it must not trip the
+    // daemon-down backoff for everyone else.
+    if (res.status === 401 || res.status === 403) return null;
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const body: unknown = await res.json();
+    if (!accept(body)) throw new Error('malformed payload');
+    failedAt.delete(endpoint);
+    return body;
+  } catch {
+    failedAt.set(endpoint, Date.now());
+    return null;
+  }
+}
+
+/** Prefetch the caller's /plugins/ui listing so the navigation rail arrives complete in the HTML
+ *  (no first-paint pop-in of plugin worlds). Deduped per request via React cache. */
+export const fetchPluginUiListing = cache((locale: string): Promise<PluginUiListing[] | null> =>
+  fetchForCaller(
+    `/plugins/ui?lang=${encodeURIComponent(locale)}`,
+    (body): body is PluginUiListing[] => Array.isArray(body),
+  ));
+
+/** Prefetch the caller's /auth/me for the same reason, and it is the OTHER half of the same flash: the
+ *  system group renders admin destinations only once `is_admin` is known, so without this the rail
+ *  paints with Account alone and grows Settings/Users a round-trip later — the pop-in stayed visible
+ *  after the plugin worlds stopped causing it. Deduped per request via React cache. */
+export const fetchMe = cache((): Promise<{ user: User } | null> =>
+  fetchForCaller(
+    '/auth/me',
+    // One condition, and every part of it earns its place: optional chaining covers a null or
+    // primitive body, and the object check covers a missing or null user. A longer shape check reads
+    // safer but is dead weight — the extra branches cannot change the outcome, since anything they
+    // would reject already lands in the same rejection path.
+    (body): body is { user: User } => {
+      const user = (body as { user?: unknown } | null)?.user;
+      return typeof user === 'object' && user !== null;
+    },
+  ));

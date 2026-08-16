@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
-import type { PluginUiListing } from '../../lib/types';
+import type { PluginUiListing, User } from '../../lib/types';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/dash', useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { Shell } from '../../components/shell/Shell';
@@ -39,6 +39,53 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest }));
 afterEach(() => { server.resetHandlers(); pluginUiRequests = 0; });
 afterAll(() => server.close());
+
+describe('identity server prefetch', () => {
+  // The /auth/me handler NEVER resolves, so any admin destination in the rail came from the seed. The
+  // system group renders Settings and Users only once is_admin is known, which is why the rail kept
+  // growing after first paint even once the plugin worlds were seeded.
+  let meRequests = 0;
+  const hangingMe = http.get('*/api/auth/me', () => {
+    meRequests += 1;
+    return new Promise<Response>(() => {});
+  });
+  const asUser = (over: Partial<User>): User => ({
+    id: 1, username: 'admin', created_at: '2026-01-01', is_admin: false, allowed_execs: [], disabled_tools: [],
+    granted_plugins: [], name: '', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
+    ...over,
+  });
+  const ADMIN = { user: asUser({ is_admin: true }) };
+
+  afterEach(() => { meRequests = 0; });
+
+  it('renders the admin destinations on the FIRST paint, before any client fetch could have resolved', async () => {
+    server.use(hangingMe);
+    render(<Shell meSeed={ADMIN} pluginUiSeed={null}><span>page-body</span></Shell>);
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument();
+    // Fresh within useMe's staleTime, so the client does not even ASK for what the server rendered.
+    expect(meRequests).toBe(0);
+  });
+
+  it('shows a non-admin only their own destinations — the seed decides, and it must not over-grant', async () => {
+    server.use(hangingMe);
+    render(<Shell meSeed={{ user: asUser({ id: 2, username: 'bob' }) }} pluginUiSeed={null}><span>page-body</span></Shell>);
+    expect(await screen.findByRole('link', { name: 'Account' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+  });
+
+  it('without a seed the admin destinations arrive only after the client fetch — the flash this removes', async () => {
+    // The pre-fix behaviour, pinned deliberately: with no seed the first paint has no identity, so the
+    // rail starts without Settings and grows it when /auth/me resolves. If this ever renders Settings
+    // synchronously, the seeded assertions above would pass for a reason that has nothing to do with
+    // the seed, and this suite would stop proving anything.
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json(ADMIN)));
+    render(<Shell meSeed={null} pluginUiSeed={null}><span>page-body</span></Shell>);
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+});
 
 describe('plugin nav server prefetch', () => {
   it('renders the plugin worlds on the FIRST paint, before any client fetch could have resolved', async () => {

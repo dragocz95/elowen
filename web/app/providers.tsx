@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ElowenApiError } from '../lib/elowenClient';
 import { QUERY_KEYS } from '../lib/queries';
 import { useElowenEvents } from '../lib/useElowenEvents';
-import type { PluginUiListing } from '../lib/types';
+import type { PluginUiListing, User } from '../lib/types';
 
 /** The server-prefetched /plugins/ui listing (root layout), handed over so the client's first paint
  *  already carries the plugin worlds instead of popping them in when the client fetch resolves. Null
@@ -14,6 +14,14 @@ import type { PluginUiListing } from '../lib/types';
 export interface PluginUiSeed {
   locale: string;
   listing: PluginUiListing[];
+}
+
+/** The server-prefetched /auth/me (root layout). The system nav group renders admin destinations only
+ *  once `is_admin` is known, so without this seed the rail paints with Account alone and grows
+ *  Settings/Users when the client's own /auth/me resolves. Null for logged-out visitors and every
+ *  daemon/auth failure — the client query then fills it in as before. */
+export interface MeSeed {
+  user: User;
 }
 
 // EventBridge is exported so LoginGate can render it only when authenticated.
@@ -26,7 +34,7 @@ export function EventBridge() {
   return null;
 }
 
-export function Providers({ children, pluginUiSeed = null }: { children: ReactNode; pluginUiSeed?: PluginUiSeed | null }) {
+export function Providers({ children, pluginUiSeed = null, meSeed = null }: { children: ReactNode; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null }) {
   const [client] = useState(() => {
     const client = new QueryClient({
     defaultOptions: {
@@ -54,6 +62,9 @@ export function Providers({ children, pluginUiSeed = null }: { children: ReactNo
     // client from refetching what the server just rendered. The SSE bus still invalidates the key on a
     // plugin toggle, so live updates are unaffected.
     if (pluginUiSeed) client.setQueryData([...QUERY_KEYS.pluginUi, pluginUiSeed.locale], pluginUiSeed.listing);
+    // Same reasoning for the identity: seeded fresh at construction, so the 5-minute staleTime on
+    // useMe keeps the client from re-asking for what the server just rendered.
+    if (meSeed) client.setQueryData(QUERY_KEYS.me, meSeed);
     return client;
   });
   return (
