@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, it, expect, afterEach, afterAll } from 'vitest';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildApp } from '../../src/daemon/bootstrap.js';
@@ -11,17 +11,32 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *  argument, so the 30-day window was hardcoded at the call site and no setting could reach it. The boot
  *  runs one purge immediately, which is what these drive. */
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+const allDirs = new Set<string>();
+afterEach(() => {
+  const created = dirs.splice(0);
+  for (const dir of created) rmSync(dir, { recursive: true, force: true });
+  expect(created.filter(existsSync), 'event-retention tests left temporary directories behind').toEqual([]);
+});
+afterAll(async () => {
+  // Bootstrap used to race teardown: its unawaited marketplace clone recreated removed paths shortly later.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect([...allDirs].filter(existsSync), 'event-retention suite recreated temporary directories after cleanup').toEqual([]);
+});
 
 /** A database holding one event aged `ageDays` days, with the retention window set to `retentionDays`
  *  (omitted → the stored default). Returns the db path so bootstrap can open the same file. */
 function seedDb(ageDays: number, retentionDays?: number): string {
   const dir = mkdtempSync(join(tmpdir(), 'elowen-event-retention-'));
   dirs.push(dir);
+  allDirs.add(dir);
   const dbPath = join(dir, 'elowen.db');
   const db = openDb(dbPath);
+  const config = new ConfigStore(db);
+  // This test exercises the event sweep only. Leaving the default enabled plugins in place starts an
+  // asynchronous marketplace reconcile, which can recreate this directory after the test removes it.
+  config.update({ plugins: { enabled: [] } });
   if (retentionDays !== undefined) {
-    new ConfigStore(db).update({ runtime: { limits: { eventRetentionDays: retentionDays } } });
+    config.update({ runtime: { limits: { eventRetentionDays: retentionDays } } });
   }
   db.prepare(`INSERT INTO events (type, target, detail, ts) VALUES ('task', 't-1', 'done', datetime('now', '-${ageDays} days'))`).run();
   db.close();
@@ -31,7 +46,7 @@ function seedDb(ageDays: number, retentionDays?: number): string {
 /** Boot the daemon and run its startup sweeps (the purge fires once immediately), then stop every loop
  *  again so no interval outlives the test. */
 async function bootAndCountEvents(dbPath: string): Promise<number> {
-  const built = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true });
+  const built = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [join(process.cwd(), 'plugins')] });
   const stopLoops = built.startLoops();
   stopLoops();
   const db = openDb(dbPath);
