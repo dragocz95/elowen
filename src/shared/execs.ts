@@ -108,8 +108,17 @@ export function parseExecRef(input: ExecInput): ExecRef | null {
   return model ? { program, model } : null;
 }
 
-/** Structured identity → the legacy string spec. The single place either format is produced, so the
- *  wire, the config values and the task labels cannot drift apart while both forms are in use. */
+/**
+ * Structured identity → the legacy string spec. The single place either format is produced, so the
+ * wire, the config values and the task labels cannot drift apart while both forms are in use.
+ *
+ * It emits the CANONICAL spelling of a spec, which is not always the one it was parsed from: an
+ * explicitly prefixed `opencode:vendor/model` formats back as the bare `vendor/model`, since both
+ * name the same program and model and the bare form is what the CLI presets store. So the invariant
+ * this guarantees is identity-stability (parse → format → parse yields the same ExecRef), not byte
+ * equality — which is why nothing here rewrites a value already stored: a stored string is compared
+ * as-is, and only a structured value is ever formatted.
+ */
 export function execRefSpec(ref: ExecRef): string {
   if (ref.program === 'elowen') return `elowen:${ref.provider}/${ref.model}`;
   const prefix = Object.entries(PROGRAM_PREFIXES).find(([, p]) => p === ref.program)?.[0] ?? '';

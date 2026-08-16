@@ -69,6 +69,14 @@ describe('exec identity', () => {
         expect(execRefSpec(ref!), spec).toBe(spec);
       }
     });
+    // The formatter emits the canonical spelling, so an explicitly prefixed OpenCode spec comes back
+    // bare. What must hold is that the IDENTITY is stable — the value keeps naming the same program
+    // and model, which is what routing and the permission gates read.
+    it('is identity-stable for a spelling the formatter canonicalizes', () => {
+      const ref = parseExecRef('opencode:vendor/model')!;
+      expect(ref).toEqual({ program: 'opencode', model: 'vendor/model' });
+      expect(parseExecRef(execRefSpec(ref))).toEqual(ref);
+    });
     it('keeps the provider of a stored brain exec whose model itself contains slashes', () => {
       expect(parseExecRef('elowen:relay/ollama/kimi-k2.7-code'))
         .toEqual({ program: 'elowen', provider: 'relay', model: 'ollama/kimi-k2.7-code' });
