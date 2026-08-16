@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import { stripControlChars } from '../shared/text.js';
 import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
-import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
+import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { BrainLimits, RuntimeConfig, RuntimeLimits, ToolDeferralOverrides } from '../shared/wireContract.js';
 import { DEFAULT_MEMORY_RETENTION, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
@@ -513,6 +513,29 @@ function sanitizeStringList(input: unknown): string[] {
   return Array.isArray(input) ? input.filter((v): v is string => typeof v === 'string' && v.length > 0) : [];
 }
 
+function canonicalExec(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const ref = parseExecRef(input);
+  if (!ref) return null;
+  return ref.program === 'elowen' ? execRefSpec(ref) : input;
+}
+
+function sanitizeExecList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input.map(canonicalExec).filter((v): v is string => v !== null);
+}
+
+function canonicalizePluginExecConfig(config: Record<string, Record<string, unknown>>): Record<string, Record<string, unknown>> {
+  const out = { ...config };
+  for (const [name, field] of [['discord', 'visionModel'], ['whatsapp', 'visionModel'], ['image-gen', 'model'], ['image-edit', 'model']] as const) {
+    const slice = out[name];
+    if (!slice) continue;
+    const value = canonicalExec(slice[field]);
+    out[name] = value ? { ...slice, [field]: value } : slice;
+  }
+  return out;
+}
+
 /** Keep only well-formed custom-model entries ({ label, exec }, both non-empty strings). A malformed
  *  entry — e.g. a numeric `exec` from a hand-edited row or a loose PUT — is dropped rather than
  *  persisted, since a model picker would otherwise render it as a broken/undefined option. */
@@ -522,7 +545,8 @@ function sanitizeCustomModels(input: unknown): { label: string; exec: string }[]
   for (const v of input) {
     if (!v || typeof v !== 'object') continue;
     const { label, exec } = v as Partial<{ label: unknown; exec: unknown }>;
-    if (typeof label === 'string' && label && typeof exec === 'string' && exec) out.push({ label, exec });
+    const canonical = canonicalExec(exec);
+    if (typeof label === 'string' && label && canonical) out.push({ label, exec: canonical });
   }
   return out;
 }
@@ -534,7 +558,7 @@ function sanitizeModelNotes(input: unknown): Record<string, string> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-    if (typeof v === 'string') out[k] = v;
+    if (typeof v === 'string') out[canonicalExec(k) ?? k] = v;
   }
   return out;
 }
@@ -809,17 +833,20 @@ export class ConfigStore {
       return {
         // Element-level sanitisers, not just an Array.isArray check: a database written by an older
         // build (or hand-edited) can hold an array whose elements are the wrong runtime type.
-        allowedExecs: Array.isArray(p.allowedExecs) ? sanitizeStringList(p.allowedExecs) : d.allowedExecs,
+        allowedExecs: Array.isArray(p.allowedExecs) ? sanitizeExecList(p.allowedExecs) : d.allowedExecs,
         customModels: sanitizeCustomModels(p.customModels),
-        hiddenPresets: Array.isArray(p.hiddenPresets) ? sanitizeStringList(p.hiddenPresets) : [],
+        hiddenPresets: Array.isArray(p.hiddenPresets) ? sanitizeExecList(p.hiddenPresets) : [],
         // Seed built-in notes under any stored notes so known models always carry a description,
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...sanitizeModelNotes(p.modelNotes) } : { ...d.modelNotes },
-        autopilot: mergeAutopilot(p.autopilot, d.autopilot),
+        autopilot: (() => {
+          const value = mergeAutopilot(p.autopilot, d.autopilot);
+          return { ...value, pilotExec: canonicalExec(value.pilotExec) ?? '', overseerExec: canonicalExec(value.overseerExec) ?? '' };
+        })(),
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
         apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
         ghToken: typeof p.ghToken === 'string' ? p.ghToken : null,
-        defaults: { exec: p.defaults?.exec ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
+        defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
         security: { tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays },
         sessionRetention: {
           enabled: typeof p.sessionRetention?.enabled === 'boolean' ? p.sessionRetention.enabled : d.sessionRetention.enabled,
@@ -839,7 +866,7 @@ export class ConfigStore {
               enabled: Array.isArray(p.plugins.enabled) ? sanitizeStringList(p.plugins.enabled) : [],
               removed: Array.isArray(p.plugins.removed) ? sanitizeStringList(p.plugins.removed) : [],
               config: (p.plugins.config && typeof p.plugins.config === 'object' && !Array.isArray(p.plugins.config))
-                ? (p.plugins.config as Record<string, Record<string, unknown>>) : {},
+                ? canonicalizePluginExecConfig(p.plugins.config as Record<string, Record<string, unknown>>) : {},
             }
           : legacyEmptyPlugins(),
         agentsConfigMigrated: p.agentsConfigMigrated === true,
@@ -1078,14 +1105,14 @@ export class ConfigStore {
     // resolveExecutor would silently turn into a non-existent claude-code model (audit O22).
     // Element-level sanitised regardless of source: a stored value is already clean (idempotent), a
     // patched one might not be — the API's Zod schema is the first gate, this is the second.
-    const allowed = sanitizeStringList(patch.allowedExecs ?? cur.allowedExecs);
+    const allowed = sanitizeExecList(patch.allowedExecs ?? cur.allowedExecs);
     const pilotExec = this.normalizeExec(patch.autopilot?.pilotExec, cur.autopilot.pilotExec, allowed, '');
     const overseerExec = this.normalizeExec(patch.autopilot?.overseerExec, cur.autopilot.overseerExec, allowed, '');
     const defaultExec = this.normalizeExec(patch.defaults?.exec, cur.defaults.exec, allowed, cur.defaults.exec);
     this.write({
       allowedExecs: allowed,
       customModels: sanitizeCustomModels(patch.customModels ?? cur.customModels),
-      hiddenPresets: sanitizeStringList(patch.hiddenPresets ?? cur.hiddenPresets),
+      hiddenPresets: sanitizeExecList(patch.hiddenPresets ?? cur.hiddenPresets),
       modelNotes: sanitizeModelNotes(patch.modelNotes ?? cur.modelNotes),
       // Merge the plain fields, then override the two exec fields with their allow-list-validated values.
       autopilot: { ...mergeAutopilot(patch.autopilot, cur.autopilot), pilotExec, overseerExec },
@@ -1113,7 +1140,7 @@ export class ConfigStore {
         // An autopilot patch is NOT mirrored in here: the extraction never shipped, so no release
         // ever owned these keys via autopilot.* — plugins.config.agents (edited by the plugin's own
         // settings deck, seeded once by migrateAgentsPluginConfig) is the single source.
-        config: patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config,
+        config: canonicalizePluginExecConfig(patch.plugins?.config ? { ...cur.plugins.config, ...patch.plugins.config } : cur.plugins.config),
       },
       agentsConfigMigrated: cur.agentsConfigMigrated,
       agentsPluginConfigMigrated: cur.agentsPluginConfigMigrated,
@@ -1200,7 +1227,8 @@ export class ConfigStore {
    *  patched value only if it's allow-listed/well-formed (isAllowedExec), otherwise fall back to
    *  `onInvalid` so an invalid spec is never persisted. */
   private normalizeExec(next: string | undefined, current: string, allowed: readonly string[], onInvalid: string): string {
-    if (next === undefined) return current;
-    return isAllowedExec(next, allowed) ? next : onInvalid;
+    const value = next === undefined ? current : next;
+    const canonical = canonicalExec(value);
+    return canonical && isAllowedExec(canonical, allowed) ? canonical : onInvalid;
   }
 }

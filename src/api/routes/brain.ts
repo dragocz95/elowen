@@ -338,8 +338,8 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const cfg = brainConfigFromElowen(d.config, d.brainAuth);
     if (!cfg) return c.json([]);
     const models = (await listBrainModels(cfg)).map((m) => {
-      const legacyExec = elowenExec(m.provider, m.model);
-      return { ...m, program: 'elowen' as const, legacyExec, exec: legacyExec };
+      const legacyExec = `elowen:${m.provider}/${m.model}`;
+      return { ...m, program: 'elowen' as const, legacyExec, exec: elowenExec(m.provider, m.model) };
     });
     const u = d.users ? c.get('user') : undefined;
     if (!u || u.is_admin) return c.json(models);

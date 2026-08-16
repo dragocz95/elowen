@@ -1036,7 +1036,7 @@ describe('GET /brain/models allow-list', () => {
   it('every item carries its elowen exec spec; admin sees everything', async () => {
     const { app, adminTok } = setupWithProviders();
     const models = await (await app.request('/brain/models', auth(adminTok))).json() as { exec: string }[];
-    expect(models.map((m) => m.exec)).toEqual(['elowen:relay/kimi', 'elowen:relay/glm']);
+    expect(models.map((m) => m.exec)).toEqual(['elowen|relay|kimi', 'elowen|relay|glm']);
   });
 
   // The identity is published STRUCTURALLY so a client never has to parse the engine, the provider or
@@ -1049,9 +1049,9 @@ describe('GET /brain/models allow-list', () => {
       { program: string; provider: string; model: string; legacyExec: string; exec: string }[];
     expect(models[0]).toMatchObject({
       program: 'elowen', provider: 'relay', model: 'kimi',
-      legacyExec: 'elowen:relay/kimi', exec: 'elowen:relay/kimi',
+      legacyExec: 'elowen:relay/kimi', exec: 'elowen|relay|kimi',
     });
-    for (const m of models) expect(m.exec).toBe(m.legacyExec);
+    for (const m of models) expect(m.exec).not.toBe(m.legacyExec);
   });
 
   it('a non-admin sees every configured brain model (not global-bounded), narrowed only by their personal list', async () => {
@@ -1059,11 +1059,11 @@ describe('GET /brain/models allow-list', () => {
     // Brain execs aren't bounded by allowedExecs (CLI-only) — an empty personal list = every configured
     // brain model. (The bug this guards against: a non-admin getting an EMPTY model picker.)
     let models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
-    expect(models.map((m) => m.exec)).toEqual(['elowen:relay/kimi', 'elowen:relay/glm']);
+    expect(models.map((m) => m.exec)).toEqual(['elowen|relay|kimi', 'elowen|relay|glm']);
     // A personal whitelist narrows further.
     users.setAllowedExecs(amy.id, ['elowen:relay/glm']);
     models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
-    expect(models.map((m) => m.exec)).toEqual(['elowen:relay/glm']);
+    expect(models.map((m) => m.exec)).toEqual(['elowen|relay|glm']);
   });
 });
 

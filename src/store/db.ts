@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
+import { execRefSpec, parseExecRef } from '../shared/execs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -85,6 +86,7 @@ function migrate(db: Db): void {
   widenSessionEventKindsForSubagent(db);
   widenSessionEventKindsForWorkflow(db);
   keyToolResultSpillsByOccurrence(db);
+  migrateExecIdentity(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -489,6 +491,74 @@ function keyToolResultSpillsByOccurrence(db: Db): void {
       DROP TABLE brain_tool_result_spills;
       ALTER TABLE brain_tool_result_spills_new RENAME TO brain_tool_result_spills;
     `);
+  });
+}
+
+/** v12 — replace the legacy embedded-exec prefix with the canonical composite identity. */
+function migrateExecIdentity(db: Db): void {
+  runOnce(db, 12, () => {
+    const canonical = (value: unknown): unknown => {
+      if (typeof value !== 'string' || !value.startsWith('elowen:')) return value;
+      const ref = parseExecRef(value);
+      return ref ? execRefSpec(ref) : value;
+    };
+    const rewriteList = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value;
+
+    const settings = db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
+    if (settings) {
+      const next = rewriteJson(settings.data, (blob) => {
+        const root = blob as Record<string, unknown>;
+        root.allowedExecs = rewriteList(root.allowedExecs);
+        root.hiddenPresets = rewriteList(root.hiddenPresets);
+        if (Array.isArray(root.customModels)) {
+          for (const item of root.customModels as Record<string, unknown>[]) if (item && typeof item === 'object') item.exec = canonical(item.exec);
+        }
+        if (root.modelNotes && typeof root.modelNotes === 'object' && !Array.isArray(root.modelNotes)) {
+          root.modelNotes = Object.fromEntries(Object.entries(root.modelNotes as Record<string, unknown>).map(([k, v]) => [canonical(k) as string, v]));
+        }
+        const autopilot = root.autopilot as Record<string, unknown> | undefined;
+        if (autopilot) {
+          autopilot.pilotExec = canonical(autopilot.pilotExec);
+          autopilot.overseerExec = canonical(autopilot.overseerExec);
+        }
+        const defaults = root.defaults as Record<string, unknown> | undefined;
+        if (defaults) defaults.exec = canonical(defaults.exec);
+        const configs = (root.plugins as { config?: Record<string, Record<string, unknown>> } | undefined)?.config;
+        for (const name of ['discord', 'whatsapp']) if (configs?.[name]) configs[name].visionModel = canonical(configs[name].visionModel);
+        for (const name of ['image-gen', 'image-edit']) if (configs?.[name]) configs[name].model = canonical(configs[name].model);
+      });
+      if (next && next !== settings.data) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(next);
+    }
+
+    const tableExists = (name: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+    const users = db.prepare('SELECT id, allowed_execs, default_exec, advisor_exec FROM users').all() as Array<{ id: number; allowed_execs: string; default_exec: string; advisor_exec: string }>;
+    for (const user of users) {
+      const allowed = user.allowed_execs.split(',').map(v => canonical(v) as string).join(',');
+      const defaultExec = canonical(user.default_exec) as string;
+      const advisorExec = canonical(user.advisor_exec) as string;
+      if (allowed !== user.allowed_execs || defaultExec !== user.default_exec || advisorExec !== user.advisor_exec) {
+        db.prepare('UPDATE users SET allowed_execs = ?, default_exec = ?, advisor_exec = ? WHERE id = ?').run(allowed, defaultExec, advisorExec, user.id);
+      }
+    }
+    if (tableExists('tasks')) {
+      const rows = db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:elowen:%'").all() as Array<{ id: string; labels: string }>;
+      for (const row of rows) {
+        const labels = row.labels.split(',').map(label => label.startsWith('exec:elowen:') ? `exec:${canonical(label.slice(5)) as string}` : label).join(',');
+        if (labels !== row.labels) db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels, row.id);
+      }
+    }
+    if (tableExists('missions')) {
+      const rows = db.prepare('SELECT id, pilot_exec, overseer_exec FROM missions').all() as Array<{ id: string; pilot_exec: string; overseer_exec: string }>;
+      for (const row of rows) {
+        const pilot = canonical(row.pilot_exec) as string;
+        const overseer = canonical(row.overseer_exec) as string;
+        if (pilot !== row.pilot_exec || overseer !== row.overseer_exec) db.prepare('UPDATE missions SET pilot_exec = ?, overseer_exec = ? WHERE id = ?').run(pilot, overseer, row.id);
+      }
+    }
+    if (tableExists('task_usage')) {
+      const rows = db.prepare("SELECT task_id, exec FROM task_usage WHERE exec LIKE 'elowen:%'").all() as Array<{ task_id: string; exec: string }>;
+      for (const row of rows) db.prepare('UPDATE task_usage SET exec = ? WHERE task_id = ?').run(canonical(row.exec), row.task_id);
+    }
   });
 }
 

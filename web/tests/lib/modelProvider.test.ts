@@ -28,6 +28,7 @@ describe('modelProvider', () => {
       expect(execProvider('ollama-cloud/glm-5.2')).toBe('opencode');
       expect(execProvider('relay/ollama/kimi-k2.7-code')).toBe('opencode');
       expect(execProvider('elowen:anthropic/claude-opus-5')).toBe('elowen');
+      expect(execProvider('elowen|anthropic|claude-opus-5')).toBe('elowen');
     });
   });
 
@@ -55,6 +56,7 @@ describe('modelProvider', () => {
       expect(execModel('kilo:anthropic/claude-sonnet-4-5')).toBe('anthropic/claude-sonnet-4-5');
       expect(execModel('pi:sonnet')).toBe('sonnet');
       expect(execModel('omp:opus')).toBe('opus');
+      expect(execModel('elowen|relay|ollama%2Fkimi-k2.7-code')).toBe('ollama/kimi-k2.7-code');
     });
   });
 

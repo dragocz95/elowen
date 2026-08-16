@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import type { User } from '../shared/wireContract.js';
+import { execRefSpec, parseExecRef } from '../shared/execs.js';
 
 /** Fallback token TTL (days) when no configured value is passed in — keeps the store usable on its
  *  own (e.g. tests). The live value comes from config.security.tokenTtlDays. */
@@ -25,7 +26,19 @@ export type StoredScope = TokenScope | 'advisor' | 'terminal';
  *  null for every other token (interactive sessions, and the unbound shared service token). */
 export interface Principal { user: User; scope: TokenScope; taskId: string | null }
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '', advisor_exec: r.advisor_exec ?? '', advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
+const canonicalExec = (value: unknown): string => {
+  if (typeof value !== 'string' || !value) return '';
+  const ref = parseExecRef(value);
+  if (!ref) return '';
+  return ref.program === 'elowen' ? execRefSpec(ref) : value;
+};
+const readAllowedExecs = (value: string): string[] => {
+  if (!value) return [];
+  let raw: unknown[];
+  try { raw = JSON.parse(value) as unknown[]; } catch { raw = value.split(','); }
+  return Array.isArray(raw) ? raw.map(canonicalExec).filter(Boolean) : [];
+};
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -74,7 +87,7 @@ export class UserStore {
   }
   /** Set the per-user model allow-list (exec specs). Empty → no per-user restriction. */
   setAllowedExecs(id: number, execs: string[]): User | null {
-    this.db.prepare('UPDATE users SET allowed_execs = ? WHERE id = ?').run(execs.join(','), id);
+    this.db.prepare('UPDATE users SET allowed_execs = ? WHERE id = ?').run(execs.map(canonicalExec).filter(Boolean).join(','), id);
     return this.get(id);
   }
   /** Set the per-user tool DENY-list (plugin tool names disabled for this user's own brain sessions).
@@ -96,13 +109,13 @@ export class UserStore {
     const sets: string[] = []; const p: Record<string, unknown> = { id };
     if (typeof patch.name === 'string') { sets.push('name = @name'); p.name = patch.name; }
     if (typeof patch.email === 'string') { sets.push('email = @email'); p.email = patch.email; }
-    if (typeof patch.default_exec === 'string') { sets.push('default_exec = @default_exec'); p.default_exec = patch.default_exec; }
+    if (typeof patch.default_exec === 'string') { sets.push('default_exec = @default_exec'); p.default_exec = canonicalExec(patch.default_exec); }
     if (sets.length > 0) this.db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = @id`).run(p);
     return this.get(id);
   }
   /** Remember which agent exec the user's advisor runs (chosen at first open). Empty = not set up. */
   setAdvisorExec(id: number, exec: string): User | null {
-    this.db.prepare('UPDATE users SET advisor_exec = ? WHERE id = ?').run(exec, id);
+    this.db.prepare('UPDATE users SET advisor_exec = ? WHERE id = ?').run(canonicalExec(exec), id);
     return this.get(id);
   }
   /** Toggle whether the advisor auto-starts on login. */

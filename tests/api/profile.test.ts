@@ -59,7 +59,7 @@ describe('PATCH /auth/me — self-service profile', () => {
     const { app, bobTok } = setup();
     const res = await app.request('/auth/me', patch(bobTok, { default_exec: 'elowen:anthropic/claude-sonnet-5' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ default_exec: 'elowen:anthropic/claude-sonnet-5' });
+    expect(await res.json()).toMatchObject({ default_exec: 'elowen|anthropic|claude-sonnet-5' });
   });
 });
 

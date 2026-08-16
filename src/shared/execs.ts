@@ -75,10 +75,23 @@ export function isProgram(value: unknown): value is Program {
  * already stored in configs and task labels, which is exactly the breakage this migration avoids.
  */
 export function execSpecProgram(spec: string): Program {
+  const encoded = parseEncodedExecRef(spec);
+  if (encoded) return encoded.program;
   for (const [prefix, program] of Object.entries(PROGRAM_PREFIXES)) {
     if (spec.startsWith(prefix)) return program;
   }
   return spec.includes('/') ? BARE_WITH_SLASH_PROGRAM : BARE_PLAIN_PROGRAM;
+}
+
+function parseEncodedExecRef(input: string): ExecRef | null {
+  if (!input.startsWith('elowen|')) return null;
+  const parts = input.split('|');
+  if (parts.length !== 3) return null;
+  try {
+    const provider = decodeURIComponent(parts[1] ?? '');
+    const model = decodeURIComponent(parts[2] ?? '');
+    return provider && model ? { program: 'elowen', provider, model } : null;
+  } catch { return null; }
 }
 
 /**
@@ -98,6 +111,8 @@ export function parseExecRef(input: ExecInput): ExecRef | null {
     }
     return { program: input.program, model: input.model };
   }
+  const encoded = parseEncodedExecRef(input);
+  if (encoded) return encoded;
   const program = execSpecProgram(input);
   if (program === 'elowen') {
     const parsed = parseElowenExec(input);
@@ -109,18 +124,12 @@ export function parseExecRef(input: ExecInput): ExecRef | null {
 }
 
 /**
- * Structured identity → the legacy string spec. The single place either format is produced, so the
- * wire, the config values and the task labels cannot drift apart while both forms are in use.
- *
- * It emits the CANONICAL spelling of a spec, which is not always the one it was parsed from: an
- * explicitly prefixed `opencode:vendor/model` formats back as the bare `vendor/model`, since both
- * name the same program and model and the bare form is what the CLI presets store. So the invariant
- * this guarantees is identity-stability (parse → format → parse yields the same ExecRef), not byte
- * equality — which is why nothing here rewrites a value already stored: a stored string is compared
- * as-is, and only a structured value is ever formatted.
+ * Structured identity → the canonical persisted spec. The embedded form is a delimiter-safe composite
+ * id (`elowen|<provider>|<model>`) whose components are URI-encoded; legacy `elowen:` strings are read
+ * only. CLI spellings retain their existing contract, including bare OpenCode and Claude Code specs.
  */
 export function execRefSpec(ref: ExecRef): string {
-  if (ref.program === 'elowen') return `elowen:${ref.provider}/${ref.model}`;
+  if (ref.program === 'elowen') return `elowen|${encodeURIComponent(ref.provider)}|${encodeURIComponent(ref.model)}`;
   const prefix = Object.entries(PROGRAM_PREFIXES).find(([, p]) => p === ref.program)?.[0] ?? '';
   // opencode/claude-code keep their historical bare forms: prefixing them would change nothing but
   // would churn every stored value. Their shape already routes back to the same program.
@@ -145,6 +154,8 @@ export function isElowenExec(input: ExecInput): boolean {
  * Returns null for anything that isn't a well-formed elowen exec.
  */
 export function parseElowenExec(spec: string): { provider: string; model: string } | null {
+  const encoded = parseEncodedExecRef(spec);
+  if (encoded?.program === 'elowen') return { provider: encoded.provider, model: encoded.model };
   if (!spec.startsWith('elowen:')) return null;
   const rest = spec.slice('elowen:'.length);
   const slash = rest.indexOf('/');
@@ -160,9 +171,14 @@ export function elowenExec(provider: string, model: string): string {
 /** The stored/comparable spec for either input form — null when the structured form names nothing
  *  runnable. Allow-lists persist strings, so a structured value is judged by the spec it denotes. */
 function execSpecOf(input: ExecInput): string | null {
-  if (typeof input === 'string') return input;
   const ref = parseExecRef(input);
-  return ref ? execRefSpec(ref) : null;
+  if (!ref) return null;
+  if (ref.program === 'elowen') return execRefSpec(ref);
+  return typeof input === 'string' ? input : execRefSpec(ref);
+}
+
+function includesExec(list: readonly string[], spec: string): boolean {
+  return list.some(value => execSpecOf(value) === spec);
 }
 
 /**
@@ -184,8 +200,8 @@ export function isExecAllowedForUser(
   // bound — else non-admins get an empty brain-model picker. Only the per-user allow-list still narrows
   // it. CLI execs keep the global bound. The brain test asks the PROGRAM, not the text: a structured
   // `{ program: 'elowen', … }` value carries no prefix to match on.
-  if (!isElowenExec(exec) && !globalExecs.includes(spec)) return false;
-  return user.allowed_execs.length === 0 || user.allowed_execs.includes(spec);
+  if (!isElowenExec(exec) && !includesExec(globalExecs, spec)) return false;
+  return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
 }
 
 /**
@@ -203,9 +219,9 @@ export function isModelVisibleForUser(
   if (spec === null) return false;
   // Brain execs are bounded by configured providers, not KNOWN_EXECS — see isExecAllowedForUser. Decided
   // by the program so the structured form is judged identically to the legacy prefixed string.
-  if (!isElowenExec(exec) && !globalExecs.includes(spec)) return false;
+  if (!isElowenExec(exec) && !includesExec(globalExecs, spec)) return false;
   if (!user) return true;
-  return user.allowed_execs.length === 0 || user.allowed_execs.includes(spec);
+  return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
 }
 
 /** Built-in exec labels offered/allowed out of the box (the default `allowedExecs`). Keep in sync
@@ -251,6 +267,7 @@ export const EXEC_NOTES: Readonly<Record<string, string>> = {
  * claude-code model name. Such specs are only valid when explicitly allow-listed (see isAllowedExec).
  */
 export function isWellFormedExec(spec: string): boolean {
+  if (parseEncodedExecRef(spec)) return true;
   if (Object.keys(PROGRAM_PREFIXES).some(p => spec.startsWith(p))) return true;
   return spec.includes('/');
 }

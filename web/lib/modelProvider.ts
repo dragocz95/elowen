@@ -32,6 +32,7 @@ const PROVIDER_PREFIXES: readonly [string, ProviderId][] = [
  * `program` field) and nothing else — otherwise every OpenCode exec would file under Elowen AI.
  */
 export function execProvider(exec: string): ProviderId {
+  if (exec.startsWith('elowen|')) return 'elowen';
   for (const [prefix, provider] of PROVIDER_PREFIXES) {
     if (exec.startsWith(prefix)) return provider;
   }
@@ -61,6 +62,10 @@ export function brainModelLabel(exec: string, models: readonly BrainModelOption[
 
 /** The bare model id with any provider prefix stripped (for display/edit). */
 export function execModel(exec: string): string {
+  if (exec.startsWith('elowen|')) {
+    const parts = exec.split('|');
+    if (parts.length === 3) try { return decodeURIComponent(parts[2] ?? ''); } catch { return exec; }
+  }
   for (const [prefix] of PROVIDER_PREFIXES) {
     if (exec.startsWith(prefix)) return exec.slice(prefix.length);
   }

@@ -62,11 +62,14 @@ describe('exec identity', () => {
       'ollama-cloud/glm-5.2',
       'sonnet',
     ];
-    it('round-trips every stored spec through parse → format unchanged', () => {
+    it('reads every legacy spec and writes the one canonical spelling', () => {
       for (const spec of stored) {
         const ref = parseExecRef(spec);
         expect(ref, spec).not.toBeNull();
-        expect(execRefSpec(ref!), spec).toBe(spec);
+        const formatted = execRefSpec(ref!);
+        expect(parseExecRef(formatted), spec).toEqual(ref);
+        if (ref!.program === 'elowen') expect(formatted).not.toContain('elowen:');
+        else expect(formatted).toBe(spec);
       }
     });
     // The formatter emits the canonical spelling, so an explicitly prefixed OpenCode spec comes back
@@ -81,8 +84,9 @@ describe('exec identity', () => {
       expect(parseExecRef('elowen:relay/ollama/kimi-k2.7-code'))
         .toEqual({ program: 'elowen', provider: 'relay', model: 'ollama/kimi-k2.7-code' });
     });
-    it('elowenExec still produces the legacy string other releases read', () => {
-      expect(elowenExec('anthropic', 'claude-opus-5')).toBe('elowen:anthropic/claude-opus-5');
+    it('elowenExec produces only the canonical composite identity', () => {
+      expect(elowenExec('anthropic', 'claude-opus-5')).toBe('elowen|anthropic|claude-opus-5');
+      expect(parseExecRef('elowen|anthropic|claude-opus-5')).toEqual({ program: 'elowen', provider: 'anthropic', model: 'claude-opus-5' });
     });
     it('rejects a value that names no runnable model', () => {
       expect(parseExecRef('elowen:relay')).toBeNull();      // brain exec without a model
