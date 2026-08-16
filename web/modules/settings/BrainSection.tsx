@@ -383,6 +383,9 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
         // IS the off/auto pair, so seeding them keeps the editor honest about what that daemon is doing.
         subagentRunnerEnabled: config.runtime?.subagentRunnerEnabled ?? false,
         subagentRunnerPoolMax: config.runtime?.subagentRunnerPoolMax ?? null,
+        // Same again: a daemon predating provider-side compaction omits the field, and its behaviour is
+        // the off state, so seeding `false` describes it correctly.
+        remoteCompactionEnabled: config.runtime?.remoteCompactionEnabled ?? false,
       });
       setRuntimeSeeded(true);
     }

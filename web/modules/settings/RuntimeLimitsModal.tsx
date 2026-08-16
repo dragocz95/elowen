@@ -151,6 +151,22 @@ export function RuntimeLimitsModal({ runtime, applied, onChange, onClose, presen
               label={t.brain.runtime.subagentRunnerEnabled}
             />
           </div>
+          {/* Read live on every compaction and every request, so switching it off does not merely stop new
+              blobs — the stored ones stop being sent too, from the next request on. */}
+          <div className="flex items-center gap-2.5 py-3.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted">
+              <Cpu size={18} aria-hidden />
+            </span>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-text">
+              {t.brain.runtime.remoteCompactionEnabled}
+              <HelpTip>{t.brain.runtime.remoteCompactionEnabledHint}</HelpTip>
+            </span>
+            <Toggle
+              checked={runtime.remoteCompactionEnabled}
+              onChange={(next) => onChange((cur) => ({ ...cur, remoteCompactionEnabled: next }))}
+              label={t.brain.runtime.remoteCompactionEnabled}
+            />
+          </div>
         </div>
       </ModalBody>
       <ModalFooter>

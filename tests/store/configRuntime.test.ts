@@ -32,6 +32,9 @@ describe('ConfigStore runtime limits', () => {
       // AUTO: the pool measures the machine it is on, because any hard-coded count would be wrong on
       // either a 2-core VPS or a 16-core server. An operator only sets a number when those inputs lie.
       subagentRunnerPoolMax: null,
+      // OFF: provider-side compaction rides an undocumented beta endpoint and replaces the readable
+      // compaction summary with a marker, so an upgrade must not turn it on for existing conversations.
+      remoteCompactionEnabled: false,
       memoryRetention: DEFAULT_MEMORY_RETENTION,
     });
   });
@@ -128,6 +131,21 @@ describe('ConfigStore runtime limits', () => {
     expect(cs.get().runtime.subagentRunnerEnabled).toBe(false);
     cs.update({ runtime: { subagentRunnerEnabled: true } });
     expect(cs.get().runtime.subagentRunnerEnabled).toBe(true);
+  });
+
+  it('round-trips the remote-compaction switch and leaves it alone on a limits-only patch', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    expect(cs.get().runtime.remoteCompactionEnabled).toBe(false); // OFF by default; on is the opt-in
+    cs.update({ runtime: { remoteCompactionEnabled: true } });
+    expect(cs.get().runtime.remoteCompactionEnabled).toBe(true);
+    // An operator who opted in must not be silently opted back out by tuning an unrelated knob — the
+    // default is off, so a lost `true` is the direction that would quietly undo the choice.
+    cs.update({ runtime: { limits: { toolDeferThreshold: 12 } } });
+    expect(cs.get().runtime.remoteCompactionEnabled).toBe(true);
+    cs.update({ runtime: { subagentRunnerEnabled: false } });
+    expect(cs.get().runtime.remoteCompactionEnabled).toBe(true);
+    cs.update({ runtime: { remoteCompactionEnabled: false } });
+    expect(cs.get().runtime.remoteCompactionEnabled).toBe(false);
   });
 
   it('round-trips the pool size knob, including the two values that are not "a number"', () => {

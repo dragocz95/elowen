@@ -154,6 +154,7 @@ export const configPatchSchema = z.object({
     // `null` is a REAL value here (auto — let the pool size itself from the machine), not "leave it
     // alone": an absent key is what means that. Non-negative integer, because it counts processes.
     subagentRunnerPoolMax: z.number().int().min(0).nullable().optional(),
+    remoteCompactionEnabled: z.boolean().optional(),
     memoryRetention: memoryRetentionPatchSchema.optional(),
   }).optional(),
   embedding: z.object({

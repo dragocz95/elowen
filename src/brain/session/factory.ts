@@ -21,6 +21,12 @@ import { installToolResultClearing } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
 import { idleThresholdMs, OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
+import {
+  createRemoteCompactionV2,
+  installCompactionMarkerSanitizer,
+  type RemoteCompactionV2,
+} from './remoteCompactionV2.js';
+import { bearerFromAuth } from '../providerUsage.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { logger } from '../../shared/logger.js';
 
@@ -82,6 +88,10 @@ export interface SessionSpec {
   /** PI's built-in auto-compaction: on/off. When on, PI summarizes the context on its own once it fills
    *  past `autoCompactAtPct` — no separate trigger in our turn loop. */
   autoCompact: boolean;
+  /** The operator's remote-compaction switch, read live so it applies without a respawn. Only ever
+   *  consulted for a ChatGPT-account session; every other provider is unaffected either way. A caller
+   *  that omits it (task workers) keeps the text-summary path. */
+  remoteCompactionEnabled?: () => boolean;
   /** Context-window fill percentage (30–95) at which PI auto-compacts. Translated to PI's absolute
    *  `reserveTokens` = round(contextWindow · (1 − pct/100)) — `shouldCompact` fires when the context
    *  exceeds `contextWindow − reserveTokens`, i.e. once the window is `pct`% full. */
@@ -137,6 +147,12 @@ export interface BrainResourceLoaderOptions {
   compactionModelRouteExtension?: CompactionModelRoute['extension'];
   /** Cancel gate for automatic compaction once it has failed too many times in a row. */
   compactionCircuitBreakerExtension?: (pi: ExtensionAPI) => void;
+  /** Provider-side opaque compaction; present only for a ChatGPT-account session. */
+  remoteCompactionExtension?: RemoteCompactionV2['extension'];
+  /** Whether THIS session can restore a stored compaction blob. Always supplied: the sanitizer it
+   *  installs is what keeps a blob minted before a model switch from reaching a foreign provider as
+   *  text, so it is exactly the sessions that answer `false` that need it. */
+  remoteCompactionUsable: () => boolean;
   /** Recall memories again mid-turn, searching from the work rather than the opening message. */
   liveRecall?: LiveRecallOptions;
   /** Provider-payload hashes (Anthropic or OpenAI Responses shape) consumed by cacheWatch after each
@@ -304,11 +320,15 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
     // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
-    ...(o.codexReasoningFix || o.kimiHeaderProbe || o.compactionModelRouteExtension
-      || o.compactionCircuitBreakerExtension || o.requestProfile || o.liveRecall || o.cacheMonitor
-      || o.cacheBreakpoints ? {
+    // No longer conditional: the marker sanitizer below has to run on every session, so there is always
+    // at least one inline extension to load.
+    ...{
       extensionFactories: [
         ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
+        ...(o.remoteCompactionExtension ? [o.remoteCompactionExtension] : []),
+        // Unconditional: a session that CANNOT use a stored blob is the one that would otherwise send it
+        // as raw text, so the guard belongs on every provider, not just the one that mints blobs.
+        ((usable) => (pi: ExtensionAPI): void => { installCompactionMarkerSanitizer(pi, usable); })(o.remoteCompactionUsable),
         ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
         ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
@@ -320,7 +340,7 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         // snapshot honest about what this code did or did not touch.
         ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
       ],
-    } : {}),
+    },
   });
 }
 
@@ -404,6 +424,22 @@ export class BrainSessionFactory {
     const cacheIdleMs = cacheFlavor === 'openai-responses'
       ? idleThresholdMs(process.env, OPENAI_CACHE_MAX_RETENTION_MS) : undefined;
     const cacheMonitor = cacheFlavor ? createCachePayloadMonitor() : undefined;
+    // Provider-side compaction exists only on the ChatGPT backend. `usable` is read live — the operator
+    // switch, not the spawn-time snapshot — so turning the feature off mid-conversation immediately stops
+    // new blobs AND makes the sanitizer strip the ones already stored, instead of leaving them to be sent
+    // as text by a build that no longer swaps them.
+    const remoteCompactionUsable = (): boolean =>
+      spec.model.provider === 'openai-codex' && spec.remoteCompactionEnabled?.() === true;
+    const remoteCompaction: RemoteCompactionV2 | undefined = spec.model.provider === 'openai-codex'
+      ? createRemoteCompactionV2({
+        enabled: remoteCompactionUsable,
+        model: spec.model,
+        systemPrompt: () => [spec.systemPrompt, ...spec.appendSystemPrompt].join('\n\n'),
+        // The same resolve-and-refresh path a normal turn takes, so a token that expired mid-conversation
+        // is renewed here rather than turning into a silent compaction failure.
+        token: async () => bearerFromAuth((await spec.runtime.getAuth(spec.model))?.auth),
+      })
+      : undefined;
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
@@ -411,6 +447,8 @@ export class BrainSessionFactory {
       kimiHeaderProbe: spec.model.provider === 'kimi-coding',
       compactionModelRouteExtension: compactionModelRoute?.extension,
       compactionCircuitBreakerExtension: compactionBreaker.extension,
+      remoteCompactionExtension: remoteCompaction?.extension,
+      remoteCompactionUsable,
       requestProfile: spec.requestProfile, settingsManager,
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
       ...(cacheMonitor ? { cacheMonitor } : {}),
@@ -447,6 +485,9 @@ export class BrainSessionFactory {
     // pipeline created for this session. The extension above has already been loaded and only marks
     // PI's own compaction signal; it never executes or returns a custom compaction.
     compactionModelRoute?.install(session);
+    // After the compaction route, so a stale-blob retry re-issues through whatever wrapper that installed
+    // — the retry must be the same request, not a differently routed one.
+    remoteCompaction?.install(session);
     // PI's steering queue defaults to "one-at-a-time", so N messages sent during a running turn cost N
     // model rounds and the agent answers each without seeing the ones behind it. "all" hands the whole
     // queue to the loop, which injects every message into the context before a SINGLE model call. The
