@@ -1039,6 +1039,21 @@ describe('GET /brain/models allow-list', () => {
     expect(models.map((m) => m.exec)).toEqual(['elowen:relay/kimi', 'elowen:relay/glm']);
   });
 
+  // The identity is published STRUCTURALLY so a client never has to parse the engine, the provider or
+  // the model out of one string (a model id may itself contain slashes). `legacyExec` — and its `exec`
+  // alias, kept until the migration's cleanup phase — is the value configs and allow-lists still store,
+  // so an older client keeps working against this same response.
+  it('publishes the structured identity alongside the legacy exec spec', async () => {
+    const { app, adminTok } = setupWithProviders();
+    const models = await (await app.request('/brain/models', auth(adminTok))).json() as
+      { program: string; provider: string; model: string; legacyExec: string; exec: string }[];
+    expect(models[0]).toMatchObject({
+      program: 'elowen', provider: 'relay', model: 'kimi',
+      legacyExec: 'elowen:relay/kimi', exec: 'elowen:relay/kimi',
+    });
+    for (const m of models) expect(m.exec).toBe(m.legacyExec);
+  });
+
   it('a non-admin sees every configured brain model (not global-bounded), narrowed only by their personal list', async () => {
     const { app, users, amy, amyTok } = setupWithProviders();
     // Brain execs aren't bounded by allowedExecs (CLI-only) — an empty personal list = every configured

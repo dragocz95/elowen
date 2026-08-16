@@ -4,7 +4,7 @@ import { ModelIcon } from './ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from './ManageSelectionModal';
 import { SelectionSummary } from './SelectionSummary';
 import { providerMeta } from '../../modules/settings/providers';
-import { execProvider, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
+import { execProvider, brainModelId, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 
@@ -44,7 +44,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
   // Elowen AI models gated by the global allow-list (what may run as an executor), grouped by their real
   // provider — same rule as ExecutorPicker's `kind='all'` Elowen AI section.
   const allowed = config.data?.allowedExecs;
-  const brainList = (brain.data ?? []).filter((m) => kind === 'brain' || !allowed || allowed.includes(m.exec));
+  const brainList = (brain.data ?? []).filter((m) => kind === 'brain' || !allowed || allowed.includes(brainModelId(m)));
 
   // Worker CLI models (from the preset catalog), grouped by engine; elowen execs live in the brain
   // section, never as workers — mirrors ExecutorPicker.
@@ -52,7 +52,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
     .filter((m) => execProvider(m.exec) !== 'elowen')
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const known = new Set([...workerModels.map((m) => m.exec), ...brainList.map((m) => m.exec)]);
+  const known = new Set([...workerModels.map((m) => m.exec), ...brainList.map(brainModelId)]);
 
   const items: ManageSelectionItem[] = [
     ...(allowRelay ? [{ id: '', label: relayLabel, group: '' }] : []),
@@ -65,8 +65,10 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
     // Every Elowen AI model sits under ONE "Elowen AI" group carrying the Elowen mark — the same branding
     // the Account worker picker uses — so the embedded brain reads as its own engine everywhere, exactly
     // like Claude Code / Codex. The underlying provider stays visible per row via its source badge.
+    // The row's ID is the composite identity, never the displayed name: the same model offered by two
+    // providers must stay two selectable rows, and the saved value has to match one of them exactly.
     ...brainList.map((m) => ({
-      id: m.exec,
+      id: brainModelId(m),
       label: m.model,
       group: 'b:elowen',
       groupLabel: providerMeta('elowen')?.label ?? 'Elowen AI',

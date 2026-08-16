@@ -7,7 +7,7 @@ import type { ProfilePatch } from '../../lib/types';
 import { useMe, useConfig, useMyCliSettings, useBrainModels, useMyPluginConfigs } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
-import { execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { providerMeta } from '../settings/providers';
 import { Avatar } from '../../components/ui/Avatar';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -298,8 +298,10 @@ export function AccountView() {
   // they have no per-user restriction.
   const restricted = u.allowed_execs.length > 0;
   const pickable = restricted ? u.allowed_execs : (config?.allowedExecs ?? []);
-  const brainLabelByExec = new Map((brainModels.data ?? []).map((m) => [m.exec, m.model]));
-  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label ?? brainLabelByExec.get(exec) ?? exec;
+  // Worker presets name themselves; a brain exec takes its clean model name from the catalog (shared
+  // helper — the exec must not be split on a slash, the model id may contain one).
+  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
+    ?? brainModelLabel(exec, brainModels.data);
 
   // Every pickable exec is a selectable Default worker (writes default_exec) — INCLUDING Elowen AI models
   // enabled in Settings→Models, which the daemon runs as embedded brain workers. The separate Elowen AI

@@ -24,13 +24,39 @@ const PROVIDER_PREFIXES: readonly [string, ProviderId][] = [
   ['omp:', 'omp'],
 ];
 
-/** Which program runs this exec string (same heuristic as resolveExecutor). */
+/**
+ * Which program runs this exec string — the same decision the daemon's `execSpecProgram` makes.
+ * An explicit prefix decides; only a prefix-LESS value falls back to the CLI shape contract
+ * (`provider/model` is OpenCode, a bare name is Claude Code). A slash must NEVER be read as the
+ * embedded brain: `elowen` is reached through its prefix (or, on the wire, through the model's own
+ * `program` field) and nothing else — otherwise every OpenCode exec would file under Elowen AI.
+ */
 export function execProvider(exec: string): ProviderId {
   for (const [prefix, provider] of PROVIDER_PREFIXES) {
     if (exec.startsWith(prefix)) return provider;
   }
   if (exec.includes('/')) return 'opencode';
   return 'claude-code';
+}
+
+/**
+ * The IDENTITY of a brain model in a picker or an allow-list: its composite spec, which carries the
+ * program AND the provider AND the model — and which is also the value the daemon stores, so a pick
+ * round-trips. Deliberately NOT the visible label: two providers can offer the same model name, and
+ * keying rows by that name collapses them into one ambiguous row (and makes a saved value unmatchable).
+ */
+export function brainModelId(m: Pick<BrainModelOption, 'exec'>): string {
+  return m.exec;
+}
+
+/**
+ * The clean model name to DISPLAY for an exec — taken from the catalog, never by splitting the string:
+ * a model id may itself contain slashes (`elowen:relay/ollama/kimi-k2.7-code`), so blind splitting
+ * shows the wrong name. An exec with no catalog entry falls back to the raw value, which keeps a
+ * removed/stale pick visible instead of rendering it empty.
+ */
+export function brainModelLabel(exec: string, models: readonly BrainModelOption[] | undefined): string {
+  return models?.find((m) => brainModelId(m) === exec)?.model ?? exec;
 }
 
 /** The bare model id with any provider prefix stripped (for display/edit). */

@@ -68,6 +68,12 @@ export interface BrainProvider {
 /** One Elowen AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */
 export interface BrainModelOption {
   provider: string; providerLabel: string; model: string; exec: string;
+  /** Structured identity from GET /brain/models: `program` names the engine explicitly, so nothing has
+   *  to infer it from the spec's shape, and `legacyExec` is the composite spec configs, task labels and
+   *  allow-lists still store (`exec` is its alias, kept until the prefix migration's cleanup phase).
+   *  Optional so a response from an older daemon still satisfies this type. */
+  program?: 'elowen';
+  legacyExec?: string;
   source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean;
   /** Model/provider-derived reasoning controls. Absent means the model must not receive an effort. */
   reasoningLevels?: string[];

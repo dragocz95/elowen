@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { FolderGit2, Cpu, Wrench, ShieldCheck, Puzzle } from 'lucide-react';
-import { usePlugins, useUserProjects } from '../../lib/queries';
+import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
-import { execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { PROVIDERS, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
@@ -97,11 +97,16 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   const update = useUpdateUser();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const brainModels = useBrainModels();
   if (globalExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
 
+  // Display names come from the catalogs — worker presets first, then the Elowen AI model list — never
+  // from splitting the exec at its first slash: a brain model id may itself contain slashes
+  // (`elowen:relay/ollama/kimi-k2.7-code`), which that split would truncate into the wrong name. The row
+  // id below stays the full exec, so the same model offered by two providers remains two entries.
   const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
-    ?? (exec.startsWith('elowen:') ? exec.slice(exec.indexOf('/') + 1) : exec);
-  const iconNameOf = (exec: string) => (exec.startsWith('elowen:') ? exec.slice(exec.indexOf('/') + 1) : exec);
+    ?? brainModelLabel(exec, brainModels.data);
+  const iconNameOf = (exec: string) => brainModelLabel(exec, brainModels.data);
 
   // Order execs by the settings' provider order so the modal groups follow the executor picker.
   const providerOrder = (id: ProviderId) => {

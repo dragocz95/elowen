@@ -48,6 +48,24 @@ describe('UserDetailPane', () => {
     expect(await screen.findByText('2 models · 1 providers')).toBeTruthy();
   });
 
+  // The admin allow-list shows brain models by the name the catalog gives them — the exec is the row's
+  // identity, not its label, so two providers offering the same model stay two grantable entries.
+  it('labels brain execs from the catalog and keeps same-named models from two providers apart', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'elowen:anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'relay', providerLabel: 'Relay', model: 'claude-opus-5', exec: 'elowen:relay/claude-opus-5', legacyExec: 'elowen:relay/claude-opus-5', program: 'elowen', source: 'relay', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    mount(user(), [], ['elowen:anthropic/claude-opus-5', 'elowen:relay/claude-opus-5']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    const rows = await screen.findAllByRole('button', { name: /claude-opus-5/ });
+    expect(rows).toHaveLength(2);
+    // The clean model name is shown; the raw spec is not what the admin reads.
+    expect(rows.every((r) => r.textContent?.includes('elowen:'))).toBe(false);
+  });
+
   it('saving the models modal PATCHes allowed_execs', async () => {
     let patched: { id?: string; body?: unknown } = {};
     server.use(

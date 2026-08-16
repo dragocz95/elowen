@@ -325,18 +325,27 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // The pickable models across every configured brain provider — dedicated entries, connected OAuth
   // accounts, or the relay fallback (feeds the Account → CLI dropdown and the CLI /model picker).
-  // Every item carries its exec spec (`elowen:<provider>/<model>`) so pickers, the users admin UI and
-  // the settings catalog all speak the same identifier. Non-admins only see models their allow-list
-  // permits — this single server-side filter covers web AND CLI.
+  //
+  // Each item carries its identity STRUCTURALLY (`program` + the `provider`/`model` it already had) so a
+  // client can render the bare model name without parsing anything out of a string — a model id may
+  // itself contain slashes, so splitting the spec is not a safe way to get it. `legacyExec` (and its
+  // `exec` alias, kept until the migration's cleanup phase) is the same value as before: it is what
+  // configs, task labels and per-user allow-lists still store, so it stays the picker's identifier and
+  // an older client keeps working unchanged. Non-admins only see models their allow-list permits — this
+  // single server-side filter covers web AND CLI.
   app.get('/brain/models', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = brainConfigFromElowen(d.config, d.brainAuth);
     if (!cfg) return c.json([]);
-    const models = (await listBrainModels(cfg)).map((m) => ({ ...m, exec: elowenExec(m.provider, m.model) }));
+    const models = (await listBrainModels(cfg)).map((m) => {
+      const legacyExec = elowenExec(m.provider, m.model);
+      return { ...m, program: 'elowen' as const, legacyExec, exec: legacyExec };
+    });
     const u = d.users ? c.get('user') : undefined;
     if (!u || u.is_admin) return c.json(models);
     const globalExecs = d.config.get().allowedExecs;
-    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, m.exec)));
+    // Judged on the structured identity — the gate asks the program, not the prefix of a string.
+    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, { program: m.program, provider: m.provider, model: m.model })));
   });
 
   // Probe an OpenAI-compatible endpoint's /models for the provider add/edit dialog — so the admin
