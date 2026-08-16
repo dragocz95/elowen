@@ -5,9 +5,9 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/collect-plugin-classes.mjs && next dev",
+    "dev": "next dev",
     "copy:monaco": "node scripts/copy-monaco.mjs",
-    "build": "node scripts/copy-monaco.mjs && node scripts/collect-plugin-classes.mjs && next build",
+    "build": "node scripts/copy-monaco.mjs && next build",
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",

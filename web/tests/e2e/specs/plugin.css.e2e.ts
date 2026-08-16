@@ -4,9 +4,9 @@
 // there is no Tailwind and no Next build: the host's CSS is frozen at publish time and carries only the
 // utilities the HOST itself uses. Any utility a registry plugin reached for and the host did not — a
 // `h-36`, a `grid-cols-[10rem_minmax(0,1fr)]` — simply did not exist there, and the plugin's page
-// rendered unstyled with nothing the operator could do about it. The build-time class-mirroring the repo
-// also has (`web/scripts/collect-plugin-classes.mjs`) only ever worked where the SOURCES are, which on a
-// published install is nowhere.
+// rendered unstyled with nothing the operator could do about it. A build-time mirror of plugin classes
+// could only work where plugin sources and the host's Tailwind build coexist, which is not true on a
+// published install.
 //
 // This is the end-to-end proof of the replacement pipe: the daemon advertises `cssUrl` in `/plugins/ui`,
 // serves the sheet on its own immutable content-hash URL, and the app links it and WAITS for it before
