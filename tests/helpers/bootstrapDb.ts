@@ -9,11 +9,11 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *  only the bare-assistant tool set, so a domain plugin's routes exist solely on an install whose
  *  owner installed it — this seeds exactly that state. On disk rather than `:memory:` because the
  *  settings row has to exist BEFORE buildApp opens the database. */
-export function dbWithPlugins(enabled: string[]): { dbPath: string; cleanup: () => void } {
+export function dbWithPlugins(enabled: string[]): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'elowen-bootstrap-'));
   const dbPath = join(dir, 'elowen.db');
   const db = openDb(dbPath);
   new ConfigStore(db).update({ plugins: { enabled } });
   db.close();
-  return { dbPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dbPath, dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }

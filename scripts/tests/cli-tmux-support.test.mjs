@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -219,6 +220,16 @@ test('strict JSONL rejects interior blank records instead of silently dropping e
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('fallback artifact directories are removed when their process exits', () => {
+  const moduleUrl = new URL('./cli-tmux-support.mjs', import.meta.url).href;
+  const script = `import { createArtifactDir } from ${JSON.stringify(moduleUrl)}; console.log(createArtifactDir('cleanup-guard'));`;
+  const path = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+    env: { ...process.env, ELOWEN_TMUX_ARTIFACT_ROOT: '' },
+  }).trim();
+  assert.equal(existsSync(path), false, `fallback artifact directory survived child exit: ${path}`);
 });
 
 test('configured artifact scenarios reject stale non-empty directories', () => {

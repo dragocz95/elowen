@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
@@ -37,19 +37,25 @@ describe('memory recall scope', () => {
     mkdirSync(nested, { recursive: true });
     mkdirSync(kolinOld, { recursive: true });
     const db = openDb(':memory:');
-    const categories = new MemoryCategoryStore(db);
-    const global = categories.create(1, { name: 'Global' });
-    const project = categories.create(1, { name: 'Kolin', projectId: 7 });
+    try {
+      const categories = new MemoryCategoryStore(db);
+      const global = categories.create(1, { name: 'Global' });
+      const project = categories.create(1, { name: 'Kolin', projectId: 7 });
 
-    const projects = { list: () => [{ id: 7, path: kolin }] };
-    const nestedScope = memoryRecallScope(1, nested, categories, projects);
-    const unrelatedScope = memoryRecallScope(1, kolinOld, categories, projects);
+      const projects = { list: () => [{ id: 7, path: kolin }] };
+      const nestedScope = memoryRecallScope(1, nested, categories, projects);
+      const unrelatedScope = memoryRecallScope(1, kolinOld, categories, projects);
 
-    expect(nestedScope.projectId).toBe(7);
-    expect(nestedScope.categoryIds).toEqual(new Set([global.id, project.id]));
-    expect(unrelatedScope.projectId).toBeNull();
-    expect(unrelatedScope.categoryIds).toEqual(new Set([global.id]));
-    expect(realpathSync(kolinOld)).not.toBe(realpathSync(kolin));
+      expect(nestedScope.projectId).toBe(7);
+      expect(nestedScope.categoryIds).toEqual(new Set([global.id, project.id]));
+      expect(unrelatedScope.projectId).toBeNull();
+      expect(unrelatedScope.categoryIds).toEqual(new Set([global.id]));
+      expect(realpathSync(kolinOld)).not.toBe(realpathSync(kolin));
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+      expect(existsSync(root), 'memory-scope test left its temporary directory behind').toBe(false);
+    }
   });
 
   it('recalls only global and current-project categories in vector, keyword and recency paths', async () => {

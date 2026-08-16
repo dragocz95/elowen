@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { aggregateTmuxReports, resolveTmuxRunId } from './cli-tmux-support.mjs';
+import { aggregateTmuxReports, createOwnedTempDir, resolveTmuxRunId } from './cli-tmux-support.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const runId = resolveTmuxRunId(process.env);
 const configuredRoot = process.env.ELOWEN_TMUX_ARTIFACT_ROOT?.trim();
 const artifactRoot = configuredRoot
   ? resolve(configuredRoot)
-  : mkdtempSync(join(tmpdir(), 'elowen-tui-built-round-'));
+  : createOwnedTempDir('elowen-tui-built-round-');
 mkdirSync(artifactRoot, { recursive: true });
 if (configuredRoot && readdirSync(artifactRoot).length > 0) {
   process.stderr.write(`FAIL test:cli-tmux:built — configured evidence root must be empty: ${artifactRoot}\n`);

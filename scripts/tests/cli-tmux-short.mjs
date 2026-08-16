@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -10,6 +9,7 @@ import {
   collectMetadata,
   completeMetadata,
   createArtifactDir,
+  createOwnedTempDir,
   createTmuxServer,
   latestFrame,
   paneLines,
@@ -29,7 +29,7 @@ if (spawnSync('tmux', ['-V'], { stdio: 'ignore' }).status !== 0) {
   process.exit(0);
 }
 
-const temp = mkdtempSync(join(tmpdir(), 'elowen-cli-tmux-short-'));
+const temp = createOwnedTempDir('elowen-cli-tmux-short-');
 const artifactDir = createArtifactDir('short');
 const home = join(temp, 'home');
 const config = join(temp, 'config');

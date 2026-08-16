@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildApp } from '../../src/daemon/bootstrap.js';
@@ -10,7 +10,13 @@ import { MarketplaceService } from '../../src/plugins/marketplace.js';
 import { BrainService } from '../../src/brain/brainService.js';
 import { fixturePlugins, type FixturePluginSpec } from '../helpers/fixturePlugin.js';
 
+const tempDirs = new Set<string>();
+beforeEach(() => { vi.spyOn(MarketplaceService.prototype, 'reconcileEnabled').mockResolvedValue([]); });
 afterEach(() => { vi.restoreAllMocks(); });
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect([...tempDirs].filter(existsSync), 'bootstrap tests recreated temporary directories after cleanup').toEqual([]);
+});
 
 /** A domain plugin in the only shape this file cares about: it owns a root mount of its own, declared in
  *  the manifest and registered by the entry. The subject is the DAEMON's composition — that buildApp
@@ -31,7 +37,8 @@ describe('buildApp', () => {
     // A root mount only exists on an install whose owner enabled the plugin that declares it, so the
     // database is seeded that way and the loader is pointed at the fixture. /health is core.
     const plugin = fixturePlugins([LEDGER]);
-    const { dbPath, cleanup } = dbWithPlugins(['ledger']);
+    const { dbPath, dir, cleanup } = dbWithPlugins(['ledger']);
+    tempDirs.add(dir);
     try {
       const { app } = await buildApp({ dbPath, tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [plugin.dir] });
       expect((await app.request('/health')).status).toBe(200);
@@ -43,7 +50,8 @@ describe('buildApp', () => {
   });
 
   it('does not start plugin platforms until the boot marketplace reconcile settles', async () => {
-    const { dbPath, cleanup } = dbWithPlugins([]);
+    const { dbPath, dir, cleanup } = dbWithPlugins([]);
+    tempDirs.add(dir);
     let settleReconcile!: (restored: string[]) => void;
     const reconcilePending = new Promise<string[]>((resolve) => { settleReconcile = resolve; });
     const reconcile = vi.spyOn(MarketplaceService.prototype, 'reconcileEnabled').mockReturnValue(reconcilePending);
@@ -78,7 +86,8 @@ describe('buildApp', () => {
     // Every install triggered from a conversation hit exactly that, because the work being waited on was
     // the turn asking for the install. The outcome is reported as itself now, and the deferred half is
     // finished by the brain's post-apply hook.
-    const { dbPath, cleanup } = dbWithPlugins(['files']);
+    const { dbPath, dir, cleanup } = dbWithPlugins(['files']);
+    tempDirs.add(dir);
     type ReloadFn = () => Promise<'applied' | 'deferred'>;
     let marketplaceReload!: ReloadFn;
     let loadedNames!: () => Promise<ReadonlySet<string>>;
@@ -134,6 +143,7 @@ describe('buildApp', () => {
     // marketplace cache is placed next to the database (bootstrap.ts → dirname(dbPath)), and ':memory:'
     // has no directory: its cache, and the clone temp dir beside it, land in the process CWD instead.
     const dir = mkdtempSync(join(tmpdir(), 'elowen-fresh-install-'));
+    tempDirs.add(dir);
     try {
       const { app } = await buildApp({ dbPath: join(dir, 'elowen.db'), tmux: new FakeTmuxDriver(), project: { id: 1, slug: 'elowen', path: '/o' }, relay: null, allowOpen: true, pluginDirs: [plugin.dir] });
       expect((await app.request('/health')).status).toBe(200);
@@ -147,6 +157,7 @@ describe('buildApp', () => {
 
   it('resolves the daemon home project by path instead of locking id 1', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'elowen-home-project-'));
+    tempDirs.add(dir);
     const dbPath = join(dir, 'elowen.db');
     try {
       const db = openDb(dbPath);

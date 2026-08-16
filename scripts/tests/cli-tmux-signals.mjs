@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +10,7 @@ import {
   collectMetadata,
   completeMetadata,
   createArtifactDir,
+  createOwnedTempDir,
   createTmuxServer,
   readFrames,
   writeReport,
@@ -45,7 +45,7 @@ async function runSignal(signal) {
   const slug = signal.toLowerCase();
   const artifactDir = join(root, slug);
   mkdirSync(artifactDir, { recursive: true });
-  const temp = mkdtempSync(join(tmpdir(), `elowen-cli-${slug}-`));
+  const temp = createOwnedTempDir(`elowen-cli-${slug}-`);
   const home = join(temp, 'home');
   const config = join(temp, 'config');
   const logPath = join(temp, 'requests.jsonl');

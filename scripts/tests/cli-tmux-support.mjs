@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync,
+  lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -96,11 +96,26 @@ export function resolveTmuxRunId(env = process.env, generate = randomUUID) {
   return env.ELOWEN_TMUX_RUN_ID?.trim() || `local-${generate()}`;
 }
 
+const ownedArtifactDirs = new Set();
+const cleanupOwnedArtifactDirs = () => {
+  for (const dir of ownedArtifactDirs) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort process-exit cleanup */ }
+  }
+  ownedArtifactDirs.clear();
+};
+process.once('exit', cleanupOwnedArtifactDirs);
+
+export function createOwnedTempDir(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  ownedArtifactDirs.add(dir);
+  return dir;
+}
+
 export function createArtifactDir(scenario) {
   const configured = process.env.ELOWEN_TMUX_ARTIFACT_ROOT?.trim();
   const dir = configured
     ? resolveArtifactDir(configured, scenario)
-    : mkdtempSync(join(tmpdir(), `elowen-tui-${scenario}-artifacts-`));
+    : createOwnedTempDir(`elowen-tui-${scenario}-artifacts-`);
   mkdirSync(dir, { recursive: true });
   if (configured) {
     const stale = readdirSync(dir);

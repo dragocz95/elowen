@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,8 +34,24 @@ afterEach(() => { for (const p of processRegistry.list()) processRegistry.kill(p
 // the run nondeterministically. Removing them here, after every test (and its kill hook) has settled, is
 // the only safe point.
 let dirs: string[] = [];
-const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
-afterAll(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
+const allDirs = new Set<string>();
+const cleanupDirs = () => {
+  for (const process of processRegistry.list()) processRegistry.kill(process.id);
+  for (const p of dirs) rmSync(p, { recursive: true, force: true });
+  dirs = [];
+};
+const tmpDir = (tag: string): string => {
+  const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`));
+  dirs.push(p);
+  allDirs.add(p);
+  return p;
+};
+process.once('exit', cleanupDirs);
+afterAll(() => {
+  process.off('exit', cleanupDirs);
+  cleanupDirs();
+  expect([...allDirs].filter(existsSync), 'terminal plugin tests left temporary directories behind').toEqual([]);
+});
 
 describe('terminal plugin', () => {
   let reg: PluginRegistry;

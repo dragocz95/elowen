@@ -8,8 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +18,7 @@ import {
   collectMetadata,
   completeMetadata,
   createArtifactDir,
+  createOwnedTempDir,
   createTmuxServer,
   readFrames,
   resolveTmuxRunId,
@@ -51,7 +51,7 @@ async function waitFor(label, predicate, timeoutMs = 8_000) {
 }
 
 async function main() {
-  const temp = mkdtempSync(join(tmpdir(), 'elowen-cli-stop-escalation-'));
+  const temp = createOwnedTempDir('elowen-cli-stop-escalation-');
   const home = join(temp, 'home');
   const config = join(temp, 'config');
   const logPath = join(temp, 'requests.jsonl');

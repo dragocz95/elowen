@@ -124,16 +124,29 @@ export async function bootPlainDaemon(opts = {}) {
   child.stderr.on('data', (d) => logs.push(d.toString()));
   let exited = null;
   child.on('exit', (code, signal) => { exited = { code, signal }; });
+  const cleanupDataDir = () => {
+    try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+  };
+  const cleanupOnExit = () => {
+    if (exited === null) child.kill('SIGKILL');
+    cleanupDataDir();
+  };
+  process.once('exit', cleanupOnExit);
 
   const stop = async () => {
     try {
       if (exited === null) {
         child.kill('SIGTERM');
         for (let i = 0; i < 30 && exited === null; i += 1) await sleep(100);
-        if (exited === null) child.kill('SIGKILL');
+        if (exited === null) {
+          child.kill('SIGKILL');
+          for (let i = 0; i < 30 && exited === null; i += 1) await sleep(100);
+          if (exited === null) throw new Error(`daemon child ${child.pid ?? 'unknown'} did not exit after SIGKILL`);
+        }
       }
     } finally {
-      try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+      process.off('exit', cleanupOnExit);
+      cleanupDataDir();
     }
   };
 
