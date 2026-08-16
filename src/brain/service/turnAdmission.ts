@@ -33,6 +33,7 @@ export class TurnAdmission {
   private persistText?: string;
   private stored: StoredChatImage[] = [];
   private admitted = false;
+  private echoed = false;
   private rolledBack = false;
 
   constructor(private d: TurnAdmissionDeps, private input: AdmissionInput) {}
@@ -55,8 +56,32 @@ export class TurnAdmission {
     return storeChatImages(this.d.chatImagesDir, this.input.images);
   }
 
+  /** Publish the authoritative `user` event — the ONLY thing clients render the sent bubble from (none of
+   * them pushes an optimistic echo of its own). Callable, and called, BEFORE the turn context is built:
+   * that build awaits turn-start memory recall, which is a remote embedding request with a 30 s deadline,
+   * and a sent message must not stay invisible for it. The turn itself still waits for the memories.
+   *
+   * ADMISSION deliberately does not move with it — it stays on PI's preflight, because it gates the HTTP
+   * 202 and that timing is what closes the 202 → isStreaming=false window an immediate follow-up would
+   * otherwise slip through. So is `lastAdmitted`: an Esc has a turn to discard only once PI holds one.
+   * A turn rejected between this echo and preflight retracts the bubble in rollbackPending(). */
+  echo(): void {
+    if (!this.input.visible || this.echoed) return;
+    const { durableId } = this.prepare();
+    // Reset before the event goes out, so a cancel racing the turn's first token reads a consistent
+    // `turnProducedOutput`.
+    this.input.live.turnProducedOutput = false;
+    this.input.live.replay.publish({
+      type: 'user',
+      text: this.displayText(),
+      durableId,
+      ...(this.stored.length ? { images: toMessageImages(this.stored) } : {}),
+    });
+    this.echoed = true;
+  }
+
   /** PI native preflight callback. False is deliberately a no-op; prompt() throws and the caller rolls
-   * the still-hidden projection back through rollbackPending(). */
+   * the unadmitted projection back through rollbackPending(). */
   preflightResult = (success: boolean): void => {
     if (!success || !this.input.visible || this.admitted) return;
     this.publishAccepted();
@@ -90,36 +115,39 @@ export class TurnAdmission {
     this.markAdmitted();
   }
 
-  /** Remove only a hidden user projection. Internal turns intentionally remain durable on failure,
-   * matching the existing goal/system-turn history semantics. */
+  /** Undo an unadmitted user turn: delete its durable row and retract its echo. Internal turns
+   * intentionally remain durable on failure, matching the existing goal/system-turn history semantics. */
   rollbackPending(): void {
     if (!this.input.visible || this.admitted || this.rolledBack || !this.durableId) return;
     this.rolledBack = true;
     this.d.store.deleteMessage(this.input.live.sessionId, this.durableId);
+    // The echo now precedes the turn context, so a turn rejected in between has a bubble on screen with
+    // no row behind it. Retract it through the same event Esc-before-output uses: clients pop the trailing
+    // 'you' turn and the CLI puts the text back into an empty composer.
+    if (this.echoed) {
+      this.input.live.replay.publish({ type: 'discard_user', durableId: this.durableId, text: this.displayText() });
+    }
   }
 
   private publishAccepted(): void {
     if (this.admitted) return;
-    const { durableId, persistText } = this.prepare();
+    const { durableId } = this.prepare();
     const row = this.input.titleOnAdmission ? this.d.store.getSession(this.input.live.sessionId) : undefined;
     if (row && !row.title) {
       const provisionalTitle = this.input.text.slice(0, 60);
       this.d.store.setTitle(this.input.live.sessionId, provisionalTitle);
       void this.d.titler.run(this.input.live.sessionId, this.input.text, provisionalTitle);
     }
-    // Arm the Esc/Stop-before-output discard for THIS turn: reset the output flag and remember the row a
-    // discard would delete + the text it would restore (the same text shown in the bubble). Set before the
-    // user event is published so a cancel racing the first token reads a consistent `turnProducedOutput`.
-    const displayText = this.input.display ?? persistText;
-    this.input.live.turnProducedOutput = false;
-    this.input.live.lastAdmitted = { durableId, text: displayText };
-    this.input.live.replay.publish({
-      type: 'user',
-      text: displayText,
-      durableId,
-      ...(this.stored.length ? { images: toMessageImages(this.stored) } : {}),
-    });
+    this.echo();
+    // Arm the Esc/Stop-before-output discard for THIS turn: remember the row a discard would delete + the
+    // text it would restore (the same text shown in the bubble).
+    this.input.live.lastAdmitted = { durableId, text: this.displayText() };
     this.markAdmitted();
+  }
+
+  /** The text the bubble shows — and the text a discard restores to the composer. */
+  private displayText(): string {
+    return this.input.display ?? this.prepare().persistText;
   }
 
   private durableText(): string {

@@ -485,9 +485,14 @@ export class BrainTurnRunner {
       );
       admission.prepare();
       try {
+      // Before the turn context, not after it: building that context awaits turn-start memory recall — a
+      // remote embedding with a 30 s deadline — and the sender's own message is rendered from this event
+      // alone, so waiting on it left a sent message invisible for 1.4–5.8 s. The prompt below still gets
+      // the recalled memories; only the echo is off that path.
+      admission.echo();
       // PI's preflightResult fires after extension/input/template/auth/compaction preparation and directly
-      // before _runAgentPrompt. Publishing + admitting there closes the 202→isStreaming=false window: the
-      // prompt run becomes active in the same call stack before an HTTP follow-up can resume and steer it.
+      // before _runAgentPrompt. ADMITTING there closes the 202→isStreaming=false window: the prompt run
+      // becomes active in the same call stack before an HTTP follow-up can resume and steer it.
       const options = {
         images: turnImages?.length
           ? turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))

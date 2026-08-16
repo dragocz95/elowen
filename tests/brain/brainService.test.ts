@@ -133,6 +133,16 @@ function fakeDeps() {
   };
 }
 
+/** A turn rejected before admission must leave NO bubble on screen. The `user` echo is published before
+ *  the turn context is built (so the sender's message does not wait on turn-start memory recall), so the
+ *  rejection path can no longer prevent it — it retracts it instead, with the same `discard_user` event
+ *  Esc-before-output uses. Clients pop the trailing 'you' turn by durableId; the CLI restores its text. */
+function expectEchoRetracted(seen: readonly { type: string; durableId?: string }[]): void {
+  const echo = seen.find((event) => event.type === 'user');
+  expect(echo?.durableId, 'the pre-context user echo').toBeTruthy();
+  expect(seen.find((event) => event.type === 'discard_user')).toMatchObject({ durableId: echo?.durableId });
+}
+
 describe('BrainService', () => {
   let dirs: string[] = [];
   const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -1506,8 +1516,8 @@ describe('BrainService', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const seen: { type: string }[] = [];
-    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+    const seen: { type: string; durableId?: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string; durableId?: string }));
     d.session.prompt.mockImplementationOnce(async (_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
       options?.preflightResult?.(false);
       throw new Error('prompt preflight rejected');
@@ -1517,7 +1527,7 @@ describe('BrainService', () => {
     await expect(operation.admitted).rejects.toThrow('prompt preflight rejected');
     await expect(operation.completed).rejects.toThrow('prompt preflight rejected');
     expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
-    expect(seen.some((event) => event.type === 'user')).toBe(false);
+    expectEchoRetracted(seen);
     expect(d.store.getSession('brain-1')?.title).toBe('');
   });
 
@@ -1525,8 +1535,8 @@ describe('BrainService', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const seen: { type: string }[] = [];
-    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+    const seen: { type: string; durableId?: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string; durableId?: string }));
     vi.spyOn(d.store, 'setTitle').mockImplementationOnce(() => { throw new Error('title store unavailable'); });
 
     const operation = svc.startSend({ userId: 1, text: 'first title candidate' });
@@ -1534,7 +1544,7 @@ describe('BrainService', () => {
     await expect(operation.admitted).rejects.toThrow('title store unavailable');
     await expect(operation.completed).rejects.toThrow('title store unavailable');
     expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
-    expect(seen.some((event) => event.type === 'user')).toBe(false);
+    expectEchoRetracted(seen);
   });
 
   it('keeps the durable echo after admission when the model runner fails later', async () => {
@@ -3983,6 +3993,47 @@ describe('BrainService memory integration', () => {
     const curatorPrompt = decide.mock.calls.map((c) => c[0] as string).find((p) => p.includes('echo:'));
     expect(curatorPrompt, 'curator prompt (contains the assistant echo)').toBeDefined();
     expect(curatorPrompt).toContain('zapamatuj si, že preferuju strict mode');
+  });
+
+  // Turn-start recall is a REMOTE embedding call with a 30 s deadline, and every client renders the sent
+  // bubble from the daemon's `user` event alone (no optimistic client-side push). While that event was
+  // published behind the retrieval, a sent message stayed invisible for its whole duration — measured at
+  // 1.4–5.8 s. The echo therefore goes out before the turn context is built. The other half of the
+  // contract is asserted here too: the agent still receives the memories, so this can never be "fixed"
+  // by dropping recall from the turn.
+  it('publishes the user echo while turn-start recall is still awaiting its embedding', async () => {
+    const d = fakeDeps();
+    let releaseRetrieval!: () => void;
+    const retrieval = new Promise<void>((resolve) => { releaseRetrieval = resolve; });
+    const memory = asRow('Filip preferuje TypeScript strict.');
+    (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));
+    (d as Record<string, unknown>).memoryService = {
+      retrieve: vi.fn(async () => {
+        await retrieval; // hangs exactly like an embedding request that has not answered yet
+        return { memories: [memory], debug: { query: '', fallback: true, provider: null, model: null, candidates: 1, scores: [] } };
+      }),
+      markRecalled: vi.fn(),
+      findSimilar: vi.fn(async () => []),
+    } as unknown as MemoryService;
+
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string; text?: string }[] = [];
+    svc.subscribe(1, (e) => seen.push(e as { type: string; text?: string }));
+
+    const completed = svc.send({ userId: 1, text: 'jaký jazyk mám použít?', display: 'jaký jazyk mám použít?' });
+    // Drain the microtask/immediate queues. The retrieval is still pending, so anything sequenced behind
+    // it provably has not run — an echo observed here is not waiting for the embedding.
+    for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+
+    expect(seen.map((e) => e.type), 'the user echo is still parked behind the embedding').toContain('user');
+    expect(seen.find((e) => e.type === 'user')?.text).toBe('jaký jazyk mám použít?');
+    // The model turn deliberately DOES still wait: only the echo was taken off the recall's critical path.
+    expect(d.session.prompt).not.toHaveBeenCalled();
+
+    releaseRetrieval();
+    await completed;
+    expect(lastPrompt(d)).toContain('Filip preferuje TypeScript strict.');
   });
 });
 
