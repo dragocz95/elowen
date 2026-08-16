@@ -2,6 +2,8 @@
 import { cache } from 'react';
 import { headers } from 'next/headers';
 import { daemonUrl, readCookieHeader, COOKIE_NAME } from './proxy';
+import { dictionaries, type Locale } from './i18n/dictionaries';
+import { DEFAULT_LOCALE } from './i18n';
 import type { PluginUiListing, User } from './types';
 
 /** After a failed fetch, requests skip the daemon for this long. Same reasoning as the theme payload
@@ -49,6 +51,15 @@ async function fetchForCaller<T>(path: string, accept: (body: unknown) => body i
     return null;
   }
 }
+
+/** The locale THIS document must render in, read from the cookie the client mirrors its choice into.
+ *  Without it the server can only ever guess English, and a Czech user watches the whole interface —
+ *  every nav label, every heading — get rewritten a moment after it appears. Unknown or absent value
+ *  falls back to the default, so a hand-edited cookie cannot render a dictionary that does not exist. */
+export const readLocale = cache(async (): Promise<Locale> => {
+  const value = readCookieHeader((await headers()).get('cookie') ?? '', 'elowen-locale');
+  return value && value in dictionaries ? (value as Locale) : DEFAULT_LOCALE;
+});
 
 /** Prefetch the caller's /plugins/ui listing so the navigation rail arrives complete in the HTML
  *  (no first-paint pop-in of plugin worlds). Deduped per request via React cache. */

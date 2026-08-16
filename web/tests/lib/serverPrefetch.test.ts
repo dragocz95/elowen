@@ -101,6 +101,29 @@ describe('fetchPluginUiListing', () => {
   });
 });
 
+describe('readLocale', () => {
+  beforeEach(() => { vi.resetModules(); cookieHeader = null; });
+
+  const importFresh = async () => (await import('../../lib/serverPrefetch')).readLocale;
+
+  it('renders the document in the language the caller chose', async () => {
+    cookieHeader = 'elowen-locale=cs';
+    expect(await (await importFresh())()).toBe('cs');
+  });
+
+  it('falls back to the default when no choice was ever made', async () => {
+    cookieHeader = 'elowen_session=token';
+    expect(await (await importFresh())()).toBe('en');
+  });
+
+  it('refuses a locale with no dictionary instead of rendering an empty interface', async () => {
+    // The cookie is client-written, so a hand-edited value reaches the server verbatim; indexing the
+    // dictionaries with it unchecked would hand every label `undefined`.
+    cookieHeader = 'elowen-locale=../../etc';
+    expect(await (await importFresh())()).toBe('en');
+  });
+});
+
 describe('fetchMe', () => {
   beforeEach(() => { vi.resetModules(); cookieHeader = null; });
   afterEach(() => vi.unstubAllGlobals());

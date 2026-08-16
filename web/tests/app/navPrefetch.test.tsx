@@ -11,6 +11,13 @@ import { Shell } from '../../components/shell/Shell';
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
+const asUser = (over: Partial<User>): User => ({
+  id: 1, username: 'admin', created_at: '2026-01-01', is_admin: false, allowed_execs: [], disabled_tools: [],
+  granted_plugins: [], name: '', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
+  ...over,
+});
+const ADMIN_SEED = { user: asUser({ is_admin: true }) };
+
 const LISTING: PluginUiListing[] = [
   { name: 'salon', url: '/plugins/salon/bundle.js', apiVersion: 1, label: 'Salon', nav: [{ label: 'Bookings' }], settings: [] },
 ];
@@ -49,12 +56,7 @@ describe('identity server prefetch', () => {
     meRequests += 1;
     return new Promise<Response>(() => {});
   });
-  const asUser = (over: Partial<User>): User => ({
-    id: 1, username: 'admin', created_at: '2026-01-01', is_admin: false, allowed_execs: [], disabled_tools: [],
-    granted_plugins: [], name: '', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
-    ...over,
-  });
-  const ADMIN = { user: asUser({ is_admin: true }) };
+  const ADMIN = ADMIN_SEED;
 
   afterEach(() => { meRequests = 0; });
 
@@ -84,6 +86,28 @@ describe('identity server prefetch', () => {
     render(<Shell meSeed={null} pluginUiSeed={null}><span>page-body</span></Shell>);
     expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+});
+
+describe('locale server prefetch', () => {
+  it('renders the FIRST paint in the server-resolved language, with no English pass first', async () => {
+    // Before the locale rode a cookie, the server could only ever render English: a Czech user got an
+    // English document and watched every label be rewritten once hydration read localStorage. Nothing
+    // moved — which is why CLS stayed near zero and the flash was invisible to layout metrics — but the
+    // whole interface changed words in front of them.
+    localStorage.setItem('elowen-locale', 'cs');
+    render(<Shell initialLocale="cs" meSeed={ADMIN_SEED} pluginUiSeed={null}><span>page-body</span></Shell>);
+    expect(screen.getByRole('link', { name: 'Nastavení' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
+  it('still honours a stored choice the server never saw, and writes the cookie so the next load is right', async () => {
+    // A session that predates the cookie has localStorage only. It must keep working — one repaint, as
+    // before — and must leave the cookie behind so the NEXT document is server-rendered correctly.
+    localStorage.setItem('elowen-locale', 'cs');
+    render(<Shell initialLocale="en" meSeed={ADMIN_SEED} pluginUiSeed={null}><span>page-body</span></Shell>);
+    expect(await screen.findByRole('link', { name: 'Nastavení' })).toBeInTheDocument();
+    await waitFor(() => expect(document.cookie).toContain('elowen-locale=cs'));
   });
 });
 
