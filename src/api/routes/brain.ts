@@ -7,6 +7,7 @@ import { brainConfigFromElowen } from '../../brain/config.js';
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
+import { brainProviderIds } from '../../store/configStore.js';
 import type { BrainEvent } from '../../brain/events.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
@@ -345,7 +346,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!u || u.is_admin) return c.json(models);
     const globalExecs = d.config.get().allowedExecs;
     // Judged on the structured identity — the gate asks the program, not the prefix of a string.
-    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, { program: m.program, provider: m.provider, model: m.model })));
+    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, { program: m.program, provider: m.provider, model: m.model }, brainProviderIds(d.config))));
   });
 
   // Probe an OpenAI-compatible endpoint's /models for the provider add/edit dialog — so the admin

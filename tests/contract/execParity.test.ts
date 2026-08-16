@@ -16,7 +16,7 @@ describe('exec / provider parity (web ↔ daemon)', () => {
     for (const [prefix, program] of Object.entries(PROGRAM_PREFIXES)) {
       expect(execProvider(`${prefix}some-model`)).toBe(program);
     }
-    expect(execProvider('provider/model')).toBe(BARE_WITH_SLASH_PROGRAM); // bare, slash → opencode
+    expect(execProvider('provider/model')).toBe(BARE_WITH_SLASH_PROGRAM); // bare, slash → the brain
     expect(execProvider('sonnet')).toBe(BARE_PLAIN_PROGRAM);              // bare, plain → claude-code
   });
 
@@ -26,12 +26,16 @@ describe('exec / provider parity (web ↔ daemon)', () => {
   it('web buildExec round-trips every PROGRAM_PREFIXES program through build → parse → model', () => {
     for (const [prefix, program] of Object.entries(PROGRAM_PREFIXES)) {
       const provider = program as ProviderId; // Program and ProviderId are the same id set
-      const exec = buildExec(provider, 'some-model');
+      // The brain is identified by `<provider>/<model>`, so its round-trip needs a value of that shape;
+      // for every other program the bare model id is what the settings form yields.
+      const typed = provider === 'elowen' ? 'prov/some-model' : 'some-model';
+      const exec = buildExec(provider, typed);
       expect(execProvider(exec)).toBe(program);
-      expect(execModel(exec)).toBe('some-model');
+      expect(execModel(exec)).toBe(typed);
       // Ordinary providers must actually USE the table's prefix (not merely parse back to the right
       // program) — this is what catches a hardcoded buildExec branch that quietly no-ops for a new one.
-      if (provider !== 'opencode' && provider !== 'claude-code') expect(exec).toBe(`${prefix}some-model`);
+      // Only the two that own an unprefixed shape are exempt.
+      if (provider !== 'elowen' && provider !== 'claude-code') expect(exec).toBe(`${prefix}${typed}`);
     }
   });
 });

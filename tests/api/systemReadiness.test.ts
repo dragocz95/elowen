@@ -130,14 +130,14 @@ describe('GET /system/readiness', () => {
       brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi'], apiKey: 'k' }] },
     } });
     const { body } = await getChecks(app);
-    expect(body.checks[1]).toEqual({ id: 'tasks', label: 'Tasks', ok: true, detail: 'elowen|relay|kimi' });
+    expect(body.checks[1]).toEqual({ id: 'tasks', label: 'Tasks', ok: true, detail: 'relay/kimi' });
   });
 
   it('tasks: not ok when the elowen: exec points at a provider that no longer exists', async () => {
     const { app } = makeApp({ model: 'm', patch: { defaults: { exec: 'elowen:gone/kimi', autonomy: 'L3', maxSessions: 1 } } });
     const { body } = await getChecks(app);
     expect(body.checks[1]).toEqual({
-      id: 'tasks', label: 'Tasks', ok: false, detail: 'elowen|gone|kimi',
+      id: 'tasks', label: 'Tasks', ok: false, detail: 'gone/kimi',
       hint: 'The provider its executor points at is gone — re-run `elowen setup`.',
     });
   });

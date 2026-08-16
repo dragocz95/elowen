@@ -65,6 +65,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shared/execs.js';
+import { brainProviderIds } from '../store/configStore.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 const log = logger('daemon');
@@ -478,7 +479,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         const owner = users.list().find((u) => u.is_admin);
         const globalExecs = config.get().allowedExecs;
         return listBrainModels(c).then((models) =>
-          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model))));
+          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), brainProviderIds(config))));
       },
       resolveProvider,
       // The SHARED embedder + live Settings→Memory config mapper, exposed to plugins as ctx.embeddings
@@ -647,7 +648,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         },
         // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
         // bounded by the global list AND their personal whitelist (empty personal = global only).
-        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec),
+        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, brainProviderIds(config)),
         // Platform channels (Discord, …): role mappings resolve to project-scoped policies; the admin's
         // token anchors the channel sessions.
         policyForProjects,

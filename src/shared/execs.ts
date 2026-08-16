@@ -23,8 +23,16 @@ export const PROGRAM_PREFIXES: Readonly<Record<string, Program>> = {
   'elowen:': 'elowen',
 };
 
-/** Program a bare (prefix-less) spec routes to depending on whether it looks like `provider/model`. */
-export const BARE_WITH_SLASH_PROGRAM: Program = 'opencode';
+/**
+ * Program a bare (prefix-less) spec routes to depending on whether it looks like `provider/model`.
+ *
+ * `provider/model` means the EMBEDDED BRAIN: it is the identity users see and type, so it is the one
+ * that gets to be spelled without ceremony. OpenCode, which held this shape historically, now names
+ * itself explicitly with `opencode:` — migration v13 rewrote every stored bare-slash value, and both
+ * KNOWN_EXECS and the web presets ship prefixed. Exactly one program may own the unprefixed shape;
+ * giving it to the brain is what removes `elowen:` from stored data instead of merely respelling it.
+ */
+export const BARE_WITH_SLASH_PROGRAM: Program = 'elowen';
 export const BARE_PLAIN_PROGRAM: Program = 'claude-code';
 
 /**
@@ -124,16 +132,16 @@ export function parseExecRef(input: ExecInput): ExecRef | null {
 }
 
 /**
- * Structured identity → the canonical persisted spec. The embedded form is a delimiter-safe composite
- * id (`elowen|<provider>|<model>`) whose components are URI-encoded; legacy `elowen:` strings are read
- * only. CLI spellings retain their existing contract, including bare OpenCode and Claude Code specs.
+ * Structured identity → the canonical persisted spec. The embedded brain writes `<provider>/<model>`
+ * with NO prefix — that is the whole point of this migration, so `elowen:` and the interim
+ * `elowen|…` composite are read-only legacy. Claude Code keeps its bare model name; every other
+ * program names itself with its explicit prefix, OpenCode included.
  */
 export function execRefSpec(ref: ExecRef): string {
-  if (ref.program === 'elowen') return `elowen|${encodeURIComponent(ref.provider)}|${encodeURIComponent(ref.model)}`;
+  if (ref.program === 'elowen') return `${ref.provider}/${ref.model}`;
   const prefix = Object.entries(PROGRAM_PREFIXES).find(([, p]) => p === ref.program)?.[0] ?? '';
-  // opencode/claude-code keep their historical bare forms: prefixing them would change nothing but
-  // would churn every stored value. Their shape already routes back to the same program.
-  if (ref.program === BARE_WITH_SLASH_PROGRAM && ref.model.includes('/')) return ref.model;
+  // claude-code keeps its historical bare form: prefixing `sonnet` would change nothing but would
+  // churn every stored value. A plain name already routes back to claude-code on its own.
   if (ref.program === BARE_PLAIN_PROGRAM && !ref.model.includes('/')) return ref.model;
   return `${prefix}${ref.model}`;
 }
@@ -149,15 +157,18 @@ export function isElowenExec(input: ExecInput): boolean {
 }
 
 /**
- * Brain-model exec spec: `elowen:<provider>/<model>`. The provider id never contains a slash, so we
- * split on the FIRST one — the model part may carry more (e.g. `elowen:relay/ollama/kimi-k2.7-code`).
- * Returns null for anything that isn't a well-formed elowen exec.
+ * Brain-model exec spec, canonically `<provider>/<model>` and historically `elowen:<provider>/<model>`
+ * (plus the short-lived `elowen|provider|model` composite, read-only). The provider id never contains
+ * a slash, so we split on the FIRST one — the model part may carry more (e.g. `relay/ollama/kimi-k2.7-code`).
+ * Returns null for anything that isn't a well-formed brain exec.
  */
 export function parseElowenExec(spec: string): { provider: string; model: string } | null {
   const encoded = parseEncodedExecRef(spec);
   if (encoded?.program === 'elowen') return { provider: encoded.provider, model: encoded.model };
-  if (!spec.startsWith('elowen:')) return null;
-  const rest = spec.slice('elowen:'.length);
+  const rest = spec.startsWith('elowen:') ? spec.slice('elowen:'.length) : spec;
+  // Only the canonical bare shape is accepted here besides the legacy prefix; a value carrying some
+  // OTHER program's prefix must never be read as a brain exec just because it contains a slash.
+  if (rest === spec && Object.keys(PROGRAM_PREFIXES).some(p => spec.startsWith(p))) return null;
   const slash = rest.indexOf('/');
   if (slash <= 0 || slash === rest.length - 1) return null;
   return { provider: rest.slice(0, slash), model: rest.slice(slash + 1) };
@@ -191,6 +202,7 @@ export function isExecAllowedForUser(
   user: { is_admin: boolean; allowed_execs: readonly string[] } | null | undefined,
   globalExecs: readonly string[],
   exec: ExecInput,
+  brainProviders: readonly string[],
 ): boolean {
   if (!user || user.is_admin) return true;
   const spec = execSpecOf(exec);
@@ -198,10 +210,23 @@ export function isExecAllowedForUser(
   // Brain execs are bounded by the configured brain PROVIDERS (the model list is built only from them),
   // NOT by `KNOWN_EXECS`/allowedExecs, which cover CLI-agent specs only. So a brain exec skips the global
   // bound — else non-admins get an empty brain-model picker. Only the per-user allow-list still narrows
-  // it. CLI execs keep the global bound. The brain test asks the PROGRAM, not the text: a structured
-  // `{ program: 'elowen', … }` value carries no prefix to match on.
-  if (!isElowenExec(exec) && !includesExec(globalExecs, spec)) return false;
+  // it. CLI execs keep the global bound.
+  if (!isConfiguredBrainExec(exec, brainProviders) && !includesExec(globalExecs, spec)) return false;
   return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
+}
+
+/**
+ * Whether a value names a brain model on a provider this installation actually has configured.
+ *
+ * This is the test that may skip the global allow-list, and it is deliberately narrower than
+ * `isElowenExec`. Since the canonical brain spelling is bare `<provider>/<model>`, ANY slash-shaped
+ * string now parses as a brain exec — so asking only "is this the brain?" would let `bogus/model`
+ * through the bound that exists to stop exactly that. Membership in the configured provider set is
+ * what separates a real model from a well-shaped string.
+ */
+export function isConfiguredBrainExec(input: ExecInput, brainProviders: readonly string[]): boolean {
+  const ref = parseExecRef(input);
+  return ref?.program === 'elowen' && brainProviders.includes(ref.provider);
 }
 
 /**
@@ -214,12 +239,12 @@ export function isModelVisibleForUser(
   user: { allowed_execs: readonly string[] } | null | undefined,
   globalExecs: readonly string[],
   exec: ExecInput,
+  brainProviders: readonly string[],
 ): boolean {
   const spec = execSpecOf(exec);
   if (spec === null) return false;
-  // Brain execs are bounded by configured providers, not KNOWN_EXECS — see isExecAllowedForUser. Decided
-  // by the program so the structured form is judged identically to the legacy prefixed string.
-  if (!isElowenExec(exec) && !includesExec(globalExecs, spec)) return false;
+  // Brain execs are bounded by configured providers, not KNOWN_EXECS — see isExecAllowedForUser.
+  if (!isConfiguredBrainExec(exec, brainProviders) && !includesExec(globalExecs, spec)) return false;
   if (!user) return true;
   return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
 }
@@ -227,17 +252,17 @@ export function isModelVisibleForUser(
 /** Built-in exec labels offered/allowed out of the box (the default `allowedExecs`). Keep in sync
  *  with the web preset list (`web/lib/execPresets.ts`) and the default notes below. */
 export const KNOWN_EXECS: readonly string[] = [
-  'ollama-cloud/glm-5.2',
+  'opencode:ollama-cloud/glm-5.2',
   'codex:gpt-5.5',
   'sonnet',
   'opus',
-  'ollama-cloud/deepseek-v4-pro',
-  'ollama/kimi-k2.7-code',
-  'ollama-cloud/minimax-m3',
-  'ollama-cloud/deepseek-v4-flash',
-  'ollama-cloud/minimax-m2.7',
-  'ollama-cloud/glm-5.1',
-  'ollama-cloud/qwen3.5',
+  'opencode:ollama-cloud/deepseek-v4-pro',
+  'opencode:ollama/kimi-k2.7-code',
+  'opencode:ollama-cloud/minimax-m3',
+  'opencode:ollama-cloud/deepseek-v4-flash',
+  'opencode:ollama-cloud/minimax-m2.7',
+  'opencode:ollama-cloud/glm-5.1',
+  'opencode:ollama-cloud/qwen3.5',
 ];
 
 /**
@@ -247,17 +272,17 @@ export const KNOWN_EXECS: readonly string[] = [
  * KNOWN_EXECS. Notes are English — they are fed verbatim into the (English) planner prompt.
  */
 export const EXEC_NOTES: Readonly<Record<string, string>> = {
-  'ollama-cloud/glm-5.2': 'Open frontier model, near Claude Opus on agentic coding; sustains long autonomous tool-use sessions. Strong all-rounder for complex, multi-step work.',
+  'opencode:ollama-cloud/glm-5.2': 'Open frontier model, near Claude Opus on agentic coding; sustains long autonomous tool-use sessions. Strong all-rounder for complex, multi-step work.',
   'codex:gpt-5.5': "OpenAI's strongest agentic coder (via Codex) — excellent long-horizon planning, debugging, and end-to-end PR work.",
   'sonnet': 'Claude Sonnet — fast, reliable everyday coder with strong tool use and instruction following. A solid default for most tasks.',
   'opus': 'Claude Opus — most capable reasoner; best for hard architecture, large multi-file refactors, and tricky debugging.',
-  'ollama-cloud/deepseek-v4-pro': 'Top open-source raw coding; best for whole-codebase refactors and hard SWE-bench-style problems.',
-  'ollama/kimi-k2.7-code': 'Agentic coding specialist — long-horizon tasks with heavy multi-tool and sub-agent orchestration.',
-  'ollama-cloud/minimax-m3': 'Efficient agentic coder — multi-file edits and code-run-fix loops at low cost and high throughput.',
-  'ollama-cloud/deepseek-v4-flash': 'Faster, cheaper DeepSeek V4 — strong coding at low latency, good for quick iterations.',
-  'ollama-cloud/minimax-m2.7': 'Cheap, fast agentic model — routine multi-file edits and test-validated fixes.',
-  'ollama-cloud/glm-5.1': 'Open agentic model for long-running tasks (hours of tool calls); a step below GLM 5.2.',
-  'ollama-cloud/qwen3.5': 'Best-in-class instruction following and function-calling; balanced reasoning and coding agent.',
+  'opencode:ollama-cloud/deepseek-v4-pro': 'Top open-source raw coding; best for whole-codebase refactors and hard SWE-bench-style problems.',
+  'opencode:ollama/kimi-k2.7-code': 'Agentic coding specialist — long-horizon tasks with heavy multi-tool and sub-agent orchestration.',
+  'opencode:ollama-cloud/minimax-m3': 'Efficient agentic coder — multi-file edits and code-run-fix loops at low cost and high throughput.',
+  'opencode:ollama-cloud/deepseek-v4-flash': 'Faster, cheaper DeepSeek V4 — strong coding at low latency, good for quick iterations.',
+  'opencode:ollama-cloud/minimax-m2.7': 'Cheap, fast agentic model — routine multi-file edits and test-validated fixes.',
+  'opencode:ollama-cloud/glm-5.1': 'Open agentic model for long-running tasks (hours of tool calls); a step below GLM 5.2.',
+  'opencode:ollama-cloud/qwen3.5': 'Best-in-class instruction following and function-calling; balanced reasoning and coding agent.',
 };
 
 /**

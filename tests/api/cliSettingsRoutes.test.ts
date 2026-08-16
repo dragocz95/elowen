@@ -86,7 +86,9 @@ describe('cli-settings routes', () => {
   });
 
   it('PATCH accepts any configured brain model for a non-admin, but a personal allow-list still narrows it', async () => {
-    const { app, users } = setup();
+    const { app, users, config } = setup();
+    // These two cases turn on the brain bypass, which only applies to a CONFIGURED provider.
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi', 'glm'], apiKey: 'k' }] } });
     const bob = users.create('bob', 'pw');
     const bobTok = users.issueToken(bob.id);
     // `elowen:relay/kimi` is a brain exec — bounded by configured providers, not the global CLI allow-list —
@@ -103,7 +105,9 @@ describe('cli-settings routes', () => {
   });
 
   it('PATCH persists the compaction-model pair and enforces the personal allow-list', async () => {
-    const { app, users } = setup();
+    const { app, users, config } = setup();
+    // These two cases turn on the brain bypass, which only applies to a CONFIGURED provider.
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['kimi', 'glm'], apiKey: 'k' }] } });
     const bob = users.create('bob', 'pw');
     const bobTok = users.issueToken(bob.id);
     // An unrestricted non-admin may set any configured brain exec as their compaction model.

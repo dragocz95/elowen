@@ -4,7 +4,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
-import { isElowenExec, isExecAllowedForUser } from '../../shared/execs.js';
+import { isExecAllowedForUser, isConfiguredBrainExec } from '../../shared/execs.js';
+import { brainProviderIds } from '../../store/configStore.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
@@ -66,7 +67,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // isExecAllowedForUser in two ways: it had no admin bypass, and it applied the global allow-list to
       // `elowen:` brain execs, which are bounded by the configured providers instead. So a model the
       // brain picker offered could not be saved as the default here.
-      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec)) {
+      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec, brainProviderIds(d.config))) {
         return c.json({ error: 'exec not allowed' }, 400);
       }
     }
@@ -162,16 +163,17 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // pick is already structured here, so it is judged as an ExecRef: the gate decides on `program`
     // instead of on a prefix this route would first have had to write into a string.
     const brainRef = (provider: string, model: string) => ({ program: 'elowen' as const, provider, model });
+    const providers = brainProviderIds(d.config);
     if (patch.model && patch.modelProvider
-      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.modelProvider, patch.model))) {
+      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.modelProvider, patch.model), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
     }
     if (patch.visionModel && patch.visionModelProvider
-      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.visionModelProvider, patch.visionModel))) {
+      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.visionModelProvider, patch.visionModel), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
     }
     if (patch.compactModel && patch.compactModelProvider
-      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.compactModelProvider, patch.compactModel))) {
+      && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.compactModelProvider, patch.compactModel), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
     }
     try {
@@ -388,7 +390,11 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // are bounded by the configured providers, not KNOWN_EXECS, so they're granted directly — asked
       // through the shared program test, not a prefix comparison of my own.
       const globalAllowed = new Set(d.config.get().allowedExecs);
-      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && (isElowenExec(e) || globalAllowed.has(e))))]);
+      const providers = brainProviderIds(d.config);
+      // A brain exec is granted directly, but only when its provider is actually configured: the bare
+      // `provider/model` spelling means any typo now parses as a brain exec, and `isElowenExec` alone
+      // would wave it past the global bound.
+      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && (isConfiguredBrainExec(e, providers) || globalAllowed.has(e))))]);
     }
     if (Array.isArray(b.disabled_tools)) {
       users.setDisabledTools(id, b.disabled_tools.filter((t) => typeof t === 'string'));

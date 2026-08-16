@@ -26,17 +26,16 @@ const PROVIDER_PREFIXES: readonly [string, ProviderId][] = [
 
 /**
  * Which program runs this exec string — the same decision the daemon's `execSpecProgram` makes.
- * An explicit prefix decides; only a prefix-LESS value falls back to the CLI shape contract
- * (`provider/model` is OpenCode, a bare name is Claude Code). A slash must NEVER be read as the
- * embedded brain: `elowen` is reached through its prefix (or, on the wire, through the model's own
- * `program` field) and nothing else — otherwise every OpenCode exec would file under Elowen AI.
+ * An explicit prefix decides first; a prefix-LESS value falls back to the shape contract, where
+ * `provider/model` is the embedded brain — its identity is stored with no prefix at all — and a bare
+ * name is Claude Code. OpenCode names itself explicitly, so a slash never routes to it by accident.
  */
 export function execProvider(exec: string): ProviderId {
   if (exec.startsWith('elowen|')) return 'elowen';
   for (const [prefix, provider] of PROVIDER_PREFIXES) {
     if (exec.startsWith(prefix)) return provider;
   }
-  if (exec.includes('/')) return 'opencode';
+  if (exec.includes('/')) return 'elowen';
   return 'claude-code';
 }
 
@@ -78,13 +77,15 @@ const PREFIX_BY_PROVIDER: Record<string, string> = Object.fromEntries(
   PROVIDER_PREFIXES.map(([prefix, provider]) => [provider, prefix]),
 );
 
-/** Compose an exec string from a chosen provider + bare model id (inverse of the parse above). opencode
- *  and claude-code are the only two whose format genuinely differs (bare unless a slash would otherwise
- *  mean the other program), so they stay explicit; every other provider just gets its table prefix. */
+/** Compose an exec string from a chosen provider + bare model id (inverse of the parse above). Two
+ *  providers own an unprefixed shape and so stay explicit here: the embedded brain writes bare
+ *  `provider/model`, and claude-code writes a bare name. Everyone else — OpenCode included, which used
+ *  to share the brain's slash shape — just gets its table prefix. */
 export function buildExec(provider: ProviderId, model: string): string {
   const m = model.trim();
-  if (provider === 'opencode') return m.includes('/') ? m : `opencode:${m}`;
-  // claude-code: bare resolves to claude; prefix only when a slash would otherwise mean opencode
+  // the brain's identity IS `<provider>/<model>`; prefixing it is exactly what this migration removed
+  if (provider === 'elowen') return m;
+  // claude-code: bare resolves to claude; prefix only when a slash would otherwise mean the brain
   if (provider === 'claude-code') return m.includes('/') ? `claude:${m}` : m;
   return `${PREFIX_BY_PROVIDER[provider]}${m}`;
 }

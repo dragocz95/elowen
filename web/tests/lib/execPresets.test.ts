@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { allModels, isPresetExec, removeModel, upsertModel, type ModelState } from '../../lib/execPresets';
 
 // A preset exec that really exists in EXEC_PRESETS, used across the cases below.
-const PRESET = 'ollama-cloud/deepseek-v4-pro';
+const PRESET = 'opencode:ollama-cloud/deepseek-v4-pro';
 
 describe('isPresetExec', () => {
   it('recognises built-in presets and rejects unknown execs', () => {

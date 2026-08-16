@@ -18,15 +18,15 @@ describe('modelProvider', () => {
       expect(execProvider('pi:sonnet')).toBe('pi');
       expect(execProvider('omp:opus')).toBe('omp');
     });
-    it('keeps the bare-spec heuristic (slash → opencode, plain → claude)', () => {
-      expect(execProvider('a/b')).toBe('opencode');
+    it('keeps the bare-spec heuristic (slash → the brain, plain → claude)', () => {
+      expect(execProvider('a/b')).toBe('elowen');
       expect(execProvider('sonnet')).toBe('claude-code');
     });
-    // Mirrors the daemon guard: the embedded brain is named by its prefix (or, on the wire, by the
-    // model's `program` field) — never by a slash, which belongs to the OpenCode contract.
-    it('never reads a bare provider/model as the embedded brain', () => {
-      expect(execProvider('ollama-cloud/glm-5.2')).toBe('opencode');
-      expect(execProvider('relay/ollama/kimi-k2.7-code')).toBe('opencode');
+    // Mirrors the daemon: the brain's identity is stored WITHOUT a prefix, so the bare slash shape is
+    // its own. OpenCode names itself, and that explicit prefix must always win over the shape.
+    it('reads a bare provider/model as the brain, and never steals an explicit prefix', () => {
+      expect(execProvider('relay/ollama/kimi-k2.7-code')).toBe('elowen');
+      expect(execProvider('opencode:ollama-cloud/glm-5.2')).toBe('opencode');
       expect(execProvider('elowen:anthropic/claude-opus-5')).toBe('elowen');
       expect(execProvider('elowen|anthropic|claude-opus-5')).toBe('elowen');
     });

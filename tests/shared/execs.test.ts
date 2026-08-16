@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+/** The brain providers this installation has configured. A brain exec only skips the global
+ *  allow-list when its provider is one of these — see isConfiguredBrainExec. */
+const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov'];
+
 import {
   PROGRAM_PREFIXES,
   DEFAULT_BINS,
@@ -94,6 +98,17 @@ describe('shared/execs', () => {
       expect(parseElowenExec('elowen:relay/')).toBeNull();
       expect(parseElowenExec('codex:gpt-5.5')).toBeNull();
     });
+    // Now that the bare `provider/model` shape belongs to the brain, this exported helper would read
+    // ANOTHER program's spec as a brain identity on the strength of the slash alone — `opencode:` would
+    // become the provider. parseExecRef never hands it such a value today, but the function is public
+    // and its contract is "a brain exec or nothing". Mutation: drop the prefix check and this goes green
+    // with { provider: 'opencode:vendor', model: 'model' }.
+    it('refuses a spec that carries another program\'s prefix, slash or not', () => {
+      expect(parseElowenExec('opencode:vendor/model')).toBeNull();
+      expect(parseElowenExec('claude:some/model')).toBeNull();
+      // …while the canonical unprefixed brain spelling is exactly what it does accept
+      expect(parseElowenExec('relay/kimi')).toEqual({ provider: 'relay', model: 'kimi' });
+    });
     it('routes the elowen: prefix to the elowen program', () => {
       expect(PROGRAM_PREFIXES['elowen:']).toBe('elowen');
     });
@@ -102,36 +117,36 @@ describe('shared/execs', () => {
   describe('isExecAllowedForUser', () => {
     const globalExecs = ['sonnet']; // the CLI global list; brain (elowen:) execs are NOT bounded by it
     it('admin and open mode are unrestricted', () => {
-      expect(isExecAllowedForUser({ is_admin: true, allowed_execs: [] }, globalExecs, 'elowen:x/y')).toBe(true);
-      expect(isExecAllowedForUser(null, globalExecs, 'elowen:x/y')).toBe(true);
+      expect(isExecAllowedForUser({ is_admin: true, allowed_execs: [] }, globalExecs, 'elowen:x/y', PROVIDERS)).toBe(true);
+      expect(isExecAllowedForUser(null, globalExecs, 'elowen:x/y', PROVIDERS)).toBe(true);
     });
     it('CLI execs are bounded by the global list', () => {
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'opus')).toBe(false); // not global
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'sonnet')).toBe(true);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'opus', PROVIDERS)).toBe(false); // not global
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'sonnet', PROVIDERS)).toBe(true);
     });
     it('brain (elowen:) execs skip the global bound — empty personal list = every configured brain model', () => {
       // The reported bug: without this a non-admin gets an EMPTY brain-model picker.
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'elowen:any/model')).toBe(true);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'elowen:any/model', PROVIDERS)).toBe(true);
     });
     it('a non-empty personal list narrows further (CLI and brain alike)', () => {
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:other/m')).toBe(false);
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:relay/kimi')).toBe(true);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:other/m', PROVIDERS)).toBe(false);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:relay/kimi', PROVIDERS)).toBe(true);
     });
   });
 
   describe('isModelVisibleForUser (picker display filter)', () => {
     const globalExecs = ['sonnet']; // CLI global list; brain execs bounded by providers, not this
     it('a personal list narrows the picker (CLI and brain)', () => {
-      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'elowen:relay/kimi')).toBe(false);
-      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'sonnet')).toBe(true);
+      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'elowen:relay/kimi', PROVIDERS)).toBe(false);
+      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'sonnet', PROVIDERS)).toBe(true);
     });
     it('empty personal list = every configured brain model + the global CLI list', () => {
-      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'elowen:relay/kimi')).toBe(true); // brain not global-bounded
-      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'opus')).toBe(false); // CLI not in global
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'elowen:relay/kimi', PROVIDERS)).toBe(true); // brain not global-bounded
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'opus', PROVIDERS)).toBe(false); // CLI not in global
     });
     it('null user = open mode (all global CLI + all brain)', () => {
-      expect(isModelVisibleForUser(null, globalExecs, 'sonnet')).toBe(true);
-      expect(isModelVisibleForUser(undefined, globalExecs, 'elowen:x/y')).toBe(true); // brain always visible in open mode
+      expect(isModelVisibleForUser(null, globalExecs, 'sonnet', PROVIDERS)).toBe(true);
+      expect(isModelVisibleForUser(undefined, globalExecs, 'elowen:x/y', PROVIDERS)).toBe(true); // brain always visible in open mode
     });
   });
 });

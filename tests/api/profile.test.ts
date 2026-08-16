@@ -27,7 +27,13 @@ function setup() {
     tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-    clock: new FakeClock(0), config: new ConfigStore(db),
+    clock: new FakeClock(0), config: (() => {
+      // A brain exec only bypasses the global allow-list when its provider is CONFIGURED, so the
+      // suite has to name one — otherwise `anthropic/…` is just a well-shaped string.
+      const config = new ConfigStore(db);
+      config.update({ brain: { providers: [{ id: 'anthropic', label: 'Anthropic', type: 'anthropic', baseUrl: '', models: ['claude-sonnet-5'], apiKey: 'k' }] } });
+      return config;
+    })(),
     users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), avatarsDir, avatarSecret: 'test-avatar-secret',
   });
   return { app, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
@@ -59,7 +65,7 @@ describe('PATCH /auth/me — self-service profile', () => {
     const { app, bobTok } = setup();
     const res = await app.request('/auth/me', patch(bobTok, { default_exec: 'elowen:anthropic/claude-sonnet-5' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ default_exec: 'elowen|anthropic|claude-sonnet-5' });
+    expect(await res.json()).toMatchObject({ default_exec: 'anthropic/claude-sonnet-5' });
   });
 });
 

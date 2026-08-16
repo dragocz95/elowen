@@ -3,7 +3,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
-import { execRefSpec, parseExecRef } from '../shared/execs.js';
+import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -87,6 +87,7 @@ function migrate(db: Db): void {
   widenSessionEventKindsForWorkflow(db);
   keyToolResultSpillsByOccurrence(db);
   migrateExecIdentity(db);
+  migrateExecIdentityDropPrefix(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -494,14 +495,53 @@ function keyToolResultSpillsByOccurrence(db: Db): void {
   });
 }
 
-/** v12 — replace the legacy embedded-exec prefix with the canonical composite identity. */
+/**
+ * v12 — replace the legacy `elowen:` prefix with the interim `elowen|provider|model` composite.
+ *
+ * The spelling is written out longhand instead of calling `execRefSpec`, because a migration must
+ * produce the exact bytes it produced the day it shipped. Sharing the live formatter means a later
+ * change to the canonical spelling silently rewrites history: v13 assumes every value v12 touched
+ * carries the composite marker, and when v12 started emitting v13's own output instead, v13 read those
+ * values as unclaimed OpenCode execs and prefixed them. Migrations are frozen by definition.
+ */
 function migrateExecIdentity(db: Db): void {
-  runOnce(db, 12, () => {
-    const canonical = (value: unknown): unknown => {
-      if (typeof value !== 'string' || !value.startsWith('elowen:')) return value;
+  runOnce(db, 12, () => rewriteStoredExecs(db, (value) => {
+    if (typeof value !== 'string' || !value.startsWith('elowen:')) return value;
+    const ref = parseExecRef(value);
+    if (!ref || ref.program !== 'elowen') return value;
+    return `elowen|${encodeURIComponent(ref.provider)}|${encodeURIComponent(ref.model)}`;
+  }));
+}
+
+/**
+ * v13 — drop the prefix from the brain's identity for good.
+ *
+ * The canonical spelling is now bare `<provider>/<model>`, so exactly one program may own the
+ * unprefixed slash shape and it is the brain. OpenCode held that shape historically and is therefore
+ * rewritten to its explicit `opencode:` prefix FIRST — every bare-slash value still in the database at
+ * this point predates the switch and belongs to OpenCode, because v12 wrote every brain exec as the
+ * `elowen|…` composite. Reading a leftover OpenCode value after the switch would route it into the
+ * embedded brain, which is the silent breakage this whole migration exists to avoid.
+ *
+ * Ordering inside one pass matters: the decision is made on the value as it was READ, so a brain exec
+ * unwrapped to `provider/model` here is never re-examined and mistaken for an OpenCode leftover.
+ */
+function migrateExecIdentityDropPrefix(db: Db): void {
+  runOnce(db, 13, () => rewriteStoredExecs(db, (value) => {
+    if (typeof value !== 'string' || !value) return value;
+    if (value.startsWith('elowen:') || value.startsWith('elowen|')) {
       const ref = parseExecRef(value);
       return ref ? execRefSpec(ref) : value;
-    };
+    }
+    const prefixed = Object.keys(PROGRAM_PREFIXES).some(p => value.startsWith(p));
+    return !prefixed && value.includes('/') ? `opencode:${value}` : value;
+  }));
+}
+
+/** Apply `canonical` to every exec value this database stores. The identity migrations differ only in
+ *  the spelling they produce — never in WHERE execs live — so the column walk belongs here, once. */
+function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): void {
+  {
     const rewriteList = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value;
 
     const settings = db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
@@ -541,9 +581,11 @@ function migrateExecIdentity(db: Db): void {
       }
     }
     if (tableExists('tasks')) {
-      const rows = db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:elowen:%'").all() as Array<{ id: string; labels: string }>;
+      // Every `exec:` label, not just the prefixed ones: v13 also has to reach values that carry no
+      // prefix at all, and a narrower LIKE would skip exactly those.
+      const rows = db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:%'").all() as Array<{ id: string; labels: string }>;
       for (const row of rows) {
-        const labels = row.labels.split(',').map(label => label.startsWith('exec:elowen:') ? `exec:${canonical(label.slice(5)) as string}` : label).join(',');
+        const labels = row.labels.split(',').map(label => label.startsWith('exec:') ? `exec:${canonical(label.slice('exec:'.length)) as string}` : label).join(',');
         if (labels !== row.labels) db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels, row.id);
       }
     }
@@ -556,10 +598,13 @@ function migrateExecIdentity(db: Db): void {
       }
     }
     if (tableExists('task_usage')) {
-      const rows = db.prepare("SELECT task_id, exec FROM task_usage WHERE exec LIKE 'elowen:%'").all() as Array<{ task_id: string; exec: string }>;
-      for (const row of rows) db.prepare('UPDATE task_usage SET exec = ? WHERE task_id = ?').run(canonical(row.exec), row.task_id);
+      const rows = db.prepare("SELECT task_id, exec FROM task_usage WHERE exec != ''").all() as Array<{ task_id: string; exec: string }>;
+      for (const row of rows) {
+        const next = canonical(row.exec) as string;
+        if (next !== row.exec) db.prepare('UPDATE task_usage SET exec = ? WHERE task_id = ?').run(next, row.task_id);
+      }
     }
-  });
+  }
 }
 
 /** Apply `rename` to every tool name this DB stores. Four surfaces, and every one of them matches by

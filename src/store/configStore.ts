@@ -22,6 +22,18 @@ export interface EmbeddingBlock {
   dimensions: number | null;
 }
 
+/**
+ * Ids of the configured brain providers — the bound every brain exec is judged against.
+ *
+ * Since the canonical brain spelling lost its prefix, any `provider/model` string parses as a brain
+ * exec, so "is this the brain?" no longer implies "is this a model this install can run". The
+ * permission gates take this set and ask the narrower question. Typed structurally so a test double
+ * satisfies it without constructing a ConfigStore.
+ */
+export function brainProviderIds(config: { get(): { brain: { providers: readonly { id: string }[] } } }): string[] {
+  return config.get().brain.providers.map((p) => p.id);
+}
+
 /** Map the persisted embedding block to an EmbeddingService config. The API key is NOT carried here —
  *  EmbeddingService resolves it from the referenced brain provider (`providerId`) via its resolver.
  *  An empty `providerId`/`model` yields a config the embed queue treats as "not configured". */

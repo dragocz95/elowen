@@ -99,7 +99,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
     // is no longer configured here: it's a separate, final, opt-in step, so the AI step must NOT touch the
     // autopilot config.
     const puts = calls.filter((c) => c.method === 'PUT' && c.path === '/config');
-    expect(puts).toContainEqual({ method: 'PUT', path: '/config', body: { defaults: { exec: 'elowen|relay|m1' } } });
+    expect(puts).toContainEqual({ method: 'PUT', path: '/config', body: { defaults: { exec: 'relay/m1' } } });
     expect(puts.some((c) => (c.body as { autopilot?: unknown }).autopilot !== undefined)).toBe(false);
 
     // the smoke test ran against the just-embedded provider/model
@@ -124,7 +124,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
 
     expect(result).toEqual({ status: 'done' }); // "keep anyway" still completes the step
     const defaultsPut = calls.find((c) => c.method === 'PUT' && c.path === '/config' && (c.body as { defaults?: unknown }).defaults);
-    expect(defaultsPut?.body).toEqual({ defaults: { exec: 'elowen|relay|m1' } });
+    expect(defaultsPut?.body).toEqual({ defaults: { exec: 'relay/m1' } });
     expect(calls.filter((c) => c.method === 'POST' && c.path === '/brain/test')).toHaveLength(1); // no retry loop taken
   });
 });
