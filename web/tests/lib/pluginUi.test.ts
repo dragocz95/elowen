@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ComponentType } from 'react';
-import { matchPluginPage, type PluginPageProps } from '../../lib/pluginUi';
+import { ensurePluginUiRuntime, matchPluginPage, PLUGIN_UI_API_VERSION, type PluginPageProps } from '../../lib/pluginUi';
 import { pluginNavEntries } from '../../lib/pluginNav';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { Puzzle, Sparkles } from 'lucide-react';
@@ -11,6 +11,18 @@ const C = (name: string) => {
   fn.displayName = name;
   return fn as ComponentType<PluginPageProps>;
 };
+
+describe('plugin UI runtime', () => {
+  it('publishes the versioned shared editor surface needed by first-class plugin pages', () => {
+    ensurePluginUiRuntime();
+    expect(PLUGIN_UI_API_VERSION).toBe(2);
+    expect(window.ElowenUiRuntime?.apiVersion).toBe(2);
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('PluginConfigEditor');
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('Avatar');
+    expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
+    expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useUsers');
+  });
+});
 
 describe('matchPluginPage', () => {
   const pages = {

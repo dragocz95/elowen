@@ -396,7 +396,7 @@ export interface PluginConfigField {
 }
 
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
-export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean }
+export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean; elowenUser?: string }
 
 /** One external MCP server row in a plugin's `mcpServers` config (the MCP-bridge pattern). `transport`
  *  picks how to reach it: `stdio` launches a local process (`command` + `args`, `env` extra vars — the

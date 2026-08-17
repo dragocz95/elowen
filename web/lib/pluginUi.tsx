@@ -27,6 +27,7 @@ import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginU
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Avatar } from '../components/ui/Avatar';
 import { Badge } from '../components/ui/Badge';
 import { Field } from '../components/ui/Field';
 import { HelpTip } from '../components/ui/HelpTip';
@@ -34,6 +35,7 @@ import { Modal, ModalBody, ModalFooter } from '../components/ui/Modal';
 import { Toggle } from '../components/ui/Toggle';
 import { ModuleHeader } from '../components/ui/ModuleHeader';
 import { Segmented } from '../components/ui/Segmented';
+import { SelectMenu } from '../components/ui/SelectMenu';
 import { EntityList, EntityRow } from '../components/ui/EntityList';
 import { LoadingState, LoadingLine, ErrorState, EmptyState } from '../components/ui/states';
 import { MotionLayoutItem, MotionPresence } from '../components/ui/Motion';
@@ -76,6 +78,8 @@ import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
 import { TONE_TEXT } from '../components/ui/tone';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
+import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
+import { usePluginConfigDraft } from '../modules/settings/usePluginConfigDraft';
 import { ConstellationScope } from '../components/ui/Constellation';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';
@@ -92,7 +96,7 @@ import { useProjectFilter } from './useProjectFilter';
 import { useFillHeight } from './useFillHeight';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
-  useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills,
+  useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills, useUsers, usePlugins,
   useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
@@ -132,7 +136,7 @@ import { taskTypeMeta } from './taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
-export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 1;
+export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 2;
 export type { PluginPageProps, PluginUiRegistration };
 
 /** The page header a plugin surface wears when it is reached as its own page. It is the app's own
@@ -263,8 +267,8 @@ export function ensurePluginUiRuntime(): void {
     // The third block is the settings-extraction surface (moved CLI-agents + autopilot sections): the
     // settings document primitives, the model/provider pickers and the autosave indicator.
     components: {
-      Button, Input, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
-      Toggle, ModuleHeader, Segmented, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
+      Button, Input, Avatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
+      Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
       // rebuilt the layout for itself.
@@ -272,7 +276,7 @@ export function ensurePluginUiRuntime(): void {
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
       TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
-      SettingsDocument, SettingsGroup, SettingsRow, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
+      SettingsDocument, SettingsGroup, SettingsRow, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       // Which of the two settings renderings a section's groups/rows use. A section that declares
       // `layout: 'orbital'` in its manifest wraps itself in this, exactly as the core sections do.
       ConstellationScope,
@@ -296,6 +300,7 @@ export function ensurePluginUiRuntime(): void {
       useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
       useUpdateConfig,
       useBrainModels, useSystemSkills, useInstallSkills, useAutoSaveStatus, usePluginStrings,
+      useUsers, usePlugins, usePluginConfigDraft,
       // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
       // the cronjob plugin's settings editor reaches them here.
       useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,

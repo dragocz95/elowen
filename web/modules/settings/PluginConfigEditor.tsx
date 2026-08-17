@@ -16,11 +16,12 @@ import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
+import { usePlugins, useProjects, useConfig, useBrainModels, useUsers } from '../../lib/queries';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from './usePluginConfigDraft';
@@ -123,6 +124,7 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
   const { t } = useTranslation();
   const { data: projects } = useProjects();
   const { data: plugins } = usePlugins();
+  const { data: users } = useUsers();
   // Every tool an enabled plugin contributes, tagged with its owner — the vocabulary (and the
   // modal grouping) for per-role tool allowlists. First owner wins on a name clash.
   const owners = new Map<string, string>();
@@ -134,6 +136,16 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
   }
   const allTools = [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))
     .map(([name, plugin]) => ({ name, plugin, pluginHasIcon: pluginHasIcon.get(plugin) ?? false }));
+  const accountOptions = (current: string) => [
+    { value: '', label: t.pluginCfg.roleAccountNone },
+    ...(current && !(users ?? []).some((user) => user.username === current)
+      ? [{ value: current, label: current }]
+      : []),
+    ...(users ?? []).map((user) => ({
+      value: user.username,
+      label: user.name ? `${user.name} · @${user.username}` : `@${user.username}`,
+    })),
+  ];
   const patch = (i: number, p: Partial<RolePolicy>) => onChange(value.map((r, j) => (j === i ? { ...r, ...p } : r)));
   // Which rows are expanded (by index). Removing a row shifts the indices above it down by one.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -157,6 +169,7 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                 {r.roleId ? <span className="truncate font-mono text-[11px] text-text-muted">{r.roleId}</span> : null}
                 <span className="ml-auto flex shrink-0 items-center gap-1.5">
                   {r.admin === true ? <Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge> : null}
+                  {r.elowenUser ? <Badge>{`@${r.elowenUser}`}</Badge> : null}
                   <Badge>{t.pluginCfg.roleProjectsCount.replace('{n}', String(r.projectIds.length))}</Badge>
                   <Badge>{(r.tools ?? []).length === 0 ? t.pluginCfg.roleToolsAllBadge : t.pluginCfg.roleToolsCount.replace('{n}', String((r.tools ?? []).length))}</Badge>
                 </span>
@@ -175,6 +188,14 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                     </Field>
                   </div>
                 </div>
+                <Field label={t.pluginCfg.roleAccount} hint={t.pluginCfg.roleAccountHint}>
+                  <SelectMenu
+                    value={r.elowenUser ?? ''}
+                    onChange={(elowenUser) => patch(i, { elowenUser: elowenUser || undefined })}
+                    options={accountOptions(r.elowenUser ?? '')}
+                    label={t.pluginCfg.roleAccount}
+                  />
+                </Field>
                 <label className="flex cursor-pointer items-center gap-2.5">
                   <Toggle checked={r.admin === true} onChange={(v) => patch(i, { admin: v })} label={t.pluginCfg.roleAdmin} />
                   <span className="flex flex-col">

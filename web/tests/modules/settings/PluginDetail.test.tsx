@@ -15,7 +15,8 @@ const usePlugins = vi.hoisted(() => vi.fn());
 const useProjects = vi.hoisted(() => vi.fn());
 const useConfig = vi.hoisted(() => vi.fn());
 const useBrainModels = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels }));
+const useUsers = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers }));
 vi.mock('../../../lib/mutations', () => ({
   useSavePluginConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({ ok: true }), isPending: false }),
   useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
@@ -54,6 +55,7 @@ beforeEach(() => {
   useConfig.mockReturnValue({ data: undefined });
   usePlugins.mockReturnValue({ data: [] });
   useBrainModels.mockReturnValue({ data: [] });
+  useUsers.mockReturnValue({ data: [] });
 });
 
 describe('PluginDetail — error state', () => {
@@ -292,5 +294,24 @@ describe('PluginDetail per-role tool allowlist', () => {
     expandRole();
     fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
     expect(screen.getByRole('button', { name: 'ghost_tool' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('maps a platform role to an Elowen account without dropping the rest of the policy', () => {
+    useUsers.mockReturnValue({ data: [
+      { id: 7, username: 'amy', name: 'Amy' },
+      { id: 8, username: 'bob', name: 'Bob' },
+    ] });
+    usePluginDetail.mockReturnValue({ data: detail(schema, {
+      rolePolicies: [{ ...role([])[0], elowenUser: 'amy' }],
+    }), isLoading: false });
+    renderDetail();
+    expandRole();
+
+    const account = screen.getByRole('combobox', { name: en.pluginCfg.roleAccount });
+    expect(account).toHaveTextContent('Amy · @amy');
+    fireEvent.click(account);
+    fireEvent.click(screen.getByRole('option', { name: 'Bob · @bob' }));
+    expect(account).toHaveTextContent('Bob · @bob');
+    expect(screen.getByText(en.pluginCfg.roleToolsAll)).toBeInTheDocument();
   });
 });
