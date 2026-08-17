@@ -27,7 +27,7 @@ import type { PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginU
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Avatar } from '../components/ui/Avatar';
+import { Avatar as UserAvatar } from '../components/ui/Avatar';
 import { Badge } from '../components/ui/Badge';
 import { Field } from '../components/ui/Field';
 import { HelpTip } from '../components/ui/HelpTip';
@@ -244,6 +244,21 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
   return res.status === 204 ? undefined : res.json();
 }
 
+type PluginAvatarProps = {
+  name?: string;
+  user?: { id: number; username: string; name?: string; avatar?: string };
+  size?: number | 'sm' | 'md' | 'lg';
+};
+
+/** Public plugin avatar contract. The host's account Avatar intentionally accepts a full user object,
+ * while plugin pages also render directory people that have only a display name. Keep that internal
+ * shape behind this adapter so exposing the component cannot crash a plugin on `user.name`. */
+function PluginAvatar({ name, user, size = 'md' }: PluginAvatarProps) {
+  const pixels = typeof size === 'number' ? size : size === 'sm' ? 28 : size === 'lg' ? 44 : 36;
+  const label = name?.trim() || user?.name?.trim() || user?.username || '?';
+  return <UserAvatar user={user ?? { id: 0, username: label, name: label }} size={pixels} />;
+}
+
 type Navigate = (href: string) => void;
 let navigateImpl: Navigate = (href) => { window.location.assign(href); };
 /** The shell installs the SPA router push here (see the /p/[plugin] page); default hard-navigates. */
@@ -267,7 +282,7 @@ export function ensurePluginUiRuntime(): void {
     // The third block is the settings-extraction surface (moved CLI-agents + autopilot sections): the
     // settings document primitives, the model/provider pickers and the autosave indicator.
     components: {
-      Button, Input, Avatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
+      Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
       MotionLayoutItem, MotionPresence, SpatialWorkspaceLayout, WorkspaceMetric,
       // Page chrome a plugin page needs to look like every built-in workspace, not like a bundle that
