@@ -24,7 +24,7 @@ import { useBrand } from '../../lib/brand';
 import { usePlugins, useProjects, useConfig, useBrainModels, useUsers } from '../../lib/queries';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
-import type { PluginConfigDraft } from './usePluginConfigDraft';
+import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
 

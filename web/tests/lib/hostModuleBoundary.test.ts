@@ -55,6 +55,7 @@ describe('host ↔ plugin boundary', () => {
     const allowed = [
       'modules/settings/providers',
       'modules/settings/SettingsSurface',
+      'modules/settings/PluginConfigEditor',
       'modules/settings/MarkdownAssetEditor',
     ];
     const offenders = sources(join(webRoot, 'lib')).flatMap((file) => {

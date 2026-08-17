@@ -79,7 +79,7 @@ import { TONE_TEXT } from '../components/ui/tone';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
-import { usePluginConfigDraft } from '../modules/settings/usePluginConfigDraft';
+import { usePluginConfigDraft } from './usePluginConfigDraft';
 import { ConstellationScope } from '../components/ui/Constellation';
 import { MarkdownAssetEditor } from '../modules/settings/MarkdownAssetEditor';
 import { allModels } from './execPresets';

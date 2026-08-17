@@ -5,7 +5,7 @@ import type { PluginConfigField, PluginDetail } from '../../../lib/types';
 const mutateAsync = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/mutations', () => ({ useSavePluginConfig: () => ({ mutateAsync }) }));
 
-import { usePluginConfigDraft } from '../../../modules/settings/usePluginConfigDraft';
+import { usePluginConfigDraft } from '../../../lib/usePluginConfigDraft';
 
 function pluginDetail(configSchema: PluginConfigField[], config: Record<string, unknown>): PluginDetail {
   return {

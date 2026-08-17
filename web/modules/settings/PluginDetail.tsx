@@ -17,7 +17,7 @@ import { PluginPermissionsPanel } from './PluginPermissionsPanel';
 import { PluginDataPanel } from './PluginDataPanel';
 import { PluginLogsPanel } from './PluginLogsPanel';
 import { PluginLivePreview } from './PluginLivePreview';
-import { usePluginConfigDraft } from './usePluginConfigDraft';
+import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsState, SettingsToolbar } from './SettingsSurface';
 
 type WorkspaceTab = 'setup' | 'behavior' | 'capabilities' | 'activity' | 'advanced';

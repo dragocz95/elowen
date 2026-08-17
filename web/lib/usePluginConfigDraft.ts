@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { useSavePluginConfig } from '../../lib/mutations';
-import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
-import type { PluginConfigField, PluginDetail } from '../../lib/types';
+import { useSavePluginConfig } from './mutations';
+import { useAutoSaveStatus } from './useAutoSaveStatus';
+import type { PluginConfigField, PluginDetail } from './types';
 
 /** Invalid JSON remains editable but makes the save fail visibly; claiming "Saved" while dropping
  *  that field would lose the user's draft on navigation. */

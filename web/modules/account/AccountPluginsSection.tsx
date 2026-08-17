@@ -8,7 +8,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useMyPluginConfigs } from '../../lib/queries';
 import { useSaveMyPluginConfig } from '../../lib/mutations';
 import { PluginConfigEditor } from '../settings/PluginConfigEditor';
-import { usePluginConfigDraft } from '../settings/usePluginConfigDraft';
+import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import type { PluginConfigField, PluginUserConfig } from '../../lib/types';
 
 /** One plugin's per-ACCOUNT form. Rendered by the SAME schema-driven editor as the instance-wide plugin
