@@ -34,7 +34,12 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
 // unresolved rather than attributed to the alphabetically-first one. Normalization must be IDENTICAL to
 // the marked-provider branch below, hence the shared helper: a lookup that normalized differently would
 // split one model into two rows again, which is the bug this is fixing.
-const SAME_MODEL_PROVIDER = `SELECT a.session_id AS session_id,
+// MATERIALIZED, and hoisted to a CTE both UNION halves join, because it is the expensive half of this
+// query: it aggregates every assistant message in the database. Inlined as a derived table in each half,
+// SQLite builds it TWICE and the live query went from 1.2 s to 3.8 s; computed once it costs ~0.9 s total.
+// That matters more than it looks — better-sqlite3 is synchronous, so this runs ON the daemon's event
+// loop, and the dashboard polls it every 30 s.
+const SAME_MODEL_CTE = `sm AS MATERIALIZED (SELECT a.session_id AS session_id,
          NULLIF(json_extract(a.content, '$.model'), '') AS model,
          MIN(${markedProvider('a.content', '$.provider')}) AS provider
     FROM brain_messages a
@@ -42,11 +47,11 @@ const SAME_MODEL_PROVIDER = `SELECT a.session_id AS session_id,
      AND NULLIF(json_extract(a.content, '$.model'), '') IS NOT NULL
      AND ${markedProvider('a.content', '$.provider')} IS NOT NULL
    GROUP BY a.session_id, NULLIF(json_extract(a.content, '$.model'), '')
-  HAVING COUNT(DISTINCT ${markedProvider('a.content', '$.provider')}) = 1`;
+  HAVING COUNT(DISTINCT ${markedProvider('a.content', '$.provider')}) = 1)`;
 
 const producingProvider = (src: string, path: string, modelPath: string, fallback: string): string => `COALESCE(
   ${markedProvider(src, path)},
-  -- Recovered from the live messages of the same session that ran the same model (see SAME_MODEL_PROVIDER).
+  -- Recovered from the live messages of the same session that ran the same model (see SAME_MODEL_CTE).
   -- This is a lookup, not a guess: the row it reads is one the same session actually produced.
   sm.provider,
   -- The session fallback applies ONLY to a row that carries no model of its own. Provider and model must
@@ -97,8 +102,8 @@ const USAGE_ROWS = `
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS measured_output,
          ${numeric('m.content', '$.usage.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
-         LEFT JOIN (${SAME_MODEL_PROVIDER}) sm
-           ON sm.session_id = m.session_id AND sm.model = NULLIF(json_extract(m.content, '$.model'), '')
+         LEFT JOIN sm ON sm.session_id = m.session_id
+                     AND sm.model = NULLIF(json_extract(m.content, '$.model'), '')
    WHERE m.role = 'assistant' AND json_valid(m.content) AND json_type(m.content) = 'object'
   UNION ALL
   SELECT s.user_id AS user_id, s.id AS session_id,
@@ -119,8 +124,8 @@ const USAGE_ROWS = `
                         THEN (CASE WHEN json_type(m.content, '$.usageRollup') = 'array'
                                    THEN json_extract(m.content, '$.usageRollup') END)
                    END) je
-         LEFT JOIN (${SAME_MODEL_PROVIDER}) sm
-           ON sm.session_id = m.session_id AND sm.model = NULLIF(json_extract(je.value, '$.model'), '')
+         LEFT JOIN sm ON sm.session_id = m.session_id
+                     AND sm.model = NULLIF(json_extract(je.value, '$.model'), '')
    WHERE m.role = 'compaction' AND je.type = 'object'`;
 
 // A `brain-task-<id>` worker session is EXCLUDED from the brain aggregates ONLY when its spend is
@@ -353,7 +358,7 @@ export class BrainUsageStore {
   usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
     return this.cachedView(`byDay${userId}${daysArg}`, () => this.db.prepare(
-      `WITH usage_rows AS (${USAGE_ROWS})
+      `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
        SELECT date(ts / 1000, 'unixepoch') AS day,
               COALESCE(SUM(total), 0) AS tokens,
               CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
@@ -392,7 +397,7 @@ export class BrainUsageStore {
     return this.cachedView(`byModel${userId}${fromMs}${toMs}`, () => {
       interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
       const rows = this.db.prepare(
-        `WITH usage_rows AS (${USAGE_ROWS})
+        `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
          SELECT provider AS provider, model AS model,
                 COALESCE(SUM(input), 0) AS input,
                 COALESCE(SUM(output), 0) AS output,
@@ -451,7 +456,7 @@ export class BrainUsageStore {
          SELECT child.id, child.user_id
            FROM brain_sessions child JOIN descendants parent ON child.parent_session_id = parent.id
           WHERE child.user_id = parent.user_id
-       ), usage_rows AS (${USAGE_ROWS})
+       ), ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
        SELECT COALESCE(SUM(u.input), 0) AS input,
               COALESCE(SUM(u.output), 0) AS output,
               COALESCE(SUM(u.cache_read), 0) AS cache_read,
