@@ -5,6 +5,34 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.4] - 2026-08-17
+
+An administrator can now see who is consuming the instance, and from where. The question matters the
+moment someone other than the owner can reach it — an account handed to a colleague, or a chat window
+opened to the public — because until now the only honest answer was the total.
+
+Attribution happens per turn, not per message and not per session. A conversation outlives any single
+caller, and a message that arrives mid-turn is steered into the turn already running, so attributing
+either one would quietly credit the wrong origin. The origin is therefore pinned when a turn starts and
+consumed when it settles; a turn resumed after a restart is recorded as internal rather than inheriting
+whoever last spoke, because nobody asked for it.
+
+The client address had to reach the daemon first, and it did not: the browser talks to the web app,
+which proxies to the daemon through a strict header allow-list. That list now passes the address our own
+nginx writes, and only that one — the browser-supplied forwarding headers stay out, since a client can
+put anything in them. Reading the address and deciding whether the proxy in front may be believed is one
+function shared by usage attribution and the login brute-force guard, which previously carried its own
+copy of the rule.
+
+Addresses age out on their own. A rollup older than the configured window keeps its totals but loses the
+address, merging into a redacted row, and only real IP addresses are redacted — local, internal and
+platform origins identify nobody, and blurring them would destroy the distinction the view exists for.
+Deleting a user removes their rollups in the same transaction that removes the user.
+
+The reasoning level of a delegated sub-agent is no longer blank when you drill into it. The level was
+never missing from the run — the delegation inherits it and spawns with it — it simply never travelled
+back to the panel that displays it.
+
 ## [0.28.3] - 2026-08-17
 
 A model is now called what it is. The stored identity of a brain model lost its `elowen:` prefix, so a
