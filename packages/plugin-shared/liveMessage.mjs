@@ -126,6 +126,13 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
     }
   }
 
+  /** Freeze and remove one posted editable message after any in-flight create/edit has settled. */
+  async function deleteEditableMessage(b) {
+    b.close();
+    await b.sending?.catch(() => {});
+    if (b.messageId) await Promise.resolve(transport.remove(b.a, b.channelId, b.messageId)).catch(() => {});
+  }
+
   /** The streaming answer: the assistant's reply text edited live into its OWN message(s), kept SEPARATE
    *  from the tool-progress bubble so alternating text→tool→text never loses an edit target. Overflow past
    *  one message is split code-fence-aware (splitContent) into ordered continuation bubbles; only the last
@@ -169,11 +176,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
     /** Freeze a bubble and delete its message, AWAITING any in-flight create/edit first — a bubble whose
      *  initial create is still in flight has messageId === null, so deciding close-vs-delete before the send
      *  settles would let a straggler create escape and leave an orphan message behind. */
-    async deleteBubble(b) {
-      b.close();
-      await b.sending?.catch(() => {}); // let the in-flight create/edit settle so messageId is known
-      if (b.messageId) await transport.remove(this.a, b.channelId, b.messageId);
-    }
+    async deleteBubble(b) { await deleteEditableMessage(b); }
     /** Delete EVERY posted bubble and freeze — used to drop a stranded answer draft (re-anchored below a
      *  tool trace) or an image-only reply's raw-markdown draft. Awaits each in-flight send so none escapes. */
     async discard() { for (const b of this.bubbles) await this.deleteBubble(b); }
@@ -376,6 +379,19 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         this.idle = e;
       }
     }
+    /** Remove only tool-activity messages after the turn when the conversation opted into ephemeral progress. */
+    async cleanupToolActivity() {
+      if (!this.display.deleteToolActivityAfterTurn || this.toolCalls.length === 0) return;
+      if (this.display.toolMessageMode === 'per_tool') {
+        for (const bubble of this.toolBubbles.values()) await deleteEditableMessage(bubble);
+        this.toolBubbles.clear();
+        return;
+      }
+      if (this.progress) {
+        await deleteEditableMessage(this.progress);
+        this.progress = null;
+      }
+    }
     /** Freeze the live bubbles on a FAILED turn: clear the stall-hint timer and close BOTH the progress and
      *  answer messages so a straggler edit can't land after the error reply already went out. */
     abandon() {
@@ -398,6 +414,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       for (const bubble of this.toolBubbles.values()) await bubble.settle(bubble.content);
       if (this.progress) await this.progress.settle(this.progress.content);
       if (this.answer) this.answer.close();
+      await this.cleanupToolActivity();
     }
     async finalize(reply) {
       // Settle the progress bubble to its complete tool list (a throttled edit may still be pending),
@@ -463,6 +480,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         if (this.answer) await this.answer.finalize(body);
         else await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
       }
+      await this.cleanupToolActivity();
     }
   }
 

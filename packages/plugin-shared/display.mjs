@@ -25,11 +25,13 @@ export function resolveDisplaySettings(cfg = {}, channelState = {}) {
   const globalAnswer = pick(cfg.answerMode, ANSWER_MODES, legacyAnswer);
   const globalOutput = pick(cfg.toolOutput, TOOL_OUTPUT, 'summary');
   const globalToolMessageMode = pick(cfg.toolMessageMode, TOOL_MESSAGE_MODES, 'single');
+  const globalDeleteToolActivity = cfg.deleteToolActivityAfterTurn === true;
   return {
     toolActivity: pick(channel.toolActivity, TOOL_ACTIVITY, globalTools),
     answerMode: pick(channel.answerMode, ANSWER_MODES, globalAnswer),
     toolOutput: pick(channel.toolOutput, TOOL_OUTPUT, globalOutput),
     toolMessageMode: pick(channel.toolMessageMode, TOOL_MESSAGE_MODES, globalToolMessageMode),
+    deleteToolActivityAfterTurn: globalDeleteToolActivity,
   };
 }
 

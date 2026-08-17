@@ -28,4 +28,9 @@ describe('observesLiveEvents', () => {
     // The legacy streaming:false install is the one that opts out entirely.
     expect(observesLiveEvents(resolveDisplaySettings({ streaming: false }), { streaming: false })).toBe(false);
   });
+
+  it('keeps tool progress by default and enables cleanup globally', () => {
+    expect(resolveDisplaySettings({}).deleteToolActivityAfterTurn).toBe(false);
+    expect(resolveDisplaySettings({ deleteToolActivityAfterTurn: true }).deleteToolActivityAfterTurn).toBe(true);
+  });
 });

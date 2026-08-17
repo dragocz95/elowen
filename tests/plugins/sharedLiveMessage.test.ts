@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-type Lm = { onEvent: (e: Record<string, unknown>) => void };
+type Lm = {
+  onEvent: (e: Record<string, unknown>) => void;
+  finalize: (reply?: string) => Promise<void>;
+  fail: (message: string) => Promise<void>;
+};
 
 /** The trace-line separator the shared engine joins tool rows with. Every surface so far treats a bare
  *  "\n" as a line break; Microsoft Teams renders a bot message as markdown, where a single newline is a
@@ -159,5 +163,63 @@ describe('shared LiveMessage card separation', () => {
     const content = await render({ quoteBlock: (lines) => lines.map((l) => `> ${l}`).join('\n'), items: [] });
     expect(content).toContain('TodoWrite');
     expect(content).not.toContain('>');
+  });
+});
+
+/** Tool activity may be ephemeral, but the final answer must land before its progress messages disappear. */
+describe('shared LiveMessage tool activity cleanup', () => {
+  const style = {
+    mentionSafe: (s: string) => s,
+    fenceSafe: (s: string) => s,
+    bold: (s: string) => s,
+    strike: (s: string) => s,
+    italic: (s: string) => s,
+    subtext: (s: string) => s,
+    summaryLine: (s: string) => s,
+  };
+
+  async function run(cfg: Record<string, unknown>, mode: 'finalize' | 'fail' = 'finalize') {
+    const { createLiveMessage } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
+      createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string) => Lm;
+    };
+    const events: string[] = [];
+    let nextId = 0;
+    const transport = {
+      create: async () => { const id = `progress-${++nextId}`; events.push(`create:${id}`); return id; },
+      edit: async () => true,
+      remove: async (_a: unknown, _channel: string, id: string) => { events.push(`remove:${id}`); },
+      replyRef: () => ({}),
+      hasImages: () => false,
+      postImages: async () => {},
+    };
+    const LiveMessage = createLiveMessage({
+      transport,
+      style,
+      CHUNK: 4000,
+      splitContent: (text: string) => [text],
+      postWithImages: async () => { events.push('answer'); },
+      footerLine: () => '',
+    });
+    const lm = new LiveMessage({ cfg: { runtimeFooter: false, ...cfg } }, 'channel');
+    lm.onEvent({ type: 'tool', id: 'one', name: 'Read' });
+    lm.onEvent({ type: 'tool', id: 'two', name: 'Bash' });
+    if (mode === 'fail') await lm.fail('boom');
+    else await lm.finalize('Done.');
+    return events;
+  }
+
+  it('keeps tool progress by default', async () => {
+    expect(await run({})).not.toContain('remove:progress-1');
+  });
+
+  it('deletes the single tool progress message only after the final answer', async () => {
+    const events = await run({ deleteToolActivityAfterTurn: true });
+    expect(events).toEqual(['create:progress-1', 'answer', 'remove:progress-1']);
+  });
+
+  it('deletes every per-tool message on successful and failed turns', async () => {
+    const cfg = { deleteToolActivityAfterTurn: true, toolMessageMode: 'per_tool' };
+    expect(await run(cfg)).toEqual(['create:progress-1', 'create:progress-2', 'answer', 'remove:progress-1', 'remove:progress-2']);
+    expect(await run(cfg, 'fail')).toEqual(['create:progress-1', 'create:progress-2', 'remove:progress-1', 'remove:progress-2']);
   });
 });
