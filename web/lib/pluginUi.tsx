@@ -246,16 +246,31 @@ async function api(path: string, init?: RequestInit): Promise<unknown> {
 
 type PluginAvatarProps = {
   name?: string;
+  src?: string;
   user?: { id: number; username: string; name?: string; avatar?: string };
   size?: number | 'sm' | 'md' | 'lg';
 };
 
-/** Public plugin avatar contract. The host's account Avatar intentionally accepts a full user object,
- * while plugin pages also render directory people that have only a display name. Keep that internal
- * shape behind this adapter so exposing the component cannot crash a plugin on `user.name`. */
-function PluginAvatar({ name, user, size = 'md' }: PluginAvatarProps) {
+/** Public plugin avatar contract. A plugin-owned image wins, then the linked Elowen account avatar,
+ * then initials. The host's account Avatar stays behind this adapter so directory-only people never
+ * have to mimic its internal user shape. */
+function PluginAvatar({ name, src, user, size = 'md' }: PluginAvatarProps) {
+  const [sourceFailed, setSourceFailed] = React.useState(false);
+  React.useEffect(() => setSourceFailed(false), [src]);
   const pixels = typeof size === 'number' ? size : size === 'sm' ? 28 : size === 'lg' ? 44 : 36;
   const label = name?.trim() || user?.name?.trim() || user?.username || '?';
+  if (src && !sourceFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt={label}
+        className="shrink-0 rounded-full border border-border object-cover"
+        style={{ width: pixels, height: pixels }}
+        onError={() => setSourceFailed(true)}
+      />
+    );
+  }
   return <UserAvatar user={user ?? { id: 0, username: label, name: label }} size={pixels} />;
 }
 
