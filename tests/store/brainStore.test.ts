@@ -973,6 +973,83 @@ describe('BrainStore', () => {
       });
     });
 
+    // Refusing to borrow leaves the rollup buckets unattributed, and on real history that is most of the
+    // spend: the same model then shows up TWICE, once resolved and once as `elowen:<model>`. The provider
+    // is recoverable without guessing, though — the live messages the bucket was summarized from are still
+    // in the same session. This reads that, so it is a lookup of what actually ran, not a fallback.
+    // Mutation: drop the `sm.provider` term and this returns the `elowen:shared-model` legacy bucket.
+    it('recovers a rollup bucket provider from the live rows of the same session and model', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
+      store.appendMessage({
+        id: 'm1', sessionId: 'brain-a', parentId: null, role: 'assistant',
+        content: {
+          role: 'assistant', provider: 'row-provider', model: 'shared-model', timestamp: Date.now(),
+          usage: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10 },
+        },
+      });
+      db.prepare('INSERT INTO brain_messages (id, session_id, parent_id, role, content) VALUES (?, ?, NULL, ?, ?)')
+        .run('c1', 'brain-a', 'compaction', JSON.stringify({
+          role: 'compactionSummary', summary: 's', tokensBefore: 1, timestamp: Date.now(),
+          usageRollup: [{ model: 'shared-model', at: Date.now(), totalTokens: 100 }],
+        }));
+
+      const rows = store.usageByModel(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: 'row-provider/shared-model', provider: 'row-provider' });
+      expect(rows[0]!.usage.total).toBe(110);
+    });
+
+    // The whole safety property of that lookup. A session that served ONE model through TWO providers
+    // cannot say which of them produced the bucket, so it must stay unresolved rather than pick one —
+    // picking would re-create exactly the invented pairs the borrowing fallback was removed for.
+    // Mutation: drop `HAVING COUNT(DISTINCT …) = 1` and the bucket is filed under `provider-a`.
+    it('leaves a rollup bucket unresolved when the session ran that model through two providers', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
+      for (const [id, provider] of [['m1', 'provider-a'], ['m2', 'provider-b']] as const) {
+        store.appendMessage({
+          id, sessionId: 'brain-a', parentId: null, role: 'assistant',
+          content: {
+            role: 'assistant', provider, model: 'shared-model', timestamp: Date.now(),
+            usage: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10 },
+          },
+        });
+      }
+      db.prepare('INSERT INTO brain_messages (id, session_id, parent_id, role, content) VALUES (?, ?, NULL, ?, ?)')
+        .run('c1', 'brain-a', 'compaction', JSON.stringify({
+          role: 'compactionSummary', summary: 's', tokensBefore: 1, timestamp: Date.now(),
+          usageRollup: [{ model: 'shared-model', at: Date.now(), totalTokens: 100 }],
+        }));
+
+      expect(store.usageByModel(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'elowen:shared-model', provider: null, usage: expect.objectContaining({ total: 100 }) }),
+      ]));
+    });
+
+    // The lookup is scoped to the session that produced the bucket. Another session running the same
+    // model proves nothing about this one — a global lookup would happily attribute a bucket to a
+    // provider the session never touched.
+    // Mutation: drop `sm.session_id = m.session_id` from the join and this resolves to `other-provider`.
+    it('does not recover a provider from a different session', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
+      store.createSession({ id: 'brain-b', userId: 1, provider: 'session-provider', model: 'session-model' });
+      store.appendMessage({
+        id: 'm1', sessionId: 'brain-b', parentId: null, role: 'assistant',
+        content: {
+          role: 'assistant', provider: 'other-provider', model: 'shared-model', timestamp: Date.now(),
+          usage: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10 },
+        },
+      });
+      db.prepare('INSERT INTO brain_messages (id, session_id, parent_id, role, content) VALUES (?, ?, NULL, ?, ?)')
+        .run('c1', 'brain-a', 'compaction', JSON.stringify({
+          role: 'compactionSummary', summary: 's', tokensBefore: 1, timestamp: Date.now(),
+          usageRollup: [{ model: 'shared-model', at: Date.now(), totalTokens: 100 }],
+        }));
+
+      expect(store.usageByModel(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'elowen:shared-model', provider: null, usage: expect.objectContaining({ total: 100 }) }),
+      ]));
+    });
+
     it('does not strip the internal prefix from a marked configured provider id', () => {
       store.createSession({ id: 'brain-a', userId: 1, provider: 'elowen-relay', model: 'm' });
       store.appendMessage({

@@ -18,14 +18,37 @@ export const numeric = (src: string, path: string, absent = '0'): string =>
  * registry name: custom endpoints used the internal `elowen-<config id>` namespace, while OAuth rows used
  * PI's built-in name. Normalize only that historical custom prefix before grouping; a marked id stays
  * verbatim, and only a missing/empty row field falls back to the session's configured provider id. */
-const producingProvider = (src: string, path: string, modelPath: string, fallback: string): string => `COALESCE(
-  NULLIF(CASE WHEN json_type(${src}, '${path}') = 'text' THEN
+const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN json_type(${src}, '${path}') = 'text' THEN
     CASE WHEN json_extract(${src}, '$.providerIdentity') = 'config'
       THEN json_extract(${src}, '${path}')
       WHEN json_extract(${src}, '${path}') LIKE '${BRAIN_REGISTRY_PROVIDER_PREFIX}%'
       THEN substr(json_extract(${src}, '${path}'), ${BRAIN_REGISTRY_PROVIDER_PREFIX.length + 1})
       ELSE json_extract(${src}, '${path}') END
-  END, ''),
+  END, '')`;
+
+// Sessions that ran exactly ONE provider for a given model, so a row of that model in that session can be
+// attributed without guessing. A compaction rollup bucket names its model but never its provider, and the
+// live assistant messages it was summarized FROM are still in the same session — this recovers the pair
+// that actually produced the tokens instead of inventing one. `HAVING COUNT(DISTINCT …) = 1` is the whole
+// safety property: a session that served the same model through two providers stays ambiguous and is left
+// unresolved rather than attributed to the alphabetically-first one. Normalization must be IDENTICAL to
+// the marked-provider branch below, hence the shared helper: a lookup that normalized differently would
+// split one model into two rows again, which is the bug this is fixing.
+const SAME_MODEL_PROVIDER = `SELECT a.session_id AS session_id,
+         NULLIF(json_extract(a.content, '$.model'), '') AS model,
+         MIN(${markedProvider('a.content', '$.provider')}) AS provider
+    FROM brain_messages a
+   WHERE a.role = 'assistant' AND json_valid(a.content) AND json_type(a.content) = 'object'
+     AND NULLIF(json_extract(a.content, '$.model'), '') IS NOT NULL
+     AND ${markedProvider('a.content', '$.provider')} IS NOT NULL
+   GROUP BY a.session_id, NULLIF(json_extract(a.content, '$.model'), '')
+  HAVING COUNT(DISTINCT ${markedProvider('a.content', '$.provider')}) = 1`;
+
+const producingProvider = (src: string, path: string, modelPath: string, fallback: string): string => `COALESCE(
+  ${markedProvider(src, path)},
+  -- Recovered from the live messages of the same session that ran the same model (see SAME_MODEL_PROVIDER).
+  -- This is a lookup, not a guess: the row it reads is one the same session actually produced.
+  sm.provider,
   -- The session fallback applies ONLY to a row that carries no model of its own. Provider and model must
   -- come from the SAME source: a row that names its model but not its provider (every compaction-rollup
   -- bucket) would otherwise be stamped with whatever provider the session happens to run NOW, inventing
@@ -74,6 +97,8 @@ const USAGE_ROWS = `
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS measured_output,
          ${numeric('m.content', '$.usage.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
+         LEFT JOIN (${SAME_MODEL_PROVIDER}) sm
+           ON sm.session_id = m.session_id AND sm.model = NULLIF(json_extract(m.content, '$.model'), '')
    WHERE m.role = 'assistant' AND json_valid(m.content) AND json_type(m.content) = 'object'
   UNION ALL
   SELECT s.user_id AS user_id, s.id AS session_id,
@@ -94,6 +119,8 @@ const USAGE_ROWS = `
                         THEN (CASE WHEN json_type(m.content, '$.usageRollup') = 'array'
                                    THEN json_extract(m.content, '$.usageRollup') END)
                    END) je
+         LEFT JOIN (${SAME_MODEL_PROVIDER}) sm
+           ON sm.session_id = m.session_id AND sm.model = NULLIF(json_extract(je.value, '$.model'), '')
    WHERE m.role = 'compaction' AND je.type = 'object'`;
 
 // A `brain-task-<id>` worker session is EXCLUDED from the brain aggregates ONLY when its spend is
