@@ -101,25 +101,25 @@
     "settings": [
       {
         "id": "subagents",
-        "label": "Sub-agents",
+        "label": "Agents",
         "icon": "GitFork"
       }
     ],
     "strings": {
-      "title": "Sub-agents",
-      "sectionHint": "Typed sub-agents the assistant can delegate to. Built-in explore and plan ship read-only; add your own.",
-      "empty": "No sub-agents yet.",
+      "title": "Agents",
+      "sectionHint": "Typed agents the assistant can delegate to. Built-in explore and plan ship read-only; add your own.",
+      "empty": "No agents yet.",
       "badgeBuiltin": "built-in",
       "badgeUser": "custom",
-      "add": "Add sub-agent",
-      "edit": "Edit sub-agent",
-      "remove": "Delete sub-agent",
-      "deleteTitle": "Delete sub-agent",
-      "deleteDesc": "The sub-agent “{name}” will be removed permanently.",
+      "add": "Add agent",
+      "edit": "Edit agent",
+      "remove": "Delete agent",
+      "deleteTitle": "Delete agent",
+      "deleteDesc": "The agent “{name}” will be removed permanently.",
       "name": "Name",
       "description": "Description",
       "tools": "Tools",
-      "toolsHint": "What the sub-agent may use. Read-only grants tools that cannot edit, plus a shell limited to non-destructive commands.",
+      "toolsHint": "What the agent may use. Read-only grants tools that cannot edit, plus a shell limited to non-destructive commands.",
       "toolsReadOnly": "Read-only (+ non-destructive shell)",
       "toolsAll": "All (full toolset)",
       "toolsInherit": "Inherit the caller’s tools",
@@ -127,17 +127,17 @@
       "customTools": "Tool list",
       "customToolsHint": "Comma-separated tool names, e.g. Read, Search, Bash.",
       "body": "Prompt",
-      "bodyPlaceholder": "The sub-agent’s system prompt…",
-      "save": "Save sub-agent",
+      "bodyPlaceholder": "The agent’s system prompt…",
+      "save": "Save agent",
       "cancel": "Cancel",
-      "created": "Sub-agent saved",
-      "updated": "Sub-agent updated",
-      "deleted": "Sub-agent deleted",
+      "created": "Agent saved",
+      "updated": "Agent updated",
+      "deleted": "Agent deleted",
       "helpName": "kebab-case: lowercase letters, digits and dashes (e.g. “code-reviewer”).",
-      "helpDescription": "One line: when to delegate to this sub-agent (the assistant reads it to choose).",
-      "helpBody": "The sub-agent’s system prompt — its role, constraints and how to report back.",
-      "workspaceEyebrow": "Sub-agents",
-      "workspaceReady": "Sub-agents loaded"
+      "helpDescription": "One line: when to delegate to this agent (the assistant reads it to choose).",
+      "helpBody": "The agent’s system prompt — its role, constraints and how to report back.",
+      "workspaceEyebrow": "Agents",
+      "workspaceReady": "Agents loaded"
     }
   }
 }

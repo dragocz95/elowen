@@ -20,23 +20,23 @@
   },
   "web": {
     "settings": {
-      "subagents": "Sub-agenti"
+      "subagents": "Agenti"
     },
     "strings": {
-      "title": "Sub-agenti",
-      "sectionHint": "Typovaní sub-agenti, ktorým môže asistent delegovať prácu. Vstavané explore a plan sú len na čítanie; pridajte si vlastných.",
-      "empty": "Zatiaľ žiadni sub-agenti.",
+      "title": "Agenti",
+      "sectionHint": "Typovaní agenti, ktorým môže asistent delegovať prácu. Vstavané explore a plan sú len na čítanie; pridajte si vlastných.",
+      "empty": "Zatiaľ žiadni agenti.",
       "badgeBuiltin": "vstavaný",
       "badgeUser": "vlastný",
-      "add": "Pridať sub-agenta",
-      "edit": "Upraviť sub-agenta",
-      "remove": "Vymazať sub-agenta",
-      "deleteTitle": "Vymazať sub-agenta",
-      "deleteDesc": "Sub-agent „{name}“ bude natrvalo odstránený.",
+      "add": "Pridať agenta",
+      "edit": "Upraviť agenta",
+      "remove": "Vymazať agenta",
+      "deleteTitle": "Vymazať agenta",
+      "deleteDesc": "Agent „{name}“ bude natrvalo odstránený.",
       "name": "Názov",
       "description": "Popis",
       "tools": "Nástroje",
-      "toolsHint": "Čo smie sub-agent použiť. „Len na čítanie“ dá nástroje bez úprav a shell obmedzený na nedeštruktívne príkazy.",
+      "toolsHint": "Čo smie agent použiť. „Len na čítanie“ dá nástroje bez úprav a shell obmedzený na nedeštruktívne príkazy.",
       "toolsReadOnly": "Len na čítanie (+ nedeštruktívny shell)",
       "toolsAll": "Všetko (plná sada nástrojov)",
       "toolsInherit": "Zdediť nástroje volajúceho",
@@ -44,17 +44,17 @@
       "customTools": "Zoznam nástrojov",
       "customToolsHint": "Názvy nástrojov oddelené čiarkou, napr. Read, Search, Bash.",
       "body": "Prompt",
-      "bodyPlaceholder": "Systémový prompt sub-agenta…",
-      "save": "Uložiť sub-agenta",
+      "bodyPlaceholder": "Systémový prompt agenta…",
+      "save": "Uložiť agenta",
       "cancel": "Zrušiť",
-      "created": "Sub-agent uložený",
-      "updated": "Sub-agent upravený",
-      "deleted": "Sub-agent vymazaný",
+      "created": "Agent uložený",
+      "updated": "Agent upravený",
+      "deleted": "Agent vymazaný",
       "helpName": "kebab-case: malé písmená, číslice a pomlčky (napr. „code-reviewer“).",
-      "helpDescription": "Jedna veta: kedy delegovať tomuto sub-agentovi (podľa nej volí asistent).",
-      "helpBody": "Systémový prompt sub-agenta — jeho rola, mantinely a ako má reportovať.",
-      "workspaceEyebrow": "Sub-agenti",
-      "workspaceReady": "Sub-agenti načítaní"
+      "helpDescription": "Jedna veta: kedy delegovať tomuto agentovi (podľa nej volí asistent).",
+      "helpBody": "Systémový prompt agenta — jeho rola, mantinely a ako má reportovať.",
+      "workspaceEyebrow": "Agenti",
+      "workspaceReady": "Agenti načítaní"
     }
   }
 }
