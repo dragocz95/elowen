@@ -180,8 +180,12 @@ export function modelMetaLine(
     color.faint('·'),
     activeGoal?.primary ?? '',
     activeGoal ? color.faint('·') : '',
-    color.text(model),
+    // Provider first, then the model it qualifies, separated by the same faint dot the rest of the line
+    // uses. Reading order matches how the identity is written and typed (`anthropic/claude-opus-5`), and
+    // the dot keeps the two from looking like one long name.
     provider ? color.dim(provider) : '',
+    provider ? color.faint('·') : '',
+    color.text(model),
     thinkingLevel ? color.warning(thinkingLevel) : '',
     fast ? color.accent('FAST') : '',
     // Warning-toned so auto-approved tool asks are never invisible (session /yolo or the persisted default).

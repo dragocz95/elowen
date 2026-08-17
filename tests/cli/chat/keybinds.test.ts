@@ -358,14 +358,25 @@ describe('modelMetaLine', () => {
     // The spinner is the one element that appears and disappears mid-turn. Next to the fixed-width mode
     // label it holds still; at the far end of the line it drifts with the model name's length.
     const line = plain(modelMetaLine('build', 'anthropic/claude-opus-4-8', 'off', '* 19s', true, false, null));
-    expect(line).toBe('Build * 19s · claude-opus-4-8 anthropic off YOLO');
+    expect(line).toBe('Build * 19s · anthropic · claude-opus-4-8 off YOLO');
     expect(line.indexOf('19s')).toBeLessThan(line.indexOf('claude-opus-4-8'));
   });
 
   it('closes the gap when no turn is running', () => {
     // Idle must not leave a stray separator or a double space where the chip was.
     expect(plain(modelMetaLine('plan', 'anthropic/claude-opus-4-8', '', undefined, false, false, null)))
-      .toBe('Plan · claude-opus-4-8 anthropic');
+      .toBe('Plan · anthropic · claude-opus-4-8');
+  });
+
+  // The provider qualifies the model, so it reads in the order the identity is written and typed. The dot
+  // is what stops the two from running together as one long name — and a bare model id, having nothing to
+  // qualify, must NOT pick up a stray separator.
+  it('leads with the provider, separated by the same faint dot', () => {
+    const qualified = plain(modelMetaLine('build', 'anthropic/claude-opus-4-8', '', undefined, false, false, null));
+    expect(qualified).toBe('Build · anthropic · claude-opus-4-8');
+    expect(qualified.indexOf('anthropic')).toBeLessThan(qualified.indexOf('claude-opus-4-8'));
+
+    expect(plain(modelMetaLine('build', 'k3', '', undefined, false, false, null))).toBe('Build · k3');
   });
 
   it('keeps a bare model id and the goal chips intact', () => {

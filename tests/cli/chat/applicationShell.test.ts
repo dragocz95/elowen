@@ -1457,7 +1457,7 @@ describe('chat application shell ownership', () => {
     composition.resume();
     composition.renderForced('test:parent-model-identity');
     await vi.runOnlyPendingTimersAsync();
-    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('provider-model test medium');
+    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('test · provider-model medium');
     composition.dispose();
     composition.stop();
   });
