@@ -5,6 +5,40 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.3] - 2026-08-17
+
+A model is now called what it is. The stored identity of a brain model lost its `elowen:` prefix, so a
+model reads `anthropic/claude-opus-5` in the database, in the API and on screen — the same string
+everywhere, with no translation step between what you pick and what gets sent.
+
+Nothing in a flat string distinguishes two programs that both spell a model as `provider/model`, so
+exactly one of them may own that shape. It went to the embedded brain, which is the identity users
+actually read and type. OpenCode, which held the bare shape historically, now names itself with its
+existing `opencode:` prefix, and migration v13 rewrites every stored value — OpenCode execs first, so
+none is left to be mistaken for a brain model afterwards. The rewrite is deliberately not self-inverse,
+so it runs inside one immediate transaction: a half-migrated database is the one state that could not
+be told apart, and it must never exist.
+
+Widening the bare shape also widened what parses as a brain exec, and brain execs bypass the global
+allow-list by design. The permission gates therefore no longer ask "is this the brain?" but "is this a
+model this installation actually has a provider for", and they take the configured provider set as a
+required argument so the compiler names every caller that has to supply it.
+
+Usage statistics group by that same identity. A model that two providers both offer used to collapse
+into one ambiguous row; each provider now gets its own. Rows that name a model but no provider — every
+compaction rollup written before this release — stay explicitly unresolved rather than borrowing the
+provider their session happens to run now, which would invent pairs that never existed.
+
+Plugins ship their own CSS. Elowen is distributed as a prebuilt Next.js bundle, so a plugin page using
+a utility class the host itself never used rendered unstyled on every installation but the developer's.
+Each plugin now carries a generated stylesheet that references the host's design tokens, so it still
+follows the active skin.
+
+Also: installing a plugin no longer fails while a turn is running (the swap is deferred until the
+daemon is idle and the route answers 202), and several test helpers stopped leaking temporary
+directories — one was recreating its own directory after cleanup through an un-awaited marketplace
+reconcile.
+
 ## [0.28.2] - 2026-08-15
 
 The package finishes becoming the agent. The last four plugins that owned a whole domain — `agents`
