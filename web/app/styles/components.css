@@ -169,7 +169,6 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .workspace-page {
   container-type: inline-size;
   width: 100%;
-  max-width: 100rem;
   margin-inline: auto;
   padding: 0 var(--shell-gutter) 3rem;
 }
@@ -206,7 +205,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .control-surface-state { padding: 2.5rem clamp(1.25rem, 2vw, 2rem); color: var(--color-text-muted); text-align: center; }
 .control-surface-state[data-tone='danger'] { color: var(--color-danger); }
 .spatial-workspace-hero { min-width: 0; border-bottom: var(--hairline); }
-.spatial-workspace-hero__header { display: flex; min-height: 8.6rem; align-items: center; justify-content: space-between; gap: 2rem; padding: 1.5rem var(--shell-gutter); border-bottom: var(--hairline); }
+.spatial-workspace-hero__header { display: flex; min-height: 8.6rem; align-items: center; justify-content: space-between; gap: 2rem; padding: 1.5rem 0; border-bottom: var(--hairline); }
 .spatial-workspace-hero__header h1 { color: var(--color-text); font-size: clamp(2rem, 1.6rem + 1vw, 2.8rem); font-weight: 610; letter-spacing: -0.045em; line-height: 1; }
 .spatial-workspace-hero__header p { max-width: 42rem; margin-top: 0.5rem; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.55; }
 .spatial-workspace-hero__body { display: grid; min-height: 12rem; grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr); }
@@ -261,7 +260,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 @container (max-width: 38.75rem) {
   .control-surface-toolbar { padding-inline: 1rem; }
   .control-surface-register { padding-inline: 1rem; }
-  .spatial-workspace-hero__header { min-height: 0; padding: 1.25rem 1rem; }
+  .spatial-workspace-hero__header { min-height: 0; padding: 1.25rem 0; }
   .spatial-workspace-hero__header .workspace-header__actions { width: 100%; justify-content: space-between; }
   .spatial-workspace-hero__mascot { min-height: 7.5rem; }
   .spatial-workspace-hero__mascot .spatial-mascot { transform: scale(0.68); }

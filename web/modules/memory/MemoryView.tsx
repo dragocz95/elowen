@@ -5,7 +5,6 @@ import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
 import { useCreateMemory, useMergeMemories, useDeleteMemory, useRestoreMemory, usePurgeMemories, useEmptyTrash, useSetMemoryCategory } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/elowenClient';
-import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
@@ -281,7 +280,6 @@ export function MemoryView() {
 
   return (
     <>
-      <ModuleHeader title={t.page.memory} count={tab === 'list' ? filtered.length : undefined} icon={Brain} />
       <SpatialWorkspaceLayout
         hero={{
           eyebrow: t.page.memory,
