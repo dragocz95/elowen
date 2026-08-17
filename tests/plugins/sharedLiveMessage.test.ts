@@ -68,3 +68,96 @@ describe('shared LiveMessage trace separator', () => {
     expect(content.split('\n').filter((l) => l.trim()).length).toBeGreaterThan(1);
   });
 });
+
+/** How a display card (the todo checklist) is set apart from the tool trace. A surface with real block
+ *  quoting renders the card as a quoted block and needs no drawn divider; a plain-text surface such as
+ *  Telegram, where `> ` would be shown literally, keeps the divider. */
+describe('shared LiveMessage card separation', () => {
+  const load = async () => (await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs'))) as {
+    createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string) => Lm;
+  };
+
+  const style = {
+    mentionSafe: (s: string) => s,
+    fenceSafe: (s: string) => s,
+    bold: (s: string) => `**${s}**`,
+    strike: (s: string) => `~~${s}~~`,
+    italic: (s: string) => `_${s}_`,
+    subtext: (s: string) => `-# ${s}`,
+    summaryLine: (s: string) => `  ↳ ${s}`,
+  };
+
+  async function render(opts: { quoteBlock?: (lines: string[]) => string; lineBreak?: string; items?: Array<{ text: string; status: string }> } = {}) {
+    const { createLiveMessage } = await load();
+    let content = '';
+    const transport = {
+      create: async (_a: unknown, _c: string, text: string) => { content = text; return 'mid-1'; },
+      edit: async (_a: unknown, _c: string, _id: string, text: string) => { content = text; return true; },
+      remove: async () => {},
+      replyRef: (replyToId: string) => ({ replyToId }),
+      hasImages: () => false,
+      postImages: async () => {},
+    };
+    const LiveMessage = createLiveMessage({
+      transport,
+      style: {
+        ...style,
+        ...(opts.quoteBlock ? { quoteBlock: opts.quoteBlock } : {}),
+        ...(opts.lineBreak ? { lineBreak: opts.lineBreak } : {}),
+      },
+      CHUNK: 4000,
+      splitContent: (t: string) => [t],
+      postWithImages: async () => {},
+      footerLine: () => '',
+    });
+    const lm = new LiveMessage({ cfg: { runtimeFooter: false } }, 'chan-1');
+    lm.onEvent({ type: 'tool', id: 'a', name: 'TodoWrite', detail: '', icon: '📋' });
+    lm.onEvent({
+      type: 'card',
+      card: {
+        id: 'todos',
+        title: 'Todos',
+        items: opts.items ?? [{ text: 'find records', status: 'in_progress' }, { text: 'link bookings', status: 'pending' }],
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    return content;
+  }
+
+  it('falls back to the drawn divider when the surface cannot quote', async () => {
+    const content = await render();
+    expect(content).toContain('┈┈┈');
+    expect(content).toContain('📋 **Todos** (0/2)');
+    expect(content).not.toContain('> ');
+  });
+
+  it('quotes the checklist and drops the divider when the surface can quote', async () => {
+    const content = await render({ quoteBlock: (lines) => lines.map((l) => `> ${l}`).join('\n') });
+    expect(content).not.toContain('┈┈┈');
+    // Every card line is quoted — a half-quoted block would break the panel look mid-list.
+    expect(content).toContain('> 📋 **Todos** (0/2)');
+    expect(content).toContain('> 🔸 find records');
+    expect(content).toContain('> ⬜ link bookings');
+    // The tool trace itself stays unquoted: only the card becomes a block.
+    expect(content).toMatch(/^📋 `TodoWrite`/m);
+    expect(content).not.toContain('> 📋 `TodoWrite`');
+  });
+
+  /** The hook takes the whole block precisely so a surface can wrap it ONCE. Teams separates trace rows
+   *  with a blank line, and a per-line quote there would draw one full-width frame per checklist item. */
+  it('lets a surface wrap the whole card in a single quote, not one per line', async () => {
+    const content = await render({
+      lineBreak: '\n\n',
+      quoteBlock: (lines) => `<blockquote>${lines.join('<br>')}</blockquote>`,
+    });
+    expect(content.match(/<blockquote>/g)).toHaveLength(1);
+    expect(content).toContain('📋 **Todos** (0/2)<br>🔸 find records<br>⬜ link bookings');
+    expect(content).not.toContain('┈┈┈');
+  });
+
+  it('removes an emptied card instead of leaving an empty quoted block', async () => {
+    const content = await render({ quoteBlock: (lines) => lines.map((l) => `> ${l}`).join('\n'), items: [] });
+    expect(content).toContain('TodoWrite');
+    expect(content).not.toContain('>');
+  });
+});

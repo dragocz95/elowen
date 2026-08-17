@@ -35,6 +35,14 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
   // arrives as one run-on paragraph. Such a surface sets "\n\n" here. Trace lines only — the answer body
   // is the model's own markdown and is never reflowed.
   const NL = style.lineBreak ?? '\n';
+  // How a display card is set apart from the tool trace. A surface with real block quoting supplies
+  // `style.quoteBlock(lines)` and the checklist becomes a quoted block of its own — the platform's own
+  // left bar reads as a panel, so no drawn divider is needed. The hook takes the WHOLE block, not one
+  // line, because surfaces express a multi-line quote differently: Discord/WhatsApp prefix every line,
+  // while Teams needs a single <blockquote> (its `\n\n` row separator would otherwise draw one
+  // full-width frame per item). A plain-text surface (Telegram sends no parse_mode, so `> ` would show
+  // up literally) leaves it unset and keeps the DIVIDER fallback.
+  const quoteBlock = typeof style.quoteBlock === 'function' ? style.quoteBlock : null;
   const { compactLine, safeTail } = makeTextHelpers(style);
   const outputSummary = makeOutputSummary({ compactLine, safeTail });
   const foldedCalls = makeFoldedCalls(compactLine);
@@ -222,8 +230,11 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
         toolLines.push(`💭 ${style.italic(tail)}`);
       }
-      // Each card becomes its own section; a subtext divider separates the tool trace from the checklist(s).
-      const cards = [...this.cards.values()].map((c) => cardLines(c).join(NL)).filter(Boolean);
+      // Each card becomes its own section, set apart from the tool trace by the surface's block quote
+      // when it has one and by the drawn divider when it does not.
+      const cards = [...this.cards.values()]
+        .map((c) => { const lines = cardLines(c); return lines.length ? (quoteBlock ? quoteBlock(lines) : lines.join(NL)) : ''; })
+        .filter(Boolean);
       const sections = [];
       if (toolLines.length) sections.push(toolLines.join(NL));
       sections.push(...cards);
@@ -234,7 +245,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // ABOVE the trace. Flag it so finalize re-anchors the answer below and keeps it the LAST message.
         if (this.answer) this.answerStranded = true;
       }
-      const rendered = sections.join(`${NL}${style.subtext(DIVIDER)}${NL}`);
+      const rendered = sections.join(quoteBlock ? NL : `${NL}${style.subtext(DIVIDER)}${NL}`);
       // Preserve the newest/active tools and cards when a long turn exceeds the surface's message limit.
       const bounded = rendered.length > CHUNK ? `…\n${rendered.slice(-(CHUNK - 2))}` : rendered;
       this.progress.update(bounded);
