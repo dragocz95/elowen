@@ -10,13 +10,14 @@ import { buildUsageSummary, cacheHitPct } from '../../lib/usageBars';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Modal, ModalBody } from '../../components/ui/Modal';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
 const SECTIONS = ['conversation', 'models', 'context'] as const;
 type Section = (typeof SECTIONS)[number];
 
 export function StatsModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
-  const { usage, currentModel, activeSessionId } = useBrainChat();
+  const { usage, currentModel, provider, activeSessionId } = useBrainChat();
   const usageQuery = useModelUsage();
   const summary = buildUsageSummary(usageQuery.data);
 
@@ -100,7 +101,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
             {/* Model row */}
             <div className="flex items-center justify-between rounded-md border border-border bg-elevated px-3 py-2">
               <span className="text-xs text-text-muted">{t.stats.model}</span>
-              <span className="text-sm font-mono text-text">{currentModel || '—'}</span>
+              <span className="text-sm font-mono text-text">{currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : '—'}</span>
             </div>
 
             {/* Metrics grid */}

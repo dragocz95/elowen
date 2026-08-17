@@ -3326,6 +3326,7 @@ describe('BrainService', () => {
     expect(list.map((s) => s.id).sort()).toEqual([first.sessionId, second.sessionId].sort());
     expect(list.find((s) => s.id === first.sessionId)?.active).toBe(true);
     expect(list.find((s) => s.id === first.sessionId)?.title).toBe('první konverzace');
+    expect(list.find((s) => s.id === first.sessionId)?.provider).toBe('relay');
   });
 
   it('channel sessions get NO Elowen* control-plane tools (the owner token stays unreachable)', async () => {
@@ -3635,8 +3636,9 @@ describe('BrainService', () => {
     await svc.channelSend({ channelId: 'disc-idle', ownerUserId: 1, policy, onEvent: (e) => seen.push(e) }, 'ahoj');
     const idles = seen.filter((e) => e.type === 'idle');
     expect(idles.length).toBeGreaterThan(0);
-    // The last idle is the deterministic post-turn one — it must carry the model for the footer.
-    expect(typeof idles[idles.length - 1].model).toBe('string');
+    // The last idle is the deterministic post-turn one — it must carry the qualified identity so every
+    // platform footer can name the billing provider without making another catalog lookup.
+    expect(idles[idles.length - 1].model).toMatch(/^[^/]+\/.+/);
   });
 
   it('notify fans out to started platforms that implement notify()', async () => {

@@ -10,7 +10,7 @@ import { en } from '../../../lib/i18n/dictionaries/en';
 
 // SessionPicker reads the single chat controller via useBrainChat (activeSessionId + currentModel) — mock
 // it so the picker is exercised in isolation against a controlled binding (no BrainChatProvider boot).
-const ctx = vi.hoisted(() => ({ value: { activeSessionId: null as string | null, currentModel: '' } }));
+const ctx = vi.hoisted(() => ({ value: { activeSessionId: null as string | null, currentModel: '', provider: '' } }));
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => ctx.value }));
 
 import { SessionPicker } from '../../../modules/advisor/SessionPicker';
@@ -25,7 +25,7 @@ const meHandler = (is_admin: boolean) => http.get('*/api/auth/me', () => HttpRes
 const noSessions = http.get('*/api/sessions', () => HttpResponse.json([]));
 
 function renderPicker(ui: React.ReactElement, over: Partial<typeof ctx.value> = {}) {
-  ctx.value = { activeSessionId: null, currentModel: '', ...over };
+  ctx.value = { activeSessionId: null, currentModel: '', provider: '', ...over };
   const { wrapper: Wrapper } = createWrapper();
   return render(<Wrapper><ToastProvider>{ui}</ToastProvider></Wrapper>);
 }
@@ -55,10 +55,10 @@ describe('SessionPicker', () => {
 
   it('shows the admin-only Elowen CLI section with the open row (with an active conversation)', async () => {
     server.use(meHandler(true), noSessions);
-    renderPicker(<SessionPicker open onPick={vi.fn()} onClose={vi.fn()} exclude={[]} />, { activeSessionId: 'sess-1', currentModel: 'claude-opus' });
+    renderPicker(<SessionPicker open onPick={vi.fn()} onClose={vi.fn()} exclude={[]} />, { activeSessionId: 'sess-1', currentModel: 'claude-opus', provider: 'anthropic' });
     expect(await screen.findByText(interpolate(en.advisor.sectionElowenCli, { productName: 'Elowen' }))).toBeInTheDocument();
+    expect(screen.getByText('anthropic/claude-opus')).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: new RegExp(en.advisor.elowenCliOpen) })).toBeInTheDocument();
-    expect(screen.getByText('claude-opus')).toBeInTheDocument();
   });
 
   it('renders NO Elowen CLI nodes for a non-admin', async () => {

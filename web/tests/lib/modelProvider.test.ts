@@ -66,6 +66,8 @@ describe('modelProvider', () => {
         .toBe('ai-coresynth-io/deepseek/deepseek-v4-pro');
       expect(brainModelQualifiedLabel('gone/model', [brainModel({})])).toBe('gone/model');
       expect(brainModelQualifiedLabel('sonnet', undefined)).toBe('sonnet');
+      expect(brainModelQualifiedLabel({ provider: 'alibaba', model: 'deepseek-v4-pro' }))
+        .toBe('alibaba/deepseek-v4-pro');
     });
   });
 

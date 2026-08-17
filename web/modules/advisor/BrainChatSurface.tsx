@@ -25,6 +25,7 @@ import { ModelPicker } from './ModelPicker';
 import { useBrainChat } from './BrainChatProvider';
 import { formatTokens, formatCost, formatDuration } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
@@ -617,7 +618,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const c = useBrainChat();
   const {
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued, readOnly,
-    usage, lineCfg, currentModel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
+    usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts, setShowThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
@@ -1015,9 +1016,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           </button>
           {statuslineShown ? (
             <>
-              {lineCfg.showModel && (currentModel || active?.model)
-                ? <span className="min-w-0 truncate" title={currentModel || active?.model}>{currentModel || active?.model}</span>
-                : null}
+              {lineCfg.showModel && (currentModel || active?.model) ? (() => {
+                const model = currentModel || active?.model || '';
+                const modelProvider = currentModel ? provider : (active?.provider ?? '');
+                const label = brainModelQualifiedLabel({ provider: modelProvider, model });
+                return <span className="min-w-0 truncate" title={label}>{label}</span>;
+              })() : null}
               {lineCfg.showContext && usage && usage.percent != null ? (
                 <span className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}

@@ -76,15 +76,15 @@ export function stripThinking(text) {
  * The runtime footer a turn settles with (`model · context %`), wrapped in the surface's own subtext
  * markup. `fence` is that markup: Discord `{ open: '-# ' }`, Telegram `{ open: '— ' }`, WhatsApp
  * `{ open: '_', close: '_' }`, Teams `{ open: '' }` (bot messages there have no small-text style at all).
- * The provider prefix is dropped (`anthropic/claude-sonnet-5` → the model name alone) and the percentage
- * rounded; missing data simply omits its fragment, and an idle event carrying neither yields '' so no
+ * A qualified model reference is preserved (`anthropic/claude-sonnet-5`) and the percentage rounded;
+ * missing data simply omits its fragment, and an idle event carrying neither yields '' so no
  * empty subtext line is posted. The percentage is checked for finiteness, not merely for being a number:
  * it reaches us from the agent runtime's context accounting, where a zero-sized window would divide out
  * to Infinity and print as `Infinity %`.
  */
 export function runtimeFooter(idle, fence) {
   const parts = [];
-  const model = typeof idle?.model === 'string' ? idle.model.split('/').pop() : '';
+  const model = typeof idle?.model === 'string' ? idle.model.trim() : '';
   if (model) parts.push(model);
   const pct = idle?.usage?.percent;
   if (Number.isFinite(pct) && pct >= 0) parts.push(`${Math.round(pct)} %`);

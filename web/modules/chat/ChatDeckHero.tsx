@@ -3,6 +3,7 @@ import { MessagesSquare } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useBrainChat } from '../advisor/BrainChatProvider';
 import { formatTokens, formatCost } from '../../lib/format';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
 /** The Elowen-style identity hero for /chat: the section icon + title, then a row of live stats about the
  *  user's conversations (count, active model, context fill, total tokens, cost) read straight off the one
@@ -10,11 +11,13 @@ import { formatTokens, formatCost } from '../../lib/format';
  *  conversation itself renders natively below it. */
 export function ChatDeckHero() {
   const { t } = useTranslation();
-  const { sessions, currentModel, usage } = useBrainChat();
+  const { sessions, currentModel, provider, usage } = useBrainChat();
 
   const count = sessions.data?.length ?? 0;
   const active = sessions.data?.find((s) => s.active);
-  const model = currentModel || active?.model;
+  const modelName = currentModel || active?.model;
+  const modelProvider = currentModel ? provider : active?.provider;
+  const model = modelName ? brainModelQualifiedLabel({ provider: modelProvider ?? '', model: modelName }) : undefined;
 
   const stats: { label: string; value: string; mono?: boolean }[] = [
     { label: t.chat.heroConversations, value: String(count) },

@@ -10,6 +10,7 @@ const ctx = vi.hoisted(() => ({
   value: {} as {
     models: BrainModelOption[] | null;
     currentModel: string;
+    provider: string;
     setModel: (m: BrainModelOption) => void;
     loadModels: () => void;
     modelsLoading: boolean;
@@ -32,7 +33,7 @@ const CATALOG: BrainModelOption[] = [
 
 function setCtx(over: Partial<typeof ctx.value>): void {
   ctx.value = {
-    models: null, currentModel: '', setModel: vi.fn(), loadModels: vi.fn(), modelsLoading: false, modelsError: false,
+    models: null, currentModel: '', provider: '', setModel: vi.fn(), loadModels: vi.fn(), modelsLoading: false, modelsError: false,
     ...over,
   };
 }
@@ -54,9 +55,11 @@ describe('ModelPicker', () => {
     expect(loadModels).toHaveBeenCalledTimes(1);
   });
 
-  it('groups by provider with an OAuth/source badge, marks the active model, and shows reasoning chips', () => {
-    setCtx({ models: CATALOG, currentModel: 'claude-sonnet' });
+  it('qualifies the standalone trigger, groups rows by provider, and marks the exact active pair', () => {
+    const duplicate = model({ provider: 'openai', providerLabel: 'OpenAI', model: 'claude-sonnet', source: 'api-key' });
+    setCtx({ models: [...CATALOG, duplicate], currentModel: 'claude-sonnet', provider: 'anthropic-oauth' });
     renderPicker();
+    expect(screen.getByRole('button', { name: 'anthropic-oauth/claude-sonnet' })).toBeInTheDocument();
     openPopover();
 
     // Provider grouping + source badges.
@@ -66,8 +69,8 @@ describe('ModelPicker', () => {
     expect(screen.getByText('API')).toBeInTheDocument();
 
     // Active model is the selected option; the others are not.
-    const active = screen.getByRole('option', { name: /claude-sonnet/ });
-    expect(active).toHaveAttribute('aria-selected', 'true');
+    const duplicateRows = screen.getAllByRole('option', { name: /claude-sonnet/ });
+    expect(duplicateRows.filter((row) => row.getAttribute('aria-selected') === 'true')).toHaveLength(1);
     expect(screen.getByRole('option', { name: /claude-opus/ })).toHaveAttribute('aria-selected', 'false');
 
     // Reasoning chips render for the model that supports them (labelled), from its reasoningLabels.

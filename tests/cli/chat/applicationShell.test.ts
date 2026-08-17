@@ -1415,6 +1415,17 @@ describe('chat application shell ownership', () => {
     composition.stop();
   });
 
+  it('shows the parent provider beside its model in the composer meta row', async () => {
+    const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:parent-model-identity');
+    await vi.runOnlyPendingTimersAsync();
+    expect(renderMountedRoot(h).map(terminalPlainText).join('\n')).toContain('provider-model test medium');
+    composition.dispose();
+    composition.stop();
+  });
+
   it("shows the child's model and elapsed time (not the parent's) in the composer meta row", async () => {
     const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
     // Parent model is test/provider-model, reasoning level medium (from the harness). Drill into a child.

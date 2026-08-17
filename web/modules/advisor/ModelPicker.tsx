@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import type { BrainModelOption } from '../../lib/types';
-import { SOURCE_BADGE } from '../../lib/modelProvider';
+import { brainModelQualifiedLabel, SOURCE_BADGE } from '../../lib/modelProvider';
 import { useBrainChat } from './BrainChatProvider';
 
 /** Group the flat catalog into ordered provider buckets keyed by the provider's display label, preserving
@@ -24,7 +24,7 @@ function groupByProvider(models: BrainModelOption[]): { label: string; source: B
  *  component, same data. Selecting a model switches the conversation IN PLACE (no SSE reconnect). */
 export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
   const { t } = useTranslation();
-  const { models, currentModel, setModel, modelsLoading, modelsError, loadModels } = useBrainChat();
+  const { models, currentModel, provider, setModel, modelsLoading, modelsError, loadModels } = useBrainChat();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -47,7 +47,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
   };
 
   const groups = models ? groupByProvider(models) : [];
-  const label = currentModel || t.brainChat.modelPicker;
+  const label = currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : t.brainChat.modelPicker;
 
   return (
     <div ref={rootRef} data-testid="chat-model-picker" className="relative shrink-0">
@@ -96,7 +96,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
                   </span>
                 </div>
                 {group.items.map((m) => {
-                  const active = m.model === currentModel;
+                  const active = m.provider === provider && m.model === currentModel;
                   const levels = m.reasoningLevels ?? [];
                   return (
                     <button

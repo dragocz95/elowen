@@ -17,6 +17,7 @@ import { subscribeRevive, STALE_HIDE_MS } from '../../lib/useRevive';
 import { createReconnectController, type ReconnectController } from '../../lib/reconnect';
 import { isStreamDataFrame, startStreamWatchdog, resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import {
   BRAIN_COMPOSE_EVENT,
   BRAIN_OPEN_EVENT,
@@ -1038,7 +1039,8 @@ function useBrainChatController(): BrainChatValue {
     try {
       const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
       setCurrentModel(model);
-      toast(`${t.brainChat.modelSwitched} ${model}`, 'ok');
+      setProvider(m.provider);
+      toast(`${t.brainChat.modelSwitched} ${brainModelQualifiedLabel({ provider: m.provider, model })}`, 'ok');
     } catch (e) { toast((e as Error).message ?? 'error', 'error'); }
   };
   // Switch the mode every following send is stamped with (the CLI's /plan|/build|/workflow, whose mode is
@@ -1109,7 +1111,8 @@ function useBrainChatController(): BrainChatValue {
       if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
       if (cmd.name === 'status') {
         const s = await elowenClient.brainStatus(boundSessionRef.current); const u = s.usage;
-        const parts = [s.model && `model: ${s.model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${formatTokens(u.totalTokens)} tok`, u && formatCost(u.cost, 2)].filter(Boolean) as string[];
+        const model = s.model ? brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model }) : '';
+        const parts = [model && `model: ${model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${formatTokens(u.totalTokens)} tok`, u && formatCost(u.cost, 2)].filter(Boolean) as string[];
         toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
       }
       if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
@@ -1135,7 +1138,7 @@ function useBrainChatController(): BrainChatValue {
     } catch (e) { toast((e as Error).message ?? String(e), 'error'); }
   };
   const slashItems: SlashItem[] = modelSlashOpen
-    ? (models ?? []).map((m) => ({ key: `${m.provider}/${m.model}`, label: m.model, desc: m.providerLabel, run: () => void runModel(m) }))
+    ? (models ?? []).map((m) => ({ key: `${m.provider}/${m.model}`, label: `${m.providerLabel}/${m.model}`, desc: m.provider, run: () => void runModel(m) }))
     : slashMatches.map((c) => ({ key: c.name, label: `/${c.name}`, desc: c.description, run: () => void runSlash(c) }));
 
   // --- Lazy attach + the cross-mount bridge (session/composer requests + live BRAIN_* events). ---

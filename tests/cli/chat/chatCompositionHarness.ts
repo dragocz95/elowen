@@ -121,7 +121,8 @@ export function compositionHarness(options: {
   ]).flat();
   const state = new ChatState({
     transcript: new TranscriptModel(history),
-    modelName: 'test/provider-model',
+    modelName: 'provider-model',
+    provider: 'test',
     conversationTitle: 'Harness conversation',
     thinkingLevel: 'medium',
     thinkingLevelLabels: { medium: 'medium' },

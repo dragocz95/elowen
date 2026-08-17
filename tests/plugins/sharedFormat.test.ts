@@ -100,10 +100,10 @@ describe('shared plugin format helpers', () => {
     };
     const idle = { model: 'alibaba/qwen3.8-max-preview', usage: { percent: 41.6 } };
 
-    it('wraps the same text in each surface own markup, provider dropped and percent rounded', () => {
-      expect(runtimeFooter(idle, FENCES.discord)).toBe('-# qwen3.8-max-preview · 42 %');
-      expect(runtimeFooter(idle, FENCES.telegram)).toBe('— qwen3.8-max-preview · 42 %');
-      expect(runtimeFooter(idle, FENCES.whatsapp)).toBe('_qwen3.8-max-preview · 42 %_');
+    it('wraps the same qualified model in each surface own markup and rounds the percent', () => {
+      expect(runtimeFooter(idle, FENCES.discord)).toBe('-# alibaba/qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, FENCES.telegram)).toBe('— alibaba/qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, FENCES.whatsapp)).toBe('_alibaba/qwen3.8-max-preview · 42 %_');
     });
 
     // Teams is the one surface with no subtext style for bot messages, so its footer carries no markup.
@@ -111,7 +111,7 @@ describe('shared plugin format helpers', () => {
     const teams = { open: '', close: '' };
 
     it('writes the same footer unmarked on a surface that has no subtext style', () => {
-      expect(runtimeFooter(idle, teams)).toBe('qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, teams)).toBe('alibaba/qwen3.8-max-preview · 42 %');
       expect(runtimeFooter(null, teams)).toBe('');
     });
 

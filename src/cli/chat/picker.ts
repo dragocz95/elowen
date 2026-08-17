@@ -92,23 +92,25 @@ export class ChatEditor extends Editor {
  *  (the CLI's own bound conversation) takes the ▸ marker — falling back to the server's active flag for
  *  callers without a binding. A conversation some OTHER client stream holds shows `· attached`, so the
  *  user sees which ones a second terminal / the web dock is working in before resuming one. */
-export function sessionItems(sessions: { id: string; title: string; model: string; updated_at: string; active: boolean; attached?: number }[], currentId?: string): SelectItem[] {
+export function sessionItems(sessions: { id: string; title: string; provider?: string; model: string; updated_at: string; active: boolean; attached?: number }[], currentId?: string): SelectItem[] {
   return sessions.map((s) => {
     const current = currentId ? s.id === currentId : s.active;
     const attached = !current && (s.attached ?? 0) > 0;
+    const model = s.provider ? `${s.provider}/${s.model}` : s.model;
     return {
       value: s.id,
       label: `${current ? '▸ ' : ''}${s.title || '(untitled)'}`,
-      description: `${s.model}${s.updated_at ? ` · ${s.updated_at.slice(0, 16)}` : ''}${attached ? ' · attached' : ''}`,
+      description: `${model}${s.updated_at ? ` · ${s.updated_at.slice(0, 16)}` : ''}${attached ? ' · attached' : ''}`,
     };
   });
 }
 
-/** Shape the configured models for the /model picker: the current model floats to the top. */
-export function modelItems(models: { provider: string; providerLabel: string; model: string }[], currentModel: string): SelectItem[] {
+/** Shape the configured models for the /model picker: provider stays beside every model, and the exact
+ *  provider/model pair (not a globally ambiguous model id) determines the current marker. */
+export function modelItems(models: { provider: string; providerLabel: string; model: string }[], currentModel: string, currentProvider = ''): SelectItem[] {
   const items = models.map((m) => ({
     value: `${m.provider} ${m.model}`,
-    label: `${m.model === currentModel ? '▸ ' : ''}${m.model}`,
+    label: `${m.model === currentModel && (!currentProvider || m.provider === currentProvider) ? '▸ ' : ''}${m.model}`,
     description: m.providerLabel,
   }));
   return [...items.filter((i) => i.label.startsWith('▸ ')), ...items.filter((i) => !i.label.startsWith('▸ '))];

@@ -255,7 +255,7 @@ export function createPickers(
     runApplication(() => client.models(), (models) => {
       if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
       openPicker({
-        tui, editor, title: 'Switch model', items: modelItems(models, rt.modelName),
+        tui, editor, title: 'Switch model', items: modelItems(models, rt.modelName, rt.provider),
         footer: 'enter switch · type to search · ctrl+p providers · esc close',
         onInput: (data, _selected, close) => {
           if (isCtrlP(data)) { close(); openProviderModal(); return true; }

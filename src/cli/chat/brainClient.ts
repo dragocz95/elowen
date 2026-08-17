@@ -208,11 +208,11 @@ export class BrainClient {
 
   /** The caller's stored conversations, most recent first (drives /sessions in the TUI). `attached` =
    *  live client streams currently holding the conversation (another terminal / the web dock). */
-  async sessions(): Promise<{ id: string; title: string; model: string; updated_at: string; active: boolean; attached: number }[]> {
+  async sessions(): Promise<{ id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number }[]> {
     const res = await this.f(`${this.o.base}/brain/sessions`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/sessions`);
-    return (await res.json()) as { id: string; title: string; model: string; updated_at: string; active: boolean; attached: number }[];
+    return (await res.json()) as { id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number }[];
   }
 
   async send(text: string, mode?: BrainWorkMode, images?: { data: string; mimeType: string }[], display?: string): Promise<void> {

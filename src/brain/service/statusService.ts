@@ -25,7 +25,7 @@ import { gitBranch } from './gitBranch.js';
 import { clientDir } from './workDir.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
-export interface SessionListItem { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }
+export interface SessionListItem { id: string; title: string; provider: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }
 
 /** Opt-in slice for the session listings. Both fields are already clamped to non-negative ints by the
  *  route; absent → the full unpaginated list (the historical bare-array response). */
@@ -86,6 +86,7 @@ interface BrainProjectView { cwd: string | null; branch: string | null }
 export interface ManagedSessionView {
   id: string;
   title: string;
+  provider: string;
   model: string;
   updated_at: string;
   running: boolean;
@@ -366,7 +367,7 @@ export class BrainStatusService {
     const unspoken = this.d.store.unspokenSessionIds(userId);
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
-      .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id) }));
+      .map((s) => ({ id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id) }));
   }
 
   /** The user's conversations, most recent first (pickers show an "attached" marker so the user sees
@@ -407,7 +408,7 @@ export class BrainStatusService {
       const channel = isChannelSession(s.id);
       const running = channel ? !!this.d.sessions.channelGet(channelIdOf(s.id)) : this.d.sessions.has(s.id);
       return {
-        id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
+        id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
         kind: channel ? 'channel' as const : isTaskSession(s.id) ? 'task' as const : 'conversation' as const,
         tokens: tokens[s.id] ?? 0,
       };

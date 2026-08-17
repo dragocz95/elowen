@@ -37,6 +37,7 @@ import { OverlayController } from './overlayController.js';
 import { RenderShell } from './renderShell.js';
 import { LONG_COMPOSE_TOOLS } from './composeLabels.js';
 import { activityChip, bottomHintItems, fitSegments, fitVariants, goalMeta, modelMetaLine, quitHint, startScreenHintItems, statusline } from './composeLines.js';
+import { execRefSpec } from '../../shared/execs.js';
 
 export interface ShellInputDeps {
   cycleThinkingLevel(): void;
@@ -343,11 +344,11 @@ export function createChatComposition(
   );
   let childViewport: ChatViewport | null = null;
   let childViewportSession = '';
+  const modelIdentity = (provider: string, model: string): string =>
+    provider && model ? execRefSpec({ program: 'elowen', provider, model }) : model;
   const childModelName = (): string => {
     const child = rt.childView;
-    if (!child) return '';
-    if (!child.provider || child.model.includes('/')) return child.model;
-    return `${child.provider}/${child.model}`;
+    return child ? modelIdentity(child.provider, child.model) : '';
   };
   const newChildViewport = (): ChatViewport => new ChatViewport(
     {
@@ -401,7 +402,7 @@ export function createChatComposition(
     startInput,
     () => Math.max(1, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn, goalMeta(rt.goal)) + leaderChip(),
+      modelLine: modelMetaLine(rt.workMode, modelIdentity(rt.provider, rt.modelName), rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn, goalMeta(rt.goal)) + leaderChip(),
       hints: color.faint(fitSegments(startScreenHintItems(keymap), startScreenBox(term.columns).boxWidth, ' · ')),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
@@ -524,7 +525,7 @@ export function createChatComposition(
     const childEntry = child ? currentAgents.find((agent) => agent.sessionId === child.sessionId) : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
-    const rawModel = child ? childModelName() : rt.modelName;
+    const rawModel = child ? childModelName() : modelIdentity(rt.provider, rt.modelName);
     const modelArg = opts.provider === false ? rawModel.replace(/^[^/]+\//, '') : rawModel;
     const activity = child ? child.transcript.activity : rt.transcript.activity;
     const seconds = child ? (childEntry?.seconds ?? currentRunSeconds) : currentRunSeconds;

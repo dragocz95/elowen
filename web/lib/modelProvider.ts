@@ -73,9 +73,13 @@ export function brainModelLabel(exec: string, models: readonly BrainModelOption[
  * bare name leaves the reader guessing. It also matches what the database now stores since the
  * `elowen:` prefix went away, so there is no translation between what you read and what gets sent.
  */
-export function brainModelQualifiedLabel(exec: string, models: readonly BrainModelOption[] | undefined): string {
-  const found = models?.find((m) => brainModelId(m) === exec);
-  return found ? `${found.provider}/${found.model}` : exec;
+export function brainModelQualifiedLabel(
+  identity: string | Pick<BrainModelOption, 'provider' | 'model'>,
+  models?: readonly BrainModelOption[],
+): string {
+  if (typeof identity !== 'string') return identity.provider ? `${identity.provider}/${identity.model}` : identity.model;
+  const found = models?.find((m) => brainModelId(m) === identity);
+  return found ? `${found.provider}/${found.model}` : identity;
 }
 
 /** The bare model id with any provider prefix stripped (for display/edit). */

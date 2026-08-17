@@ -32,6 +32,7 @@ import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.j
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
+import { execRefSpec } from '../shared/execs.js';
 
 /** How a delegated steer ended: `delivered` = the message provably reached the child's context (its
  *  durable user row exists); `idle` = the child was not mid-turn here, or its turn ended before the queue
@@ -512,7 +513,11 @@ export class ChannelSessionService {
             }
           }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, workDir: ch.workDir, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
-          turnOnEvent?.({ type: 'idle', model: ch.model, usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId) });
+          turnOnEvent?.({
+            type: 'idle',
+            model: execRefSpec({ program: 'elowen', provider: ch.providerId || ch.provider, model: ch.model }),
+            usage: sessionUsageSnapshot(ch.session, this.d.store, ch.sessionId),
+          });
         } finally { detach?.(); }
         // Auto-compaction is PI-native (the factory configures the channel's reserveTokens from
         // DEFAULT_AUTO_COMPACT_PCT): PI compacts on its own after this turn's agent_end, and the factory's

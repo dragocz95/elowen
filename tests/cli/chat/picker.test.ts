@@ -16,22 +16,22 @@ describe('pickerContentWidth (adaptive modal sizing)', () => {
 describe('picker item builders', () => {
   it('sessionItems marks the active conversation and falls back to (untitled)', () => {
     const items = sessionItems([
-      { id: 'a', title: 'Fix the button', model: 'opus', updated_at: '2026-07-02T12:00:00', active: true },
+      { id: 'a', title: 'Fix the button', provider: 'anthropic', model: 'opus', updated_at: '2026-07-02T12:00:00', active: true },
       { id: 'b', title: '', model: 'kimi', updated_at: '', active: false },
     ]);
     expect(items[0]).toMatchObject({ value: 'a', label: '▸ Fix the button' });
-    expect(items[0]!.description).toContain('opus');
+    expect(items[0]!.description).toContain('anthropic/opus');
     expect(items[0]!.description).toContain('2026-07-02');
     expect(items[1]).toMatchObject({ value: 'b', label: '(untitled)', description: 'kimi' });
   });
 
-  it('modelItems floats the current model to the top and encodes provider+model in the value', () => {
+  it('modelItems floats only the exact current provider/model pair to the top', () => {
     const items = modelItems([
-      { provider: 'relay', providerLabel: 'Relay', model: 'kimi' },
-      { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-4-8' },
-    ], 'claude-opus-4-8');
-    expect(items[0]).toMatchObject({ value: 'anthropic claude-opus-4-8', label: '▸ claude-opus-4-8', description: 'Anthropic' });
-    expect(items[1]).toMatchObject({ value: 'relay kimi', label: 'kimi' });
+      { provider: 'ai-coresynth-io', providerLabel: 'AI.CORESYNTH.IO', model: 'deepseek-v4-pro' },
+      { provider: 'alibaba', providerLabel: 'Alibaba', model: 'deepseek-v4-pro' },
+    ], 'deepseek-v4-pro', 'alibaba');
+    expect(items[0]).toMatchObject({ value: 'alibaba deepseek-v4-pro', label: '▸ deepseek-v4-pro', description: 'Alibaba' });
+    expect(items[1]).toMatchObject({ value: 'ai-coresynth-io deepseek-v4-pro', label: 'deepseek-v4-pro', description: 'AI.CORESYNTH.IO' });
   });
 
   it('parseModelValue splits the picker value back into a selection', () => {

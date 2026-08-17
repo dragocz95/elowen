@@ -8,6 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { sessionLabel } from '../../lib/agentUtils';
 import { useBrainChat } from './BrainChatProvider';
 import type { SessionInfo } from '../../lib/types';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
 function roleIcon(role: SessionInfo['role']) {
   return role === 'overseer' ? Eye : role === 'pilot' || role === 'advisor' ? Bot : role === 'chat' ? MessagesSquare : SquareTerminal;
@@ -31,7 +32,7 @@ export function SessionPicker({ open, onPick, onClose, exclude, showAdvisor, onA
   const infos = useSessionInfos();
   const tasks = useTasks();
   const isAdmin = me.data?.user?.is_admin ?? false;
-  const { activeSessionId, currentModel } = useBrainChat();
+  const { activeSessionId, currentModel, provider } = useBrainChat();
   const openTerminal = useOpenBrainTerminal();
   const { toast } = useToast();
   if (!open) return null;
@@ -68,7 +69,7 @@ export function SessionPicker({ open, onPick, onClose, exclude, showAdvisor, onA
                 <MessagesSquare size={15} className="shrink-0 text-accent" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{t.advisor.elowenCliOpen}</span>
-                  {currentModel ? <span className="block truncate font-mono text-tiny text-text-muted">{currentModel}</span> : null}
+                  {currentModel ? <span className="block truncate font-mono text-tiny text-text-muted">{brainModelQualifiedLabel({ provider, model: currentModel })}</span> : null}
                 </span>
               </button>
             ) : (
