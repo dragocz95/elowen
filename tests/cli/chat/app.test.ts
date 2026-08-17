@@ -525,8 +525,7 @@ describe('parseCommand', () => {
     expect(parseCommand('/build')).toEqual({ cmd: 'build' });
     expect(parseCommand('/yolo')).toEqual({ cmd: 'yolo', arg: undefined });
     expect(parseCommand('/yolo off')).toEqual({ cmd: 'yolo', arg: 'off' });
-    expect(parseCommand('/tdd')).toEqual({ cmd: 'tdd', arg: undefined });
-    expect(parseCommand('/tdd on')).toEqual({ cmd: 'tdd', arg: 'on' });
+    expect(parseCommand('/tdd')).toBeNull(); // retired — the agents plugin owns the tddMode setting
     expect(parseCommand('/quit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/exit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/help')).toEqual({ cmd: 'help' });

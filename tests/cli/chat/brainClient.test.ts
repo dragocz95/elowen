@@ -554,45 +554,6 @@ describe('BrainClient', () => {
     }
   });
 
-  it('getTddMode reads tddMode from the agents plugin detail (config wave 2)', async () => {
-    const f = vi.fn(async () => j(200, { config: { tddMode: true } })) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    expect(await c.getTddMode()).toBe(true);
-    expect(f).toHaveBeenCalledWith('http://x/plugins/agents', expect.objectContaining({ headers: expect.anything() }));
-  });
-
-  it('getTddMode defaults to false when the flag is absent', async () => {
-    const f = vi.fn(async () => j(200, { config: {} })) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    expect(await c.getTddMode()).toBe(false);
-  });
-
-  it('getTddMode maps a 404 (agents plugin disabled) to a clear error', async () => {
-    const f = vi.fn(async () => j(404, { error: 'unknown plugin' })) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    await expect(c.getTddMode()).rejects.toThrow(/agents plugin/i);
-  });
-
-  it('setTddMode PATCHes the agents plugin config (config wave 2)', async () => {
-    const f = vi.fn(async () => j(200, { ok: true })) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    await c.setTddMode(true);
-    expect(f).toHaveBeenCalledWith('http://x/plugins/agents/config', expect.objectContaining({
-      method: 'PATCH', body: JSON.stringify({ values: { tddMode: true } }),
-    }));
-  });
-
-  it('setTddMode surfaces a 403 as an admin-only error', async () => {
-    const f = vi.fn(async () => j(403, { error: 'forbidden' })) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    await expect(c.setTddMode(true)).rejects.toThrow(/admin/i);
-  });
-
-  it('setTddMode surfaces a 401 as Unauthorized', async () => {
-    const f = vi.fn(async () => j(401, {})) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    await expect(c.setTddMode(false)).rejects.toBeInstanceOf(Unauthorized);
-  });
 });
 
 // The brand payload comes over the wire from a possibly foreign daemon and lands in raw terminal

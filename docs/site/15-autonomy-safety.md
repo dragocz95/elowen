@@ -41,9 +41,9 @@ it at any time from the Dashboard.
 ## TDD mission mode
 
 An optional guardrail that makes every autonomous worker practice strict
-test-driven development. It is **off by default** and toggled globally — from
-**Settings → Autopilot**, or with the `/tdd` command (bare `/tdd` reports the
-current state, `/tdd on` / `/tdd off` flips it; changing it is admin-only).
+test-driven development. It is **off by default** and toggled globally in
+**Settings → Autopilot** (the agents plugin's `tddMode` setting; changing it is
+admin-only).
 
 When on, Elowen appends a Test-Driven-Development directive to every worker
 briefing, so the agent must:

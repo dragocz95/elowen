@@ -16,9 +16,9 @@ Plugins extend Elowen without turning the daemon into a monolith. They can contr
 
 Open **Settings → Plugins** to inspect installed plugins, enable or disable a capability, adjust its schema-driven settings, inspect contributions, and use the marketplace where configured. Bundled plugins can be soft-removed and restored; their package files are not deleted as part of a normal UI toggle.
 
-Bundled capabilities include file and terminal tools, MCP, skills, sub-agent delegation, ask-user questions, scheduled jobs, codebase indexing, formatters, runtime context, Discord, Telegram, Microsoft Teams, WhatsApp, and supporting presentation/security tools. The exact installed set can differ by deployment, so Settings is the source of truth for a running instance.
+Bundled capabilities include file and terminal tools, MCP, skills, sub-agent delegation, ask-user questions, scheduled jobs, codebase indexing, runtime context, Discord, Telegram, Microsoft Teams, WhatsApp, and supporting presentation tools. The exact installed set can differ by deployment, so Settings is the source of truth for a running instance.
 
-A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, skills, sub-agents, the Elowen manual, scheduled jobs, security scanning, statusline, codebase search, MCP, and language-server diagnostics. Anything that brings its own pages and its own data — tasks and Kanban (`work`), missions and autopilot (`agents`), the code editor (`editor`) — is installed deliberately from **Settings → Plugins**, as are the chat platforms, which each need a credential.
+A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, sub-agents, the Elowen manual, statusline, and MCP. Anything that brings its own pages and its own data — tasks and Kanban (`work`), missions and autopilot (`agents`), the code editor (`editor`) — is installed deliberately from **Settings → Plugins**, as are the chat platforms, which each need a credential.
 
 **ElowenDocs** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
 

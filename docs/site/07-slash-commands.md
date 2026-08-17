@@ -53,7 +53,6 @@ These manage saved conversations. They exist only in the CLI, where session swit
 | `/workflow` | — | Switches to workflow mode, where work runs as a DAG of sub-agents. | CLI, web |
 | `/goal` | `[text\|status\|pause\|resume\|clear\|draft]` | Manages a persistent multi-turn objective. `draft` previews the goal without activating it. | CLI |
 | `/subgoal` | `<text>\|remove N\|clear` | Adds, removes, or clears sub-goals under the active goal. | CLI |
-| `/tdd` | `[on\|off]` | Toggles the daemon-wide test-driven-development mission mode. | CLI (admin) |
 
 A mode lives in the client's own session state and is stamped on each message it
 sends, so it only exists where there is a place to show which mode you are in —

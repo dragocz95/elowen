@@ -189,20 +189,28 @@ describe('slash command registry', () => {
     expect(commandsFor('cli', false).find((c) => c.name === 'context')?.kind).toBe('info');
   });
 
-  it('gates /lsp behind adminOnly (daemon-wide toggle)', () => {
+  it('gates /lsp behind adminOnly (daemon-wide toggle) and its own plugin', () => {
     const lsp = findCommand('lsp')!;
     expect(lsp.adminOnly).toBe(true);
+    expect(lsp.requiresPlugin).toBe('lsp');
     expect(commandsFor('cli', false).some((c) => c.name === 'lsp')).toBe(false);
     expect(commandsFor('cli', true).some((c) => c.name === 'lsp')).toBe(true);
   });
 
-  it('gates /tdd behind adminOnly and scopes it to the CLI (daemon-wide config toggle)', () => {
-    const tdd = findCommand('tdd')!;
-    expect(tdd.adminOnly).toBe(true);
-    expect(tdd.kind).toBe('action');
-    expect(commandsFor('cli', true).some((c) => c.name === 'tdd')).toBe(true);
-    expect(commandsFor('cli', false).some((c) => c.name === 'tdd')).toBe(false);
-    expect(commandsFor('web', true).some((c) => c.name === 'tdd')).toBe(false);
-    expect(commandsFor('discord', true).some((c) => c.name === 'tdd')).toBe(false);
+  /** The modal drives a plugin's REST surface, so without that plugin the entry could only open onto a
+   *  503. Both are pickers, which is what makes hiding them a sufficient gate (see the test above). */
+  it('hides /lsp and /statusline when their plugin is not loaded', () => {
+    for (const name of ['lsp', 'statusline']) {
+      expect(commandsWithPlugins('cli', true, [], new Set()).some((c) => c.name === name)).toBe(false);
+      expect(commandsWithPlugins('cli', true, [], new Set([name])).some((c) => c.name === name)).toBe(true);
+    }
+  });
+
+  /** `/tdd` was a second switch for `plugins.config.agents.tddMode`, which the agents plugin already
+   *  exposes as a labelled config field — the CLI copy could only ever report "needs the agents plugin"
+   *  on an install without it. The flag itself and its worker directive are untouched. */
+  it('no longer ships a /tdd command', () => {
+    expect(findCommand('tdd')).toBeUndefined();
+    expect(commandsFor('cli', true).some((c) => c.name === 'tdd')).toBe(false);
   });
 });

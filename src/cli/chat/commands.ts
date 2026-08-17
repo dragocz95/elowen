@@ -20,7 +20,7 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -45,7 +45,6 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'keybinds': return { cmd: 'keybinds' };
     case 'statusline': return { cmd: 'statusline' };
     case 'lsp': return { cmd: 'lsp' };
-    case 'tdd': return { cmd: 'tdd', arg: m[2] };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
     case 'tools': return { cmd: 'tools' };
@@ -475,25 +474,6 @@ export function wireSubmit(
         case 'lsp':
           pickers.openLspModal();
           return;
-        case 'tdd': {
-          // Global (daemon-wide) TDD mission mode: bare "/tdd" reports the current state, "/tdd on|off"
-          // flips it. Admin-gated server-side — a non-admin's PUT /config 403s, surfaced clearly.
-          const arg = command.arg?.trim().toLowerCase();
-          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /tdd · /tdd on · /tdd off'); render(); return; }
-          const report = (on: boolean): void => {
-            rt.notice = on
-              ? color.warning('TDD mission mode on — autopilot workers write a failing test first, then implement, then verify')
-              : color.dim('TDD mission mode off');
-            render();
-          };
-          if (!arg) {
-            runApplication(() => client.getTddMode(), report, fail);
-            return;
-          }
-          const on = arg === 'on';
-          runApplication(() => client.setTddMode(on), () => report(on), fail);
-          return;
-        }
         case 'mcp':
           pickers.openMcpModal();
           return;

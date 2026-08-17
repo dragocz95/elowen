@@ -471,30 +471,6 @@ export class BrainClient {
     } catch { return DEFAULT_PUBLIC_BRAND; }
   }
 
-  /** Current global TDD mission mode flag (the `/tdd` command). The flag is agents-plugin config
-   *  since the wave-2 config split, so it reads the plugin detail — the command is admin-only,
-   *  matching the endpoint's gate. */
-  async getTddMode(): Promise<boolean> {
-    const res = await this.f(`${this.o.base}/plugins/agents`, { headers: this.headers() });
-    if (res.status === 401) throw new Unauthorized();
-    if (res.status === 403) throw new Error('only an admin can read TDD mode');
-    if (res.status === 404) throw new Error('TDD mode needs the agents plugin');
-    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/agents`);
-    const body = (await res.json()) as { config?: { tddMode?: boolean } };
-    return body.config?.tddMode === true;
-  }
-
-  /** Flip the global TDD mission mode flag (admin-only; the `/tdd on|off` command). */
-  async setTddMode(on: boolean): Promise<void> {
-    const res = await this.f(`${this.o.base}/plugins/agents/config`, {
-      method: 'PATCH', headers: this.headers(true), body: JSON.stringify({ values: { tddMode: on } }),
-    });
-    if (res.status === 401) throw new Unauthorized();
-    if (res.status === 403) throw new Error('only an admin can change TDD mode');
-    if (res.status === 404) throw new Error('TDD mode needs the agents plugin');
-    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/agents/config`);
-  }
-
   /** Save the statusline display toggles (admin-only; the `/statusline` modal). Applies live via the
    *  brain's plugin hot-reload, so the bar updates on the next status refresh. */
   async setStatuslineConfig(values: StatuslineConfig): Promise<void> {
@@ -610,7 +586,7 @@ export class BrainClient {
   }
 
   /** Flip live diagnostics (the `/lsp` modal's toggle; admin-only). The flag is the lsp plugin's own
-   *  config since the extraction, so this PATCHes the plugin slice exactly like `/tdd` does — the save
+   *  config since the extraction, so this PATCHes the plugin slice like the statusline modal does — the save
    *  persists the choice AND hot-reloads the plugin, which stops or re-seeds the language servers. */
   async setLspDiagnostics(on: boolean): Promise<void> {
     const res = await this.f(`${this.o.base}/plugins/lsp/config`, {

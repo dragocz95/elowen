@@ -56,7 +56,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'keybinds', description: 'List keyboard shortcuts and where to customize them', kind: 'info', surfaces: ['cli'] },
   // CLI-only: ticks what the bottom status bar shows. The toggles are the statusline plugin's shared
   // config (also editable in the web dock), so the picker PATCHes it server-side and refreshes the bar.
-  { name: 'statusline', description: 'Choose what the bottom status bar shows', kind: 'picker', surfaces: ['cli'] },
+  { name: 'statusline', description: 'Choose what the bottom status bar shows', kind: 'picker', surfaces: ['cli'], requiresPlugin: 'statusline' },
   // CLI-local like /theme: `process.chdir` in the TUI's own process. Every request already reports the
   // client's cwd per turn, so moving the process is the whole mechanism. Meaningless on the other
   // surfaces — they have no local directory to move.
@@ -75,10 +75,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // can contribute a prompt macro but not a native modal command; with the plugin disabled the modal
   // reports exactly that (GET /brain/lsp answers 503). adminOnly: the toggle stops/starts language
   // servers for everyone, so it stays operator-gated.
-  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'picker', surfaces: ['cli'], adminOnly: true },
-  // adminOnly: the toggle flips the daemon-wide TDD flag (plugins.config.agents.tddMode — affects every worker the
-  // autopilot spawns), so it must be gated to operators — exactly like `/lsp`.
-  { name: 'tdd', description: 'TDD mission mode — autopilot workers write a failing test first ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'], adminOnly: true },
+  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'picker', surfaces: ['cli'], adminOnly: true, requiresPlugin: 'lsp' },
   { name: 'restart', description: 'Restart the Elowen daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).
