@@ -5,7 +5,7 @@ import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
-import { brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { PROVIDERS, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
@@ -107,6 +107,9 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
     ?? brainModelLabel(exec, brainModels.data);
   const iconNameOf = (exec: string) => brainModelLabel(exec, brainModels.data);
+  // The summary lists picks outside their provider groups, so there the provider belongs in the label.
+  const qualifiedLabelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
+    ?? brainModelQualifiedLabel(exec, brainModels.data);
 
   // Order execs by the settings' provider order so the modal groups follow the executor picker.
   const providerOrder = (id: ProviderId) => {
@@ -152,7 +155,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
     <>
       <SelectionSummary
         countText={countText}
-        samples={summarySource.slice(0, 3).map((exec) => ({ label: labelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
+        samples={summarySource.slice(0, 3).map((exec) => ({ label: qualifiedLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
         moreCount={Math.max(0, summarySource.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}

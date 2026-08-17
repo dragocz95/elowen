@@ -51,12 +51,31 @@ export function brainModelId(m: Pick<BrainModelOption, 'exec'>): string {
 
 /**
  * The clean model name to DISPLAY for an exec — taken from the catalog, never by splitting the string:
- * a model id may itself contain slashes (`elowen:relay/ollama/kimi-k2.7-code`), so blind splitting
- * shows the wrong name. An exec with no catalog entry falls back to the raw value, which keeps a
- * removed/stale pick visible instead of rendering it empty.
+ * a model id may itself contain slashes (`ai-coresynth-io/deepseek/deepseek-v4-pro`), so blind
+ * splitting shows the wrong name. An exec with no catalog entry falls back to the raw value, which
+ * keeps a removed/stale pick visible instead of rendering it empty.
+ *
+ * Use this inside a list that is already GROUPED BY PROVIDER (pickers, the manage modal): the group
+ * header names the provider, so repeating it on every row is noise. It is also what feeds ModelIcon,
+ * whose brand lookup expects a model name.
  */
 export function brainModelLabel(exec: string, models: readonly BrainModelOption[] | undefined): string {
   return models?.find((m) => brainModelId(m) === exec)?.model ?? exec;
+}
+
+/**
+ * The same name QUALIFIED by its provider — `<provider>/<model>`, composed from the catalog's own
+ * fields, never by splitting the exec.
+ *
+ * Use this where a model appears on its own, with no group header to say whose it is: selection
+ * summaries, the chip for a current pick. The provider is what disambiguates there — the catalog
+ * carries `deepseek-v4-pro` from one provider and `deepseek/deepseek-v4-pro` from another, and the
+ * bare name leaves the reader guessing. It also matches what the database now stores since the
+ * `elowen:` prefix went away, so there is no translation between what you read and what gets sent.
+ */
+export function brainModelQualifiedLabel(exec: string, models: readonly BrainModelOption[] | undefined): string {
+  const found = models?.find((m) => brainModelId(m) === exec);
+  return found ? `${found.provider}/${found.model}` : exec;
 }
 
 /** The bare model id with any provider prefix stripped (for display/edit). */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { execProvider, execModel, buildExec, brainModelId, brainModelLabel, type ProviderId } from '../../lib/modelProvider';
+import { execProvider, execModel, buildExec, brainModelId, brainModelLabel, brainModelQualifiedLabel, type ProviderId } from '../../lib/modelProvider';
 import type { BrainModelOption } from '../../lib/types';
 
 const brainModel = (over: Partial<BrainModelOption>): BrainModelOption => ({
@@ -48,6 +48,24 @@ describe('modelProvider', () => {
     it('falls back to the raw exec so an unknown pick stays visible and whole', () => {
       expect(brainModelLabel('elowen:gone/model', [brainModel({})])).toBe('elowen:gone/model');
       expect(brainModelLabel('sonnet', undefined)).toBe('sonnet');
+    });
+    // Outside a provider-grouped list the bare name is ambiguous, so the summary label carries the
+    // provider. It is COMPOSED from the catalog fields: splitting the exec would cut a model id that
+    // contains slashes in the wrong place, which is the bug the plain label already had to avoid.
+    it('qualifies the name with its provider where no group header does it', () => {
+      const a = brainModel({ provider: 'anthropic', exec: 'anthropic/claude-opus-5' });
+      const b = brainModel({ provider: 'relay', providerLabel: 'Relay', exec: 'relay/claude-opus-5' });
+      expect(brainModelQualifiedLabel('anthropic/claude-opus-5', [a, b])).toBe('anthropic/claude-opus-5');
+      expect(brainModelQualifiedLabel('relay/claude-opus-5', [a, b])).toBe('relay/claude-opus-5');
+      // …and the two now READ differently, which is the whole point — plain labels are identical here.
+      expect(brainModelLabel('anthropic/claude-opus-5', [a, b])).toBe(brainModelLabel('relay/claude-opus-5', [a, b]));
+    });
+    it('keeps a slashed model id whole when qualifying it, and falls back to the raw exec', () => {
+      const slashy = brainModel({ provider: 'ai-coresynth-io', model: 'deepseek/deepseek-v4-pro', exec: 'ai-coresynth-io/deepseek/deepseek-v4-pro' });
+      expect(brainModelQualifiedLabel('ai-coresynth-io/deepseek/deepseek-v4-pro', [slashy]))
+        .toBe('ai-coresynth-io/deepseek/deepseek-v4-pro');
+      expect(brainModelQualifiedLabel('gone/model', [brainModel({})])).toBe('gone/model');
+      expect(brainModelQualifiedLabel('sonnet', undefined)).toBe('sonnet');
     });
   });
 

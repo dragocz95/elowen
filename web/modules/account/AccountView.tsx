@@ -7,7 +7,7 @@ import type { ProfilePatch } from '../../lib/types';
 import { useMe, useConfig, useMyCliSettings, useBrainModels, useMyPluginConfigs } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
-import { brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { providerMeta } from '../settings/providers';
 import { Avatar } from '../../components/ui/Avatar';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -73,11 +73,14 @@ function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
 /** Single-select default worker exec: a compact summary chip + a manage modal grouping the pickable
  *  worker engines by provider (engine logo on each header, model brand icon on each row). A pinned row
  *  (id '') clears the personal default so new tasks fall back to the global default. */
-function WorkerField({ value, onChange, execs, labelOf, defaultLabel, title }: {
+function WorkerField({ value, onChange, execs, labelOf, summaryLabelOf, defaultLabel, title }: {
   value: string;
   onChange: (v: string) => void;
   execs: string[];
+  /** Row label inside the picker, which is grouped by provider — so the provider is NOT repeated here. */
   labelOf: (exec: string) => string;
+  /** Label for the summary chip, which stands alone: there the provider is what disambiguates. */
+  summaryLabelOf: (exec: string) => string;
   defaultLabel: string;
   title: string;
 }) {
@@ -97,7 +100,7 @@ function WorkerField({ value, onChange, execs, labelOf, defaultLabel, title }: {
     <>
       <SelectionSummary
         countText=""
-        samples={[value ? { label: labelOf(value), icon: <ModelIcon name={value} size={13} /> } : { label: defaultLabel }]}
+        samples={[value ? { label: summaryLabelOf(value), icon: <ModelIcon name={value} size={13} /> } : { label: defaultLabel }]}
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
@@ -302,6 +305,9 @@ export function AccountView() {
   // helper — the exec must not be split on a slash, the model id may contain one).
   const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
     ?? brainModelLabel(exec, brainModels.data);
+  // Standing alone in the summary, a brain model carries its provider — no group header does it there.
+  const qualifiedLabelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
+    ?? brainModelQualifiedLabel(exec, brainModels.data);
 
   // Every pickable exec is a selectable Default worker (writes default_exec) — INCLUDING Elowen AI models
   // enabled in Settings→Models, which the daemon runs as embedded brain workers. The separate Elowen AI
@@ -404,6 +410,7 @@ export function AccountView() {
               onChange={setDefaultExec}
               execs={workerExecs}
               labelOf={labelOf}
+              summaryLabelOf={qualifiedLabelOf}
               defaultLabel={t.account.defaultWorkerNone}
               title={t.account.defaultWorker}
             />
