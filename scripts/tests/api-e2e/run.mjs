@@ -58,6 +58,18 @@ async function postJson(baseUrl, path, token, body) {
   return { status: res.status, json };
 }
 
+/** POST with EXTRA request headers — for the origin-attribution area, where the whole point is what the
+ *  daemon reads off `x-real-ip`. Separate from postJson so the plain helper stays unambiguous. */
+async function postJsonWithHeaders(baseUrl, path, token, body, extra) {
+  const headers = { 'content-type': 'application/json', ...extra };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(`${baseUrl}${path}`, { method: 'POST', headers, body: JSON.stringify(body ?? {}) });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* leave null */ }
+  return { status: res.status, json };
+}
+
 async function patchJson(baseUrl, path, token, body) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -346,6 +358,96 @@ async function sseStreamLifecycle() {
   }
 }
 
+
+// =====================================================================================================
+// 4) ORIGIN ATTRIBUTION — two real turns from two addresses, read back through GET /usage/by-origin.
+//
+// The end-to-end teeth for the "who, from where" view. Every unit test in this area stubs SOMETHING —
+// the header, the store, or the projector. This drives real HTTP into a real daemon with a real model
+// server and asserts that the two turns land on two SEPARATE rows: a breakdown, not a total, because a
+// total would also come out of an implementation that attributed spend to the session instead of to the
+// requesting turn. It also asserts the 403 for a non-admin as a STATUS, since a filtered-but-200 answer
+// would still tell a normal account that addresses are being recorded.
+// =====================================================================================================
+async function originAttribution() {
+  console.log('\n[4] ORIGIN ATTRIBUTION — /usage/by-origin');
+  const model = await startModelServer({ toolName: null, firstText: 'API-E2E-ORIGIN ', finalText: 'attributed.' });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl });
+    const { baseUrl, token } = daemon;
+
+    let r = await get(baseUrl, '/usage/by-origin', token);
+    assert(r.status === 200 && r.json?.trackingSince === null && Array.isArray(r.json?.rows) && r.json.rows.length === 0,
+      `[origin/empty] GET /usage/by-origin → 200 with an explicitly empty window (got ${r.status} ${JSON.stringify(r.json)})`);
+    ok('GET /usage/by-origin → 200 with trackingSince null before anything is recorded');
+
+    // Two turns, two addresses. The header is the ONLY difference between them, and it has to survive the
+    // whole path: HTTP → clientOrigin → the per-turn pin → the settle → the rollup.
+    const addresses = ['203.0.113.7', '198.51.100.44'];
+    for (const address of addresses) {
+      const start = await postJsonWithHeaders(baseUrl, '/brain/start', token, { fresh: true }, { 'x-real-ip': address });
+      assert(start.status === 201 && typeof start.json?.sessionId === 'string',
+        `[origin/${address}] POST /brain/start → 201 (got ${start.status} ${JSON.stringify(start.json)})`);
+      const sessionId = start.json.sessionId;
+      const stream = await openStream(baseUrl, `/brain/stream?session=${encodeURIComponent(sessionId)}`, token);
+      await new Promise((resolve) => setTimeout(resolve, 200)); // let the tap attach before the send
+      const send = await postJsonWithHeaders(
+        baseUrl, '/brain/send', token,
+        { text: `Say hello from ${address}.`, session: sessionId, mode: 'build' },
+        { 'x-real-ip': address },
+      );
+      assert(send.status === 202, `[origin/${address}] POST /brain/send → 202 (got ${send.status} ${JSON.stringify(send.json)})`);
+      // The rollup is written when the turn SETTLES, so the read below is only meaningful after idle.
+      await stream.waitFor((evs) => evs.some((e) => e.type === 'idle'), 45_000, `idle frame for ${address}`);
+      await stream.close(5_000);
+      ok(`turn from ${address} settled over the live stream`);
+    }
+
+    r = await get(baseUrl, '/usage/by-origin?group=origin', token);
+    assert(r.status === 200, `[origin/admin] GET /usage/by-origin → 200 (got ${r.status})`);
+    const origins = (r.json?.rows ?? []).map((row) => row.origin).sort();
+    assert(origins.length === 2 && origins.join(',') === [...addresses].sort().join(','),
+      `[origin/admin] the two turns produced two SEPARATE rows, one per address (got ${JSON.stringify(origins)})`);
+    const tokensRecorded = (r.json.rows ?? []).every((row) => row.tokens > 0 && row.turns >= 1);
+    assert(tokensRecorded, `[origin/admin] each address carries real tokens and turns (got ${JSON.stringify(r.json.rows)})`);
+    assert(typeof r.json.trackingSince === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.json.trackingSince),
+      `[origin/admin] trackingSince names the first recorded day (got ${JSON.stringify(r.json.trackingSince)})`);
+    ok(`GET /usage/by-origin → two rows, one per address (${origins.join(' + ')})`);
+
+    // A second, non-admin account with a perfectly valid token. It is also assigned to a project, so the
+    // coarse project pre-filter cannot be what produces the 403 — the route's own admin gate must.
+    const created = await postJson(baseUrl, '/users', token, { username: 'origin-e2e-member', password: 'member-pw-1234' });
+    assert(created.status === 200 || created.status === 201, `[origin/member] POST /users → created (got ${created.status} ${JSON.stringify(created.json)})`);
+    const memberId = created.json?.id ?? created.json?.user?.id;
+    assert(typeof memberId === 'number', `[origin/member] created user carries an id (got ${JSON.stringify(created.json)})`);
+    const projects = await get(baseUrl, '/projects', token);
+    const projectId = projects.json?.[0]?.id;
+    assert(typeof projectId === 'number', `[origin/member] a project exists to assign (got ${JSON.stringify(projects.json)})`);
+    const assigned = await postJson(baseUrl, `/users/${memberId}/projects`, token, { projectId });
+    assert(assigned.status === 200, `[origin/member] project assigned (got ${assigned.status} ${JSON.stringify(assigned.json)})`);
+    const login = await postJson(baseUrl, '/auth/login', null, { username: 'origin-e2e-member', password: 'member-pw-1234' });
+    assert(login.status === 200 && typeof login.json?.token === 'string', `[origin/member] member logs in (got ${login.status})`);
+
+    r = await get(baseUrl, '/usage/by-origin', login.json.token);
+    assert(r.status === 403, `[origin/member] GET /usage/by-origin → 403 for a non-admin (got ${r.status} ${JSON.stringify(r.json)})`);
+    ok('GET /usage/by-origin → 403 for a fully-assigned non-admin (the route gates, not the project filter)');
+
+    // The reset clears the origin rollup along with the rest, so the drawer can never keep reporting
+    // spend the rest of Stats has forgotten.
+    const reset = await postJson(baseUrl, '/usage/reset', token, {});
+    assert(reset.status === 200 && reset.json?.originsCleared >= 1,
+      `[origin/reset] POST /usage/reset clears origin rows (got ${reset.status} ${JSON.stringify(reset.json)})`);
+    r = await get(baseUrl, '/usage/by-origin', token);
+    assert(r.status === 200 && (r.json?.rows ?? []).length === 0,
+      `[origin/reset] the origin view is empty after the reset (got ${JSON.stringify(r.json)})`);
+    ok('POST /usage/reset emptied the origin view too');
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
 // =====================================================================================================
 
 async function main() {
@@ -366,6 +468,7 @@ async function main() {
   }
 
   await sseStreamLifecycle();
+  await originAttribution();
 
   const pidAfter = prodDaemonPid();
   if (pidBefore && pidAfter) {

@@ -20,7 +20,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const daemonEntry = join(repoRoot, 'dist', 'daemon', 'index.js');
+// The built daemon this harness boots. `ELOWEN_E2E_DIST` overrides the location so the suite can be run
+// against a SCRATCH build (`tsc --outDir <dir>`) without rewriting the `dist/` a deployed instance runs
+// from — the default stays the ordinary `dist/`, so nothing changes for CI or a plain local run.
+const distRoot = process.env.ELOWEN_E2E_DIST || join(repoRoot, 'dist');
+const daemonEntry = join(distRoot, 'daemon', 'index.js');
 
 /** Grab a free loopback TCP port by binding to port 0 and reading it back. Guarantees we never collide
  *  with prod's 4400/4500 (the OS hands out an ephemeral high port). */

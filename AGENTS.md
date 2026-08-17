@@ -13,6 +13,8 @@ This repository is Elowen (`github.com/dragocz95/elowen`), a TypeScript daemon w
 - Do not touch unrelated worktree changes, especially `benchmark-env/`.
 - After completing each logical change, create a scoped local git commit automatically. Do not wait for a separate commit request, never include unrelated worktree changes, and do not treat this rule as authorization to push.
 - Preserve Czech and English user-facing text. Plugin manifests provide English fallback; add locale overrides under `plugins/<name>/i18n/<lang>.json`, including enum option labels when needed.
+- `usage_by_origin` is the ONLY source of origin-attributed spend ("who burned the tokens, from where"). It is a write-time rollup precisely because `/usage/by-model` and `/usage/by-day` already scan `brain_messages` — the largest table — with per-row `json_extract`, on the daemon's synchronous event loop. Never answer an origin question with a query or join over `brain_messages`, whatever breakdown is asked for next; `tests/store/usageOriginPlan.test.ts` fails the build through `EXPLAIN QUERY PLAN` if you do. It is a SEPARATE counter from those views and is not expected to agree with them (it starts at deployment); do not present one as a check on the other.
+- A client IP is read in exactly one place, `src/api/clientIp.ts`, and whether a proxy may be believed is decided there alone (`security.trustProxy`). The web BFF only forwards the nginx-set `x-real-ip`; it never makes a trust decision, and `x-forwarded-for`/`forwarded` stay off its allow-list because the client writes them itself.
 - Do not push, publish npm packages, or deploy production unless the user explicitly asks.
 
 ## Validation
