@@ -29,6 +29,20 @@ describe('brain persistence', () => {
     expect(JSON.parse(msgs.at(-1)!.content)).toMatchObject({ content: 'hello' });
   });
 
+  it('persists the configured provider identity without mutating PI registry messages', () => {
+    store.touchSession('s1', 'm', 'my-oauth-account');
+    const assistant = { role: 'assistant', content: 'hello', provider: 'anthropic', model: 'm' };
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [assistant] } as never);
+    expect(JSON.parse(store.getMessages('s1')[0]!.content)).toMatchObject({ provider: 'my-oauth-account', providerIdentity: 'config', model: 'm' });
+    expect(assistant.provider).toBe('anthropic');
+
+    const pending = { role: 'assistant', content: 'partial', provider: 'anthropic', model: 'm' };
+    const project = createSessionPersistenceProjector(store, { messages: [] } as unknown as AgentSession, 's1', 200_000);
+    project({ type: 'message_end', message: pending } as never);
+    expect(JSON.parse(store.getMessages('s1').at(-1)!.content)).toMatchObject({ provider: 'my-oauth-account', providerIdentity: 'config', model: 'm' });
+    expect(pending.provider).toBe('anthropic');
+  });
+
   it('stamps the assistant generation duration from message_start to message_end', () => {
     const session = { messages: [] as unknown[] } as unknown as AgentSession;
     const project = createSessionPersistenceProjector(store, session, 's1', 200_000);

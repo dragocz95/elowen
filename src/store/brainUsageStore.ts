@@ -1,6 +1,7 @@
 import type { Db } from './db.js';
-import type { TokenUsage, CostSource } from '../integrations/usage/types.js';
+import type { TokenUsage, CostSource, ModelUsage } from '../integrations/usage/types.js';
 import { TASK_PREFIX } from '../brain/sessionId.js';
+import { BRAIN_REGISTRY_PROVIDER_PREFIX, execRefSpec } from '../shared/execs.js';
 
 // Read a numeric JSON field ONLY when it really holds a number. `json_extract` alone also yields a string
 // that merely looks numeric ("100"), which SQLite's SUM() silently coerces — whereas
@@ -12,6 +13,19 @@ import { TASK_PREFIX } from '../brain/sessionId.js';
 // {@link BrainStore.tokenTotals} sums `$.usage.totalTokens` outside this file and would otherwise drift.
 export const numeric = (src: string, path: string, absent = '0'): string =>
   `CASE WHEN json_type(${src}, '${path}') IN ('integer', 'real') THEN json_extract(${src}, '${path}') ELSE ${absent} END`;
+
+/** Current rows mark their persisted configured provider id explicitly. Older PI rows instead carry a
+ * registry name: custom endpoints used the internal `elowen-<config id>` namespace, while OAuth rows used
+ * PI's built-in name. Normalize only that historical custom prefix before grouping; a marked id stays
+ * verbatim, and only a missing/empty row field falls back to the session's configured provider id. */
+const producingProvider = (src: string, path: string, fallback: string): string => `COALESCE(
+  NULLIF(CASE WHEN json_type(${src}, '${path}') = 'text' THEN
+    CASE WHEN json_extract(${src}, '$.providerIdentity') = 'config'
+      THEN json_extract(${src}, '${path}')
+      WHEN json_extract(${src}, '${path}') LIKE '${BRAIN_REGISTRY_PROVIDER_PREFIX}%'
+      THEN substr(json_extract(${src}, '${path}'), ${BRAIN_REGISTRY_PROVIDER_PREFIX.length + 1})
+      ELSE json_extract(${src}, '${path}') END
+  END, ''), NULLIF(${fallback}, ''))`;
 
 // Normalized usage rows shared by usageByDay + usageByModel. One row per LIVE assistant message (its
 // `$.usage`, attributed to the model it recorded in `$.model`) UNIONed with one row per per-model
@@ -38,6 +52,7 @@ export const numeric = (src: string, path: string, absent = '0'): string =>
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
 const USAGE_ROWS = `
   SELECT s.user_id AS user_id, s.id AS session_id,
+         ${producingProvider('m.content', '$.provider', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(m.content, '$.model'), ''), s.model) AS model,
          ${numeric('m.content', '$.timestamp', 'NULL')} AS ts,
          ${numeric('m.content', '$.usage.input')} AS input,
@@ -55,6 +70,7 @@ const USAGE_ROWS = `
    WHERE m.role = 'assistant' AND json_valid(m.content) AND json_type(m.content) = 'object'
   UNION ALL
   SELECT s.user_id AS user_id, s.id AS session_id,
+         ${producingProvider('je.value', '$.provider', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(je.value, '$.model'), ''), s.model) AS model,
          ${numeric('je.value', '$.at', 'NULL')} AS ts,
          ${numeric('je.value', '$.input')} AS input,
@@ -134,6 +150,8 @@ export interface BrainDescendantUsage {
  *  neither, and a bucket written before `measuredOutput` existed reads as unmeasured rather than having a
  *  speed invented for it. */
 export interface UsageRollupBucket {
+  provider?: string;
+  providerIdentity?: 'config';
   model: string;
   input: number; output: number; cacheRead: number; cacheWrite: number;
   totalTokens: number; reasoning: number; at?: number;
@@ -147,11 +165,19 @@ export interface UsageRollupBucket {
  *  spend keeps its ORIGINAL date instead of jumping to the compaction moment. Returns null when nothing
  *  dropped carried usage (keeps the divider clean). */
 export function rollupDroppedUsage(dropped: readonly { content: string }[]): UsageRollupBucket[] | null {
-  const byModel = new Map<string, UsageRollupBucket>();
+  const byIdentity = new Map<string, UsageRollupBucket>();
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const bucketFor = (model: string): UsageRollupBucket => {
-    let b = byModel.get(model);
-    if (!b) { b = { model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0, at: 0, durationMs: 0, measuredOutput: 0 }; byModel.set(model, b); }
+  const bucketFor = (provider: string, model: string, providerIdentity = false): UsageRollupBucket => {
+    const key = JSON.stringify([provider, model, providerIdentity]);
+    let b = byIdentity.get(key);
+    if (!b) {
+      b = {
+        ...(provider ? { provider } : {}), ...(providerIdentity ? { providerIdentity: 'config' as const } : {}), model,
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0,
+        at: 0, durationMs: 0, measuredOutput: 0,
+      };
+      byIdentity.set(key, b);
+    }
     return b;
   };
   const fold = (b: UsageRollupBucket, u: Record<string, unknown>, at: number, measured: { durationMs: number; output: number }): void => {
@@ -175,21 +201,30 @@ export function rollupDroppedUsage(dropped: readonly { content: string }[]): Usa
     let content: unknown;
     try { content = JSON.parse(row.content); } catch { continue; }
     if (typeof content !== 'object' || content === null) continue;
-    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown };
+    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown };
     if (Array.isArray(c.usageRollup)) {
-      // A prior divider — merge each of its per-model buckets (chained compaction).
+      // A prior divider — merge each of its per-identity buckets (chained compaction). Legacy buckets have
+      // no provider, so they remain separate and unresolved rather than being guessed from newer state.
       for (const raw of c.usageRollup) {
         if (!raw || typeof raw !== 'object') continue;
         const pb = raw as Record<string, unknown>;
-        fold(bucketFor(typeof pb.model === 'string' ? pb.model : ''), pb, num(pb.at), { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) });
+        fold(bucketFor(
+          typeof pb.provider === 'string' ? pb.provider : '',
+          typeof pb.model === 'string' ? pb.model : '',
+          pb.providerIdentity === 'config',
+        ), pb, num(pb.at), { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) });
       }
     } else if (c.usage && typeof c.usage === 'object') {
-      // An assistant message — attribute to the model it recorded (empty → resolved to the session model
-      // in SQL for legacy rows that predate per-message model capture).
-      fold(bucketFor(typeof c.model === 'string' ? c.model : ''), c.usage, typeof c.timestamp === 'number' ? c.timestamp : 0, { durationMs: num(c.durationMs), output: num(c.usage.output) });
+      // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
+      // session only by the SQL reader, which still has that session row; the persisted rollup never guesses.
+      fold(bucketFor(
+        typeof c.provider === 'string' ? c.provider : '',
+        typeof c.model === 'string' ? c.model : '',
+        c.providerIdentity === 'config',
+      ), c.usage, typeof c.timestamp === 'number' ? c.timestamp : 0, { durationMs: num(c.durationMs), output: num(c.usage.output) });
     }
   }
-  const buckets = [...byModel.values()].filter((b) => b.totalTokens !== 0 || b.cost != null);
+  const buckets = [...byIdentity.values()].filter((b) => b.totalTokens !== 0 || b.cost != null);
   if (buckets.length === 0) return null;
   // A legacy row with no numeric `$.timestamp` is already invisible to the day/model views (`ts IS NOT
   // NULL`), so its bucket must stay undated too: dating it — to the compaction moment or anything else —
@@ -297,13 +332,14 @@ export class BrainUsageStore {
     ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[]);
   }
 
-  /** Total token/cost usage of the user's OWN brain CHAT sessions aggregated per model (exec spec), for
+  /** Total token/cost usage of the user's OWN brain CHAT sessions aggregated per executor identity, for
    *  the web Stats page's /usage/by-model view — the analogue of usageByDay, so chat spend on a paid
-   *  model is no longer invisible there. Groups the normalized USAGE_ROWS by the model that ACTUALLY
-   *  produced each assistant row (its `$.model`, or a rollup bucket's `model`) — NOT the session's
-   *  current model, so switching a conversation's model never retroactively re-attributes its history —
-   *  and emits `elowen:<model>` so a model that ALSO ran as a task worker folds into the SAME bucket the
-   *  task_usage aggregate uses. `brain-task-%` sessions are excluded only when already snapshotted in
+   *  model is no longer invisible there. Groups the normalized USAGE_ROWS by the provider + model that
+   *  ACTUALLY produced each assistant row (its own fields, or a rollup bucket's) — NOT the session's
+   *  current selection, so switching a conversation's model never retroactively re-attributes its history.
+   *  A missing provider remains an explicit legacy `elowen:<model>` bucket; it is neither discarded nor
+   *  merged into any canonical `<provider>/<model>` identity. `brain-task-%` sessions are excluded only
+   *  when already snapshotted in
    *  task_usage (taskSnapshotExclusion); platform channel sessions (Discord) ARE included — the operator
    *  anchors them, so their spend counts as the operator's. Brain chat cost is OpenRouter provider-reported, so a costed
    *  bucket is `provider_reported`; an uncosted one is `unavailable` (costUsd null), matching usageByDay's
@@ -311,7 +347,7 @@ export class BrainUsageStore {
    *  epoch), same basis as usageByDay; undated rows are excluded from BOTH the windowed and unwindowed
    *  view (`ts IS NOT NULL`) so windowed totals always sum to the unwindowed total. A bucket comes back
    *  if it has any tokens OR any cost (a provider that reports cost with zero tokens still counts). */
-  usageByModel(userId: number, window?: { fromIso?: string; toIso?: string }): { exec: string; usage: TokenUsage }[] {
+  usageByModel(userId: number, window?: { fromIso?: string; toIso?: string }): ModelUsage[] {
     const clauses = [`user_id = ?`, `ts IS NOT NULL`, `model != ''`, taskSnapshotExclusion(this.hasTaskUsage())];
     const params: (string | number)[] = [userId];
     const fromMs = window?.fromIso ? Date.parse(window.fromIso) : NaN;
@@ -320,10 +356,10 @@ export class BrainUsageStore {
     if (Number.isFinite(toMs)) { clauses.push(`ts <= ?`); params.push(toMs); }
     // Key on the PARSED bounds so two ISO spellings of the same instant share one entry.
     return this.cachedView(`byModel${userId}${fromMs}${toMs}`, () => {
-      interface Row { model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
+      interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
       const rows = this.db.prepare(
         `WITH usage_rows AS (${USAGE_ROWS})
-         SELECT model AS model,
+         SELECT provider AS provider, model AS model,
                 COALESCE(SUM(input), 0) AS input,
                 COALESCE(SUM(output), 0) AS output,
                 COALESCE(SUM(cache_read), 0) AS cache_read,
@@ -335,7 +371,7 @@ export class BrainUsageStore {
                 CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
            FROM usage_rows
           WHERE ${clauses.join(' AND ')}
-          GROUP BY model`
+          GROUP BY provider, model`
       ).all(...params) as Row[];
       return rows
         .filter((r) => r.total > 0 || (r.cost ?? 0) > 0)
@@ -352,7 +388,10 @@ export class BrainUsageStore {
             measuredOutput: r.measured_output,
             outputTps: r.duration_ms > 0 ? (r.measured_output / (r.duration_ms / 1000)) : null,
           };
-          return { exec: `elowen:${r.model}`, usage };
+          const exec = r.provider
+            ? execRefSpec({ program: 'elowen', provider: r.provider, model: r.model })
+            : `elowen:${r.model}`;
+          return { id: exec, exec, program: 'elowen', provider: r.provider, model: r.model, usage };
         });
     });
   }

@@ -722,9 +722,13 @@ export interface TokenUsage {
   measuredOutput?: number;
 }
 
-/** Total token/cost usage aggregated for one model (exec spec). */
+/** Total token/cost usage aggregated for one executor identity. `exec` is the backward-compatible id. */
 export interface ModelUsage {
+  id?: string;
   exec: string;
+  program?: string | null;
+  provider?: string | null;
+  model?: string;
   usage: TokenUsage;
 }
 

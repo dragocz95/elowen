@@ -133,7 +133,7 @@ describe('BrainWorkerService', () => {
     expect(recorded).toHaveLength(1);
     // No OpenRouter fetch ran in this test, so the meter reports nothing — pi-ai's price-sheet cost
     // (0.02) is kept but flagged as a calculated estimate, not provider-reported.
-    expect(recorded[0]).toEqual(['T-1', 1, 'elowen:kimi', { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, reasoning: 0, costUsd: 0.02, currency: 'USD', costSource: 'calculated' }]);
+    expect(recorded[0]).toEqual(['T-1', 1, 'relay/kimi', { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, reasoning: 0, costUsd: 0.02, currency: 'USD', costSource: 'calculated' }]);
   });
 
   it('every run is bound to the task checkout: kickoff and nudge both carry workDir = projectPath', async () => {

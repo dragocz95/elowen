@@ -150,7 +150,9 @@ function sanitizeBrainProviders(input: unknown): BrainProviderStored[] {
   for (const v of input) {
     if (!v || typeof v !== 'object') continue;
     const p = v as Partial<BrainProviderStored>;
-    if (typeof p.id !== 'string' || !p.id || seen.has(p.id)) continue;
+    // Brain exec identity is `<provider>/<model>` and splits on the first slash, so a provider id carrying
+    // `/` would make two distinct pairs serialize identically. Reject it at the persistence boundary.
+    if (typeof p.id !== 'string' || !p.id || p.id.includes('/') || seen.has(p.id)) continue;
     if (!TYPES.includes(p.type as BrainProviderType)) continue;
     seen.add(p.id);
     out.push({

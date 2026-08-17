@@ -32,6 +32,15 @@ export function projectUserTurn(store: BrainStore, sessionId: string, text: stri
  *  this their chat/channel spend persists as $0 and never reaches usageByModel/usageByDay. Only stamps
  *  when a meter is ambient (the turn ran under runWithMeter) AND it saw a provider-reported cost; stamps
  *  the per-`agent_end` DELTA so a thinking-only nudge (a second agent_end under one meter) can't double it. */
+function durableGeneratedMessage(message: unknown, role: string, provider: string, imagesDir?: string): unknown {
+  const content = imagesDir ? externalizeImageBlocks(message, imagesDir) : message;
+  if (role !== 'assistant' || !provider || typeof content !== 'object' || content === null || Array.isArray(content)) return content;
+  // PI's `provider` is its registry id (`elowen-<config id>` for custom endpoints, or a built-in OAuth
+  // name). Persist the configured id as the usage identity without mutating PI's live message object — PI
+  // reuses that object for warm-cache requests, so only the durable clone may be rewritten.
+  return { ...content, provider, providerIdentity: 'config' };
+}
+
 export function projectEvent(store: BrainStore, sessionId: string, event: AgentSessionEvent, imagesDir?: string): void {
   if (event.type !== 'agent_end') return;
   const meter = currentMeter();
@@ -42,6 +51,7 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
   let lastAssistant = -1;
   event.messages.forEach((m, i) => { if (((m as { role?: string }).role ?? 'assistant') === 'assistant') lastAssistant = i; });
   const run: BrainRunMessage[] = [];
+  const provider = store.getSession(sessionId)?.provider ?? '';
   event.messages.forEach((m, i) => {
     const role = (m as { role?: string }).role ?? 'assistant';
     // Internal no-reply nudges deliberately never have a durable user row. Every other user already
@@ -54,7 +64,7 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
     if (i === lastAssistant && costDelta > 0) stampCost(m, costDelta);
     // Only the STORED copy loses its image bytes. `m` itself stays untouched, because PI keeps handing
     // that same object to the provider and rewriting an already-sent message is what breaks a warm cache.
-    run.push({ id: randomUUID(), role, content: imagesDir ? externalizeImageBlocks(m, imagesDir) : m });
+    run.push({ id: randomUUID(), role, content: durableGeneratedMessage(m, role, provider, imagesDir) });
   });
   const reordered = store.persistAgentRun(sessionId, run);
   if (!reordered) {
@@ -87,7 +97,8 @@ function projectPendingMessage(store: BrainStore, sessionId: string, message: un
   if (role !== 'assistant' && role !== 'toolResult') return;
   // This row and the one `agent_end` writes later hold the same message, so both externalize it. Naming
   // the file after its own bytes is what keeps that from doubling: the second write finds the file there.
-  const content = imagesDir ? externalizeImageBlocks(message, imagesDir) : message;
+  const provider = store.getSession(sessionId)?.provider ?? '';
+  const content = durableGeneratedMessage(message, role, provider, imagesDir);
   store.appendPendingMessage({ id: randomUUID(), sessionId, role, content });
 }
 

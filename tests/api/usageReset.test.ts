@@ -44,7 +44,7 @@ describe('GET /usage/by-model', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(1);
-    expect(body[0].exec).toBe('sonnet');
+    expect(body[0]).toMatchObject({ id: 'sonnet', exec: 'sonnet', program: 'claude-code', provider: null, model: 'sonnet' });
     expect(body[0].usage.total).toBe(330);
     expect(body[0].usage.costUsd).toBe(1);
   });
@@ -189,12 +189,32 @@ describe('GET /usage/by-day — brain session merge', () => {
 });
 
 describe('GET /usage/by-model — brain session merge', () => {
-  const seedBrainModel = (db: ReturnType<typeof openDb>, userId: number, sessionId: string, model: string, totalTokens: number, cost: number | null) => {
-    db.prepare("INSERT INTO brain_sessions (id, user_id, title, model) VALUES (?, ?, 't', ?)").run(sessionId, userId, model);
+  const seedBrainModel = (db: ReturnType<typeof openDb>, userId: number, sessionId: string, model: string, totalTokens: number, cost: number | null, provider = '', messageProvider = provider) => {
+    db.prepare("INSERT INTO brain_sessions (id, user_id, title, provider, model) VALUES (?, ?, 't', ?, ?)").run(sessionId, userId, provider, model);
     const u = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens, ...(cost == null ? {} : { cost: { total: cost } }) };
-    const content = JSON.stringify({ role: 'assistant', content: [], usage: u, timestamp: Date.now() });
+    const content = JSON.stringify({ role: 'assistant', content: [], ...(messageProvider ? { provider: messageProvider } : {}), model, usage: u, timestamp: Date.now() });
     db.prepare("INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, 'assistant', ?)").run(`${sessionId}-m1`, sessionId, content);
   };
+
+  it('returns same-named brain models from different providers as distinct structured identities', async () => {
+    const { app, db, adminId, adminTok } = setup();
+    db.prepare("INSERT INTO brain_sessions (id, user_id, title, provider, model) VALUES ('brain-1', ?, 't', 'current', 'shared-model')").run(adminId);
+    const append = (id: string, provider: string, totalTokens: number) => db.prepare(
+      "INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, 'brain-1', 'assistant', ?)"
+    ).run(id, JSON.stringify({
+      role: 'assistant', provider, model: 'shared-model', timestamp: Date.now(),
+      usage: { input: 0, output: totalTokens, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens },
+    }));
+    append('m1', 'elowen-provider-a', 100);
+    append('m2', 'elowen-provider-b', 200);
+
+    const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
+    expect(body.map((r: { id: string; provider: string; model: string; usage: { total: number } }) =>
+      [r.id, r.provider, r.model, r.usage.total])).toEqual([
+      ['provider-a/shared-model', 'provider-a', 'shared-model', 100],
+      ['provider-b/shared-model', 'provider-b', 'shared-model', 200],
+    ]);
+  });
 
   it("merges the caller's own chat spend as an elowen:<model> row alongside task rows", async () => {
     const { app, db, taskUsage, adminId, adminTok } = setup();
@@ -209,13 +229,12 @@ describe('GET /usage/by-model — brain session merge', () => {
 
   it('folds chat + a task worker on the SAME model into one bucket, cost added once (no double count)', async () => {
     const { app, db, taskUsage, adminId, adminTok } = setup();
-    // A task worker on the embedded brain records exec `elowen:<model>`; a chat session on the same model
-    // must sum INTO that bucket, not create a parallel one.
-    taskUsage.record('t1', 1, 'elowen:claude-opus-4-8', { ...usage, total: 200, costUsd: 0.2 });
-    seedBrainModel(db, adminId, 'brain-1', 'claude-opus-4-8', 300, 0.3);
+    // A task worker and chat on the same full embedded-brain identity must sum into one bucket.
+    taskUsage.record('t1', 1, 'relay/claude-opus-4-8', { ...usage, total: 200, costUsd: 0.2 });
+    seedBrainModel(db, adminId, 'brain-1', 'claude-opus-4-8', 300, 0.3, 'relay', 'elowen-relay');
     const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
     expect(body).toHaveLength(1);
-    expect(body[0].exec).toBe('elowen:claude-opus-4-8');
+    expect(body[0]).toMatchObject({ id: 'relay/claude-opus-4-8', exec: 'relay/claude-opus-4-8', program: 'elowen', provider: 'relay', model: 'claude-opus-4-8' });
     expect(body[0].usage.total).toBe(500); // 200 task + 300 chat
     expect(body[0].usage.costUsd).toBeCloseTo(0.5); // 0.2 + 0.3, counted once
     expect(body[0].usage.costSource).toBe('provider_reported');

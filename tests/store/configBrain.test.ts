@@ -30,7 +30,7 @@ describe('ConfigStore brain providers', () => {
 
   it('drops malformed entries and duplicate ids', () => {
     const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ brain: { providers: [entry, { ...entry, label: 'dup' }, { id: '', type: 'openai' }, { id: 'x', type: 'bogus' }, 'junk'] } });
+    cs.update({ brain: { providers: [entry, { ...entry, label: 'dup' }, { ...entry, id: 'ambiguous/provider' }, { id: '', type: 'openai' }, { id: 'x', type: 'bogus' }, 'junk'] } });
     expect(cs.brainProviders().map((p) => p.id)).toEqual(['relay']);
   });
 

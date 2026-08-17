@@ -34,6 +34,8 @@ export const PROGRAM_PREFIXES: Readonly<Record<string, Program>> = {
  */
 export const BARE_WITH_SLASH_PROGRAM: Program = 'elowen';
 export const BARE_PLAIN_PROGRAM: Program = 'claude-code';
+/** Internal PI registry namespace for custom brain providers; never part of the public exec identity. */
+export const BRAIN_REGISTRY_PROVIDER_PREFIX = 'elowen-';
 
 /**
  * Default executable name per program. Keyed by Program id so it stays in sync with the prefixes

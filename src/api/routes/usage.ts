@@ -1,12 +1,32 @@
 import { queryInt } from '../validation.js';
 import type { ElowenApp, RouteContext } from '../context.js';
-import type { TokenUsage, CostSource } from '../../integrations/usage/types.js';
+import type { TokenUsage, CostSource, ModelUsage } from '../../integrations/usage/types.js';
+import { parseExecRef } from '../../shared/execs.js';
 
 /** Fold a task-worker exec bucket and the same model's brain-chat bucket into one, for /usage/by-model.
  *  Token fields add; cost preserves null (a bucket with NO cost stays "—", never a fake $0) and its
  *  provenance rolls up exactly like TaskUsageStore.aggregateByExec: unavailable when neither side is
  *  costed, provider_reported only when EVERY costed side is provider-reported, else calculated (any
  *  estimate taints the sum). */
+function modelUsage(exec: string, usage: TokenUsage): ModelUsage {
+  const ref = parseExecRef(exec);
+  if (ref) {
+    return {
+      id: exec, exec, program: ref.program,
+      provider: ref.program === 'elowen' ? ref.provider : null,
+      model: ref.model, usage,
+    };
+  }
+  // Historical stats used `elowen:<model>` without a provider. It cannot be parsed as a runnable exec,
+  // but dropping or guessing it would corrupt accounting, so expose it as an unresolved legacy identity.
+  if (exec.startsWith('elowen:') && exec.length > 'elowen:'.length) {
+    return { id: exec, exec, program: 'elowen', provider: null, model: exec.slice('elowen:'.length), usage };
+  }
+  // task_usage is plugin-owned and may contain executor ids written by older/custom integrations. Preserve
+  // such a bucket rather than hiding its spend; its shape cannot identify anything more specific.
+  return { id: exec, exec, program: null, provider: null, model: exec, usage };
+}
+
 function mergeModelUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   const costUsd = a.costUsd == null && b.costUsd == null ? null : (a.costUsd ?? 0) + (b.costUsd ?? 0);
   const costed = [a, b].filter((u) => u.costUsd != null);
@@ -68,11 +88,10 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
     const rows = d.taskUsage?.aggregateByExec(projectIds, window) ?? [];
     const userId = c.get('user')?.id;
     const brain = !projectScoped && userId != null ? d.brainStore?.usageByModel(userId, window) ?? [] : [];
-    if (brain.length === 0) return c.json(rows);
-    const byExec = new Map(rows.map((r) => [r.exec, { exec: r.exec, usage: r.usage }]));
+    const byExec = new Map<string, ModelUsage>(rows.map((r) => [r.exec, modelUsage(r.exec, r.usage)]));
     for (const r of brain) {
-      const cur = byExec.get(r.exec);
-      if (!cur) byExec.set(r.exec, { exec: r.exec, usage: r.usage });
+      const cur = byExec.get(r.id);
+      if (!cur) byExec.set(r.id, r);
       else cur.usage = mergeModelUsage(cur.usage, r.usage);
     }
     return c.json([...byExec.values()]);

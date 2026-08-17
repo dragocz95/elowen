@@ -918,6 +918,60 @@ describe('BrainStore', () => {
       expect(rows.find((r) => r.exec === 'elowen:relay/kimi')!.usage.total).toBe(50);
     });
 
+    it('keeps the same model id from two providers in two identity buckets', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'current', model: 'shared-model' });
+      const append = (id: string, provider: string, totalTokens: number) => store.appendMessage({
+        id, sessionId: 'brain-a', parentId: null, role: 'assistant',
+        content: {
+          role: 'assistant', provider, model: 'shared-model', timestamp: Date.now(),
+          usage: { input: 0, output: totalTokens, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens },
+        },
+      });
+      // Custom PI registry providers carry an internal `elowen-` namespace; the public identity must not.
+      append('m1', 'elowen-provider-a', 100);
+      append('m2', 'elowen-provider-b', 200);
+
+      const rows = store.usageByModel(1).sort((a, b) => a.exec.localeCompare(b.exec));
+      expect(rows.map((r) => [r.exec, r.usage.total])).toEqual([
+        ['provider-a/shared-model', 100],
+        ['provider-b/shared-model', 200],
+      ]);
+    });
+
+    it('preserves usage with no provider in a separate explicit legacy bucket', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'legacy-model' });
+      usageMsg('brain-a', 'm1', { totalTokens: 100 }, Date.now(), 'legacy-model');
+
+      expect(store.usageByModel(1)).toMatchObject([{
+        id: 'elowen:legacy-model', exec: 'elowen:legacy-model', program: 'elowen',
+        provider: null, model: 'legacy-model', usage: { total: 100 },
+      }]);
+    });
+
+    it('falls back to the session provider only when the row has none', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'legacy-model' });
+      usageMsg('brain-a', 'm1', { totalTokens: 100 }, Date.now(), 'legacy-model');
+      expect(store.usageByModel(1)[0]).toMatchObject({
+        id: 'session-provider/legacy-model', provider: 'session-provider', model: 'legacy-model',
+      });
+    });
+
+    it('does not strip the internal prefix from a marked configured provider id', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'elowen-relay', model: 'm' });
+      store.appendMessage({
+        id: 'm1', sessionId: 'brain-a', parentId: null, role: 'assistant',
+        content: {
+          role: 'assistant', provider: 'elowen-relay', providerIdentity: 'config', model: 'm', timestamp: Date.now(),
+          usage: { input: 0, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 100 },
+        },
+      });
+      expect(store.usageByModel(1)[0]).toMatchObject({ id: 'elowen-relay/m', provider: 'elowen-relay' });
+      store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary' } }, 0);
+      const divider = JSON.parse(store.getMessages('brain-a')[0]!.content) as { usageRollup: Array<Record<string, unknown>> };
+      expect(divider.usageRollup).toMatchObject([{ provider: 'elowen-relay', providerIdentity: 'config' }]);
+      expect(store.usageByModel(1)[0]).toMatchObject({ id: 'elowen-relay/m', provider: 'elowen-relay' });
+    });
+
     it('falls back to the session model for legacy rows with no per-message $.model', () => {
       store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
       usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 }); // no $.model → session model
@@ -972,6 +1026,23 @@ describe('BrainStore', () => {
     });
 
     describe('survives compaction (rollup on the divider)', () => {
+      it('persists the producing provider in new rollup buckets', () => {
+        store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'shared-model' });
+        store.appendMessage({
+          id: 'old', sessionId: 'brain-a', parentId: null, role: 'assistant',
+          content: {
+            role: 'assistant', provider: 'elowen-row-provider', model: 'shared-model', timestamp: Date.now(),
+            usage: { input: 0, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 100 },
+          },
+        });
+        store.appendMessage({ id: 'keep', sessionId: 'brain-a', parentId: null, role: 'user', content: { role: 'user', content: 'keep' } });
+        store.compactSessionMessages('brain-a', { id: 'sum', role: 'compaction', content: { role: 'compactionSummary' } }, 1);
+
+        const divider = JSON.parse(store.getMessages('brain-a')[0]!.content) as { usageRollup: Array<Record<string, unknown>> };
+        expect(divider.usageRollup).toMatchObject([{ provider: 'elowen-row-provider', model: 'shared-model', totalTokens: 100 }]);
+        expect(store.usageByModel(1)[0]).toMatchObject({ exec: 'row-provider/shared-model', provider: 'row-provider' });
+      });
+
       it('keeps the dropped generations timing so outputTps survives compaction', () => {
         store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
         // Measured rows dropped by the compaction roll their durationMs onto the divider…

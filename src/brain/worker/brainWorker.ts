@@ -22,6 +22,7 @@ import { renderPromptFor } from '../../prompts/index.js';
 import { tddDirective } from '../../prompts/tdd.js';
 import type { PromptService } from '../../prompts/promptService.js';
 import type { TokenUsage } from '../../integrations/usage/types.js';
+import { execRefSpec } from '../../shared/execs.js';
 import { logger } from '../../shared/logger.js';
 
 const log = logger('brain-worker');
@@ -89,6 +90,7 @@ interface LiveWorker {
   projectId: number;
   /** The task's checkout — the bound workDir every run of this worker starts in. */
   cwd: string;
+  provider: string;
   model: string;
   lastEventAt: number;
   nudged: boolean;
@@ -272,7 +274,8 @@ export class BrainWorkerService {
 
     const worker: LiveWorker = {
       session, sessionName, sessionId, taskId: input.taskId, projectId: input.projectId, cwd,
-      model: model.id, lastEventAt: this.now(), nudged: false, closed: false, meter: newCostMeter(),
+      provider: route.providerId, model: model.id,
+      lastEventAt: this.now(), nudged: false, closed: false, meter: newCostMeter(),
     };
     this.live.set(sessionName, worker);
     session.subscribe(() => { worker.lastEventAt = this.now(); }); // liveness for the idle watchdog
@@ -397,7 +400,10 @@ export class BrainWorkerService {
       } else {
         usage.costSource = 'unavailable';
       }
-      if (usage.total > 0) taskUsage.record(worker.taskId, worker.projectId, `elowen:${worker.model}`, usage);
+      if (usage.total > 0) {
+        const exec = execRefSpec({ program: 'elowen', provider: worker.provider, model: worker.model });
+        taskUsage.record(worker.taskId, worker.projectId, exec, usage);
+      }
     } catch { /* usage is best-effort */ }
   }
 }

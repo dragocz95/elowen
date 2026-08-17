@@ -1,3 +1,5 @@
+import type { Program } from '../../shared/execs.js';
+
 /** Where a run's cost figure came from — so the UI/logs never present an estimate as a fact:
  *  - `provider_reported`: the provider returned the actual billed cost (OpenRouter's `usage.cost`,
  *    opencode's recorded `cost`). This is the truth.
@@ -36,5 +38,17 @@ export interface TokenUsage {
    *  seconds (measuredOutput / outputTps); deriving them from `output` overstates every bucket whose
    *  untimed history dwarfs its measured slice. 0 when nothing was measured, absent where `outputTps` is. */
   measuredOutput?: number;
+}
+
+/** One usage bucket keyed by executor identity. `exec` remains as the backward-compatible id consumed by
+ * existing clients; the structured fields are additive. A null provider means historical embedded-brain
+ * usage whose provider was never recorded — it deliberately remains separate from canonical buckets. */
+export interface ModelUsage {
+  id: string;
+  exec: string;
+  program: Program | null;
+  provider: string | null;
+  model: string;
+  usage: TokenUsage;
 }
 
