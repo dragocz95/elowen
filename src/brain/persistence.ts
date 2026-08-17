@@ -196,6 +196,12 @@ export function createSessionPersistenceProjector(
   /** Where externalized tool images go. Omitted (`:memory:` stores, tests) the bytes simply stay inline —
    *  the row is fatter, nothing else changes. */
   imagesDir?: string,
+  /** Called once per SETTLED turn with the tokens that turn actually produced, so the daemon can bill
+   *  them to the origin that ordered it. Deliberately fired from the `agent_end` branch only: a
+   *  compaction re-states tokens that were already reported on the day they were produced, so calling
+   *  this from a compaction path would double a conversation's recorded spend every time it compacts.
+   *  Absent → no attribution is recorded, which is what a test wiring or the sub-agent runner wants. */
+  onTurnSettled?: (usage: SettledTurnUsage) => void,
 ): (event: AgentSessionEvent) => void {
   let deferredOverflow: AgentSessionEvent | null = null;
   let agentRunOpen = false;
@@ -243,6 +249,9 @@ export function createSessionPersistenceProjector(
       // Generic retry errors remain in PI's SessionManager branch even when removed from live agent
       // state. Persist them too so a later compaction can align the same clean row sequence.
       projectEvent(store, sessionId, event, imagesDir);
+      // Read AFTER projectEvent, which is where the provider-reported cost is stamped onto the run's last
+      // assistant message — summing before it would report every OpenRouter turn as costing nothing.
+      if (onTurnSettled) onTurnSettled(settledTurnUsage(event.messages));
       // A threshold compaction can run between an assistant/tool batch and the next provider step. Its
       // kept PI tail contains rows that BrainStore receives only here at terminal agent_end. Rewriting the
       // store earlier aligns against unrelated old rows; rewrite now, after the complete run is durable.
@@ -295,6 +304,36 @@ export function createSessionPersistenceProjector(
       persistPendingRunCompaction();
     }
   };
+}
+
+/** Tokens (and cost, when the provider reported one) of ONE settled turn. `cost` stays null rather than
+ *  becoming 0 when nothing reported a price: "free" and "we do not know" are different answers, and the
+ *  admin view renders them differently. */
+export interface SettledTurnUsage {
+  input: number; output: number; cacheRead: number; cacheWrite: number; total: number;
+  cost: number | null;
+}
+
+/** Sum a settled run's assistant `usage` blocks. Reads the SAME fields the SQL usage views read out of
+ *  `brain_messages` (`$.usage.input`, `…output`, `…cacheRead`, `…cacheWrite`, `…totalTokens`,
+ *  `$.usage.cost.total`), from the objects that are about to become those very rows — so the two
+ *  counters start from identical numbers even though they are accumulated independently afterwards. */
+function settledTurnUsage(messages: readonly unknown[]): SettledTurnUsage {
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const out: SettledTurnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: null };
+  for (const message of messages) {
+    if ((message as { role?: string }).role !== 'assistant') continue;
+    const usage = (message as { usage?: Record<string, unknown> }).usage;
+    if (!usage || typeof usage !== 'object') continue;
+    out.input += n(usage.input); out.output += n(usage.output);
+    out.cacheRead += n(usage.cacheRead); out.cacheWrite += n(usage.cacheWrite);
+    out.total += n(usage.totalTokens);
+    const cost = (usage as { cost?: { total?: unknown } }).cost;
+    if (cost && typeof cost === 'object' && typeof cost.total === 'number' && Number.isFinite(cost.total)) {
+      out.cost = (out.cost ?? 0) + cost.total;
+    }
+  }
+  return out;
 }
 
 /** Set `usage.cost.total` on a message to the provider-reported cost pi-ai dropped. Overrides pi-ai's

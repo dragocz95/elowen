@@ -549,4 +549,49 @@ describe('brain persistence', () => {
     expect(JSON.parse(rows[1]!.content)).toMatchObject({ content: 'q_giant' });
     expect(JSON.parse(rows[2]!.content)).toMatchObject({ content: 'q_next' });
   });
+  describe('settled-turn usage attribution', () => {
+    const settled = (): { calls: { total: number; cost: number | null }[]; project: (e: unknown) => void } => {
+      const calls: { total: number; cost: number | null }[] = [];
+      const session = { messages: [] as unknown[] } as unknown as AgentSession;
+      const project = createSessionPersistenceProjector(
+        store, session, 's1', 200_000, undefined,
+        (usage) => { calls.push({ total: usage.total, cost: usage.cost }); },
+      );
+      return { calls, project: project as unknown as (e: unknown) => void };
+    };
+
+    it('reports a settled turn once, summing only its assistant usage', () => {
+      const { calls, project } = settled();
+      project({ type: 'agent_end', willRetry: false, messages: [
+        { role: 'assistant', content: 'a', usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.1 } } },
+        { role: 'tool', content: 'ran' },
+        { role: 'assistant', content: 'b', usage: { input: 20, output: 5, totalTokens: 25, cost: { total: 0.2 } } },
+      ] } as never);
+      expect(calls).toEqual([{ total: 40, cost: 0.30000000000000004 }]);
+    });
+
+    it('leaves cost null when nothing in the turn reported a price', () => {
+      const { calls, project } = settled();
+      project({ type: 'agent_end', willRetry: false, messages: [
+        { role: 'assistant', content: 'a', usage: { totalTokens: 15 } },
+      ] } as never);
+      expect(calls).toEqual([{ total: 15, cost: null }]);
+    });
+
+    it('does NOT report a compaction — those tokens were already counted when they were produced', () => {
+      const { calls, project } = settled();
+      const session = { messages: [
+        { role: 'compactionSummary', summary: 'summarized', tokensBefore: 900 },
+      ] } as unknown as AgentSession;
+      const compacting = createSessionPersistenceProjector(
+        store, session, 's1', 200_000, undefined,
+        (usage) => { calls.push({ total: usage.total, cost: usage.cost }); },
+      );
+      compacting({ type: 'compaction_end', reason: 'threshold', result: { summary: 'summarized' }, aborted: false, willRetry: false } as never);
+      // A compaction divider re-states spend that already has a day and an origin. Counting it again is
+      // how a long-lived conversation would appear to burn its whole history over and over.
+      expect(calls).toEqual([]);
+      void project;
+    });
+  });
 });

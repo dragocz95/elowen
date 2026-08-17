@@ -613,6 +613,16 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         projectPath: () => homeProject.path,
         projects,
         chatImagesDir,
+        // Bill a settled turn to the origin that ordered it. The owner comes from the session row, so a
+        // channel/task/sub-agent session is attributed to whoever owns it — the same person /usage/by-day
+        // already reports that spend under. `settleTurn` CONSUMES the pin the HTTP layer set, so a turn
+        // nobody requested (cron wake-up, boot-recovered delegation, a Discord message) settles as
+        // `internal` rather than inheriting the last human address.
+        onTurnSettled: (sessionId, usage) => {
+          const userId = brainStore.getSession(sessionId)?.user_id;
+          if (typeof userId !== 'number') return; // an unknown session has nobody to bill
+          usageOrigins.addTurn(userId, usageOrigins.settleTurn(sessionId), usage, Date.now());
+        },
         // The registry swap can happen long after the toggle was saved (it waits for running work), so the
         // web learns from this event instead of polling or needing a manual page reload.
         onPluginsReloaded: () => bus.publish({ type: 'plugins' }),

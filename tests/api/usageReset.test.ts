@@ -146,7 +146,9 @@ describe('POST /usage/reset', () => {
     expect(res.status).toBe(200);
     // `chatCleared` is reported alongside the snapshot count: the charts sum both sources, so a reset
     // that only wiped snapshots left the page looking unchanged on a chat-heavy instance.
-    expect(await res.json()).toEqual({ ok: true, cleared: 2, chatCleared: 0 });
+    // `originsCleared` is 0 here because this wiring holds no origin store — the counts stay separate so
+    // a reset that missed one of the three sources is visible in the response instead of silently partial.
+    expect(await res.json()).toEqual({ ok: true, cleared: 2, chatCleared: 0, originsCleared: 0 });
     expect(taskUsage.aggregateByExec()).toEqual([]);
   });
 });

@@ -44,10 +44,8 @@ describe('the admin origin view never scans the message store', () => {
     expect(joined).toMatch(/usage_by_origin/);
   });
 
-  it('resolves a session origin by index rather than scanning the ledger', () => {
-    const plans = plansOf((store) => { store.originForSession('brain-1'); });
-    // brain_session_origins grows with (conversation × network), and this runs on the turn path after a
-    // restart. A SCAN here would be paid per cold turn.
-    expect(plans.join('\n')).toMatch(/SEARCH brain_session_origins/);
+  it('answers the tracking window without touching the message store either', () => {
+    const plans = plansOf((store) => { store.trackingSince(); });
+    expect(plans.join('\n')).not.toMatch(/brain_messages/);
   });
 });

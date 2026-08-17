@@ -2,7 +2,7 @@ import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@ear
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
-import { createSessionPersistenceProjector, rehydrate, settlePartialTurn } from '../persistence.js';
+import { createSessionPersistenceProjector, rehydrate, settlePartialTurn, type SettledTurnUsage } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
@@ -123,6 +123,10 @@ export interface SessionFactoryDeps {
   /** Where a tool result's image bytes are externalized to when the turn is persisted. Absent for
    *  in-memory stores and tests, where the bytes simply stay on the row. */
   chatImagesDir?: string;
+  /** Bill a settled turn's tokens to the origin that ordered it (UsageOriginStore, wired in brainCore).
+   *  A seam rather than the store itself: the session factory has no business knowing how attribution is
+   *  persisted, and a process without it (the forked sub-agent runner, tests) simply records nothing. */
+  onTurnSettled?: (sessionId: string, usage: SettledTurnUsage) => void;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the system prompt. A test passes
@@ -599,8 +603,10 @@ export class BrainSessionFactory {
     // the token savings evaporate on the next rehydrate. Only a REAL compaction (result present, not
     // aborted) mirrors; a no-op/failed run leaves the store untouched. Callers layer their own
     // subscriptions on top (the `compacted` client-notify in the chat brain, liveness in the worker).
+    const onTurnSettled = this.d.onTurnSettled;
     session.subscribe(createSessionPersistenceProjector(
       this.d.store, session, spec.sessionId, spec.model.contextWindow, this.d.chatImagesDir,
+      onTurnSettled && ((usage) => { onTurnSettled(spec.sessionId, usage); }),
     ));
     // Cold-start-compaction eligibility, read live at every check: the proactive flag and the breaker
     // state may change during the session's life, and the context/floor estimates must reflect the

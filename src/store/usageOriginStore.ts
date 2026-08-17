@@ -37,6 +37,10 @@ const dayOf = (atMs: number): string => new Date(atMs).toISOString().slice(0, 10
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
+/** How long an unconsumed turn pin stays meaningful. Six hours is far past any turn that still has a
+ *  requester waiting on it, and short enough that a leaked pin cannot mislabel next week's spend. */
+const PIN_MAX_AGE_MS = 6 * 3_600_000;
+
 /** Origin attribution for brain spend: which request origin ordered a turn, and how many tokens each
  *  (day, user, origin) bucket has burned since tracking began.
  *
@@ -51,18 +55,23 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  *  message row, and only `/usage/reset` clears both. They answer "how was the spend distributed across
  *  people and addresses", never "what is the exact bill". */
 export class UsageOriginStore {
-  /** sessionId → the origin of the request that most recently spoke into it. The hot path: a settling
-   *  turn reads it without touching SQLite. Rebuilt lazily from `brain_session_origins` after a restart,
-   *  so a conversation that survives a daemon restart keeps its attribution. */
-  private readonly liveOrigins = new Map<string, ClientOrigin>();
+  /** sessionId → the origin PINNED to the turn currently in flight there, with the ms it was pinned at.
+   *  A pin is set by the first request of a turn and consumed by {@link settleTurn}; a request arriving
+   *  while one is in flight is STEERED into that same turn, so it must not repoint the attribution.
+   *  The settling turn therefore reads this without touching SQLite at all. */
+  private readonly turnOrigins = new Map<string, { origin: ClientOrigin; at: number }>();
 
   constructor(private readonly db: Db) {}
 
-  /** Remember that `origin` just spoke into `sessionId`. Called once per turn-starting request, before
-   *  the turn runs, so the settle later attributes to the request that ORDERED the turn rather than to
-   *  whatever address happens to be current when it finishes. One UPSERT into a small table. */
+  /** Remember that `origin` just spoke into `sessionId`: always into the durable ledger, and into the
+   *  in-memory pin only when no turn of that conversation is already in flight.
+   *
+   *  That asymmetry is the attribution rule. A message sent while a turn streams is steered INTO the
+   *  running turn rather than starting a new one, so its tokens belong to the request that ordered that
+   *  turn. Overwriting the pin would move a turn's whole spend to whoever spoke into it last. */
   recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): void {
-    this.liveOrigins.set(sessionId, origin);
+    this.pruneStalePins(atMs);
+    if (!this.turnOrigins.has(sessionId)) this.turnOrigins.set(sessionId, { origin, at: atMs });
     this.db.prepare(
       `INSERT INTO brain_session_origins (session_id, origin, user_id, trusted, requests, first_at, last_at)
             VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -75,28 +84,32 @@ export class UsageOriginStore {
     ).run(sessionId, origin.value, userId, origin.trusted ? 1 : 0, atMs, atMs);
   }
 
-  /** The origin a turn of `sessionId` should be attributed to. In-memory first, then the newest ledger
-   *  row (a conversation resumed after a restart), then `internal`.
+  /** Consume the pin of a settling turn: the origin of the request that ORDERED it, or `internal`.
    *
-   *  `internal` is a real answer, not a fallback placeholder: a cron wake-up, a channel message or a
-   *  boot-recovered delegation genuinely had no HTTP request behind it. Guessing the last human IP for
-   *  those would put spend on an address that did not order it. */
-  originForSession(sessionId: string): ClientOrigin {
-    const live = this.liveOrigins.get(sessionId);
-    if (live) return live;
-    const row = this.db.prepare(
-      `SELECT origin, trusted FROM brain_session_origins WHERE session_id = ? ORDER BY last_at DESC LIMIT 1`
-    ).get(sessionId) as { origin: string; trusted: number } | undefined;
-    if (!row) return INTERNAL_ORIGIN;
-    const origin = restoreOrigin(row.origin, row.trusted === 1);
-    this.liveOrigins.set(sessionId, origin);
-    return origin;
+   *  `internal` is a real answer here, not a placeholder for a lookup that failed. A cron wake-up, a
+   *  Discord message, an advisor autostart and a delegation revived at boot all genuinely had no HTTP
+   *  request behind them. Deliberately NOT backed by a lookup in `brain_session_origins`: that table
+   *  says which addresses have EVER spoken into the conversation, which is a different question — using
+   *  it here would bill a scheduled job to whichever human last opened the same conversation. */
+  settleTurn(sessionId: string): ClientOrigin {
+    const pinned = this.turnOrigins.get(sessionId);
+    this.turnOrigins.delete(sessionId);
+    return pinned?.origin ?? INTERNAL_ORIGIN;
   }
 
-  /** Forget the in-memory attribution for a conversation (it was deleted, or its turn tree is gone).
-   *  The ledger row stays until retention takes it — this only bounds the map. */
-  forgetSession(sessionId: string): void {
-    this.liveOrigins.delete(sessionId);
+  /** The pin currently held for a conversation, without consuming it. For inspection and tests. */
+  pinnedOrigin(sessionId: string): ClientOrigin | null {
+    return this.turnOrigins.get(sessionId)?.origin ?? null;
+  }
+
+  /** A turn that never settles (an abort that skips persistence, a crash mid-turn) would leave its pin
+   *  behind, and the next turn of that conversation would inherit it. Nothing in the map is worth
+   *  keeping for longer than a turn can plausibly run, so anything older than the window is dropped —
+   *  those conversations fall back to `internal`, which is the honest answer for a turn nobody can still
+   *  point at a request. Swept on write, so an idle daemon does nothing. */
+  private pruneStalePins(nowMs: number): void {
+    if (this.turnOrigins.size < 256) return;
+    for (const [id, pin] of this.turnOrigins) if (nowMs - pin.at > PIN_MAX_AGE_MS) this.turnOrigins.delete(id);
   }
 
   /** Add ONE settled turn's usage to its (day, user, origin) bucket. Idempotency is NOT claimed: the
@@ -264,17 +277,6 @@ export class UsageOriginStore {
       return removed;
     })();
   }
-}
-
-/** Rebuild a `ClientOrigin` from a persisted ledger row. The stored VALUE carries the kind: `local` and
- *  `internal` are reserved words, `platform:*` a reserved prefix, and anything else is an address. Kept
- *  next to the store rather than in clientIp.ts because it is a persistence concern — clientIp.ts
- *  classifies a live request, this classifies a string that came back out of SQLite. */
-function restoreOrigin(value: string, trusted: boolean): ClientOrigin {
-  if (value === 'local') return { value, kind: 'local', trusted };
-  if (value === 'internal') return { value, kind: 'internal', trusted };
-  if (value.startsWith('platform:')) return { value, kind: 'platform', trusted };
-  return { value, kind: 'ip', trusted };
 }
 
 /** Narrow an ISO date/datetime to its UTC day, or undefined when it is not a date at all. */

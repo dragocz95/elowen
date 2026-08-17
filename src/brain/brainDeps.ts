@@ -50,6 +50,10 @@ export interface BrainDeps {
    *  never enters `brain_messages`; the row keeps a reference to a file here. Absent (in-memory database)
    *  → attachments live only for their turn, exactly as before. */
   chatImagesDir?: string;
+  /** Bill a settled turn's tokens to the request origin that ordered it. Wired in brainCore to
+   *  UsageOriginStore; absent (tests, the forked sub-agent runner) → nothing is attributed and the admin
+   *  origin view simply has no rows for those turns, which is truthful rather than approximate. */
+  onTurnSettled?: (sessionId: string, usage: import('./persistence.js').SettledTurnUsage) => void;
   /** The daemon-wide shared plugin registry (lazy-loaded, memoized, invalidated on plugin toggles).
    *  Shared with the brain workers and platform adapters so ALL consumers reload together. Absent →
    *  brain runs exactly as before plugins existed. */

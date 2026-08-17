@@ -169,7 +169,7 @@ export class BrainService {
     d.store.setDelegationBootId(randomUUID());
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
-    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
+    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
     // Built before the channel service so it can share the SAME curator instance — channel and
