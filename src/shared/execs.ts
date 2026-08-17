@@ -76,13 +76,16 @@ export function isProgram(value: unknown): value is Program {
 }
 
 /**
- * The program a LEGACY exec string names.
+ * The program an exec string names.
  *
- * An explicit `<prefix>:` from PROGRAM_PREFIXES decides on its own. Only a prefix-LESS value falls
- * back to the shape contract — and that contract predates the brain and belongs to the CLI agents:
- * `provider/model` is OpenCode, a bare name is Claude Code. A slash therefore NEVER means `elowen`.
- * Reading a bare `provider/model` as the embedded brain would silently re-route every OpenCode exec
- * already stored in configs and task labels, which is exactly the breakage this migration avoids.
+ * An explicit `<prefix>:` from PROGRAM_PREFIXES decides on its own — that check runs FIRST, so another
+ * program's spec is never re-read as the brain's just because the rest of it contains a slash. Only a
+ * prefix-LESS value falls back to the shape contract: `provider/model` is the embedded brain (see
+ * BARE_WITH_SLASH_PROGRAM for why it owns that shape) and a bare name is Claude Code.
+ *
+ * OpenCode held the bare-slash shape until migration v13 gave it its explicit `opencode:` prefix. Any
+ * un-migrated OpenCode value left anywhere would therefore now route into the brain, which is the one
+ * breakage this contract has to be read against.
  */
 export function execSpecProgram(spec: string): Program {
   const encoded = parseEncodedExecRef(spec);

@@ -329,11 +329,12 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   //
   // Each item carries its identity STRUCTURALLY (`program` + the `provider`/`model` it already had) so a
   // client can render the bare model name without parsing anything out of a string — a model id may
-  // itself contain slashes, so splitting the spec is not a safe way to get it. `legacyExec` (and its
-  // `exec` alias, kept until the migration's cleanup phase) is the same value as before: it is what
-  // configs, task labels and per-user allow-lists still store, so it stays the picker's identifier and
-  // an older client keeps working unchanged. Non-admins only see models their allow-list permits — this
-  // single server-side filter covers web AND CLI.
+  // itself contain slashes, so splitting the spec is not a safe way to get it. `exec` is the canonical
+  // spelling and the picker's identifier — since migration v13 it is also what configs, task labels and
+  // per-user allow-lists actually store. `legacyExec` is the pre-v13 `elowen:` spelling, kept ONLY so a
+  // client built against the older wire format still resolves a pick; nothing in this repo, the web app
+  // or the plugin registry reads it, and it goes away in the migration's cleanup phase. Non-admins only
+  // see models their allow-list permits — this single server-side filter covers web AND CLI.
   app.get('/brain/models', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = brainConfigFromElowen(d.config, d.brainAuth);
