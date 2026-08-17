@@ -33,7 +33,8 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
     // the web builds its menu purely from this list, so a client-side filter would still leave the
     // page reachable by typing its URL.
     const visible = [...(registry?.webUi.values() ?? [])].filter((w) =>
-      isPluginAllowedForUser(user, { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) }));
+      (!w.adminOnly || user?.is_admin === true)
+      && isPluginAllowedForUser(user, { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) }));
     return c.json(visible.map((w) => ({
       name: w.plugin,
       url: `/plugins/${w.plugin}/web/${w.hash}.js`,
@@ -60,9 +61,11 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
         ? { path: w.cssFile, type: 'text/css; charset=utf-8', missing: 'stylesheet missing' }
         : undefined;
     if (!w || !asset) return c.json({ error: 'not found' }, 404);
+    const user = c.get('user');
+    if (w.adminOnly && user?.is_admin !== true) return c.json({ error: 'forbidden' }, 403);
     // Same grant as the listing: hiding a plugin from the menu is worthless if its assets are still
     // downloadable, since together they carry the plugin's whole UI.
-    if (!isPluginAllowedForUser(c.get('user'), { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) })) {
+    if (!isPluginAllowedForUser(user, { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) })) {
       return c.json({ error: 'forbidden' }, 403);
     }
     if (!existsSync(asset.path)) return c.json({ error: asset.missing }, 404);

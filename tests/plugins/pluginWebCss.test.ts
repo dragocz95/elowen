@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
@@ -33,11 +33,19 @@ async function load(root: string) {
   const warnings: string[] = [];
   const errors: string[] = [];
   const registry = await loadPlugins({
-    dirs: [root], enabled: ['demo'],
+    dirs: [root], enabled: ['demo'], delegatedTurnsOutOfProcess: false,
     logger: { info() {}, warn(m: string) { warnings.push(m); }, error(m: string) { errors.push(m); } },
   });
   return { web: registry.webUi.get('demo'), warnings, errors };
 }
+
+describe('bundled plugin web build', () => {
+  it('emits the stylesheet every manifest with web.css expects', () => {
+    const script = readFileSync(join(import.meta.dirname, '..', '..', 'scripts', 'build-plugins-web.mjs'), 'utf8');
+    expect(script).toContain('buildPluginUiCss');
+    expect(script).toContain("join(dir, 'web', 'index.css')");
+  });
+});
 
 describe('plugin manifest web.css', () => {
   it('is optional, and a manifest without it parses exactly as before', () => {

@@ -18,7 +18,7 @@ let pluginRoots: string[] = [];
 afterEach(() => { for (const p of pluginRoots) rmSync(p, { recursive: true, force: true }); pluginRoots = []; });
 
 /** On-disk fixture: `demo` ships a browser UI (bundle + nav/settings + cs overrides); `plain` has none. */
-function uiPluginProvider(): PluginRegistryProvider {
+function uiPluginProvider(adminOnly = false): PluginRegistryProvider {
   const root = mkdtempSync(join(tmpdir(), 'plugin-ui-'));
   pluginRoots.push(root);
   for (const name of ['demo', 'plain']) {
@@ -30,6 +30,7 @@ function uiPluginProvider(): PluginRegistryProvider {
           web: {
             entry: 'web/index.js',
             css: 'web/index.css',
+            adminOnly,
             label: 'Demo',
             nav: [{ label: 'Demo world', icon: 'Bot', route: '' }],
             settings: [{ id: 'demo-settings', label: 'Demo settings', icon: 'Puzzle' }],
@@ -50,11 +51,11 @@ function uiPluginProvider(): PluginRegistryProvider {
     }
   }
   return new PluginRegistryProvider(() => loadPlugins({
-    dirs: [root], enabled: ['demo', 'plain'], logger: { info() {}, warn() {}, error() {} },
+    dirs: [root], enabled: ['demo', 'plain'], delegatedTurnsOutOfProcess: false, logger: { info() {}, warn() {}, error() {} },
   }));
 }
 
-const makeApp = async () => makeTestApp({ extra: { plugins: uiPluginProvider() } });
+const makeApp = async (adminOnly = false) => makeTestApp({ extra: { plugins: uiPluginProvider(adminOnly) } });
 const auth = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
 
 describe('plugin browser UI routes', () => {
@@ -72,6 +73,20 @@ describe('plugin browser UI routes', () => {
     // admin sees the same listing
     const adminRes = await app.request('/plugins/ui', auth(token));
     expect(((await adminRes.json()) as unknown[]).length).toBe(1);
+  });
+
+  it('hides admin-only navigation and assets from non-admin accounts', async () => {
+    const { app, token, deps } = await makeApp(true);
+    const amy = deps.users.create('amy', 'pw');
+    const amyToken = deps.users.issueToken(amy.id);
+
+    const userList = await (await app.request('/plugins/ui', auth(amyToken))).json() as unknown[];
+    expect(userList).toEqual([]);
+    expect((await app.request(`/plugins/demo/web/${HASH}.js`, auth(amyToken))).status).toBe(403);
+
+    const adminList = await (await app.request('/plugins/ui', auth(token))).json() as unknown[];
+    expect(adminList).toHaveLength(1);
+    expect((await app.request(`/plugins/demo/web/${HASH}.js`, auth(token))).status).toBe(200);
   });
 
   it('?lang=cs localizes nav/settings labels and view strings from the plugin i18n web block', async () => {
@@ -125,7 +140,7 @@ describe('plugin browser UI routes', () => {
     writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
     writeFileSync(join(dir, 'web', 'index.js'), BUNDLE);
     const { app, token } = await makeTestApp({ extra: { plugins: new PluginRegistryProvider(() => loadPlugins({
-      dirs: [root], enabled: ['bare'], logger: { info() {}, warn() {}, error() {} },
+      dirs: [root], enabled: ['bare'], delegatedTurnsOutOfProcess: false, logger: { info() {}, warn() {}, error() {} },
     })) } });
     const list = await (await app.request('/plugins/ui', auth(token))).json() as Record<string, unknown>[];
     expect(list).toHaveLength(1);

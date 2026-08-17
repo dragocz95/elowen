@@ -6,7 +6,7 @@
 import { readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildPluginUiBundle } from 'elowen-plugin-ui-kit/build';
+import { buildPluginUiBundle, buildPluginUiCss } from 'elowen-plugin-ui-kit/build';
 
 const pluginsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins');
 const ENTRY_NAMES = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
@@ -19,6 +19,8 @@ for (const name of readdirSync(pluginsDir)) {
   const entry = ENTRY_NAMES.map((f) => join(src, f)).find((f) => existsSync(f));
   if (!entry) throw new Error(`[build-plugins-web] ${name}: web-src/ exists but has no index.{tsx,ts,jsx,js} entry`);
   // Resolve shared browser deps (lucide-react…) from the web app's tree — one version, no root copy.
-  await buildPluginUiBundle({ entry, outfile: join(dir, 'web', 'index.js'), nodePaths: [join(pluginsDir, '..', 'web', 'node_modules')] });
-  console.log(`[build-plugins-web] ${name}: web-src → web/index.js`);
+  const bundle = join(dir, 'web', 'index.js');
+  await buildPluginUiBundle({ entry, outfile: bundle, nodePaths: [join(pluginsDir, '..', 'web', 'node_modules')] });
+  await buildPluginUiCss({ bundle, outfile: join(dir, 'web', 'index.css') });
+  console.log(`[build-plugins-web] ${name}: web-src → web/index.js + web/index.css`);
 }

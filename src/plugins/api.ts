@@ -706,6 +706,8 @@ export interface PluginWebUi {
   /** Content hash of that stylesheet — its own immutable serving URL, independent of the bundle's. */
   cssHash?: string;
   requiresApiVersion: number;
+  /** Browser navigation and assets are visible only to administrator accounts. */
+  adminOnly?: boolean;
   /** Name of the plugin's world in the main navigation; absent = the world borrows its first page's. */
   label?: string;
   nav: { label: string; icon?: string; route?: string }[];

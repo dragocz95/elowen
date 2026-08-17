@@ -133,6 +133,8 @@ export interface PluginManifest {
     css?: string;
     /** The window.ElowenUiRuntime major the bundle needs; an unsupported one renders a placeholder. */
     requiresApiVersion?: number;
+    /** Hide the plugin's navigation and browser assets from non-admin accounts. */
+    adminOnly?: boolean;
     /** Name of the plugin's WORLD in the main navigation — the group its pages hang under. Without it
      *  the world borrows the first page's name, which reads wrong for a plugin contributing several
      *  peer pages ("Úkoly" standing over Kanban and Statistics). Overridable per locale like the rest. */
@@ -225,6 +227,7 @@ const ManifestSchema = Type.Object({
     entry: Type.String({ minLength: 1 }),
     css: Type.Optional(Type.String({ minLength: 1 })),
     requiresApiVersion: Type.Optional(Type.Number()),
+    adminOnly: Type.Optional(Type.Boolean()),
     label: Type.Optional(Type.String({ minLength: 1 })),
     nav: Type.Optional(Type.Array(Type.Object({
       label: Type.String({ minLength: 1 }),
