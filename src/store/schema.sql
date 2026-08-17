@@ -300,6 +300,56 @@ CREATE TABLE IF NOT EXISTS brain_goals (
 );
 CREATE INDEX IF NOT EXISTS idx_brain_goals_user ON brain_goals(user_id, status);
 
+-- Ingress ledger: which request origins spoke into which conversation. Its job is to survive a daemon
+-- restart — the in-memory sessionId → origin map is rebuilt from here — and to answer "which address
+-- talked into this session" for the admin drill-down. One row per (session, distinct origin), so it grows
+-- with conversations and networks, never with messages. `trusted` records whether the origin was a
+-- proxy-verified fact at the time (see src/api/clientIp.ts); it is stored, never used to hide a row.
+CREATE TABLE IF NOT EXISTS brain_session_origins (
+  session_id TEXT NOT NULL,
+  origin     TEXT NOT NULL,   -- '203.0.113.7' | 'local' | 'internal' | 'platform:discord'
+  user_id    INTEGER NOT NULL,
+  trusted    INTEGER NOT NULL DEFAULT 0,
+  requests   INTEGER NOT NULL DEFAULT 0,
+  first_at   INTEGER NOT NULL,
+  last_at    INTEGER NOT NULL,
+  PRIMARY KEY (session_id, origin)
+);
+CREATE INDEX IF NOT EXISTS idx_session_origins_last ON brain_session_origins(last_at);
+
+-- Rollup of settled-turn spend per day × user × origin, and the ONLY source the admin origin view reads.
+-- It exists because the question "who burned the tokens, and from where" cannot be answered from
+-- brain_messages without scanning the largest table in the database with json_extract on every row — the
+-- /usage/by-* views already pay that (~1.2 s cold) and this view must not add a second one. Written once
+-- per settled turn (one UPSERT), read as a scan over a table whose row count is days × users × addresses.
+--
+-- It is a SEPARATE counter from /usage/by-day and /usage/by-model, which derive their numbers from the
+-- messages themselves. The two answer different questions and are NOT guaranteed to agree: this table
+-- starts at deployment (older spend has no origin and never will), a hand-edited message row changes one
+-- side only, and only /usage/reset clears both. Callers must never present one as a check on the other.
+CREATE TABLE IF NOT EXISTS usage_by_origin (
+  day          TEXT NOT NULL,     -- 'YYYY-MM-DD' UTC, the same day basis as usageByDay
+  user_id      INTEGER NOT NULL,
+  origin       TEXT NOT NULL,
+  origin_kind  TEXT NOT NULL CHECK (origin_kind IN ('ip','local','internal','platform','redacted')),
+  -- 0 as soon as ANY turn in the bucket came from an unverifiable claim: a bucket is only as trustworthy
+  -- as its weakest contribution.
+  trusted      INTEGER NOT NULL DEFAULT 0,
+  turns        INTEGER NOT NULL DEFAULT 0,
+  input        INTEGER NOT NULL DEFAULT 0,
+  output       INTEGER NOT NULL DEFAULT 0,
+  cache_read   INTEGER NOT NULL DEFAULT 0,
+  cache_write  INTEGER NOT NULL DEFAULT 0,
+  total        INTEGER NOT NULL DEFAULT 0,
+  -- NULL stays NULL: a bucket whose turns reported no cost is "unknown", never a real $0.
+  cost         REAL,
+  costed_turns INTEGER NOT NULL DEFAULT 0,
+  first_at     INTEGER NOT NULL,
+  last_at      INTEGER NOT NULL,
+  PRIMARY KEY (day, user_id, origin)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_by_origin_day ON usage_by_origin(day);
+
 -- Durable binding for an admin's interactive `elowen chat` terminal (BrainTerminalService): the tmux
 -- session name → the brain conversation it resumes + the per-terminal auth token minted for it. The token
 -- is stored verbatim (not hashed) because the tmux session survives a daemon restart and teardown must be

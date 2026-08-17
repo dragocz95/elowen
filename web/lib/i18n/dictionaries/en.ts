@@ -1192,6 +1192,8 @@ export const en = {
       toolDeferThresholdHint: "External MCP tools are withheld from the prompt — only their names are advertised and the assistant fetches the full definition on demand — once a conversation holds more of them than this. Lower = a lighter prompt, at the cost of one extra round before a fetched tool can be called. Range 1-100, default 10.",
       eventRetentionDays: "Activity log retention",
       eventRetentionDaysHint: "How long entries in the activity timeline are kept before the hourly cleanup removes them. Range 1-365 days, default 30 days.",
+      originIpRetentionDays: "IP address retention",
+      originIpRetentionDaysHint: "How long a recorded client IP stays readable in the usage-by-origin view before the hourly cleanup replaces it with a placeholder. The token and cost totals survive; only the address goes. The row itself is removed later, on the activity log retention above. Range 1-365 days, default 30 days.",
       streamSilenceLimitMs: "Chat stream — silence limit",
       streamSilenceLimitMsHint: "How long the chat stream may go without a single frame — a message or the daemon's heartbeat — on a page you are watching, before the browser treats the connection as dead and reconnects. The lower end stops at 35 s on purpose: the heartbeat arrives every 30 s, so a shorter limit would declare a healthy but idle stream dead. Range 35-300 s, default 75 s.",
       streamReviveSilenceLimitMs: "Chat stream — silence limit on wake-up",

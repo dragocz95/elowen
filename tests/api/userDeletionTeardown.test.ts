@@ -76,6 +76,20 @@ describe('DELETE /users/:id tears down what is running before it deletes what is
     expect(users.get(carol.id)).toBeNull();
     expect(db.prepare('SELECT COUNT(*) c FROM user_projects WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
   });
+
+  it('takes the user\'s recorded IP addresses with them', async () => {
+    const { app, db, carol, adminTok } = setup();
+    db.prepare(`INSERT INTO usage_by_origin (day, user_id, origin, origin_kind, trusted, turns, total, first_at, last_at)
+                VALUES ('2026-08-17', ?, '203.0.113.7', 'ip', 1, 1, 100, 1, 1)`).run(carol.id);
+    db.prepare(`INSERT INTO brain_session_origins (session_id, origin, user_id, trusted, requests, first_at, last_at)
+                VALUES ('brain-1', '203.0.113.7', ?, 1, 1, 1, 1)`).run(carol.id);
+
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
+    // An IP address is personal data: deleting the account must delete it, not leave it for the next
+    // retention sweep — and certainly not leave it for a recycled user id to inherit.
+    expect(db.prepare('SELECT COUNT(*) c FROM usage_by_origin WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
+    expect(db.prepare('SELECT COUNT(*) c FROM brain_session_origins WHERE user_id = ?').get(carol.id)).toEqual({ c: 0 });
+  });
 });
 
 describe('POST /users/:id/projects requires both sides to exist', () => {

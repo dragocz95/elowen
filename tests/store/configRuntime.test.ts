@@ -20,6 +20,7 @@ describe('ConfigStore runtime limits', () => {
         memoryCuratorMaxOps: 2,           // MAX_OPS_PER_TURN
         toolDeferThreshold: 10,           // DEFAULT_DEFER_THRESHOLD
         eventRetentionDays: 30,           // purgeOlderThan(days = 30)
+        originIpRetentionDays: 30,        // IP redaction horizon
         streamSilenceLimitMs: 75_000,     // SILENCE_LIMIT_MS
         streamReviveSilenceLimitMs: 45_000, // REVIVE_SILENCE_LIMIT_MS
         toastDurationMs: 4_500,           // TOAST_MS
@@ -46,7 +47,7 @@ describe('ConfigStore runtime limits', () => {
       localShellTimeoutMs: 10_000, memorySemanticFloorPerMille: 100,
       memoryDuplicatePerMille: 500, memoryParaphrasePerMille: 500,
       memoryImportanceWeightPerMille: 0, memoryVitalityWeightPerMille: 0, memoryCuratorMaxOps: 0,
-      toolDeferThreshold: 1, eventRetentionDays: 1,
+      toolDeferThreshold: 1, eventRetentionDays: 1, originIpRetentionDays: 1,
       streamSilenceLimitMs: 35_000, streamReviveSilenceLimitMs: 35_000, toastDurationMs: 2_000,
     };
     cs.update({ runtime: { limits: low } });
@@ -55,7 +56,7 @@ describe('ConfigStore runtime limits', () => {
       localShellTimeoutMs: 300_000, memorySemanticFloorPerMille: 800,
       memoryDuplicatePerMille: 980, memoryParaphrasePerMille: 980,
       memoryImportanceWeightPerMille: 300, memoryVitalityWeightPerMille: 300, memoryCuratorMaxOps: 6,
-      toolDeferThreshold: 100, eventRetentionDays: 365,
+      toolDeferThreshold: 100, eventRetentionDays: 365, originIpRetentionDays: 365,
       streamSilenceLimitMs: 300_000, streamReviveSilenceLimitMs: 300_000, toastDurationMs: 15_000,
     };
     cs.update({ runtime: { limits: high } });
@@ -64,20 +65,20 @@ describe('ConfigStore runtime limits', () => {
 
   it('clamps a value past either end back into range', () => {
     const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ runtime: { limits: { localShellTimeoutMs: 1, memorySemanticFloorPerMille: 0, memoryDuplicatePerMille: 0, memoryParaphrasePerMille: 0, memoryImportanceWeightPerMille: -50, memoryVitalityWeightPerMille: -50, memoryCuratorMaxOps: -1, toolDeferThreshold: 0, eventRetentionDays: 0, streamSilenceLimitMs: 1_000, streamReviveSilenceLimitMs: 1_000, toastDurationMs: 100 } } });
+    cs.update({ runtime: { limits: { localShellTimeoutMs: 1, memorySemanticFloorPerMille: 0, memoryDuplicatePerMille: 0, memoryParaphrasePerMille: 0, memoryImportanceWeightPerMille: -50, memoryVitalityWeightPerMille: -50, memoryCuratorMaxOps: -1, toolDeferThreshold: 0, eventRetentionDays: 0, originIpRetentionDays: 0, streamSilenceLimitMs: 1_000, streamReviveSilenceLimitMs: 1_000, toastDurationMs: 100 } } });
     expect(cs.get().runtime.limits).toEqual({
       localShellTimeoutMs: 10_000, memorySemanticFloorPerMille: 100,
       memoryDuplicatePerMille: 500, memoryParaphrasePerMille: 500,
       memoryImportanceWeightPerMille: 0, memoryVitalityWeightPerMille: 0, memoryCuratorMaxOps: 0,
-      toolDeferThreshold: 1, eventRetentionDays: 1,
+      toolDeferThreshold: 1, eventRetentionDays: 1, originIpRetentionDays: 1,
       streamSilenceLimitMs: 35_000, streamReviveSilenceLimitMs: 35_000, toastDurationMs: 2_000,
     });
-    cs.update({ runtime: { limits: { localShellTimeoutMs: 9_000_000, memorySemanticFloorPerMille: 1_000, memoryDuplicatePerMille: 1_000, memoryParaphrasePerMille: 1_000, memoryImportanceWeightPerMille: 900, memoryVitalityWeightPerMille: 900, memoryCuratorMaxOps: 99, toolDeferThreshold: 5_000, eventRetentionDays: 10_000, streamSilenceLimitMs: 9_000_000, streamReviveSilenceLimitMs: 9_000_000, toastDurationMs: 9_000_000 } } });
+    cs.update({ runtime: { limits: { localShellTimeoutMs: 9_000_000, memorySemanticFloorPerMille: 1_000, memoryDuplicatePerMille: 1_000, memoryParaphrasePerMille: 1_000, memoryImportanceWeightPerMille: 900, memoryVitalityWeightPerMille: 900, memoryCuratorMaxOps: 99, toolDeferThreshold: 5_000, eventRetentionDays: 10_000, originIpRetentionDays: 10_000, streamSilenceLimitMs: 9_000_000, streamReviveSilenceLimitMs: 9_000_000, toastDurationMs: 9_000_000 } } });
     expect(cs.get().runtime.limits).toEqual({
       localShellTimeoutMs: 300_000, memorySemanticFloorPerMille: 800,
       memoryDuplicatePerMille: 980, memoryParaphrasePerMille: 980,
       memoryImportanceWeightPerMille: 300, memoryVitalityWeightPerMille: 300, memoryCuratorMaxOps: 6,
-      toolDeferThreshold: 100, eventRetentionDays: 365,
+      toolDeferThreshold: 100, eventRetentionDays: 365, originIpRetentionDays: 365,
       streamSilenceLimitMs: 300_000, streamReviveSilenceLimitMs: 300_000, toastDurationMs: 15_000,
     });
   });

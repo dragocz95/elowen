@@ -269,7 +269,7 @@ export async function buildApp(opts: BuildOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
     brainRuntime, brainCreds, brainOauth, brainConfig, embeddings,
-    brainStore, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
+    brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, embedQueue, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand, loadedPlugins, setPluginHostBrainWorker, setPluginHostPush, setPluginHostTerminals, setPluginHostAdvisor,
   } = await buildBrainCore({
     dbPath: opts.dbPath,
@@ -533,7 +533,7 @@ export async function buildApp(opts: BuildOpts) {
     get engine() { return missionsControl()?.engine(); },
     get missionGit() { return missionsControl()?.missionGit(); },
     get advisor() { return missionsControl()?.advisor(); },
-    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, memoryStore, memoryCategoryStore, userPluginConfig, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
+    project: homeProject, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth: brainCreds, prompts, git, avatarsDir, avatarSecret, chatImagesDir, brain, brainTerminal, restartDaemon, brainWorkers, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes, ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   });
 
   const startLoops = () => {
@@ -577,6 +577,21 @@ export async function buildApp(opts: BuildOpts) {
     };
     purgeEvents();
     const stopEventPurge = clock.setInterval(purgeEvents, 3_600_000);
+    // Origin accounting holds IP addresses, so it is swept in two steps rather than one. First the
+    // address is redacted (the spend totals survive, the personal datum does not), on its own shorter
+    // horizon; only later does the row go entirely, on the same retention window the activity log uses.
+    // Both read live, so a Settings change applies on the next sweep.
+    const sweepOriginRetention = () => {
+      if (!usageOrigins) return;
+      try {
+        const limits = config.get().runtime.limits;
+        const day = 86_400_000;
+        usageOrigins.redactOlderThan(clock.now() - limits.originIpRetentionDays * day);
+        usageOrigins.purgeOlderThan(clock.now() - limits.eventRetentionDays * day);
+      } catch (e) { log.error('origin retention sweep failed', e); }
+    };
+    sweepOriginRetention();
+    const stopOriginRetention = clock.setInterval(sweepOriginRetention, 3_600_000);
     // Optional session retention (admin, off by default): hourly, delete each user's own idle
     // conversations older than the configured age. Skips running/active/has-running-child sessions,
     // conversations a pending cron wake-up is bound to, and the non-user channel/task shells (enforced
@@ -652,7 +667,7 @@ export async function buildApp(opts: BuildOpts) {
     const stopEmbedQueue = clock.setInterval(() => {
       void embedQueue.drain().catch((e) => log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopTokenPurge(); stopEventPurge(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopTicketSweep(); stopTerminalSweep(); stopIdleSessionReap(); stopBrainWorkerWatchdog(); stopEmbedQueue(); };
+    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopTicketSweep(); stopTerminalSweep(); stopIdleSessionReap(); stopBrainWorkerWatchdog(); stopEmbedQueue(); };
   };
   return { app, startLoops, tickets, tmux };
 }

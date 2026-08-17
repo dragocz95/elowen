@@ -104,6 +104,10 @@ export interface ServerDeps {
   brainWorkers?: { isLive(session: string): boolean; abort(session: string): Promise<void> };
   /** Brain message store — feeds GET /tasks/:id/conversation for elowen workers. */
   brainStore?: import('../store/brainStore.js').BrainStore;
+  /** Where a turn's spend is attributed: which request origin ordered it, rolled up per day × user ×
+   *  origin. The ONLY source of the admin origin view. Absent (minimal test wiring) → nothing is
+   *  recorded and GET /usage/by-origin answers 503 rather than an empty, reassuring list. */
+  usageOrigins?: import('../store/usageOriginStore.js').UsageOriginStore;
   /** Elowen RAW memory persistence (user-scoped): facts, packed-Float32 embeddings, audit events. */
   memoryStore?: import('../store/memoryStore.js').MemoryStore;
   /** Per-user memory categories (labels + LLM-facing descriptions). Absent → the category routes 400. */

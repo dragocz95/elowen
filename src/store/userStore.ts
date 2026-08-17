@@ -174,6 +174,10 @@ export class UserStore {
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
       this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
       this.db.prepare('DELETE FROM user_plugin_config WHERE user_id = ?').run(id); // no orphan per-plugin values (incl. their secrets)
+      // Origin accounting holds IP addresses — personal data. Deleting the account must take them with
+      // it in the SAME transaction, not on the next retention sweep.
+      this.db.prepare('DELETE FROM usage_by_origin WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_session_origins WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }

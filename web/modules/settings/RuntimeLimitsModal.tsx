@@ -1,5 +1,5 @@
 'use client';
-import { Gauge, TerminalSquare, Radar, History, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, type LucideIcon } from 'lucide-react';
+import { Gauge, TerminalSquare, Radar, History, EyeOff, Activity, AlarmClock, MessageSquare, Copy, CopyCheck, Star, HeartPulse, PenLine, Cpu, type LucideIcon } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -14,7 +14,7 @@ export const RUNTIME_LIMIT_DEFAULTS: RuntimeLimits = {
   localShellTimeoutMs: 30000, memorySemanticFloorPerMille: 200,
   memoryDuplicatePerMille: 720, memoryParaphrasePerMille: 700,
   memoryImportanceWeightPerMille: 100, memoryVitalityWeightPerMille: 100, memoryCuratorMaxOps: 2,
-  toolDeferThreshold: 10, eventRetentionDays: 30,
+  toolDeferThreshold: 10, eventRetentionDays: 30, originIpRetentionDays: 30,
   streamSilenceLimitMs: 75000, streamReviveSilenceLimitMs: 45000, toastDurationMs: 4500,
 };
 
@@ -52,6 +52,9 @@ const RUNTIME_LIMIT_FIELDS: RuntimeLimitField[] = [
   { key: 'memoryVitalityWeightPerMille', kind: 'share', min: 0, max: 300, step: 10, icon: HeartPulse },
   { key: 'memoryCuratorMaxOps', kind: 'count', min: 0, max: 6, step: 1, icon: PenLine },
   { key: 'eventRetentionDays', kind: 'days', min: 1, max: 365, step: 1, icon: History },
+  // Next to the log retention because both answer "how long is this kept", but this one is the privacy
+  // horizon: past it the recorded address is replaced by a placeholder and only the totals remain.
+  { key: 'originIpRetentionDays', kind: 'days', min: 1, max: 365, step: 1, icon: EyeOff },
   // Adjacent on purpose: the two are one setting asked at two moments (a watched page, and a wake-up where
   // no timer could have run), and they share a floor — 35 s, above the daemon's 30 s heartbeat, because a
   // limit inside the beat interval would call a healthy but idle stream dead.

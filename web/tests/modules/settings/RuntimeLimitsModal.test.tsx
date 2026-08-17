@@ -41,13 +41,17 @@ describe('RuntimeLimitsModal', () => {
     const { apply } = renderModal();
 
     expect(screen.getByText('30 s')).toBeTruthy();
-    expect(screen.getByText('30 days')).toBeTruthy();
+    // Two retention knobs share the days unit (activity log, IP address), so the value alone is ambiguous.
+    expect(screen.getAllByText('30 days')).toHaveLength(2);
 
     fireEvent.change(screen.getByRole('slider', { name: 'Local shell timeout' }), { target: { value: '90' } });
     expect(apply(0).limits.localShellTimeoutMs).toBe(90000);
 
     fireEvent.change(screen.getByRole('slider', { name: 'Activity log retention' }), { target: { value: '7' } });
     expect(apply(1).limits.eventRetentionDays).toBe(7);
+
+    fireEvent.change(screen.getByRole('slider', { name: 'IP address retention' }), { target: { value: '14' } });
+    expect(apply(2).limits.originIpRetentionDays).toBe(14);
   });
 
   it('keeps a slider change inside the canonical field bounds', () => {

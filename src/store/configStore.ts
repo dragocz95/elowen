@@ -368,6 +368,10 @@ const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = {
   memoryCuratorMaxOps: 2,
   toolDeferThreshold: 10,
   eventRetentionDays: 30,
+  // Thirty days of readable addresses: long enough to investigate a month's traffic pattern, short enough
+  // that an address nobody looked at stops being stored as one. Must stay at or below eventRetentionDays
+  // in practice — a longer horizon simply never fires, because the row is deleted first.
+  originIpRetentionDays: 30,
   // Two and a half missed heartbeats on a watched page…
   streamSilenceLimitMs: 75_000,
   // …and a tighter one at a wake-up, where no watchdog tick could have run while the page slept.
@@ -441,6 +445,9 @@ const RUNTIME_LIMIT_BOUNDS: Record<keyof RuntimeLimits, [min: number, max: numbe
   // break for nothing; past 100 no realistic MCP surface would ever engage it.
   toolDeferThreshold: [1, 100],
   eventRetentionDays: [1, 365],
+  // Same range as the log retention above, and for the same reason: a day is the shortest horizon that
+  // still lets anyone look at yesterday, a year the longest anyone can call a retention window.
+  originIpRetentionDays: [1, 365],
   // The pair shares one floor because they measure the same thing against the same heartbeat; the ceiling
   // is five minutes, past which a dead stream is no longer worth calling detected.
   streamSilenceLimitMs: [MIN_STREAM_SILENCE_MS, 300_000],

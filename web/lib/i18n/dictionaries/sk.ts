@@ -1192,6 +1192,8 @@ export const sk = {
       toolDeferThresholdHint: "Externé nástroje MCP sa vynechajú z promptu — ponúkajú sa len ich názvy a asistent si úplnú definíciu dotiahne na vyžiadanie — hneď ako ich konverzácia obsahuje viac než tento počet. Nižšia hodnota = ľahší prompt za cenu jedného kola navyše, než sa dá dotiahnutý nástroj zavolať. Rozsah 1–100, predvolené 10.",
       eventRetentionDays: "Retencia protokolu aktivity",
       eventRetentionDaysHint: "Ako dlho sa uchovávajú záznamy v časovej osi aktivity, než ich hodinové upratovanie odstráni. Rozsah 1–365 dní, predvolené 30 dní.",
+      originIpRetentionDays: "Retencia IP adries",
+      originIpRetentionDaysHint: "Ako dlho zostane zaznamenaná IP adresa klienta čitateľná v prehľade spotreby podľa pôvodu, než ju hodinové upratovanie nahradí zástupnou hodnotou. Súčty tokenov a nákladov zostanú zachované, zmizne iba adresa. Samotný záznam sa odstráni neskôr, podľa retencie protokolu aktivity vyššie. Rozsah 1–365 dní, predvolené 30 dní.",
       streamSilenceLimitMs: "Dátový tok chatu — limit ticha",
       streamSilenceLimitMsHint: "Ako dlho smie dátový tok chatu zostať bez jediného rámca — správy alebo tepu démona — na stránke, ktorú máte otvorenú pred sebou, než prehliadač vyhlási spojenie za mŕtve a pripojí sa znova. Dolná hranica končí zámerne na 35 s: tep prichádza každých 30 s, takže kratší limit by za mŕtvy označil aj zdravý, len nečinný tok. Rozsah 35–300 s, predvolené 75 s.",
       streamReviveSilenceLimitMs: "Dátový tok chatu — limit ticha pri prebudení",

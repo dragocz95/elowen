@@ -32,6 +32,7 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { FileCredentialStore } from '../brain/credentialStore.js';
 import { bearerFromAuth, type BrainCredentialAccess } from '../brain/providerUsage.js';
 import { BrainStore } from '../store/brainStore.js';
+import { UsageOriginStore } from '../store/usageOriginStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
@@ -328,6 +329,11 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // process shares (daemon and forked sub-agent runner alike) — an unwired process would fall back to
   // id-keyed directories and stop seeing spills of conversations that were ever re-keyed.
   setSpillNamespaceResolver((sessionId) => brainStore.spillNamespace(sessionId));
+  // Origin attribution for brain spend. Built here, next to brainStore, because BOTH the HTTP layer
+  // (which learns where a request came from) and the persistence projector (which settles the turn) need
+  // the SAME instance — the in-memory sessionId → origin map is what connects the two, and a second
+  // instance would start empty and attribute every live turn to `internal`.
+  const usageOrigins = new UsageOriginStore(db);
   const memoryStore = new MemoryStore(db);
   const memoryCategoryStore = new MemoryCategoryStore(db);
   // ONE embedding-config mapper shared by the retrieval service AND the background embed queue, so both
@@ -685,7 +691,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     cli, cliArgv, elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot, getAgentRegistry,
     brainDir, brainRuntime, brainCreds, brainOauth, brainConfig, resolveProvider,
-    embeddings, embeddingConfig, brainStore, memoryStore, memoryCategoryStore, userPluginConfig,
+    embeddings, embeddingConfig, brainStore, usageOrigins, memoryStore, memoryCategoryStore, userPluginConfig,
     memoryService, embedQueue, memoryModelInference, memoryCategorizer,
     pluginProvider, hookAudit, brain, themes, brand,
     // Sync view of the last loaded registry (undefined before the first load) — for wiring that must

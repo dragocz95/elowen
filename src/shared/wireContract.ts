@@ -321,6 +321,11 @@ export interface RuntimeLimits {
   memoryCuratorMaxOps: number;
   toolDeferThreshold: number;
   eventRetentionDays: number;
+  /** How long a recorded client IP stays readable in the origin-usage rollup before the hourly janitor
+   *  replaces it with `redacted` and merges its bucket. The totals survive the redaction; only the
+   *  address goes. The row itself is deleted later, on `eventRetentionDays` — so this is the
+   *  personal-data horizon and that one is the accounting horizon. */
+  originIpRetentionDays: number;
   /** The two below are a PAIR — both answer "how long may a chat stream go without a sign of life before
    *  the browser gives up on it", differing only in which moment asks. They are read by the WEB client
    *  (which cannot import daemon code, hence the trip through this contract), and neither may reach down
