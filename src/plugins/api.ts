@@ -230,7 +230,10 @@ export interface SessionSource {
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
      *  at full price. Unset → the host default (SESSION_IDLE_ROLLOVER_MS). */
-    sessionIdleMs?: number };
+    sessionIdleMs?: number;
+    /** Additional per-turn tool denies supplied by a platform. This can only NARROW the resolved account
+     *  or role policy; synthetic relays use it to prevent autonomous agent-to-agent message loops. */
+    denyTools?: string[] };
 }
 /** Names one of the host's own standing announcements so an adapter can say it in the user's language.
  *  The host has no language setting — the per-platform `language` config is the only place that knows
@@ -763,6 +766,9 @@ export interface PlatformControlApi {
    *  a guard failure (foreign/unknown/non-bindable session) or an unlinked sender. The caller is
    *  responsible for its own operator gate. */
   bindContext(ref: ChannelRef, senderPlatformId: string, sessionId: string): Promise<{ title: string }>;
+  /** Run a synthetic platform message through the SAME identity, policy, durable session and locking path
+   *  as inbound traffic. The adapter remains responsible for delivering the returned reply. */
+  relay(src: SessionSource, text: string): Promise<string | undefined>;
 }
 
 /** Scoped logger handed to a plugin (prefixed with the plugin name by the registry). */

@@ -79,7 +79,7 @@ export class PlatformOrchestrator {
     for (const adapter of plugins?.platforms ?? []) {
       if (only && !only.includes(adapter.name)) continue;
       try {
-        adapter.listen(async (src, text, onEvent) => {
+        const onMessage: Parameters<typeof adapter.listen>[0] = async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
           // Origin-bound work (#116): a message replaying a job scheduled FROM a user conversation runs
@@ -222,9 +222,10 @@ export class PlatformOrchestrator {
           const linkedUserId = resolved.linkedUserId;
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
+          const turnDenied = src.access.denyTools ?? [];
           if (linkedUserId != null && this.d.policyForUser) {
             policy = this.d.policyForUser(linkedUserId);
-            const denied = this.d.disabledToolsFor?.(linkedUserId) ?? [];
+            const denied = [...new Set([...(this.d.disabledToolsFor?.(linkedUserId) ?? []), ...turnDenied])];
             toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
           } else {
             policy = src.access.admin
@@ -242,8 +243,9 @@ export class PlatformOrchestrator {
             // role still passes (that is what an admin role means for every other tool here); anyone else
             // is denied, so an unlinked stranger cannot borrow a subsystem an admin hands out per person.
             const ungranted = this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? [];
-            toolPolicy = allow || ungranted.length
-              ? { ...(allow ? { allow } : {}), ...(ungranted.length ? { deny: new Set(ungranted) } : {}) }
+            const denied = [...new Set([...ungranted, ...turnDenied])];
+            toolPolicy = allow || denied.length
+              ? { ...(allow ? { allow } : {}), ...(denied.length ? { deny: new Set(denied) } : {}) }
               : undefined;
           }
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
@@ -276,9 +278,10 @@ export class PlatformOrchestrator {
             // reproducing the previous `verifiedPrefix + text`.
             senderPrefix: resolved.verifiedPrefix,
           }, text);
-        });
-        // Out-of-band channel control for slash commands (stop/status/compact/restart). Optional: an
-        // adapter that doesn't implement `control` simply keeps its message-only behaviour.
+        };
+        adapter.listen(onMessage);
+        // Out-of-band channel control for slash commands (stop/status/compact/restart) and synthetic
+        // platform relays. Optional: an adapter without `control` keeps its message-only behaviour.
         adapter.control?.({
           status: (ref) => this.d.channels.status(keyOf(ref)),
           abort: (ref) => this.d.channels.abort(keyOf(ref)),
@@ -298,6 +301,10 @@ export class PlatformOrchestrator {
             const bind = this.d.bindContext;
             if (!bind) return Promise.reject(new Error('context binding is not available on this deployment'));
             return bind(ref.platform, senderPlatformId, keyOf(ref), sessionId);
+          },
+          relay: (src, text) => {
+            if (src.platform !== adapter.name) return Promise.reject(new Error('relay platform mismatch'));
+            return onMessage(src, text);
           },
         });
         await adapter.connect();

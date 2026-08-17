@@ -7,6 +7,7 @@ import { READ_ONLY_AGENT_TOOLS, type AgentDef } from '../../src/brain/agents/age
 import { normalizeDelegatedExecutionScope, PROMPT_TRUNCATION_MARKER } from '../../src/brain/delegatedScope.js';
 import { delegatedChannelSendOpts, type DelegatedTurnRequest } from '../../src/brain/delegatedTurn.js';
 import type { BrainEvent } from '../../src/brain/events.js';
+import type { PlatformControlApi } from '../../src/plugins/api.js';
 
 // A linked sender resolves to Elowen account #2 (non-admin); everyone else is unlinked.
 const users = { get: (id: number) => ({ username: `u${id}` }) };
@@ -77,6 +78,43 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const sent = await runTurn({ linked: false, access: { admin: true, projectIds: [], tools: undefined } });
     expect(sent.policy.allowedProjectIds).toBe('all');
     expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
+  });
+
+  it('runs a synthetic relay through the target account channel and only narrows its tools', async () => {
+    let control: PlatformControlApi | undefined;
+    let sent: ChannelSendOpts | undefined;
+    let message = '';
+    const adapter = {
+      name: 'discord',
+      listen: () => {},
+      connect: async () => {},
+      control: (api: PlatformControlApi) => { control = api; },
+    };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      policyForUser: () => userPolicy,
+      disabledToolsFor: () => ['DiscordApi'],
+      identity: linkedResolver(false),
+      channels: {
+        send: async (opts: ChannelSendOpts, text: string) => { sent = opts; message = text; return 'target reply'; },
+        fragmentFor: () => '',
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    const reply = await control!.relay({
+      platform: 'discord', userId: 'D2', channelId: 'target#0', roleIds: [],
+      access: { admin: false, projectIds: [3], actAsUserId: 2, denyTools: ['DiscordSend'] },
+    }, 'agent relay');
+
+    expect(reply).toBe('target reply');
+    expect(message).toBe('agent relay');
+    expect(sent).toMatchObject({ channelId: 'discord-target#0', writerUserId: 2, policy: userPolicy });
+    expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
+    expect(sent?.identity?.elowenUserId).toBe(2);
   });
 
   it('anchors a delegated child to its non-owner parent account, never the platform owner', async () => {
