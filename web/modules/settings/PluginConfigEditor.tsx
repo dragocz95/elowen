@@ -385,7 +385,7 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
  *  special sections, whose content is data (jobs.json / .md files), not config schema. */
 type PluginConfigMode = 'setup' | 'behavior' | 'advanced' | 'all';
 
-export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions, riskText, draft, mode = 'behavior' }: {
+export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions, riskText, draft, mode = 'behavior', showAppPackage = true }: {
   name: string;
   /** Only the three fields the form actually reads, so the per-ACCOUNT form can hand it its own schema
    *  and values instead of an instance-wide plugin detail it does not have. */
@@ -396,6 +396,8 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   riskText: (r: 'low' | 'medium' | 'high') => string;
   draft: PluginConfigDraft;
   mode?: PluginConfigMode;
+  /** Custom plugin workspaces may expose the package download in their hero instead. */
+  showAppPackage?: boolean;
 }) {
   const { t } = useTranslation();
   const { data: brainModels } = useBrainModels();
@@ -572,7 +574,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         sectionCards.map((card, i) => {
           const hint = card.section ? fieldHint(card.section) : undefined;
           const isConnCard = card.section?.key === 'sec_connection';
-          const showAppPackage = detail.name === 'msteams' && isConnCard;
+          const showPackageAction = showAppPackage && detail.name === 'msteams' && isConnCard;
           return (
             <SettingsGroup
               key={card.section?.key ?? `lead-${i}`}
@@ -581,9 +583,9 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
             >
-              {showAppPackage || card.fields.length > 0 ? (
+              {showPackageAction || card.fields.length > 0 ? (
                 <div className="settings-group__panel flex flex-col gap-4">
-                  {showAppPackage ? <TeamsAppPackageSection /> : null}
+                  {showPackageAction ? <TeamsAppPackageSection /> : null}
                   {card.fields.length > 0 ? fieldList(card.fields) : null}
                 </div>
               ) : null}

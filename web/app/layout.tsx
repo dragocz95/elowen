@@ -1,4 +1,5 @@
 import './globals.css';
+import '../modules/settings/theme.css';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
