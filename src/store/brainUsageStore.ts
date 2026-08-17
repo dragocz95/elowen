@@ -18,14 +18,21 @@ export const numeric = (src: string, path: string, absent = '0'): string =>
  * registry name: custom endpoints used the internal `elowen-<config id>` namespace, while OAuth rows used
  * PI's built-in name. Normalize only that historical custom prefix before grouping; a marked id stays
  * verbatim, and only a missing/empty row field falls back to the session's configured provider id. */
-const producingProvider = (src: string, path: string, fallback: string): string => `COALESCE(
+const producingProvider = (src: string, path: string, modelPath: string, fallback: string): string => `COALESCE(
   NULLIF(CASE WHEN json_type(${src}, '${path}') = 'text' THEN
     CASE WHEN json_extract(${src}, '$.providerIdentity') = 'config'
       THEN json_extract(${src}, '${path}')
       WHEN json_extract(${src}, '${path}') LIKE '${BRAIN_REGISTRY_PROVIDER_PREFIX}%'
       THEN substr(json_extract(${src}, '${path}'), ${BRAIN_REGISTRY_PROVIDER_PREFIX.length + 1})
       ELSE json_extract(${src}, '${path}') END
-  END, ''), NULLIF(${fallback}, ''))`;
+  END, ''),
+  -- The session fallback applies ONLY to a row that carries no model of its own. Provider and model must
+  -- come from the SAME source: a row that names its model but not its provider (every compaction-rollup
+  -- bucket) would otherwise be stamped with whatever provider the session happens to run NOW, inventing
+  -- pairs that never existed — measured on live data, that put 157M claude-opus-5 tokens under 'alibaba'.
+  -- Left NULL, such a row stays an explicit legacy 'elowen:<model>' bucket, which is what the aggregate
+  -- already knows how to show as unresolved.
+  CASE WHEN NULLIF(json_extract(${src}, '${modelPath}'), '') IS NULL THEN NULLIF(${fallback}, '') END)`;
 
 // Normalized usage rows shared by usageByDay + usageByModel. One row per LIVE assistant message (its
 // `$.usage`, attributed to the model it recorded in `$.model`) UNIONed with one row per per-model
@@ -52,7 +59,7 @@ const producingProvider = (src: string, path: string, fallback: string): string 
 // text happens to be an object — out of the fan-out. Every numeric field goes through {@link numeric}.
 const USAGE_ROWS = `
   SELECT s.user_id AS user_id, s.id AS session_id,
-         ${producingProvider('m.content', '$.provider', 's.provider')} AS provider,
+         ${producingProvider('m.content', '$.provider', '$.model', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(m.content, '$.model'), ''), s.model) AS model,
          ${numeric('m.content', '$.timestamp', 'NULL')} AS ts,
          ${numeric('m.content', '$.usage.input')} AS input,
@@ -70,7 +77,7 @@ const USAGE_ROWS = `
    WHERE m.role = 'assistant' AND json_valid(m.content) AND json_type(m.content) = 'object'
   UNION ALL
   SELECT s.user_id AS user_id, s.id AS session_id,
-         ${producingProvider('je.value', '$.provider', 's.provider')} AS provider,
+         ${producingProvider('je.value', '$.provider', '$.model', 's.provider')} AS provider,
          COALESCE(NULLIF(json_extract(je.value, '$.model'), ''), s.model) AS model,
          ${numeric('je.value', '$.at', 'NULL')} AS ts,
          ${numeric('je.value', '$.input')} AS input,

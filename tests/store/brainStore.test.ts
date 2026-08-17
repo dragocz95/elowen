@@ -948,11 +948,28 @@ describe('BrainStore', () => {
       }]);
     });
 
-    it('falls back to the session provider only when the row has none', () => {
-      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'legacy-model' });
+    // Provider and model must come from the SAME source. A row that names its own model but no provider
+    // must NOT borrow the session's: a conversation can switch models, so the session's CURRENT provider
+    // says nothing about who produced this row. Measured on live data before this was fixed, the borrowed
+    // fallback filed 157M `claude-opus-5` tokens under `alibaba` — a pair that cannot exist, because
+    // every compaction-rollup bucket names its model and none of them names a provider.
+    // Mutation: let producingProvider fall back whenever the row's provider is missing (ignoring
+    // modelPath) and this returns `session-provider/legacy-model` instead of the legacy bucket.
+    it('does not borrow the session provider for a row that carries its own model', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
       usageMsg('brain-a', 'm1', { totalTokens: 100 }, Date.now(), 'legacy-model');
       expect(store.usageByModel(1)[0]).toMatchObject({
-        id: 'session-provider/legacy-model', provider: 'session-provider', model: 'legacy-model',
+        id: 'elowen:legacy-model', exec: 'elowen:legacy-model', provider: null, model: 'legacy-model',
+      });
+    });
+
+    // …while a row carrying NEITHER field is genuinely the session's own work, so both may come from it.
+    // That pairing is what keeps legacy rows (predating per-message capture) attributable at all.
+    it('takes provider and model together from the session when the row carries neither', () => {
+      store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
+      usageMsg('brain-a', 'm1', { totalTokens: 100 });
+      expect(store.usageByModel(1)[0]).toMatchObject({
+        id: 'session-provider/session-model', provider: 'session-provider', model: 'session-model',
       });
     });
 
