@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, PluginInfo, PluginDetail, PluginUserConfig, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessage, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, PluginInfo, PluginDetail, PluginUserConfig, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessage, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, TokenUsage, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -111,6 +111,15 @@ export const elowenClient = {
     if (projectId != null) params.set('project_id', String(projectId));
     params.set('days', String(days));
     return req<DayUsage[]>(`/usage/by-day?${params.toString()}`);
+  },
+  /** ADMIN-ONLY: which account, from which address, burned the tokens. Answered from the write-time
+   *  origin rollup, which begins at `trackingSince` — spend older than that has no recorded origin and
+   *  never will, so a caller must present the window rather than imply the totals are complete. */
+  usageByOrigin: (group: UsageOriginGroup = 'pair', window?: { fromMs: number; toMs: number }, limit = 50) => {
+    const params = new URLSearchParams({ group, limit: String(limit) });
+    if (window && Number.isFinite(window.fromMs)) params.set('from', new Date(window.fromMs).toISOString());
+    if (window && Number.isFinite(window.toMs)) params.set('to', new Date(window.toMs).toISOString());
+    return req<UsageByOriginResult>(`/usage/by-origin?${params.toString()}`);
   },
   /** Admin: destructively clear every executor's CLI session store. Refused (409) while agents run. */
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),

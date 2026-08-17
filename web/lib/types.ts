@@ -768,8 +768,48 @@ export interface DayUsage {
   cost: number | null;
 }
 
-/** Result of a usage reset: how many task_usage snapshot rows were wiped. */
+/** Result of a usage reset: how many rows each of the three independent counters lost. */
 export interface ResetUsageResult {
   ok: boolean;
   cleared: number;
+  chatCleared?: number;
+  originsCleared?: number;
+}
+
+/** Which axis GET /usage/by-origin collapses: per account, per address, or the raw pair of both. */
+export type UsageOriginGroup = 'user' | 'origin' | 'pair';
+
+/** One row of the admin origin view. `userId`/`origin` is null on whichever axis the grouping collapsed.
+ *  `trusted` is false when any contributing turn's address was a claim the daemon could not verify —
+ *  render it, never hide the row. `cost` is null when nothing in the bucket reported a price: that is
+ *  "unknown", not $0. `originKind` distinguishes a real address (`ip`) from a loopback client (`local`),
+ *  work no HTTP request ordered (`internal`), a chat bridge (`platform`) and an aged-out, redacted
+ *  address (`redacted`). */
+interface UsageOriginRow {
+  userId: number | null;
+  username: string | null;
+  origin: string | null;
+  originKind: 'ip' | 'local' | 'internal' | 'platform' | 'redacted' | null;
+  trusted: boolean;
+  origins: number;
+  turns: number;
+  tokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number | null;
+  costSource: CostSource;
+  costedTurns: number;
+  firstAt: number;
+  lastAt: number;
+}
+
+/** GET /usage/by-origin. `trackingSince` is the oldest day the rollup holds (null = nothing recorded
+ *  yet); everything the instance spent before it has no origin and never will, so the UI must state the
+ *  window rather than let the numbers read as the whole history. */
+export interface UsageByOriginResult {
+  rows: UsageOriginRow[];
+  group: UsageOriginGroup;
+  trackingSince: string | null;
 }

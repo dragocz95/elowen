@@ -96,7 +96,7 @@ import {
   useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
-  useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
+  useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
   useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
   useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin, useWorkPlugin,
 } from './queries';
@@ -317,7 +317,9 @@ export function ensurePluginUiRuntime(): void {
       // The work plugin owns the task domain (tables, routes, tools, pages) but not a second copy of
       // the browser's data plane: these hooks keep ONE react-query cache and ONE SSE invalidation path,
       // shared with the core surfaces that still read tasks (dashboard tiles, the notification bell).
-      useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay,
+      // `useUsageByOrigin` is admin-only at the ROUTE; exporting it here widens nothing — a bundle
+      // calling it as a non-admin gets the same 403 any other caller would.
+      useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
       useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
       // `useWorkPlugin` is here for the same reason the core surfaces use it: a bundle that links to a
       // task page must not offer that link when no plugin serves one (the address would land on the

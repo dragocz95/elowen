@@ -3,7 +3,7 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
 import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, PlanJob, MemoryFilters, SlashCommandDef, ProcessInfo } from './types';
+import type { DerivedSignal, PlanJob, MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
 
 /** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
  *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
@@ -30,6 +30,7 @@ export const QUERY_KEYS = {
   systemSkills: ['system-skills'] as const,
   usageByModel: ['usage-by-model'] as const,
   usageByDay: ['usage-by-day'] as const,
+  usageByOrigin: ['usage-by-origin'] as const,
   memories: ['memories'] as const,
   embeddingSettings: ['embedding-settings'] as const,
   memoryCategories: ['memory-categories'] as const,
@@ -142,6 +143,25 @@ export const useUsageByDay = (projectId?: number, days = 7) =>
   useQuery({
     queryKey: [...QUERY_KEYS.usageByDay, projectId ?? null, days],
     queryFn: () => elowenClient.usageByDay(projectId, days),
+    refetchInterval: 60_000,
+  });
+
+/** ADMIN-ONLY: who spent the tokens, and from which address. `enabled` exists because the route answers
+ *  403 to a non-admin BY DESIGN — the caller passes the admin flag it already has so a normal account
+ *  never fires a request that is meant to fail. The server decides regardless; this only avoids noise.
+ *  Polled gently: the drawer is opened deliberately and the rollup moves at the pace of settled turns. */
+export const useUsageByOrigin = (
+  group: UsageOriginGroup = 'pair',
+  window?: { fromMs: number; toMs: number },
+  opts?: { enabled?: boolean; limit?: number },
+) =>
+  useQuery({
+    queryKey: [...QUERY_KEYS.usageByOrigin, group,
+      Number.isFinite(window?.fromMs) ? window!.fromMs : null,
+      Number.isFinite(window?.toMs) ? window!.toMs : null,
+      opts?.limit ?? 50],
+    queryFn: () => elowenClient.usageByOrigin(group, window, opts?.limit ?? 50),
+    enabled: opts?.enabled !== false,
     refetchInterval: 60_000,
   });
 
