@@ -76,15 +76,22 @@ export function stripThinking(text) {
  * The runtime footer a turn settles with (`model · context %`), wrapped in the surface's own subtext
  * markup. `fence` is that markup: Discord `{ open: '-# ' }`, Telegram `{ open: '— ' }`, WhatsApp
  * `{ open: '_', close: '_' }`, Teams `{ open: '' }` (bot messages there have no small-text style at all).
- * A qualified model reference is preserved (`anthropic/claude-sonnet-5`) and the percentage rounded;
- * missing data simply omits its fragment, and an idle event carrying neither yields '' so no
- * empty subtext line is posted. The percentage is checked for finiteness, not merely for being a number:
- * it reaches us from the agent runtime's context accounting, where a zero-sized window would divide out
- * to Infinity and print as `Infinity %`.
+ * The provider is dropped here (`openai-codex/gpt-5.6-luna` renders as `gpt-5.6-luna`). A chat surface is
+ * not where anyone picks a model or reconciles spend — the qualified identity belongs in the CLI status
+ * line and the web pickers, where two providers offering the same model name have to be told apart. In a
+ * message footer it is noise under every single answer. Splitting is delegated to `parseModelExec` rather
+ * than done inline, because a model name may itself contain a slash (`ai-coresynth-io/deepseek/…`), so
+ * only the FIRST separator divides provider from model.
+ *
+ * The percentage is rounded; missing data simply omits its fragment, and an idle event carrying neither
+ * yields '' so no empty subtext line is posted. The percentage is checked for finiteness, not merely for
+ * being a number: it reaches us from the agent runtime's context accounting, where a zero-sized window
+ * would divide out to Infinity and print as `Infinity %`.
  */
 export function runtimeFooter(idle, fence) {
   const parts = [];
-  const model = typeof idle?.model === 'string' ? idle.model.trim() : '';
+  const raw = typeof idle?.model === 'string' ? idle.model.trim() : '';
+  const model = raw ? (parseModelExec(raw)?.model ?? raw) : '';
   if (model) parts.push(model);
   const pct = idle?.usage?.percent;
   if (Number.isFinite(pct) && pct >= 0) parts.push(`${Math.round(pct)} %`);

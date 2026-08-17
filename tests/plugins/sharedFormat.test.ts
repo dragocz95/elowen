@@ -100,10 +100,32 @@ describe('shared plugin format helpers', () => {
     };
     const idle = { model: 'alibaba/qwen3.8-max-preview', usage: { percent: 41.6 } };
 
-    it('wraps the same qualified model in each surface own markup and rounds the percent', () => {
-      expect(runtimeFooter(idle, FENCES.discord)).toBe('-# alibaba/qwen3.8-max-preview · 42 %');
-      expect(runtimeFooter(idle, FENCES.telegram)).toBe('— alibaba/qwen3.8-max-preview · 42 %');
-      expect(runtimeFooter(idle, FENCES.whatsapp)).toBe('_alibaba/qwen3.8-max-preview · 42 %_');
+    it('wraps the same bare model in each surface own markup and rounds the percent', () => {
+      expect(runtimeFooter(idle, FENCES.discord)).toBe('-# qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, FENCES.telegram)).toBe('— qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, FENCES.whatsapp)).toBe('_qwen3.8-max-preview · 42 %_');
+    });
+
+    // A chat surface is not where a model gets picked or spend reconciled, so the provider is noise under
+    // every answer — it belongs in the CLI status line and the web pickers instead. The split has to take
+    // the FIRST separator only: a model name may itself contain a slash, and cutting at the last one would
+    // silently truncate it to the final segment.
+    it('drops the provider but keeps a model name that itself contains a slash', () => {
+      const qualified = { model: 'openai-codex/gpt-5.6-luna', usage: { percent: 20 } };
+      expect(runtimeFooter(qualified, FENCES.discord)).toBe('-# gpt-5.6-luna · 20 %');
+
+      const nested = { model: 'ai-coresynth-io/deepseek/deepseek-v4-pro', usage: { percent: 20 } };
+      expect(runtimeFooter(nested, FENCES.discord)).toBe('-# deepseek/deepseek-v4-pro · 20 %');
+
+      // A bare model has no provider to drop and must survive untouched.
+      expect(runtimeFooter({ model: 'k3', usage: { percent: 20 } }, FENCES.discord)).toBe('-# k3 · 20 %');
+    });
+
+    // Footers written before this change still sit in channel history. The reader recognises a footer by
+    // its fence, not by its contents, so it must keep stripping the qualified shape too — otherwise the
+    // old line feeds back into the prompt and the model starts writing footers of its own.
+    it('still strips a footer that was written with the provider still in it', () => {
+      expect(stripRuntimeFooter('Hotovo.\n\n-# alibaba/qwen3.8-max-preview · 42 %', FENCES.discord)).toBe('Hotovo.');
     });
 
     // Teams is the one surface with no subtext style for bot messages, so its footer carries no markup.
@@ -111,7 +133,7 @@ describe('shared plugin format helpers', () => {
     const teams = { open: '', close: '' };
 
     it('writes the same footer unmarked on a surface that has no subtext style', () => {
-      expect(runtimeFooter(idle, teams)).toBe('alibaba/qwen3.8-max-preview · 42 %');
+      expect(runtimeFooter(idle, teams)).toBe('qwen3.8-max-preview · 42 %');
       expect(runtimeFooter(null, teams)).toBe('');
     });
 
