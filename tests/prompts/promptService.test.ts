@@ -18,14 +18,16 @@ describe('PromptService.render', () => {
     const requiredSections = [
       'identity',
       'relationship_and_communication',
-      'elowen_control_plane',
-      'operating_model',
-      'autonomous_delivery_loop',
-      'engineering_standard',
-      'technology_policy',
-      'scope_and_foresight',
+      'session_guidance',
+      'control_plane',
+      'memory',
+      'context_management',
+      'delivering_work',
+      'software_engineering',
+      'recovery_and_persistence',
       'authority_and_safety',
-      'verification_and_definition_of_done',
+      'verification',
+      'corrections',
       'working_with_the_user',
     ];
 
@@ -54,8 +56,9 @@ describe('PromptService.render', () => {
       userName: 'Alice',
       personality: 'Communicate as a pragmatic senior engineer.',
     }, 1);
-    expect(rendered).toContain('<name>Elowen</name>');
-    expect(rendered).toContain('<user>Alice</user>');
+    // Identity is stated inline rather than in <name>/<user> tags, but both names must still be substituted.
+    expect(rendered).toContain('You are Elowen,');
+    expect(rendered).toContain('for Alice,');
     expect(rendered).toContain('<communication_style>Communicate as a pragmatic senior engineer.</communication_style>');
     expect(rendered).not.toMatch(/\{\{(?:agentName|userName|personality)\}\}/);
   });
