@@ -280,6 +280,7 @@ export function register(ctx) {
         tokens: job.tokens,
         seconds: Math.round((Date.now() - job.startedAt) / 1000),
         model: job.model,
+        thinkingLevel: job.thinkingLevel,
         background: job.background,
         autoDeliver: job.autoDeliver,
       });
@@ -491,8 +492,12 @@ export function register(ctx) {
         detail: undefined,
         tokens: undefined,
         model: model?.model,
-        originSessionId,
+        // The level this delegation actually spawns with (inherited from the parent turn above). Carried
+        // on the job so the rail entry can report it: a drilled-in sub-agent reads its reasoning level
+        // from there, and with no source for it the CLI status line rendered that field blank.
+        thinkingLevel,
         originPrincipal,
+        originSessionId,
         emit,
         background: p.background === true,
         autoDeliver: p.background === true && !!emitCompletion,

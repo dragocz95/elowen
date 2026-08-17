@@ -519,9 +519,9 @@ export function createChatComposition(
     const trimmedGoal = goal && opts.goalSuffix === false ? { primary: goal.primary, suffix: '' } : goal;
     const child = rt.childView;
     // Drilled into a sub-agent: the meta row must describe the CHILD, not the parent. Its model, elapsed
-    // seconds and reasoning level all come from the matching subagent rail entry (the daemon stamps the
-    // child's own effective level onto the subagent event); its activity from the child transcript. Work
-    // mode stays the parent's — it is a session-wide setting the sub-agent inherits, not a per-agent one.
+    // seconds and reasoning level all come from the matching subagent rail entry; its activity from the
+    // child transcript. Work mode stays the parent's — it is a session-wide setting the sub-agent
+    // inherits, not a per-agent one.
     const childEntry = child ? currentAgents.find((agent) => agent.sessionId === child.sessionId) : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
@@ -530,11 +530,15 @@ export function createChatComposition(
     const activity = child ? child.transcript.activity : rt.transcript.activity;
     const seconds = child ? (childEntry?.seconds ?? currentRunSeconds) : currentRunSeconds;
     // Parent shows its live reasoning level; a drilled-in child shows its OWN level from the rail entry
-    // (dropped only when the daemon reported none, e.g. a model with no reasoning ladder).
+    // (dropped only when nothing reported one, e.g. a model with no reasoning ladder). A raw level is
+    // mapped through the SAME label table the parent renders, so drilling in cannot switch the field from
+    // a translated label to a bare id for what is usually the very same ladder.
+    const childLevel = childEntry?.thinkingLabel
+      ?? (childEntry?.thinkingLevel ? rt.thinkingLevelLabels[childEntry.thinkingLevel] ?? childEntry.thinkingLevel : '');
     const level = opts.level === false
       ? ''
       : child
-        ? (childEntry?.thinkingLabel ?? childEntry?.thinkingLevel ?? '')
+        ? childLevel
         : (rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel);
     return modelMetaLine(
       rt.workMode,

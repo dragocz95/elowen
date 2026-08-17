@@ -1085,6 +1085,42 @@ describe('chat application shell ownership', () => {
     composition.dispose();
   });
 
+  // Drilling into a sub-agent used to blank the reasoning level: the status line reads it from the rail
+  // entry, and nothing ever put it there — the delegation inherited the parent's level and spawned with
+  // it, but never reported it back. The field simply vanished on drill-in while the parent kept showing
+  // it, which reads as "this agent has no reasoning level" rather than "nobody told the UI".
+  // Mutation: drop `thinkingLevel` from the rail entry below and the assertion fails on the empty field.
+  it('shows the drilled-in sub-agent\'s own reasoning level, mapped through the parent label table', async () => {
+    const h = compositionHarness({ columns: 140, rows: 24, turns: 4 });
+    h.rt.thinkingLevel = 'high';
+    h.rt.thinkingLevelLabels = { high: 'vysoká', low: 'nízká' };
+    h.stream.subagentStates = () => ([{
+      id: 'call-1', sessionId: 'child-1', status: 'running', task: 'delegated task',
+      tools: 0, seconds: 3, model: 'child-model', thinkingLevel: 'low',
+    }] as unknown as ReturnType<typeof h.stream.subagentStates>);
+    h.rt.childView = {
+      sessionId: 'child-1',
+      model: 'child-model',
+      provider: 'test',
+      transcript: new TranscriptModel([{ role: 'assistant', text: 'child output' }]),
+      processes: [],
+      loading: false,
+      usage: null,
+      cards: [],
+    };
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:child-level');
+    await vi.runOnlyPendingTimersAsync();
+
+    const frame = renderMountedRoot(h).map(terminalPlainText).join('\n');
+    // The child's OWN level, rendered through the same label table the parent uses — not the raw id and
+    // not the parent's level, which is what makes this an attribution test rather than a "text present" one.
+    expect(frame).toContain('nízká');
+    expect(frame).not.toContain('vysoká');
+    composition.dispose();
+  });
+
   it('keeps the background-process card when the rail cannot fit (narrow terminal)', async () => {
     const h = compositionHarness({ columns: 100, rows: 24, turns: 4 });
     h.rt.cards = [{
