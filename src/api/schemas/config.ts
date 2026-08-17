@@ -129,7 +129,7 @@ export const configPatchSchema = z.object({
     autonomy: z.string().optional(),
     maxSessions: z.number().optional(),
   }).optional(),
-  security: z.object({ tokenTtlDays: z.number().optional() }).optional(),
+  security: z.object({ tokenTtlDays: z.number().optional(), trustProxy: z.boolean().optional() }).optional(),
   sessionRetention: z.object({ enabled: z.boolean().optional(), days: z.number().optional() }).optional(),
   autoUpdate: z.boolean().optional(),
   webPushContact: z.string().optional(),

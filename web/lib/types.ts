@@ -38,7 +38,7 @@ export interface ElowenConfig {
   autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
-  security: { tokenTtlDays: number };
+  security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
   webPushContact?: string;
@@ -226,7 +226,7 @@ export interface ConfigPatch {
   autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Record<string, { bin: string; args: string }>;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
-  security?: { tokenTtlDays?: number };
+  security?: { tokenTtlDays?: number; trustProxy?: boolean };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
   webPushContact?: string;

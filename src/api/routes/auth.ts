@@ -16,6 +16,7 @@ import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflict
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import type { User } from '../../store/userStore.js';
+import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import { logger } from '../../shared/logger.js';
 
@@ -29,9 +30,10 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   const users = d.users;
 
   // Brute-force guard for the only unauthenticated, credential-checking endpoint: a fixed window per
-  // client IP. Prefer x-real-ip (set by our nginx) over the client-spoofable x-forwarded-for. In-memory
-  // per-process is enough for the single-daemon deployment; entries self-expire and are swept when the
-  // map grows large so distinct-IP traffic can't leak memory.
+  // client IP. The precedence rule (x-real-ip from our nginx over the client-spoofable x-forwarded-for)
+  // lives in `clientOrigin` — the single source shared with usage attribution. In-memory per-process is
+  // enough for the single-daemon deployment; entries self-expire and are swept when the map grows large
+  // so distinct-IP traffic can't leak memory.
   const LOGIN_MAX = 10, LOGIN_WINDOW_MS = 5 * 60_000;
   const loginHits = new Map<string, { count: number; resetAt: number }>();
   const loginLimited = (ip: string, now: number): boolean => {
@@ -42,7 +44,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     return h.count > LOGIN_MAX;
   };
   app.post('/auth/login', async (c) => {
-    const ip = c.req.header('x-real-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+    // Keyed on the origin VALUE, trusted or not: an unverifiable claim must still be rate-limited, and
+    // bucketing every unproxied hit under one key is the conservative direction for a loopback client.
+    const ip = clientOrigin(c, d.config.get().security.trustProxy).value;
     if (loginLimited(ip, d.clock.now())) return c.json({ error: 'too many login attempts, try again later' }, 429);
     // A missing/invalid body fails the schema → onError maps it to a 400, never an unhandled 500.
     const body = await parseBody(c, loginSchema);

@@ -66,7 +66,7 @@ export interface ElowenConfig {
   autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
-  security: { tokenTtlDays: number };
+  security: { tokenTtlDays: number; trustProxy: boolean };
   /** Automatic cleanup of stale brain conversations. Off by default (opt-in): when on, an hourly janitor
    *  deletes user conversations whose last activity is older than `days`. Never touches running sessions,
    *  the active pointer, sessions with running children, delegated children, or the non-user channel/task
@@ -621,7 +621,10 @@ const DEFAULT_CONFIG: ElowenConfig = {
   autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', providerId: '', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ghTokenSet: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 },
-  security: { tokenTtlDays: 30 },
+  // trustProxy on by default: the install wizard writes the nginx vhost itself, and that vhost is what
+  // sets X-Real-IP. An install that puts the daemon behind something else (or nothing) turns it off, and
+  // every recorded origin degrades to "claimed, unverified" instead of silently looking authoritative.
+  security: { tokenTtlDays: 30, trustProxy: true },
   // On, at ten days: an idle conversation older than that is history nobody reopens, and left to
   // accumulate it is what turns the message store into the largest table in the database.
   sessionRetention: { enabled: true, days: 10 },
@@ -671,7 +674,7 @@ interface Stored {
   apiKey: string | null;
   ghToken: string | null;
   defaults: { exec: string; autonomy: string; maxSessions: number };
-  security: { tokenTtlDays: number };
+  security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
   /** FROZEN: the pre-extraction live-diagnostics toggle. The `lsp` plugin owns the live flag now
@@ -806,7 +809,7 @@ export interface ConfigPatch {
   autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
-  security?: { tokenTtlDays?: number };
+  security?: { tokenTtlDays?: number; trustProxy?: boolean };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
   webPushContact?: string;
@@ -861,7 +864,10 @@ export class ConfigStore {
         apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
         ghToken: typeof p.ghToken === 'string' ? p.ghToken : null,
         defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
-        security: { tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays },
+        security: {
+          tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays,
+          trustProxy: typeof p.security?.trustProxy === 'boolean' ? p.security.trustProxy : d.security.trustProxy,
+        },
         sessionRetention: {
           enabled: typeof p.sessionRetention?.enabled === 'boolean' ? p.sessionRetention.enabled : d.sessionRetention.enabled,
           days: p.sessionRetention?.days ?? d.sessionRetention.days,
@@ -1135,7 +1141,10 @@ export class ConfigStore {
       ghToken: (typeof newGhToken === 'string' && newGhToken.length > 0) ? newGhToken : cur.ghToken,
       defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
-      security: { tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays) },
+      security: {
+        tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays),
+        trustProxy: typeof patch.security?.trustProxy === 'boolean' ? patch.security.trustProxy : cur.security.trustProxy,
+      },
       // `days` feeds the same kind of SQLite date modifier, so it takes the same positive-integer clamp.
       sessionRetention: {
         enabled: typeof patch.sessionRetention?.enabled === 'boolean' ? patch.sessionRetention.enabled : cur.sessionRetention.enabled,

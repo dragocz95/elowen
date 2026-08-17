@@ -115,9 +115,18 @@ describe('ConfigStore', () => {
     expect(notes.opus).toBeTruthy();
   });
   it('defaults security.tokenTtlDays to 30 and updates it', () => {
-    expect(cfg.get().security).toEqual({ tokenTtlDays: 30 });
+    expect(cfg.get().security).toEqual({ tokenTtlDays: 30, trustProxy: true });
     cfg.update({ security: { tokenTtlDays: 7 } });
     expect(cfg.get().security.tokenTtlDays).toBe(7);
+    expect(cfg.get().security.trustProxy).toBe(true); // a partial patch must not reset the sibling flag
+  });
+  it('toggles security.trustProxy and keeps it across an unrelated patch', () => {
+    cfg.update({ security: { trustProxy: false } });
+    expect(cfg.get().security.trustProxy).toBe(false);
+    cfg.update({ autoUpdate: true });
+    expect(cfg.get().security.trustProxy).toBe(false);
+    cfg.update({ security: { trustProxy: true } });
+    expect(cfg.get().security.trustProxy).toBe(true);
   });
   it('clamps an invalid tokenTtlDays to the current value (floors fractionals, rejects < 1)', () => {
     cfg.update({ security: { tokenTtlDays: 14 } });
