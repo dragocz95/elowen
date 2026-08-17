@@ -105,7 +105,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.0.0",
-    "elowen-plugin-shared": "0.1.1",
+    "elowen-plugin-shared": "0.1.2",
     "grammy": "^1.44.0",
     "hono": "^4.6.0",
     "jose": "^5.10.0",

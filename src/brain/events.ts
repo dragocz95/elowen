@@ -538,8 +538,24 @@ export function queueItems(steering: readonly string[], followUp: readonly strin
 
 /** Snapshot a session's statusline numbers: context fill from PI plus per-message usage totals. Internal
  *  to this module now — callers use {@link sessionUsageSnapshot} to also roll up delegated descendants. */
+/** PI's `getContextUsage` throws on a shape it produces itself. Once a session carries a compaction
+ *  entry it scans back for an assistant that answered AFTER it, and calls `calculateContextTokens`
+ *  on that message's `usage` WITHOUT a guard — while its own sibling helper in the same library
+ *  (`getAssistantUsage`) checks for the field first. An assistant that stops on `toolUse` carries no
+ *  usage at all (the totals land on the final message of the turn), so any compacted session throws
+ *  here the moment it calls a tool.
+ *
+ *  Reported to the library. Until it lands: the missing context figure is a STATUSLINE number, and
+ *  `undefined` is the value this function already treats as "context fill unknown" — the very state
+ *  PI itself returns (`tokens: null`) when it finds no post-compaction usage. Losing an entire answer
+ *  over a progress percentage is the worse failure, so the turn survives with the number unknown. */
+function contextUsageOf(session: AgentSession): ReturnType<AgentSession['getContextUsage']> | undefined {
+  try { return session.getContextUsage(); }
+  catch { return undefined; }
+}
+
 function usageOf(session: AgentSession): BrainUsage {
-  const ctx = session.getContextUsage();
+  const ctx = contextUsageOf(session);
   let totalTokens = 0;
   let cost = 0;
   let input = 0;
