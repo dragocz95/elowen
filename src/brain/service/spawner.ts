@@ -24,6 +24,7 @@ import { clientDir, turnWorkDir } from './workDir.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
 import { createSpawnEventReducer } from './spawnEventReducer.js';
+import { userInstructionsBlock } from '../../prompts/userInstructions.js';
 
 interface SpawnerDeps {
   /** See the BrainDeps fields of the same names — the spawner receives the subset it composes from. */
@@ -37,7 +38,7 @@ interface SpawnerDeps {
   cwd?: string;
   projectPath?: () => string | undefined;
   userSettings?: BrainDeps['userSettings'];
-  activePersonality?: BrainDeps['activePersonality'];
+  activeUserInstructions?: BrainDeps['activeUserInstructions'];
   brand?: BrainDeps['brand'];
   maxSteps?: () => number;
   runtimeConfig?: BrainDeps['runtimeConfig'];
@@ -224,11 +225,12 @@ export class LiveSessionSpawner {
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
     const promptTemplates = buildPromptTemplates(plugins?.commands.values() ?? []);
     const fragments = plugins?.promptFragments ?? [];
-    // The user's global personality body — one persona, identical on every platform — layers AFTER the
-    // persona as a separate appended chunk, never the per-turn context (personality is stable system-prompt
-    // material, so putting it per-turn would waste the prompt cache). Undefined when the body is empty →
-    // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
-    const persoAppend = this.d.activePersonality?.(ownerUserId);
+    // The account owner's global instructions layer AFTER the persona as a separate appended chunk, never
+    // the per-turn context (they are stable system-prompt material, so putting them per-turn would waste the
+    // prompt cache). Undefined when empty → NOTHING appended, preserving the byte-identical default prefix.
+    // XML escaping makes the account-data boundary explicit even when the text contains tag-like markup.
+    const rawUserInstructions = this.d.activeUserInstructions?.(ownerUserId);
+    const userInstructionsAppend = rawUserInstructions ? userInstructionsBlock(rawUserInstructions) : undefined;
     // Skills awareness block (progressive disclosure): PI would render `<available_skills>` itself, but
     // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `Read`
     // etc., so PI never renders it. We therefore append it ourselves so the model learns which skills
@@ -239,7 +241,7 @@ export class LiveSessionSpawner {
     // what it can fetch via ToolSearch. Stable for the session (the MCP set is fixed at spawn) → sits in the
     // cache-friendly append region, not the per-turn context. Empty string when nothing is deferred.
     const deferredBlock = toolSearchHandle ? formatDeferredToolsBlock(allTools, toolSearchHandle.deferred) : '';
-    const append = [skillsBlock, deferredBlock, ...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
+    const append = [skillsBlock, deferredBlock, ...fragments, ...(opts.extraAppend ?? []), userInstructionsAppend ?? ''].filter((s) => s.length > 0);
 
     // Elowen identity: the editable `elowen` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Elowen — not the underlying model's default persona.

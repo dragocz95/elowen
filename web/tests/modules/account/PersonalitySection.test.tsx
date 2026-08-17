@@ -11,14 +11,14 @@ import type { CliSettings } from '../../../lib/types';
 // forwards value/onChange so the body field is exercisable without loading the real editor.
 vi.mock('../../../lib/monaco/monacoLoader', () => ({
   MonacoEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <textarea aria-label="personality-body" value={value} onChange={(e) => onChange(e.target.value)} />
+    <textarea aria-label="user-instructions" value={value} onChange={(e) => onChange(e.target.value)} />
   ),
   MonacoDiffEditor: () => null,
 }));
 
 const settings: CliSettings = {
   model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: 'medium',
-  autoCompact: true, autoCompactAt: 0, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '',
+  autoCompact: true, autoCompactAt: 0, autoCompactAtByModel: {}, advisorStyle: 'concise', userInstructions: '',
   discordUserId: '', whatsappNumber: '', autoRecall: true, autoLiveRecall: true, autoSave: true,
 };
 
@@ -42,7 +42,7 @@ describe('PersonalitySection — error state', () => {
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // No editor form (style picker / body field) must render while the load has failed.
     expect(screen.queryByRole('button', { name: 'Manage' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Personality instructions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agent instructions' })).not.toBeInTheDocument();
 
     server.use(http.get('*/api/auth/me/cli-settings', () => HttpResponse.json(settings)));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -58,13 +58,13 @@ describe('PersonalitySection', () => {
     // The style renders as a chip of the seeded pick; the full choice opens in the shared picker.
     expect(await screen.findByText('Concise')).toBeInTheDocument();
     // Empty body → no inline editor; the Monaco editor only mounts inside the drawer.
-    expect(screen.queryByLabelText('personality-body')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Personality instructions' }));
-    expect(await screen.findByLabelText('personality-body')).toBeInTheDocument();
+    expect(screen.queryByLabelText('user-instructions')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent instructions' }));
+    expect(await screen.findByLabelText('user-instructions')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
-  it('autosaves advisorStyle and personalityBody together in one PATCH', async () => {
+  it('autosaves advisorStyle and userInstructions together in one PATCH', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
 
@@ -76,10 +76,10 @@ describe('PersonalitySection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Friendly' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     // Open the drawer to reach the body editor, then edit it.
-    fireEvent.click(screen.getByRole('button', { name: 'Personality instructions' }));
-    fireEvent.change(await screen.findByLabelText('personality-body'), { target: { value: 'Be warm.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Agent instructions' }));
+    fireEvent.change(await screen.findByLabelText('user-instructions'), { target: { value: 'Be warm.' } });
 
     await waitFor(() => expect(lastPatch).not.toBeNull());
-    await waitFor(() => expect(lastPatch).toEqual({ advisorStyle: 'friendly', personalityBody: 'Be warm.' }));
+    await waitFor(() => expect(lastPatch).toEqual({ advisorStyle: 'friendly', userInstructions: 'Be warm.' }));
   });
 });

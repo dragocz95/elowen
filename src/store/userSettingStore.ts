@@ -175,8 +175,8 @@ export class UserSettingStore {
       if (patch.autoLiveRecall !== undefined) this.set(userId, 'autoLiveRecall', String(patch.autoLiveRecall));
       if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));
       if (patch.advisorStyle !== undefined && isAdvisorStyle(patch.advisorStyle)) this.set(userId, 'advisorStyle', patch.advisorStyle);
-      // The global personality body — free-form instructions appended to the system prompt on every
-      // platform. Empty is a valid stored value (clears the body), so no remove branch is needed.
+      // Global agent instructions. The persisted key stays `personalityBody` for downgrade compatibility;
+      // the API exposes the semantic `userInstructions` name. Empty is a valid clear operation.
       if (patch.personalityBody !== undefined) this.set(userId, 'personalityBody', patch.personalityBody);
       // A Discord snowflake is digits-only; anything else (or empty) clears the link. A snowflake already
       // claimed by ANOTHER user is refused — otherwise a squatter could claim the operator's id and have

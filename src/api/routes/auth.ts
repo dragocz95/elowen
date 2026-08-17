@@ -132,12 +132,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
     const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true };
-    return c.json({ ...s, serverDefault: serverDefaultModel() });
+    return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown };
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown };
     const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
@@ -160,9 +160,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.telegramUserId === 'string') patch.telegramUserId = b.telegramUserId.trim(); // store validates the numeric-id shape
     // Communication style: only accept a known style; anything else is silently ignored.
     if (typeof b.advisorStyle === 'string' && ADVISOR_STYLES.includes(b.advisorStyle as never)) patch.advisorStyle = b.advisorStyle;
-    // The global personality body: free-form instructions appended to the system prompt on every platform.
-    // Empty clears it. Capped so an oversized body can't bloat the system prompt / DB row.
-    if (typeof b.personalityBody === 'string') patch.personalityBody = b.personalityBody.slice(0, 100_000);
+    // Global account instructions appended to the system prompt on every platform. `personalityBody` is a
+    // compatibility alias for older clients and the persisted DB key; the semantic API name wins on conflict.
+    const userInstructions = typeof b.userInstructions === 'string'
+      ? b.userInstructions
+      : typeof b.personalityBody === 'string' ? b.personalityBody : undefined;
+    if (userInstructions !== undefined) patch.personalityBody = userInstructions.slice(0, 100_000);
     // A complete provider+model pick must be on the caller's allow-list (clearing is always fine). The
     // pick is already structured here, so it is judged as an ExecRef: the gate decides on `program`
     // instead of on a prefix this route would first have had to write into a string.
@@ -205,9 +208,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     d.brain?.applyAutoCompactSettings(u.id);
     // Apply live in the BACKGROUND: a running brain respawns with the new settings (history rehydrates
     // from SQLite) so a model/persona change takes effect immediately instead of on the next chat restart.
-    // A changed personality body feeds the global persona on EVERY platform, so it also drops the shared
-    // channel sessions (Discord) via applyPersonalityChange — which itself restarts owner chat, so we don't
-    // also call restart. An unrelated save keeps the lighter owner-chat-only restart.
+    // Changed user instructions feed the system prompt on EVERY platform, so they also drop the shared
+    // channel sessions (Discord) via applyUserInstructionsChange — which itself restarts owner chat, so we
+    // don't also call restart. An unrelated save keeps the lighter owner-chat-only restart.
     //
     // The persist above is what this save confirms, so the response must NOT block on the respawn: restart
     // waits for any in-flight turn to settle before disposing the session, so an owner mid-turn (or a stuck
@@ -219,10 +222,11 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // model while the chat kept using another — so this restart says so explicitly.
     const modelChanged = patch.model !== undefined || patch.modelProvider !== undefined;
     const reapply = patch.personalityBody !== undefined
-      ? d.brain?.applyPersonalityChange(u.id)
+      ? d.brain?.applyUserInstructionsChange(u.id)
       : d.brain?.restart(u.id, { reapplyModelPreference: modelChanged });
     void Promise.resolve(reapply).catch((e) => console.warn(`cli-settings: live re-apply for user ${u.id} failed: ${e instanceof Error ? e.message : String(e)}`));
-    return c.json({ ...d.userSettings.cliSettings(u.id), serverDefault: serverDefaultModel() });
+    const saved = d.userSettings.cliSettings(u.id);
+    return c.json({ ...saved, userInstructions: saved.personalityBody, serverDefault: serverDefaultModel() });
   });
   // Per-user web-terminal appearance (xterm palette/font/cursor) — self-service, kept separate from
   // cli-settings so it neither trips the model allow-list nor restarts the brain. The store validates

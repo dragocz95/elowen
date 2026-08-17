@@ -906,18 +906,18 @@ export const cs = {
     saveError: 'Nastavení paměti se nepodařilo uložit.',
   },
   personality: {
-    intro: 'Dejte {agentName} osobnost: globální pokyny platné všude plus styl komunikace.',
+    intro: 'Nastavte, jak má {agentName} komunikovat a spolupracovat s vámi.',
     styleLabel: 'Styl komunikace',
     styleProfessional: 'Profesionální',
     styleFriendly: 'Přátelský',
     styleConcise: 'Stručný',
     styleDetailed: 'Podrobný',
-    bodyLabel: 'Pokyny k osobnosti',
-    bodyPlaceholder: 'Napište globální pokyny pro {agentName}…',
-    bodyHint: 'Globální pokyny pro {agentName}, platí všude (web, CLI, Discord, cron).',
+    bodyLabel: 'Pokyny pro agenta',
+    bodyPlaceholder: 'Napište vlastní pokyny pro {agentName}…',
+    bodyHint: 'Vlastní pokyny, jak se má {agentName} chovat a spolupracovat s vámi. Platí všude.',
     bodyEdit: 'Upravit pokyny',
     bodyAdd: 'Přidat pokyny',
-    saveError: 'Uložení osobnosti selhalo',
+    saveError: 'Pokyny se nepodařilo uložit',
   },
   memory: {
     // Seznam

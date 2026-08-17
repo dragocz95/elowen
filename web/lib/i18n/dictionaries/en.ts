@@ -906,18 +906,18 @@ export const en = {
     saveError: 'Failed to save memory settings.',
   },
   personality: {
-    intro: 'Set {agentName}’s personality with global instructions and a communication style.',
+    intro: 'Set how {agentName} should communicate and work with you.',
     styleLabel: 'Communication style',
     styleProfessional: 'Professional',
     styleFriendly: 'Friendly',
     styleConcise: 'Concise',
     styleDetailed: 'Detailed',
-    bodyLabel: 'Personality instructions',
-    bodyPlaceholder: 'Write global instructions for {agentName}…',
-    bodyHint: 'Global instructions for {agentName}, used everywhere (web, CLI, Discord, cron).',
+    bodyLabel: 'Agent instructions',
+    bodyPlaceholder: 'Write your instructions for {agentName}…',
+    bodyHint: 'Your instructions for how {agentName} should behave and work with you. Used everywhere.',
     bodyEdit: 'Edit instructions',
     bodyAdd: 'Add instructions',
-    saveError: 'Saving the personality failed',
+    saveError: 'Failed to save agent instructions',
   },
   memory: {
     // List

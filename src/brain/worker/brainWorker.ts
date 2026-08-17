@@ -24,6 +24,7 @@ import type { PromptService } from '../../prompts/promptService.js';
 import type { TokenUsage } from '../../integrations/usage/types.js';
 import { execRefSpec } from '../../shared/execs.js';
 import { logger } from '../../shared/logger.js';
+import { userInstructionsBlock } from '../../prompts/userInstructions.js';
 
 const log = logger('brain-worker');
 
@@ -54,6 +55,8 @@ export interface BrainWorkerDeps {
   /** The task owner's auto-compact settings — a worker runs on THEIR account, so it compacts at their
    *  threshold (global percentage plus any per-model override) instead of a fixed default. */
   userSettings?: (userId: number) => { autoCompactAt?: number; autoCompactAtByModel?: Record<string, number> };
+  /** Raw global instructions for the task owner. Wrapped and escaped at worker spawn like owner chat. */
+  userInstructions?: (userId: number) => string | undefined;
   /** Tool names the task owner must not reach (their admin-set deny-list plus the tools of any
    *  grant-gated plugin they hold no grant for). A worker runs unattended ON that account, so it gets
    *  the same answer chat does — the same seam, so the two cannot drift into different rules. */
@@ -219,7 +222,11 @@ export class BrainWorkerService {
         : undefined,
     });
     const skills = plugins?.skillsFor(null) ?? [];
-    const append = [...(plugins?.promptFragments ?? [])].filter((s) => s.length > 0);
+    const rawUserInstructions = input.ownerId != null ? this.d.userInstructions?.(input.ownerId) : undefined;
+    const append = [
+      ...(plugins?.promptFragments ?? []),
+      rawUserInstructions ? userInstructionsBlock(rawUserInstructions) : '',
+    ].filter((s) => s.length > 0);
 
     // The one control-plane capability a worker gets: closing ITS OWN task (id baked in) through the
     // REST route, so ReviewService/mission advancement fire exactly as for a CLI worker's `elowen close`.

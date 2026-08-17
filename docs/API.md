@@ -72,7 +72,7 @@ project access filters its event set.
 | `GET`, `PATCH` | `/auth/me` | Read or update the current profile |
 | `POST` | `/auth/me/password`, `/auth/me/avatar` | Change password or upload avatar |
 | `GET`, `PUT`, `DELETE` | `/auth/me/prompts/:name` | Read, save, or remove personal prompts |
-| `GET`, `PATCH` | `/auth/me/cli-settings` | CLI preferences, communication style (`advisorStyle`), and the global personality body (`personalityBody`) |
+| `GET`, `PATCH` | `/auth/me/cli-settings` | CLI preferences, communication style (`advisorStyle`), and global agent instructions (`userInstructions`; legacy alias `personalityBody`) |
 | `GET`, `PATCH` | `/auth/me/terminal-settings` | Terminal preferences |
 | `GET`, `PATCH` | `/auth/me/permissions` | Current-user permissions |
 | `GET`, `POST` | `/users` | List or create users (admin surface) |
@@ -183,12 +183,13 @@ For exact method/path pairs in these broader families, see the matching route
 modules: `plugins.ts`, `memory.ts` and `activity.ts` in `src/api/routes/`, and
 `api/integrations.ts` in `plugins/agents/src/`.
 
-There is no separate personality route family: Elowen now stores a single
-global personality body per user (free-form instructions appended to the
-system prompt on every platform) as the `personalityBody` field on
-`/auth/me/cli-settings`, alongside `advisorStyle`. The old per-platform,
-multi-profile personality system (`/personality/profiles`, `personality_profiles`
-and `personality_active_profiles` tables) has been removed.
+There is no separate personality route family: Elowen stores one global set of
+agent instructions per account and appends it to the system prompt on every
+platform. The public field is `userInstructions` on `/auth/me/cli-settings`,
+alongside `advisorStyle`; `personalityBody` remains a compatibility alias and the
+internal persisted key. The old per-platform, multi-profile personality system
+(`/personality/profiles`, `personality_profiles` and
+`personality_active_profiles` tables) has been removed.
 
 ## Error responses
 

@@ -639,9 +639,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // "Always allow" persistence behind the owner-chat approval prompt.
         permissions: (userId) => userSettings.permissionSettings(userId),
         saveAlwaysAllow: (userId, scope, pattern) => { userSettings.addPermissionAllowRule(userId, scope, pattern); },
-        // One global personality body per user (user_settings key 'personalityBody'), identical on every
-        // platform. Empty → undefined so nothing is appended and the system-prompt prefix stays byte-stable.
-        activePersonality: (userId) => { const body = userSettings.cliSettings(userId).personalityBody.trim(); return body ? body : undefined; },
+        // One global instruction body per account, stored under the legacy key 'personalityBody' for
+        // downgrade compatibility. Empty → undefined, preserving the byte-identical default prompt prefix.
+        activeUserInstructions: (userId) => { const body = userSettings.cliSettings(userId).personalityBody.trim(); return body ? body : undefined; },
         brand,
         maxSteps: () => config.get().brain.maxSteps,
         brainLimits: () => config.get().brain.limits,

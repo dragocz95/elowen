@@ -419,6 +419,10 @@ export async function buildApp(opts: BuildOpts) {
     url: elowenCli.url, token: elowenCli.token,
     plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
     userSettings: (userId) => userSettings.cliSettings(userId), // the task owner's auto-compact threshold
+    userInstructions: (userId) => {
+      const body = userSettings.cliSettings(userId).personalityBody.trim();
+      return body || undefined;
+    },
     deniedTools: (userId) => deniedToolsForUser({ users, plugins: pluginProvider }, userId),
   });
   // The plugin host's late binding, so ctx.host.brainWorker() resolves from now on — the agents

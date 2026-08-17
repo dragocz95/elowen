@@ -105,25 +105,24 @@ fitting the model's context window. **Account → Elowen AI** exposes the knobs:
 [Brain & Chat](brain-chat) explains what compaction does to a conversation and
 how to trigger it by hand.
 
-## Personality & advisor style
+## Agent instructions & communication style
 
-Elowen isn't just capable — it can sound the way you want it to. Each user shapes
-their own assistant voice, and none of it leaks between accounts.
+Each account controls how Elowen communicates and works with that user, without
+affecting anyone else's account.
 
 **Communication style** is the always-on layer, set in **Account → Personality**
 as a single pick: **Professional** (default), **Friendly**, **Concise** or
-**Detailed**. It rewrites the assistant's register everywhere your brain runs.
+**Detailed**. It adjusts the assistant's register everywhere your brain runs.
 
-**Personality** goes further: one Markdown text field, edited inline in
-**Account → Personality**, where you write free-form instructions for how Elowen
-should behave — tone, priorities, things to avoid, anything you'd tell a new
-collaborator. It's empty by default and autosaves as you type.
+**Agent instructions** are a free-form Markdown field in **Account →
+Personality**. Use it for any standing direction about how Elowen should behave
+and collaborate with you — tone, priorities, workflows, constraints or things
+to avoid. It is empty by default and autosaves as you type.
 
-There's no per-platform split and no named or activatable profiles — a single
-personality body applies identically everywhere your brain runs: web chat,
-`elowen chat`, Discord, Telegram, Microsoft Teams, WhatsApp, and scheduled cron
-turns. Runtime knobs (models, thinking level) stay in the Elowen AI section, so
-personality and mechanics never tangle.
+There is no per-platform split and no named or activatable profile. The same
+instructions apply in web chat, `elowen chat`, Discord, Telegram, Microsoft
+Teams, WhatsApp and scheduled cron turns. Runtime knobs stay in the Elowen AI
+section, so instructions and mechanics remain separate.
 
 ## Your profile & identity links
 

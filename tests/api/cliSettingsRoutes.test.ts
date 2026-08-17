@@ -18,7 +18,7 @@ function setup() {
   const config = new ConfigStore(db);
   config.update({ autopilot: { model: 'claude-opus-4-8' } });
   const restart = vi.fn(async () => {});
-  const applyPersonalityChange = vi.fn(async () => {});
+  const applyUserInstructionsChange = vi.fn(async () => {});
   const applyAutoCompactSettings = vi.fn();
   const app = createServer({
     tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
@@ -26,9 +26,9 @@ function setup() {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     userSettings: new UserSettingStore(db),
-    brain: { restart, applyPersonalityChange, applyAutoCompactSettings } as never,
+    brain: { restart, applyUserInstructionsChange, applyAutoCompactSettings } as never,
   });
-  return { app, restart, applyPersonalityChange, applyAutoCompactSettings, users, config, amyId: amy.id, amyTok: users.issueToken(amy.id) };
+  return { app, restart, applyUserInstructionsChange, applyAutoCompactSettings, users, config, amyId: amy.id, amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -38,30 +38,39 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
     const { app, restart, applyAutoCompactSettings, amyId, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
     // The threshold also reaches conversations that are ALREADY live — the restart above only covers this
     // user's active chat, not their other sessions or the channel sessions they own.
     expect(applyAutoCompactSettings).toHaveBeenCalledWith(amyId);
   });
 
-  it('PATCH saves the personality body and applies it via applyPersonalityChange (not a plain restart)', async () => {
-    const { app, restart, applyPersonalityChange, amyTok } = setup();
-    const res = await app.request('/auth/me/cli-settings', patch(amyTok, { personalityBody: 'Be concise.' }));
+  it('PATCH saves userInstructions, keeps the legacy alias, and applies it on every surface', async () => {
+    const { app, restart, applyUserInstructionsChange, amyTok } = setup();
+    const res = await app.request('/auth/me/cli-settings', patch(amyTok, {
+      userInstructions: 'Be concise.', personalityBody: 'legacy must lose',
+    }));
     expect(res.status).toBe(200);
-    expect((await res.json()).personalityBody).toBe('Be concise.');
-    expect(applyPersonalityChange).toHaveBeenCalledTimes(1); // drops channel sessions so the global body reaches Discord
-    expect(restart).not.toHaveBeenCalled(); // applyPersonalityChange already restarts owner chat — no double restart
+    expect(await res.json()).toMatchObject({ userInstructions: 'Be concise.', personalityBody: 'Be concise.' });
+    expect(applyUserInstructionsChange).toHaveBeenCalledTimes(1); // drops channel sessions so the instructions reach Discord
+    expect(restart).not.toHaveBeenCalled(); // the scoped re-apply already restarts owner chat
+  });
+
+  it('still accepts personalityBody from an older client', async () => {
+    const { app, amyTok } = setup();
+    const res = await app.request('/auth/me/cli-settings', patch(amyTok, { personalityBody: 'Legacy client.' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ userInstructions: 'Legacy client.', personalityBody: 'Legacy client.' });
   });
 
   it('PATCH returns as soon as the setting is persisted, without blocking on the live brain re-apply', async () => {
-    // Regression: applyPersonalityChange/restart respawns the brain and waits for any in-flight turn to
+    // Regression: applyUserInstructionsChange/restart respawns the brain and waits for any in-flight turn to
     // settle, so awaiting it in the request stalled the PATCH (and the web "saving" indicator) for as long
     // as the turn ran. A never-settling re-apply must not hang the response — the persist already happened.
     const db = openPluginTablesDb(':memory:');
@@ -70,19 +79,19 @@ describe('cli-settings routes', () => {
     const amy = users.create('amy', 'pw');
     const config = new ConfigStore(db);
     config.update({ autopilot: { model: 'claude-opus-4-8' } });
-    const applyPersonalityChange = vi.fn(() => new Promise<void>(() => {})); // never resolves
+    const applyUserInstructionsChange = vi.fn(() => new Promise<void>(() => {})); // never resolves
     const app = createServer({
       tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
       project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
       clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
       userSettings: new UserSettingStore(db),
-      brain: { restart: vi.fn(async () => {}), applyPersonalityChange, applyAutoCompactSettings: vi.fn() } as never,
+      brain: { restart: vi.fn(async () => {}), applyUserInstructionsChange, applyAutoCompactSettings: vi.fn() } as never,
     });
-    const res = await app.request('/auth/me/cli-settings', patch(users.issueToken(amy.id), { personalityBody: 'Be concise.' }));
+    const res = await app.request('/auth/me/cli-settings', patch(users.issueToken(amy.id), { userInstructions: 'Be concise.' }));
     expect(res.status).toBe(200);
-    expect((await res.json()).personalityBody).toBe('Be concise.'); // persisted, even though the re-apply is still pending
-    expect(applyPersonalityChange).toHaveBeenCalledTimes(1); // fired, just not awaited
+    expect((await res.json()).userInstructions).toBe('Be concise.'); // persisted, even though the re-apply is still pending
+    expect(applyUserInstructionsChange).toHaveBeenCalledTimes(1); // fired, just not awaited
   });
 
   it('PATCH accepts any configured brain model for a non-admin, but a personal allow-list still narrows it', async () => {

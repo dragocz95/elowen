@@ -73,10 +73,10 @@ export interface BrainDeps {
   /** The CLI's per-user model choice for a canonical, policy-authorized Git project root. */
   projectModelPreference?: (userId: number, projectRoot: string) => ProjectModelPreference | undefined;
   setProjectModelPreference?: (userId: number, projectRoot: string, selection: ProjectModelPreference) => void;
-  /** The user's global personality body as a ready-to-append system-prompt chunk, or undefined when it is
-   *  empty. Appended AFTER the persona in appendSystemPrompt — the cache-safe seam. One global persona per
-   *  user, identical on every platform (web/cli/discord/cron); for a channel `userId` is the channel owner. */
-  activePersonality?: (userId: number) => string | undefined;
+  /** The account owner's global instructions as raw text, or undefined when empty. The spawner escapes and
+   *  wraps them before appending them AFTER the persona at the cache-safe appendSystemPrompt seam. Identical
+   *  on every platform (web/CLI/Discord/cron); for a channel `userId` is the channel owner. */
+  activeUserInstructions?: (userId: number) => string | undefined;
   /** The instance's resolved brand — persona name (Settings → Elowen AI / active theme) and product
    *  name (active theme). Read fresh at spawn so a brand change lands on the next respawn. Absent →
    *  the built-in Elowen brand. */

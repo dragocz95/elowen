@@ -219,7 +219,7 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get projectPath() { return d.projectPath; },
       get userSettings() { return d.userSettings; },
-      get activePersonality() { return d.activePersonality; },
+      get activeUserInstructions() { return d.activeUserInstructions; },
       get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
       get runtimeConfig() { return d.runtimeConfig; },
@@ -1175,23 +1175,20 @@ export class BrainService {
     }
   }
 
-  /** A user changed their active personality profile: respawn so the new persona chunk lands in the
-   *  system prompt. The user's own owner-chat session restarts (per-user, safe), AND every channel
-   *  session THIS USER OWNS is reset so a Discord room respawns on the owner's fresh 'discord' persona —
-   *  the channel session is owner-anchored and shared, so it must not keep the stale persona. Scoped by
-   *  owner: persona is resolved per channel-session owner at spawn, so a global reset would interrupt
-   *  every OTHER user's channels for a setting that never touched them. History rehydrates from SQLite on
-   *  respawn. Rare operation; serialized on its own key so it never interleaves a reload. */
-  async applyPersonalityChange(userId: number): Promise<void> {
-    await this.serial(`personality-${userId}`, async () => {
+  /** A user changed their global agent instructions: respawn so the new system-prompt chunk lands in every
+   *  surface. The owner chat restarts and every channel session THIS USER OWNS is reset; other users stay
+   *  untouched. History rehydrates from SQLite on respawn. Rare operation; serialized on its own key so it
+   *  never interleaves a reload. */
+  async applyUserInstructionsChange(userId: number): Promise<void> {
+    await this.serial(`user-instructions-${userId}`, async () => {
       await this.restart(userId);
-      await this.channelService.resetChannels('personality changed', (ownerUserId) => ownerUserId === userId);
+      await this.channelService.resetChannels('user instructions changed', (ownerUserId) => ownerUserId === userId);
     });
   }
 
   /** The instance BRAND changed (theme switched / agent renamed): the old identity sits at the very top
    *  of every live system prompt, so a session kept alive would keep speaking as the old name while the
-   *  UI already shows the new one. Instance-wide variant of applyPersonalityChange — the brand is
+   *  UI already shows the new one. Instance-wide variant of applyUserInstructionsChange — the brand is
    *  global, so every active owner session restarts and every channel session resets. History rehydrates
    *  from SQLite; the full prompt-prefix change means a complete prompt-cache re-warm, which is why the
    *  Settings UI warns before switching. Serialized on the SAME key as reloadPlugins — both loops restart

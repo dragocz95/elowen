@@ -239,9 +239,9 @@ interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string
 export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
-/** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
- *  (`serverDefault`, response-only). `personalityBody` is the global persona applied on every surface. */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
+/** Per-user CLI/brain settings surfaced in Account. `model` empty → the configured brain default.
+ *  `userInstructions` is the semantic field; `personalityBody` is a temporary legacy-client alias. */
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,
