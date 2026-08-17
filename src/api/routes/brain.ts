@@ -17,6 +17,7 @@ import { kimiUsageSource } from '../../brain/kimiUsage.js';
 import { anthropicUsageSource } from '../../brain/anthropicUsage.js';
 import { brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
 import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer.js';
+import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
@@ -72,6 +73,17 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     [anthropicUsageSource.provider]: new UsageService(anthropicUsageSource, d.brainAuth),
   } : {};
   const forbidden = (c: { get: (k: 'tokenScope') => string }) => c.get('tokenScope') === 'agent';
+
+  /** Pin this request's origin to the conversation whose turn it is about to start, so the spend of that
+   *  turn is attributed to the address that ORDERED it — read now, at request time, not at settle, when
+   *  the requester may be gone or on another network. Called on the turn-STARTING routes only; a read
+   *  route has nothing to attribute. Silent no-op where the store is unwired (minimal test wiring). */
+  const pinOrigin = (c: ElowenContext, sessionId: string): void => {
+    d.usageOrigins?.recordRequest(
+      sessionId, c.get('user').id,
+      clientOrigin(c, d.config.get().security.trustProxy), d.clock.now(),
+    );
+  };
 
   /** The prologue almost every brain route shares: 503 when the engine isn't wired, 403 for an agent-scope
    *  token (a spawned agent must never drive a human's brain), and — with `{ admin: true }` — 403 for a
@@ -150,7 +162,13 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   app.post('/brain/start', withBrain(async (c, brain) => {
     const { provider, session, fresh, cwd, client, generation } = await parseBody(c, brainStartSchema);
-    try { return c.json(await brain.start(c.get('user').id, { provider, session, fresh, cwd, clientId: client, clientGeneration: generation }), 201); }
+    try {
+      const started = await brain.start(c.get('user').id, { provider, session, fresh, cwd, clientId: client, clientGeneration: generation });
+      // Opening a conversation does not itself burn tokens, but it establishes where this client is
+      // talking from — an advisor autostart or a first turn that follows finds the pin already set.
+      pinOrigin(c, started.sessionId);
+      return c.json(started, 201);
+    }
     catch (e) {
       const message = (e as Error).message;
       return message === 'client request is no longer current'
@@ -581,7 +599,15 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       switch (cmd.name) {
         case 'stop': await brain.abort(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: 'Agent stopped.' });
         case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await brain.start(user.id, { fresh: true }) });
-        case 'compact': { const r = await brain.compact(user.id, typeof body.session === 'string' ? body.session : undefined, compactInstruction(body.instruction)); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
+        case 'compact': {
+          const target = typeof body.session === 'string' ? body.session : undefined;
+          // A compaction runs a summarizing model turn, so its tokens are spend like any other and are
+          // attributed to whoever asked for it. preflightSend is used purely as the ownership-checked
+          // resolver of "which conversation is this about"; a failure here is not this route's error.
+          try { pinOrigin(c, brain.preflightSend(user.id, target)); } catch { /* no conversation to attribute */ }
+          const r = await brain.compact(user.id, target, compactInstruction(body.instruction));
+          return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } });
+        }
         case 'fast': {
           const r = brain.setFast(user.id, typeof body.on === 'boolean' ? body.on : undefined, typeof body.session === 'string' ? body.session : undefined);
           return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
@@ -602,8 +628,13 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     // the clean text the daemon echoes back as the authoritative `user` turn (the client no longer echoes
     // optimistically); absent → the model-facing text is shown.
     const boundClient = session && client && generation ? { id: client, generation } : undefined;
-    try { brain.preflightSend(c.get('user').id, session, boundClient); }
+    // preflightSend resolves the conversation this turn will land in (the bound session, else the active
+    // one) and throws when there is none — so it is both the guard and the only place the target id is
+    // known BEFORE the turn starts, which is exactly when the origin has to be captured.
+    let targetSession: string;
+    try { targetSession = brain.preflightSend(c.get('user').id, session, boundClient); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
+    pinOrigin(c, targetSession);
     // A model/tool turn can outlive nginx/SSH proxy request timeouts while its authoritative output is
     // already flowing over SSE. Wait only until the user row + stream echo are durable, then return 202.
     // A failure before that boundary is an HTTP error; a later failure is an ordered SSE error so an
@@ -717,6 +748,10 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     // caller would receive a misleading `{ok:true}` with no continuation ever running.
     try { brain.preflightSubagentSend(c.get('user').id, body.session); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
+    // The child's own session, not the parent's: a sub-agent turn ordered by hand is attributed to the
+    // human who typed into it. A sub-agent turn the PARENT spawns has no request of its own and settles
+    // as `internal`, which is the honest answer — nobody typed it.
+    pinOrigin(c, body.session);
     void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
     return c.json({ ok: true });
   }));

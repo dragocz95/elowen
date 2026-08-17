@@ -76,8 +76,11 @@ describe('auth login route', () => {
       body: JSON.stringify({ username: 'admin', password: 'x' }),
     });
     await login(req);
-    const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string> };
-    expect(init.headers['x-real-ip']).toBe('203.0.113.7');
+    // Built by the shared forwardHeaders allow-list now, so this asserts the guarantee through the one
+    // helper every proxied request goes through rather than through a hand-built header record.
+    const init = fetchMock.mock.calls[0][1] as { headers: Headers };
+    expect(init.headers.get('x-real-ip')).toBe('203.0.113.7');
+    expect(init.headers.get('content-type')).toBe('application/json');
   });
 
   it('returns 502 (not a crash) when the daemon returns a non-JSON 200', async () => {

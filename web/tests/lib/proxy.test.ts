@@ -69,22 +69,27 @@ describe('proxy helpers', () => {
     expect(h.get('content-type')).toBe('application/json');
   });
 
-  it('forwardHeaders drops client-supplied auth and forwarded-for headers (no smuggling/IP spoofing)', () => {
+  it('forwardHeaders drops client-supplied auth and forwarded-for headers, but carries the proxy x-real-ip', () => {
     const h = forwardHeaders(new Request('https://web.example/api/x', {
       headers: {
         authorization: 'Bearer attacker-token',
         'x-forwarded-for': '1.2.3.4',
-        'x-real-ip': '1.2.3.4',
+        'x-real-ip': '203.0.113.7',
         forwarded: 'for=1.2.3.4',
         'x-forwarded-host': 'evil.example',
         accept: 'application/json',
       },
     }));
     expect(h.get('authorization')).toBeNull();
+    // The client writes these two itself, so forwarding them would hand anyone the ability to choose
+    // the address the daemon rate-limits and attributes spend by.
     expect(h.get('x-forwarded-for')).toBeNull();
-    expect(h.get('x-real-ip')).toBeNull();
     expect(h.get('forwarded')).toBeNull();
     expect(h.get('x-forwarded-host')).toBeNull();
+    // x-real-ip is the exception, and only because nginx OVERWRITES it with the real peer. Whether to
+    // believe it is the daemon's call (security.trustProxy), not this layer's — but without forwarding
+    // it the daemon sees no origin at all for anything that comes through the web app.
+    expect(h.get('x-real-ip')).toBe('203.0.113.7');
     // Legitimate content-negotiation headers still pass through.
     expect(h.get('accept')).toBe('application/json');
     // accept-encoding is not forwarded: daemon<->proxy runs over localhost so compression buys

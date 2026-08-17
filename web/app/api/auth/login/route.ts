@@ -1,4 +1,4 @@
-import { daemonUrl, sessionCookie, namedCookie, requireSameOrigin, jsonError, isHttps, RETURN_COOKIE, IMPERSONATING_COOKIE } from '../../../../lib/proxy';
+import { daemonUrl, sessionCookie, namedCookie, requireSameOrigin, jsonError, isHttps, forwardHeaders, RETURN_COOKIE, IMPERSONATING_COOKIE } from '../../../../lib/proxy';
 
 // Proxy-owned login: forward credentials to the daemon, and on success mint the httpOnly session
 // cookie here. The daemon token is placed in the cookie and never returned to the browser body, so
@@ -9,12 +9,12 @@ export async function POST(req: Request): Promise<Response> {
   const blocked = requireSameOrigin(req);
   if (blocked) return blocked;
   const body = await req.text();
-  // Forward the trusted client IP so the daemon's login rate-limit keys per-source instead of
-  // bucketing every login as 'unknown'. The reverse proxy sets x-real-ip on the inbound request
-  // (overwriting any client-supplied value), and the daemon is localhost-only, so this can't be forged.
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  const realIp = req.headers.get('x-real-ip');
-  if (realIp) headers['x-real-ip'] = realIp;
+  // Through the shared allow-list, which is what carries the proxy-set x-real-ip: without it the
+  // daemon's login rate-limit would bucket every attempt under one key. This route used to re-add that
+  // header by hand; it goes through the same helper as every other proxied request now, so there is one
+  // description of what reaches the daemon.
+  const headers = forwardHeaders(req);
+  headers.set('content-type', 'application/json'); // the body is forwarded verbatim as JSON
   const upstream = await fetch(`${daemonUrl()}/auth/login`, { method: 'POST', headers, body });
   if (!upstream.ok) {
     // Pass the daemon's status/body through (e.g. 401 bad credentials) without minting a cookie.

@@ -97,15 +97,27 @@ export function requireSameOrigin(req: Request): Response | null {
 }
 
 /** Headers safe to forward from the browser to the daemon. An allow-list (not a deny-list) so a
- *  client can never smuggle its own `authorization` (the proxy injects the real bearer), spoof its
- *  source IP via `x-forwarded-for`/`x-real-ip`/`forwarded` (defeating daemon rate-limiting/audit),
- *  or inject hop-by-hop headers. Only content-negotiation headers pass through. */
+ *  client can never smuggle its own `authorization` (the proxy injects the real bearer) or inject
+ *  hop-by-hop headers. `x-forwarded-for` and `forwarded` stay OUT deliberately: the browser writes
+ *  those itself, so forwarding them would let any client dictate the source address the daemon
+ *  rate-limits and attributes spend by. Only content-negotiation headers pass through. */
 const FORWARD_ALLOW = new Set(['content-type', 'accept', 'accept-language']);
+
+/** The one header we re-emit rather than pass through. nginx OVERWRITES it with the real peer
+ *  (`proxy_set_header X-Real-IP $remote_addr`), so the value arriving here is the proxy's statement,
+ *  not the client's — which is precisely why it is the only source address the daemon will consider.
+ *  Whether to BELIEVE it is not decided here: the daemon owns that (`security.trustProxy`, read in
+ *  `src/api/clientIp.ts`), so the trust rule exists in exactly one place. The login route has forwarded
+ *  this header on its own since the rate-limiter needed it; this generalizes that to every proxied
+ *  request, which is what lets the daemon attribute usage to an origin at all. */
+const REAL_IP_HEADER = 'x-real-ip';
 
 export function forwardHeaders(req: Request): Headers {
   const h = new Headers();
   for (const [key, value] of req.headers) {
     if (FORWARD_ALLOW.has(key.toLowerCase())) h.set(key, value);
   }
+  const realIp = req.headers.get(REAL_IP_HEADER);
+  if (realIp) h.set(REAL_IP_HEADER, realIp);
   return h;
 }
