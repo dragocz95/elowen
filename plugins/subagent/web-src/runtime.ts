@@ -43,7 +43,7 @@ type AnyComponent = ComponentType<any>;
 
 interface SubagentComponents {
   Badge: AnyComponent; Input: AnyComponent; Field: AnyComponent; SettingsGroup: AnyComponent; PluginSection: AnyComponent;
-  MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
+  SelectMenu: AnyComponent; MarkdownAssetEditor: AnyComponent; Button: AnyComponent;
   ControlSurfaceDocument: AnyComponent;
   SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent;
 }

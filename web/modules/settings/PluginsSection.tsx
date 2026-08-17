@@ -118,7 +118,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
             <span className="mt-0.5 block truncate text-xs text-text-muted" title={description}>{description}</span>
           </span>
         </button>
-        <div className="hidden max-w-[18rem] shrink-0 items-center gap-2 @3xl:flex">
+        <div className="hidden shrink-0 items-center gap-2 @3xl:flex">
           <ProvidesBadges counts={{ tools: p.provides.tools?.length ?? 0, skills: p.provides.skills?.length ?? 0, platforms: p.provides.platforms?.length ?? 0 }} />
         </div>
         <div className="flex shrink-0 items-center gap-2">

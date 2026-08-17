@@ -2,6 +2,7 @@
 import { Gauge } from 'lucide-react';
 import type { MemoryCategory } from '../../lib/types';
 import { Slider } from '../../components/ui/Slider';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { CategoryIcon } from '../../lib/categoryIcons';
 import { categorySwatch } from './memoryMeta';
 
@@ -20,31 +21,24 @@ export function RankSlider({ label, icon: Icon = Gauge, value, onChange }: { lab
   );
 }
 
-/** Category picker showing the CURRENTLY-selected category's icon (in its colour) next to a native
- *  select — a native <option> can't carry an icon, so the icon swatch reflects the pick live. Shared by
- *  the create and edit memory modals so both set the category the same way. */
+/** Category picker shared by the create and edit memory modals. SelectMenu owns the dropdown chrome
+ *  and lets every option carry the same category icon and colour shown by the rest of the memory UI. */
 export function CategorySelect({ categories, value, onChange, ariaLabel, noneLabel }: {
   categories: MemoryCategory[]; value: number | null; onChange: (v: number | null) => void; ariaLabel: string; noneLabel: string;
 }) {
-  const selected = value != null ? categories.find((c) => c.id === value) : undefined;
   return (
-    <div className="flex items-center gap-2">
-      <span
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface"
-        style={{ color: selected ? categorySwatch(selected.color) : undefined }}
-        aria-hidden
-      >
-        <CategoryIcon name={selected?.icon} size={16} />
-      </span>
-      <select
-        value={value == null ? '' : String(value)}
-        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-        aria-label={ariaLabel}
-        className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-text focus:border-accent focus:outline-none"
-      >
-        <option value="">{noneLabel}</option>
-        {categories.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
-      </select>
-    </div>
+    <SelectMenu<string>
+      value={value == null ? '' : String(value)}
+      onChange={(next) => onChange(next === '' ? null : Number(next))}
+      label={ariaLabel}
+      options={[
+        { value: '', label: noneLabel, icon: <CategoryIcon name={undefined} size={16} /> },
+        ...categories.map((category) => ({
+          value: String(category.id),
+          label: category.name,
+          icon: <span style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={16} /></span>,
+        })),
+      ]}
+    />
   );
 }

@@ -5,6 +5,7 @@ import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives'
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Segmented } from '../../components/ui/Segmented';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
@@ -97,14 +98,16 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
                 />
               </div>
               {theme === 'custom' ? (
-                <select
-                  aria-label={t.terminal.loadPreset}
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text focus:border-accent focus:outline-none"
-                  value="" onChange={(e) => { const p = PALETTE_PRESETS.find((x) => x.id === e.target.value); if (p) setPalette({ ...p.palette }); }}
-                >
-                  <option value="">{t.terminal.presetPlaceholder}</option>
-                  {PALETTE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
+                <SelectMenu
+                  value=""
+                  onChange={(value) => { const preset = PALETTE_PRESETS.find((item) => item.id === value); if (preset) setPalette({ ...preset.palette }); }}
+                  label={t.terminal.loadPreset}
+                  className="min-w-44"
+                  options={[
+                    { value: '', label: t.terminal.presetPlaceholder },
+                    ...PALETTE_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })),
+                  ]}
+                />
               ) : null}
             </div>
             {theme === 'custom' ? (

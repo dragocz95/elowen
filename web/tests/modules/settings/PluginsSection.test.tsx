@@ -63,6 +63,16 @@ describe('PluginsSection catalog', () => {
     expect(container.querySelector('[data-testid="installed-plugins-list"]')).not.toHaveClass('border-y');
   });
 
+  it('keeps tools, skills and platforms together until the row itself is genuinely narrow', () => {
+    usePlugins.mockReturnValue({ data: [plugin({
+      name: 'full',
+      provides: { tools: ['one', 'two'], skills: ['guide'], platforms: ['chat'] },
+    })], isLoading: false });
+    const { container } = renderSection();
+    expect(container.querySelector('.max-w-\\[18rem\\]')).not.toBeInTheDocument();
+    for (const badge of container.querySelectorAll('.font-mono.rounded-md')) expect(badge).toHaveClass('whitespace-nowrap');
+  });
+
   it('filters the list by the search query and shows the no-matches empty state', async () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'files' }), plugin({ name: 'discord', provides: { platforms: ['discord'] } })], isLoading: false });
     renderSection();

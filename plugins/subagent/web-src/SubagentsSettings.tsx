@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { Eye, Package, Plus, User } from 'lucide-react';
 import { runtime, type PluginSubagent } from './runtime';
 
-const selectClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text focus:border-accent';
-
 type ToolsMode = 'read-only' | 'all' | 'inherit' | 'custom';
 /** `customTools` is a comma-separated tool list, used only when `toolsMode === 'custom'`. */
 type SubagentForm = { editing: string | null; name: string; description: string; body: string; toolsMode: ToolsMode; customTools: string };
@@ -75,12 +73,17 @@ export function SubagentsSettings({ surface }: { surface: 'page' | 'deck' }) {
         renderFieldsBeforeBody={(form: SubagentForm, patch: (p: Partial<SubagentForm>) => void) => (
           <>
             <C.Field label={s.tools} hint={s.toolsHint}>
-              <select className={selectClass} value={form.toolsMode} onChange={(e) => patch({ toolsMode: e.target.value as ToolsMode })}>
-                <option value="read-only">{s.toolsReadOnly}</option>
-                <option value="all">{s.toolsAll}</option>
-                <option value="inherit">{s.toolsInherit}</option>
-                <option value="custom">{s.toolsCustom}</option>
-              </select>
+              <C.SelectMenu
+                value={form.toolsMode}
+                onChange={(value: ToolsMode) => patch({ toolsMode: value })}
+                label={s.tools}
+                options={[
+                  { value: 'read-only', label: s.toolsReadOnly },
+                  { value: 'all', label: s.toolsAll },
+                  { value: 'inherit', label: s.toolsInherit },
+                  { value: 'custom', label: s.toolsCustom },
+                ]}
+              />
             </C.Field>
             {form.toolsMode === 'custom' ? (
               <C.Field label={s.customTools} hint={s.customToolsHint}>

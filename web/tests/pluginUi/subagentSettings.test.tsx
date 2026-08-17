@@ -55,7 +55,8 @@ describe('subagent SubagentsSettings', () => {
     const form = within(await screen.findByRole('dialog'));
     fireEvent.change(form.getByPlaceholderText('reviewer'), { target: { value: 'reviewer' } });
     fireEvent.change(form.getAllByRole('textbox')[1]!, { target: { value: 'Reviews diffs.' } });
-    fireEvent.change(form.getByRole('combobox'), { target: { value: 'custom' } });
+    fireEvent.click(form.getByRole('combobox'));
+    fireEvent.click(within(form.getByRole('listbox')).getByRole('option', { name: strings.toolsCustom }));
     fireEvent.change(form.getByPlaceholderText('Read, Search, Bash'), { target: { value: 'Read, Grep' } });
     fireEvent.change(form.getByPlaceholderText(strings.bodyPlaceholder!), { target: { value: 'Be thorough.' } });
     fireEvent.click(form.getByRole('button', { name: strings.save }));

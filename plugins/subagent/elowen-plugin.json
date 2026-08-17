@@ -98,6 +98,7 @@
   "web": {
     "entry": "web/index.js",
     "requiresApiVersion": 1,
+    "adminOnly": true,
     "settings": [
       {
         "id": "subagents",
