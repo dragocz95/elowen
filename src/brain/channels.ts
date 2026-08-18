@@ -32,6 +32,7 @@ import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.j
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
+import { steerCustomMessage } from './session/steerCustomMessage.js';
 import { execRefSpec } from '../shared/execs.js';
 
 /** How a delegated steer ended: `delivered` = the message provably reached the child's context (its
@@ -670,15 +671,15 @@ export class ChannelSessionService {
       // of learning about it a turn late — the same reason the owner path steers. It rides PI's custom
       // seam rather than enqueueMirrored: a hidden message must not surface as a queue chip or a durable
       // user row. It carries only the result, because the running turn already holds the ambient turn
-      // context this path would otherwise compose around it. `triggerTurn` is off so that a turn ending
-      // between the isStreaming read and here appends the message instead of starting a turn outside the
-      // channel lock.
+      // context this path would otherwise compose around it. It is ENQUEUED rather than sent so that a turn
+      // ending between the isStreaming read and here leaves the message waiting for the next turn instead
+      // of starting one outside the channel lock (see steerCustomMessage for what changed in PI 0.84.2).
       if (opts.internalSystem) {
         if (delegationAborted()) throw new Error('delegation aborted');
-        await streaming.session.sendCustomMessage({
+        steerCustomMessage(streaming.session, {
           customType: opts.internalSystem.customType, content: text, display: false,
           details: { source: 'elowen', resultId: opts.internalSystem.resultId },
-        }, { triggerTurn: false, deliverAs: 'steer' });
+        });
         if (delegationAborted()) {
           streaming.session.clearQueue();
           throw new Error('delegation aborted');

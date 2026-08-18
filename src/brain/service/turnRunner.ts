@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { isNonUserSession } from '../sessionId.js';
 import { xmlEscape } from '../../shared/xml.js';
 import { logger } from '../../shared/logger.js';
+import { steerCustomMessage } from '../session/steerCustomMessage.js';
 
 const coldLog = logger('brain-compaction');
 
@@ -164,10 +165,11 @@ export class BrainTurnRunner {
       // Already handed to PI by an earlier drain and still queued (see steeredInFlight). Two children
       // finishing close together is the ordinary case under fan-out, not a rare race.
       if (resultId && this.steeredInFlight.get(target)?.has(resultId)) return 'steered';
-      // triggerTurn is off for the one race the isStreaming read above cannot close: were the turn to end in
-      // between, PI would start a whole turn from here, outside the lock that serializes prompts on this
-      // session. Off, it appends the message to the transcript instead and the agent reads it next turn.
-      await running.session.sendCustomMessage(message, { triggerTurn: false, deliverAs: 'steer' });
+      // Enqueued on PI's steering queue rather than sent, which closes the one race the isStreaming read
+      // above cannot: were the turn to end in between, sending would start a whole turn from here, outside
+      // the lock that serializes prompts on this session. See steerCustomMessage for why the flag that
+      // used to express this no longer does.
+      steerCustomMessage(running.session, message);
       if (resultId) {
         const queued = this.steeredInFlight.get(target) ?? new Set<string>();
         queued.add(resultId);

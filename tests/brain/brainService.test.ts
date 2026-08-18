@@ -45,12 +45,13 @@ function fakeDeps() {
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
-    // Mirrors PI's three shapes. Streaming: the message only enters the agent's queue — no turn, and it
-    // reaches the transcript later, when the loop injects it (tests drive that with `injectSteeredCustom`).
-    // Idle + triggerTurn: PI appends it and runs a turn. Idle without: it is appended, nothing runs.
+    // Mirrors the split PI 0.84.2 draws between the two ways a custom message can arrive, because the
+    // difference is the whole point: mid-turn delivery exists ONLY through the agent's steering queue,
+    // which the loop drains between rounds (tests drive that with `injectSteeredCustom`), while
+    // sendCustomMessage appends to the transcript and, with triggerTurn, runs a turn. A fake that let
+    // sendCustomMessage steer would keep passing for code that no longer delivers anything.
     __steeredCustom: [] as Record<string, unknown>[],
     sendCustomMessage: vi.fn(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
-      if (session.isStreaming) { session.__steeredCustom.push(message); return; }
       messages.push({ role: 'custom', ...message } as never);
       if (options?.triggerTurn) {
         messages.push({ role: 'assistant', content: 'processed sub-agent result', stopReason: 'stop' } as never);
@@ -84,8 +85,13 @@ function fakeDeps() {
     getActiveToolNames(this: { __active: string[] }) { return this.__active; },
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     model: undefined as unknown,
-    // BrainSessionFactory installs the compaction-only model route on PI's public Agent stream seam.
-    agent: { streamFunction: vi.fn() },
+    // BrainSessionFactory installs the compaction-only model route on PI's public Agent stream seam, and
+    // steerCustomMessage enqueues on the steering queue this same object owns — the ONLY channel the loop
+    // injects from mid-turn, which is why the fake records those messages separately from the transcript.
+    agent: {
+      streamFunction: vi.fn(),
+      steer: vi.fn((message: Record<string, unknown>) => { session.__steeredCustom.push(message); }),
+    },
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -890,14 +896,17 @@ describe('BrainService', () => {
     d.session.isStreaming = true; // a parent turn is in flight
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-stream', toolCallId: 'call-stream', sessionId: child, status: 'done', task: 'inspect', result: 'all clear', tools: 1, seconds: 1 });
 
-    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(d.session.agent.steer).toHaveBeenCalledWith(
       expect.objectContaining({
+        role: 'custom',
         customType: 'subagent-result',
         display: false,
         content: expect.stringContaining('<subagent-result'),
       }),
-      { triggerTurn: false, deliverAs: 'steer' },
     ));
+    // Never through sendCustomMessage: since PI 0.84.2 that call records the message without handing it to
+    // the running turn, which is delivery that silently never arrives.
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     // PI accepting a steer is not proof the parent's context holds it — a stop clearing the queue would
     // erase it — so the durable row stays pending, without spending a delivery attempt on it.
     await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
@@ -909,7 +918,8 @@ describe('BrainService', () => {
 
     // The post-turn drain finds it in the transcript: acknowledged, never sent a second time.
     await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.agent.steer).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
   });
 
@@ -930,17 +940,17 @@ describe('BrainService', () => {
 
     d.session.isStreaming = true;
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-one', toolCallId: 'call-one', sessionId: 'brain-ch-subagent-one', status: 'done', task: 'one', result: 'first', tools: 1, seconds: 1 });
-    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(d.session.agent.steer).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
 
     // The second child lands while the first is still queued inside PI, untouched by the transcript.
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-two', toolCallId: 'call-two', sessionId: 'brain-ch-subagent-two', status: 'done', task: 'two', result: 'second', tools: 1, seconds: 1 });
-    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(d.session.agent.steer).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
 
     // Exactly one steer per result, and the second one carried the second result.
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
-    const bodies = d.session.sendCustomMessage.mock.calls.map((c: [{ content: string }]) => c[0].content);
+    expect(d.session.agent.steer).toHaveBeenCalledTimes(2);
+    const bodies = d.session.agent.steer.mock.calls.map((c: [{ content: string }]) => c[0].content);
     expect(bodies.filter((b: string) => b.includes('res-one'))).toHaveLength(1);
     expect(bodies.filter((b: string) => b.includes('res-two'))).toHaveLength(1);
 
@@ -967,7 +977,7 @@ describe('BrainService', () => {
 
     d.session.isStreaming = true;
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-dropped', toolCallId: 'call-dropped', sessionId: child, status: 'done', task: 'inspect', result: 'all clear', tools: 1, seconds: 1 });
-    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(d.session.agent.steer).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
 
     // In flight while the turn runs — that is what stops a second drain re-sending it.
@@ -1003,7 +1013,7 @@ describe('BrainService', () => {
 
     d.session.isStreaming = true;
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-cleared', toolCallId: 'call-cleared', sessionId: child, status: 'done', task: 'inspect', result: 'all clear', tools: 1, seconds: 1 });
-    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(d.session.agent.steer).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(runner.resultDrains.has(sessionId)).toBe(false));
 
     d.session.__steeredCustom.length = 0; // the stop dropped it before the loop could inject it
@@ -1011,7 +1021,7 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'anything', session: sessionId });
 
     await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);   // only the real, post-turn delivery
     expect(d.session.sendCustomMessage.mock.calls.at(-1)?.[1]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
     expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
   });

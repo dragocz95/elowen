@@ -449,7 +449,11 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     const child = fakeBrain('moonshot', 'kimi', undefined, childSessionId);
     child.session.isStreaming = true;
     const sendCustomMessage = vi.fn(async () => {});
-    Object.assign(child.session, { sendCustomMessage, clearQueue: vi.fn() });
+    // Mid-turn delivery rides the agent's steering queue since PI 0.84.2; sendCustomMessage is kept on the
+    // fake so the test can assert the running turn was NOT handed the message through a call that only
+    // records it (see steerCustomMessage).
+    const agentSteer = vi.fn();
+    Object.assign(child.session, { sendCustomMessage, clearQueue: vi.fn(), agent: { steer: agentSteer } });
     registry.channelTouch(childChannel, child);
     const svc = new ChannelSessionService({ registry, store, users: { get: () => ({ username: 'owner' }) }, spawn: vi.fn() } as never);
     const content = '<system-reminder>\n<subagent-result id="res-1" status="done"></subagent-result>\n</system-reminder>';
@@ -462,10 +466,15 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     } as never, content);
 
     expect(reply).toBe('');
-    expect(sendCustomMessage).toHaveBeenCalledWith(
-      { customType: 'subagent-result', content, display: false, details: { source: 'elowen', resultId: 'res-1' } },
-      { triggerTurn: false, deliverAs: 'steer' },
-    );
+    expect(agentSteer).toHaveBeenCalledWith({
+      role: 'custom',
+      customType: 'subagent-result',
+      content,
+      display: false,
+      details: { source: 'elowen', resultId: 'res-1' },
+      timestamp: expect.any(Number),
+    });
+    expect(sendCustomMessage).not.toHaveBeenCalled();
     expect(child.session.prompt).not.toHaveBeenCalled();
     expect(child.session.steer).not.toHaveBeenCalled(); // never mirrored as a visible queued message
     expect(store.getMessages(childSessionId)).toEqual([]); // and never persisted as a user row
