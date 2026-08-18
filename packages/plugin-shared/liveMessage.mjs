@@ -81,7 +81,9 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       // `content`), retry once before freezing — otherwise the reply is silently lost, frozen at the
       // mid-stream draft, with no later drain to retry it (close() below would end the chain).
       if (this.content !== this.sent) await this.flush();
+      const delivered = this.content === this.sent;
       this.close();
+      return delivered;
     }
     /** Freeze the message: no further edit lands, and any armed trailing flush is cancelled. */
     close() {
@@ -139,11 +141,13 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
    *  (growing) one is edited on each delta — earlier ones freeze at their piece. The FIRST bubble is a real
    *  reply to the triggering message. */
   class StreamingAnswer {
-    constructor(adapter, channelId, replyToId) {
+    constructor(adapter, channelId, replyToId, firstBubble = null) {
       this.a = adapter;
       this.channelId = channelId;
       this.replyToId = replyToId; // the first bubble replies to it; continuations are plain
-      this.bubbles = [];          // ordered EditableMessages; index 0 carries the reply reference
+      // A final-only turn may adopt the existing progress bubble as its first answer bubble. Reusing the
+      // activity avoids the deletion tombstones several clients render while preserving chunked replies.
+      this.bubbles = firstBubble ? [firstBubble] : [];
     }
     bubbleFor(i) {
       let b = this.bubbles[i];
@@ -170,8 +174,14 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
      *  so no stale tail remains. */
     async finalize(text) {
       const pieces = splitContent(text);
-      for (let i = 0; i < pieces.length; i++) await this.bubbleFor(i).settle(pieces[i]);
+      let deliveredAny = false;
+      for (let i = 0; i < pieces.length; i++) {
+        const delivered = await this.bubbleFor(i).settle(pieces[i]);
+        if (!delivered) return { deliveredAll: false, deliveredAny, remaining: pieces.slice(i) };
+        deliveredAny = true;
+      }
       for (let i = pieces.length; i < this.bubbles.length; i++) await this.deleteBubble(this.bubbles[i]);
+      return { deliveredAll: true, deliveredAny, remaining: [] };
     }
     /** Freeze a bubble and delete its message, AWAITING any in-flight create/edit first — a bubble whose
      *  initial create is still in flight has messageId === null, so deciding close-vs-delete before the send
@@ -192,7 +202,12 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       this.channelId = channelId;
       this.replyToId = replyToId; // the triggering message — the answer bubble is a real reply to it
       this.askerId = askerId;     // who to route an AskUserQuestion prompt to (and gate its answer on)
-      this.display = display ?? resolveDisplaySettings(adapter.cfg);
+      const resolvedDisplay = display ?? resolveDisplaySettings(adapter.cfg);
+      // Collapsing progress into the final reply requires one reusable bubble and a non-streamed answer.
+      // Normalize conflicting presentation knobs here so no earlier per-tool/live-answer messages survive.
+      this.display = resolvedDisplay.deleteToolActivityAfterTurn
+        ? { ...resolvedDisplay, answerMode: 'final', toolMessageMode: 'single' }
+        : resolvedDisplay;
       this.toolCalls = []; // lifecycle rows in display order
       this.toolById = new Map(); // PI toolCallId → row (parallel-safe completion/progress updates)
       this.notices = new Map(); // retry/compaction status lines by kind
@@ -243,7 +258,10 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       sections.push(...cards);
       if (!sections.length) return;
       if (!this.progress) {
-        this.progress = new EditableMessage(this.a, this.channelId);
+        const ref = this.display.deleteToolActivityAfterTurn && this.replyToId
+          ? transport.replyRef(this.replyToId)
+          : {};
+        this.progress = new EditableMessage(this.a, this.channelId, ref);
         // The answer draft already started, so this new tool bubble posts BELOW it — stranding the answer
         // ABOVE the trace. Flag it so finalize re-anchors the answer below and keeps it the LAST message.
         if (this.answer) this.answerStranded = true;
@@ -379,18 +397,19 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         this.idle = e;
       }
     }
-    /** Remove only tool-activity messages after the turn when the conversation opted into ephemeral progress. */
-    async cleanupToolActivity() {
-      if (!this.display.deleteToolActivityAfterTurn || this.toolCalls.length === 0) return;
-      if (this.display.toolMessageMode === 'per_tool') {
-        for (const bubble of this.toolBubbles.values()) await deleteEditableMessage(bubble);
-        this.toolBubbles.clear();
-        return;
-      }
-      if (this.progress) {
-        await deleteEditableMessage(this.progress);
-        this.progress = null;
-      }
+    /** Replace the one live progress activity with the authoritative final text. The existing bubble becomes
+     *  the first chunk of a StreamingAnswer, so long replies can still add ordered continuation messages. */
+    async collapseToolActivity(content) {
+      if (!this.display.deleteToolActivityAfterTurn || !this.progress || !content) return false;
+      const answer = new StreamingAnswer(this.a, this.channelId, this.replyToId, this.progress);
+      const delivery = await answer.finalize(content);
+      this.progress = null;
+      if (delivery.deliveredAll) return true;
+      if (!delivery.deliveredAny) return false; // caller posts the complete fallback; no answer chunk landed
+      // The leading chunks are already visible. Post only the missing split pieces so the answer stays complete
+      // without repeating the prefix; each piece is already bounded and code-fence-safe for this transport.
+      for (const piece of delivery.remaining) await postWithImages(this.a, this.channelId, piece, undefined);
+      return true;
     }
     /** Freeze the live bubbles on a FAILED turn: clear the stall-hint timer and close BOTH the progress and
      *  answer messages so a straggler edit can't land after the error reply already went out. */
@@ -400,7 +419,8 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       for (const bubble of this.toolBubbles.values()) bubble.close();
       if (this.answer) this.answer.close();
     }
-    /** Settle a failed turn's activity before the adapter posts the error reply. */
+    /** Settle a failed turn's activity. Returns true when the progress bubble became the error reply, so the
+     *  adapter must not post a duplicate error message underneath it. */
     async fail(message) {
       clearTimeout(this.stallTimer);
       for (const call of this.toolCalls) if (call.state === 'running') {
@@ -411,10 +431,11 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       this.notices.clear();
       for (const call of this.toolCalls) this.renderTool(call);
       this.renderProgress();
+      if (await this.collapseToolActivity(String(message))) return true;
       for (const bubble of this.toolBubbles.values()) await bubble.settle(bubble.content);
       if (this.progress) await this.progress.settle(this.progress.content);
       if (this.answer) this.answer.close();
-      await this.cleanupToolActivity();
+      return false;
     }
     async finalize(reply) {
       // Settle the progress bubble to its complete tool list (a throttled edit may still be pending),
@@ -427,7 +448,8 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       if (this.progress) {
         this.lastActivityAt = Date.now(); // drop the stall step-counter from the settled tool trace
         this.renderProgress();
-        await this.progress.settle(this.progress.content); // bypass the throttle for this one final settle, then freeze
+        // A collapsing turn keeps this bubble editable until the authoritative reply replaces its trace.
+        if (!this.display.deleteToolActivityAfterTurn) await this.progress.settle(this.progress.content);
       }
       // Nothing happened on this message: no streamed tool progress, no assistant text, no live answer, no
       // reply, no image refs. That's the mid-run-injection case — the message was steered into another turn
@@ -472,15 +494,20 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // settle the answer bubble to the cleaned caption if there is one, else DELETE the draft entirely so
         // only the standalone image message remains.
         if (this.answer) { if (body) await this.answer.finalize(body); else await this.answer.discard(); }
-        else if (body) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+        else if (body) {
+          if (!await this.collapseToolActivity(body)) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+        } else if (this.progress) {
+          // An image-only answer has no text to replace the trace with. Keep the settled trace rather than
+          // deleting it and producing a client-side tombstone next to the actual image response.
+          await this.progress.settle(this.progress.content);
+        }
       } else {
         // No resolvable images (or a bare test fake) — settle the answer to the full text (the streamed draft
         // is replaced by the authoritative reply), footer appended once to the last bubble.
         const body = footer ? `${full}\n\n${footer}` : full;
         if (this.answer) await this.answer.finalize(body);
-        else await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+        else if (!await this.collapseToolActivity(body)) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
       }
-      await this.cleanupToolActivity();
     }
   }
 

@@ -7,7 +7,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 type Lm = {
   onEvent: (e: Record<string, unknown>) => void;
   finalize: (reply?: string) => Promise<void>;
-  fail: (message: string) => Promise<void>;
+  fail: (message: string) => Promise<boolean>;
 };
 
 /** The trace-line separator the shared engine joins tool rows with. Every surface so far treats a bare
@@ -178,17 +178,21 @@ describe('shared LiveMessage tool activity cleanup', () => {
     summaryLine: (s: string) => s,
   };
 
-  async function run(cfg: Record<string, unknown>, mode: 'finalize' | 'fail' = 'finalize') {
+  async function run(cfg: Record<string, unknown>, mode: 'finalize' | 'fail' = 'finalize', editFails = false) {
     const { createLiveMessage } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
-      createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string) => Lm;
+      createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string, replyToId?: string) => Lm;
     };
     const events: string[] = [];
     let nextId = 0;
     const transport = {
-      create: async () => { const id = `progress-${++nextId}`; events.push(`create:${id}`); return id; },
-      edit: async () => true,
+      create: async (_a: unknown, _channel: string, _content: string, extra: { replyToId?: string }) => {
+        const id = `progress-${++nextId}`;
+        events.push(`create:${id}:${extra.replyToId ?? 'plain'}`);
+        return id;
+      },
+      edit: async (_a: unknown, _channel: string, _id: string, content: string) => { events.push(`edit:${content}`); return !editFails; },
       remove: async (_a: unknown, _channel: string, id: string) => { events.push(`remove:${id}`); },
-      replyRef: () => ({}),
+      replyRef: (replyToId: string) => ({ replyToId }),
       hasImages: () => false,
       postImages: async () => {},
     };
@@ -200,26 +204,67 @@ describe('shared LiveMessage tool activity cleanup', () => {
       postWithImages: async () => { events.push('answer'); },
       footerLine: () => '',
     });
-    const lm = new LiveMessage({ cfg: { runtimeFooter: false, ...cfg } }, 'channel');
+    const lm = new LiveMessage({ cfg: { runtimeFooter: false, ...cfg } }, 'channel', 'trigger');
     lm.onEvent({ type: 'tool', id: 'one', name: 'Read' });
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let the live progress create land before finalize
     lm.onEvent({ type: 'tool', id: 'two', name: 'Bash' });
-    if (mode === 'fail') await lm.fail('boom');
+    if (mode === 'fail') events.push(`handled:${await lm.fail('boom')}`);
     else await lm.finalize('Done.');
     return events;
   }
 
-  it('keeps tool progress by default', async () => {
-    expect(await run({})).not.toContain('remove:progress-1');
+  it('keeps tool progress and posts a separate answer by default', async () => {
+    expect(await run({})).toEqual(['create:progress-1:plain', 'edit:🔧 `Read`\n🔧 `Bash`', 'answer']);
   });
 
-  it('deletes the single tool progress message only after the final answer', async () => {
-    const events = await run({ deleteToolActivityAfterTurn: true });
-    expect(events).toEqual(['create:progress-1', 'answer', 'remove:progress-1']);
+  it('replaces the replied progress message with the final answer without deleting it', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true })).toEqual([
+      'create:progress-1:trigger',
+      'edit:Done.',
+    ]);
   });
 
-  it('deletes every per-tool message on successful and failed turns', async () => {
-    const cfg = { deleteToolActivityAfterTurn: true, toolMessageMode: 'per_tool' };
-    expect(await run(cfg)).toEqual(['create:progress-1', 'create:progress-2', 'answer', 'remove:progress-1', 'remove:progress-2']);
-    expect(await run(cfg, 'fail')).toEqual(['create:progress-1', 'create:progress-2', 'remove:progress-1', 'remove:progress-2']);
+  it('normalizes per-tool/live settings to one collapsible bubble and handles failures in place', async () => {
+    const cfg = { deleteToolActivityAfterTurn: true, toolMessageMode: 'per_tool', answerMode: 'live' };
+    expect(await run(cfg)).toEqual(['create:progress-1:trigger', 'edit:Done.']);
+    expect(await run(cfg, 'fail')).toEqual(['create:progress-1:trigger', 'edit:boom', 'handled:true']);
+  });
+
+  it('posts a fallback answer when replacing the progress activity fails twice', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true }, 'finalize', true)).toEqual([
+      'create:progress-1:trigger',
+      'edit:Done.',
+      'edit:Done.',
+      'answer',
+    ]);
+  });
+
+  it('does not duplicate delivered leading chunks when a continuation cannot be created', async () => {
+    const { createLiveMessage } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
+      createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string, replyToId?: string) => Lm;
+    };
+    const events: string[] = [];
+    let creates = 0;
+    const LiveMessage = createLiveMessage({
+      transport: {
+        create: async () => { creates++; events.push(`create:${creates}`); return creates === 1 ? 'progress' : null; },
+        edit: async (_a: unknown, _c: string, _id: string, content: string) => { events.push(`edit:${content}`); return true; },
+        remove: async () => {},
+        replyRef: () => ({}),
+        hasImages: () => false,
+        postImages: async () => {},
+      },
+      style,
+      CHUNK: 10,
+      splitContent: (text: string) => text === 'FirstSecond' ? ['First', 'Second'] : [text],
+      postWithImages: async (_a: unknown, _c: string, text: string) => { events.push(`fallback:${text}`); },
+      footerLine: () => '',
+    });
+    const lm = new LiveMessage({ cfg: { runtimeFooter: false, deleteToolActivityAfterTurn: true } }, 'channel', 'trigger');
+    lm.onEvent({ type: 'tool', id: 'one', name: 'Read' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await lm.finalize('FirstSecond');
+
+    expect(events).toEqual(['create:1', 'edit:First', 'create:2', 'create:3', 'fallback:Second']);
   });
 });
