@@ -153,6 +153,10 @@ server {
     listen 443 ssl;
     server_name elowen.example.com;
 
+    # A chat attachment is base64 inside the JSON body (+~37%) and the browser allows images up to 5 MB,
+    # so nginx's 1 MB default rejects phone screenshots with 413 before the daemon ever sees them.
+    client_max_body_size 25m;
+
     # Web UI
     location / {
         proxy_pass http://127.0.0.1:4500;
