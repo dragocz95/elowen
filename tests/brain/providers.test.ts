@@ -2,7 +2,7 @@ import { beforeEach, describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime, modelsMissingToolSearchCompat, OAUTH_BUILTIN } from '../../src/brain/providers.js';
+import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime, OAUTH_BUILTIN } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities, qwenThinkingWire } from '../../src/brain/modelCapabilities.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
@@ -476,31 +476,6 @@ describe('brain providers', () => {
     expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'typed-x' }).contextWindow).toBe(16000);
   });
 
-  describe('supportsToolSearch compat warning (native deferred-tool loading)', () => {
-    // pi-ai's openai-codex-responses adapter routes ToolSearch activations through the native
-    // tool_search_call path ONLY when the descriptor carries compat.supportsToolSearch; without it the
-    // activation appends the schema to top-level tools and rewrites the cached tool prefix. The classifier
-    // below feeds the one-shot registration warning.
-
-    it('flags a GPT-5.4+ descriptor without the flag, leaves older families and non-GPT ids alone', () => {
-      expect(modelsMissingToolSearchCompat([
-        { id: 'gpt-5.7-nova' }, // hypothetical future model shipped before its catalog update
-        { id: 'gpt-5.6-luna', compat: { supportsToolSearch: true } },
-        { id: 'gpt-5.4', compat: {} }, // in-family but flagless — the real regression this exists for
-        { id: 'gpt-6-codex' }, // future major-only naming must not bypass the defensive warning
-        { id: 'gpt-5.3-codex-spark' }, // ships without the flag by design; must not warn every start
-        { id: 'gpt-image-2' },
-        { id: 'claude-opus-5' },
-      ])).toEqual(['gpt-5.7-nova', 'gpt-5.4', 'gpt-6-codex']);
-    });
-
-    it('does not flag any model of the real pinned openai-codex catalog (gpt-5.6-* carry the flag)', () => {
-      const models = buildBrainRegistry({ providers: [] }, runtime).getAll()
-        .filter((m) => m.provider === 'openai-codex');
-      expect(models.map((m) => m.id)).toEqual(expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra']));
-      expect(modelsMissingToolSearchCompat(models)).toEqual([]);
-    });
-  });
 });
 
 describe('pinned context windows', () => {

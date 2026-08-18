@@ -23,6 +23,7 @@ import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
+import { supportsOpenAIHostedToolSearch } from '../session/openAiHostedToolSearch.js';
 import { createSpawnEventReducer } from './spawnEventReducer.js';
 import { userInstructionsBlock } from '../../prompts/userInstructions.js';
 
@@ -131,6 +132,10 @@ export class LiveSessionSpawner {
     // into the right absolute reserve down in the factory.
     const autoCompactAtPct = resolveAutoCompactPct(settings?.autoCompactAtByModel, route.providerId, model.id, opts.autoCompactAtPct);
     const capabilities = modelCapabilities(model);
+    // GPT-5.4+ on the ChatGPT-account backend can search the full allowed tool catalog server-side and call
+    // a discovered tool in the SAME response. It replaces (rather than supplements) Elowen's local
+    // ToolSearch for this session; every other provider/model keeps the established client-side path.
+    const openAIHostedToolSearch = supportsOpenAIHostedToolSearch(model);
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
@@ -196,6 +201,12 @@ export class LiveSessionSpawner {
         options: runtime ? { enabled: runtime.toolDeferralEnabled, threshold: runtime.limits.toolDeferThreshold } : undefined,
       },
       toolSearch: (deferred) => {
+        // Hosted mode keeps every sender-visible application tool active in PI's execution registry, then
+        // the provider module marks the final payload definitions deferred. Execute-time plan/permission
+        // denials stay gates rather than visibility changes, preserving the established cache contract. Do not
+        // add the local search tool or a local handle: mixing both paths costs the extra model round again
+        // and lets historical `addedToolNames` trigger pi's additional_tools replay.
+        if (openAIHostedToolSearch) return [];
         toolSearchHandle = createToolSearchHandle(deferred);
         return [toolSearchTool(toolSearchHandle)];
       },

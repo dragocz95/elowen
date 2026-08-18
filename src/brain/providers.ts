@@ -3,7 +3,6 @@ import type { Model, Api } from '@earendil-works/pi-ai';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { BRAIN_REGISTRY_PROVIDER_PREFIX } from '../shared/execs.js';
-import { logger } from '../shared/logger.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
@@ -73,48 +72,6 @@ function catalogDefinition(model: Model<Api>) {
  *  these remain Elowen's to add — the copy-forward below keeps PI's descriptors for everything else. */
 const OPENAI_CODEX_OAUTH_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
 
-/** GPT text families from 5.4 upward, the ones whose openai-codex-responses descriptors carry
- *  `compat.supportsToolSearch` in the pinned pi-ai catalog. Older ids (gpt-5.3-codex-spark) ship without
- *  the flag by design and must not trip the warning below on every start. */
-const GPT_TOOL_SEARCH_FAMILY = /^gpt-(\d+)(?:\.(\d+))?/;
-
-/** Which of these openai-codex model descriptors will silently lose NATIVE deferred-tool loading: a
- *  GPT-5.4+ id registered without `compat.supportsToolSearch`. pi-ai's openai-codex-responses adapter
- *  reads exactly that flag (buildRequestBody → splitDeferredTools); without it, a ToolSearch activation
- *  falls back to appending the fetched schema to the top-level `tools` array — which rewrites the cached
- *  tool prefix and costs a full prompt-cache re-write on every activation. Pure and exported for tests. */
-export function modelsMissingToolSearchCompat(
-  models: readonly { id: string; compat?: unknown }[],
-): string[] {
-  return models
-    .filter((m) => {
-      const match = GPT_TOOL_SEARCH_FAMILY.exec(m.id);
-      if (!match) return false;
-      const major = Number(match[1]);
-      const minor = Number(match[2] ?? 0);
-      if (major < 5 || (major === 5 && minor < 4)) return false;
-      return (m.compat as { supportsToolSearch?: boolean } | undefined)?.supportsToolSearch !== true;
-    })
-    .map((m) => m.id);
-}
-
-const providersLog = logger('brain-providers');
-let warnedMissingToolSearchCompat = false;
-
-/** One-shot defensive warning at catalog registration: a GPT-5.4+ descriptor without the flag means tool
- *  deferral still WORKS but degrades to the cache-unfriendly fallback — worth a log line, not a config. */
-function warnMissingToolSearchCompat(models: readonly { id: string; compat?: unknown }[]): void {
-  if (warnedMissingToolSearchCompat) return;
-  const missing = modelsMissingToolSearchCompat(models);
-  if (missing.length === 0) return;
-  warnedMissingToolSearchCompat = true;
-  providersLog.warn(
-    `openai-codex model(s) ${missing.join(', ')} registered without compat.supportsToolSearch — `
-    + 'deferred-tool activation will append schemas to the top-level tools array instead of the native '
-    + 'tool_search_call path, rewriting the cached tool prefix on every activation',
-  );
-}
-
 function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   const provider = 'openai-codex';
   const builtins = registry.getAll().filter((model) => model.provider === provider);
@@ -139,7 +96,6 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
       compat: template.compat,
     });
   }
-  warnMissingToolSearchCompat(models);
   // No `oauth` here: registering an extension config over a built-in provider composes onto it, so the
   // provider's native OAuth is preserved (the composition falls back to the base when the extension omits
   // it). Re-supplying it would only be needed for a provider PI ships without one.

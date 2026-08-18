@@ -6,7 +6,7 @@ import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { LiveSessionSpawner } from '../../src/brain/service/spawner.js';
-import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { inMemoryModelRuntime, type BrainRuntimeConfig } from '../../src/brain/providers.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -48,16 +48,23 @@ function runtime(
   } as RuntimeConfig;
 }
 
-function makeSpawner(registry: PluginRegistry, runtimeConfig?: () => RuntimeConfig) {
+function makeSpawner(
+  registry: PluginRegistry,
+  runtimeConfig?: () => RuntimeConfig,
+  config: BrainRuntimeConfig = {
+    providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://relay.example/v1', models: ['gpt-5'], apiKey: 'k' }],
+  },
+  modelRuntime: ModelRuntime = sharedRuntime,
+) {
   const fakeSession = { sessionId: 'sess-1', subscribe: () => () => {} };
   const create = vi.fn(async () => ({
     session: fakeSession as unknown as AgentSession,
     applyCompaction: vi.fn(),
   }));
   const spawner = new LiveSessionSpawner({
-    config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://relay.example/v1', models: ['gpt-5'], apiKey: 'k' }] },
+    config,
     store: new BrainStore(openDb(':memory:')),
-    runtime: sharedRuntime,
+    runtime: modelRuntime,
     users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Filip', username: 'filip' }) },
     prompts: { render: () => 'PERSONA' },
     url: 'http://x',
@@ -204,5 +211,30 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     expect((await spawn()).toolSearch).toBeUndefined();
     overrides = { sources: {}, tools: { 'plugin:security-scan': { ScanCode: 'deferred' } } };
     expect((await spawn()).toolSearch?.deferred).toEqual(new Set(['ScanCode']));
+  });
+
+  it('omits local ToolSearch for GPT-5.4+ ChatGPT OAuth while keeping every application tool registered', async () => {
+    const registry = registryWithMcpTools(12);
+    addTool(registry, 'security-scan', 'ScanCode');
+    const config: BrainRuntimeConfig = {
+      providers: [{
+        id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
+        models: ['gpt-5.6-luna'], apiKey: null,
+      }],
+    };
+    const isolatedRuntime = await inMemoryModelRuntime();
+    const { spawn, create } = makeSpawner(registry, () => runtime(5), config, isolatedRuntime);
+
+    const live = await spawn();
+    const names = factoryToolNames(create);
+    expect(live.toolSearch).toBeUndefined();
+    expect(names).not.toContain('ToolSearch');
+    expect(names).toEqual(expect.arrayContaining([
+      'ScanCode',
+      ...Array.from({ length: 12 }, (_, index) => `mcp__github__op_${index}`),
+    ]));
+    // No local handle means the factory leaves these tools active/executable; the provider module defers
+    // their per-turn sender-visible wire definitions instead of removing them from PI's registry.
+    expect((create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown }).toolSearch).toBeUndefined();
   });
 });

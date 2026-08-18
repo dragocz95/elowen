@@ -28,6 +28,7 @@ import {
 } from './remoteCompactionV2.js';
 import { bearerFromAuth } from '../providerUsage.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
+import { installOpenAIHostedToolSearch, supportsOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
 
 let missingBoundaryCompactionWarned = false;
@@ -166,6 +167,9 @@ export interface BrainResourceLoaderOptions {
    *  `cacheMonitor`: that one only watches, this one changes the request, so switching observability off
    *  must not switch the fix off with it. */
   cacheBreakpoints?: boolean;
+  /** GPT-5.4+ ChatGPT OAuth: send the already sender-visible tool catalog through OpenAI's hosted server
+   *  search instead of the local ToolSearch/additional_tools round-trip. */
+  openAIHostedToolSearch?: boolean;
   requestProfile?: ProviderRequestProfile;
   settingsManager: SettingsManager;
 }
@@ -337,6 +341,9 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
         ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
+        // Before cacheMonitor: observability must see the FINAL hosted-search body (deferred definitions +
+        // server tool), not pi-ai's immediate-tools intermediate that never leaves the process.
+        ...(o.openAIHostedToolSearch ? [installOpenAIHostedToolSearch] : []),
         ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
         ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
         // AFTER the monitor, so the snapshot it takes is the payload as pi-ai built it. The monitor hashes
@@ -457,6 +464,7 @@ export class BrainSessionFactory {
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
       ...(cacheMonitor ? { cacheMonitor } : {}),
       ...(spec.model.provider === 'anthropic' ? { cacheBreakpoints: true } : {}),
+      ...(supportsOpenAIHostedToolSearch(spec.model) ? { openAIHostedToolSearch: true } : {}),
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls
