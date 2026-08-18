@@ -27,6 +27,8 @@ function fakeBrain() {
   const sends: { id: number; text: string; mode?: string }[] = [];
   const boundSendCalls: { session?: string; client?: { id: string; generation: number } }[] = [];
   const fastCalls: { id: number; on?: boolean; session?: string }[] = [];
+  const clearSessionCalls: { id: number; session?: string }[] = [];
+  let clearSessionError: Error | null = null;
   const stopSessionCalls: { id: number; session?: string; client?: string; generation?: number; detachOnly?: boolean }[] = [];
   const interruptQueuedCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
   const detachSubagentCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
@@ -75,6 +77,8 @@ function fakeBrain() {
     sends,
     boundSendCalls,
     fastCalls,
+    clearSessionCalls,
+    __failClearSession: (message: string | null) => { clearSessionError = message ? new Error(message) : null; },
     stopSessionCalls,
     interruptQueuedCalls,
     detachSubagentCalls,
@@ -213,6 +217,11 @@ function fakeBrain() {
     setFast: (id: number, on?: boolean, session?: string) => {
       fastCalls.push({ id, on, session });
       return { fast: on ?? true, fastAvailable: true };
+    },
+    clearSession: async (id: number, session?: string) => {
+      clearSessionCalls.push({ id, session });
+      if (clearSessionError) throw clearSessionError;
+      return { sessionId: session ?? `brain-${id}`, model: 'gpt-5.5' };
     },
     stopSession: async (id: number, session?: string, client?: string, generation?: number, opts?: { detachOnly?: boolean }) => {
       stopSessionCalls.push({ id, session, client, generation, detachOnly: opts?.detachOnly });
@@ -660,6 +669,27 @@ describe('brain routes', () => {
     expect(command.status).toBe(200);
     expect((await command.json() as { message: string }).message).toBe('Fast mode disabled.');
     expect(brain.fastCalls.at(-1)).toEqual({ id: 2, on: false, session: 'brain-child' });
+  });
+
+  // `/clear` is a server-dispatched ACTION: every surface reaches it through this one endpoint, so the
+  // model never sees the slash as a prompt. A conversation with work in flight must refuse rather than
+  // delete underneath it, and the reason has to reach the user.
+  it('dispatches /clear to the service and reports the outcome', async () => {
+    const { app, amyTok, brain } = setup();
+    const res = await app.request('/brain/command', post(amyTok, { name: 'clear', session: 'brain-child' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true, message: 'Conversation cleared.', data: { sessionId: 'brain-child', model: 'gpt-5.5' },
+    });
+    expect(brain.clearSessionCalls).toEqual([{ id: 2, session: 'brain-child' }]);
+  });
+
+  it('answers 409 with the refusal reason when /clear cannot run', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__failClearSession('the conversation is busy — stop the running work before clearing it');
+    const res = await app.request('/brain/command', post(amyTok, { name: 'clear' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'the conversation is busy — stop the running work before clearing it' });
   });
 
   it('stops a bound live session without deleting its persisted conversation', async () => {

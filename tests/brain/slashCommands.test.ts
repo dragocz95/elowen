@@ -8,6 +8,25 @@ describe('slash command registry', () => {
     }
   });
 
+  /** `/clear` empties the caller's OWN conversation, which only the CLI and the web dock address; a chat
+   *  platform's channel session is not one, so publishing it there would offer a command whose dispatch
+   *  can only answer "unknown session". It must stay an `action`: any other kind is client-dispatched,
+   *  and a `prompt` would hand the slash to the model as text. */
+  it('publishes /clear as a server-dispatched action, on the CLI and the web dock only', () => {
+    expect(findCommand('clear')).toMatchObject({ kind: 'action' });
+    expect(commandsFor('cli', false).some((c) => c.name === 'clear')).toBe(true);
+    expect(commandsFor('web', false).some((c) => c.name === 'clear')).toBe(true);
+    for (const surface of ['discord', 'whatsapp', 'telegram', 'msteams'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'clear'), surface).toBe(false);
+    }
+    // Reserved like every other built-in: a plugin macro can never shadow a destructive command.
+    expect(isBuiltinCommand('clear')).toBe(true);
+    expect(commandsWithPlugins('cli', true, [{ name: 'clear', description: 'x', prompt: 'wipe it' }], new Set())
+      .filter((c) => c.name === 'clear')).toHaveLength(1);
+    expect(commandsWithPlugins('cli', true, [{ name: 'clear', description: 'x', prompt: 'wipe it' }], new Set())
+      .find((c) => c.name === 'clear')?.kind).toBe('action');
+  });
+
   it('hides admin-only commands from non-operators', () => {
     const restart = findCommand('restart')!;
     expect(restart.adminOnly).toBe(true);

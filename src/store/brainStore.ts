@@ -32,6 +32,9 @@ export interface BrainSessionRow {
   forked_from_session_id: string | null;
   /** Immutable spill namespace (see schema.sql). '' on rows minted by older builds = "use the id". */
   spill_ns: string;
+  /** When /clear last emptied this conversation (see schema.sql) — the only durable evidence that a
+   *  conversation with no messages has in fact been used. NULL = never cleared. */
+  cleared_at: string | null;
   created_at: string; updated_at: string;
 }
 export interface BrainMessageRow {
@@ -236,11 +239,16 @@ export class BrainStore {
   /** The user's sessions that hold no message at all. A live session owns its row from the moment it
    *  spawns — that is what the delegation parent check, the work-dir binding and every ownership check
    *  read — but a row nobody has spoken into is not yet a CONVERSATION: it is the empty shell the CLI
-   *  leaves behind simply by launching. One query, so a listing can filter without an N+1. */
+   *  leaves behind simply by launching. One query, so a listing can filter without an N+1.
+   *
+   *  A CLEARED conversation is empty for the opposite reason — it was used and then deliberately emptied
+   *  by /clear — so `cleared_at` excludes it here. Without that it would silently disappear from the
+   *  session picker and the history rail, and be swept by dropIfUnspoken on the next quit. */
   unspokenSessionIds(userId: number): Set<string> {
     const rows = this.db.prepare(
       `SELECT s.id FROM brain_sessions s
-       WHERE s.user_id = ? AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+       WHERE s.user_id = ? AND s.cleared_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
     ).all(userId) as { id: string }[];
     return new Set(rows.map((row) => row.id));
   }
@@ -813,6 +821,54 @@ export class BrainStore {
     // The plan file is outside the DB for the same reason and needs the same sweep — and a leftover one
     // is worse than a leftover spill: nothing reads a stale spill, but a plan is re-injected into the
     // prompt of whatever session next lands on this id.
+    this.removePlanFile(id);
+  }
+
+  /** Wipe one conversation's CONTENT while keeping the conversation itself — the `/clear` command. Every
+   *  table that feeds a respawn's context is emptied in ONE transaction, so a rehydrate after this can
+   *  only produce an empty history: `brain_messages` (including the `pending = 1` mid-turn rows, which
+   *  `settlePartialTurn` would otherwise graduate back into history on the next spawn), the transcript
+   *  markers, the display cards (the todo checklist) and the cleared-tool-result latches.
+   *
+   *  The parent-scoped delegation bookkeeping goes too — `brain_subagent_runs`, `brain_subagent_results`
+   *  and `brain_workflows` keyed by `parent_session_id`. They describe calls made from the transcript
+   *  being deleted, and a fresh PI session restarts its `call_N` tool-call ids, so a surviving row both
+   *  reports delegated work the (now empty) transcript never did and collides on
+   *  `UNIQUE (parent_session_id, tool_call_id)` — which would make the NEXT delegation's result
+   *  undeliverable. Only the parent side is swept: the child `brain_sessions` rows are separate
+   *  conversations with their own transcripts and stay browsable (a caller clears only once nothing is
+   *  running or awaiting delivery, so no live child is stranded).
+   *
+   *  Deliberately NOT touched: the `brain_sessions` row itself (id, title, model/provider, work_dir and
+   *  spill namespace are the conversation's identity, which `/clear` must preserve) beyond the
+   *  `cleared_at` stamp below, other users' or children's data, and `brain_goals` (a persistent goal is a
+   *  standing user instruction managed by /goal, not conversation content).
+   *
+   *  The session's historical token/cost rows go with the messages, exactly as they do on a delete —
+   *  unlike a compaction, which folds them onto its divider, there is no row left here to carry them.
+   *  `usage_by_origin` is a separate write-time rollup and is untouched. */
+  clearSessionHistory(id: string): void {
+    // Resolved before the wipe for the same reason deleteSession resolves it before the DELETE: the
+    // namespace is the only key to the spill directory on disk.
+    const spillNs = this.spillNamespace(id);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM brain_subagent_results WHERE parent_session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_subagent_runs WHERE parent_session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_tool_result_spills WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
+      // The clear itself is the conversation's remaining evidence of ever having been used — see
+      // brain_sessions.cleared_at. Written in the same transaction as the wipe that erases the messages
+      // it stands in for, so the two can never disagree.
+      this.db.prepare("UPDATE brain_sessions SET cleared_at = datetime('now') WHERE id = ?").run(id);
+    })();
+    // Both live outside SQLite and both would resurrect context the wipe just removed: a spill file backs
+    // a placeholder the cleared history referenced, and a leftover plan is re-injected into the prompt of
+    // whatever runs on this id next — which after /clear is this very conversation.
+    try { rmSync(toolResultSpillDir(process.env, spillNs), { recursive: true, force: true }); }
+    catch (e) { logger('brain-store').warn(`failed to remove tool-result spills for ${id}`, e); }
     this.removePlanFile(id);
   }
 

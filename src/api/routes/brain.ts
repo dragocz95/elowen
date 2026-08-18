@@ -599,6 +599,12 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       switch (cmd.name) {
         case 'stop': await brain.abort(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: 'Agent stopped.' });
         case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await brain.start(user.id, { fresh: true }) });
+        // Destructive and deliberate: it empties the caller's own conversation in place. A conversation
+        // with work in flight throws, which the catch below turns into a 409 carrying the reason.
+        case 'clear': {
+          const data = await brain.clearSession(user.id, typeof body.session === 'string' ? body.session : undefined);
+          return c.json({ ok: true, message: 'Conversation cleared.', data });
+        }
         case 'compact': {
           const target = typeof body.session === 'string' ? body.session : undefined;
           // A compaction runs a summarizing model turn, so its tokens are spend like any other and are

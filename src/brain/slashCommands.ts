@@ -13,6 +13,10 @@ export type { SlashCommandDef, SlashSurface };
 /** The canonical command set. Order is the display order in menus. */
 export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'new', description: 'Start a fresh conversation', kind: 'action' },
+  // Empties THIS conversation (history, markers, cards and the live context) without starting a new one —
+  // the id, title, model and every attached client stay. CLI + web only: the dispatcher resolves the
+  // caller's own conversation, and a shared channel has no such conversation to clear.
+  { name: 'clear', description: 'Clear this conversation and start from an empty context', kind: 'action', surfaces: ['cli', 'web'] },
   { name: 'stop', description: 'Stop the running agent', kind: 'action' },
   { name: 'status', description: 'Session info — model, context and usage', kind: 'info' },
   { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', surfaces: ['cli', 'web'] },

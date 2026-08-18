@@ -3,7 +3,7 @@ import type { Policy } from '../../plugins/policy.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { BrainEvent } from '../events.js';
-import type { LiveSessionRegistry } from '../session/liveRegistry.js';
+import { sendLockKey, type LiveSessionRegistry } from '../session/liveRegistry.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
 import { rolloverDue } from '../session/idleRollover.js';
@@ -11,10 +11,13 @@ import { decideVisionHop } from '../visionFallback.js';
 import { catalogModelVision } from '../modelCapabilities.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession, isOwnedUserSession, isChannelSession, channelIdOf } from '../sessionId.js';
 import type { BrainDeps } from '../brainDeps.js';
+import type { CardRegistry } from '../cards.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import { clientDir, gitProjectRoot } from './workDir.js';
 import { recordSessionEvent } from './sessionEvents.js';
+import { sessionHasWorkInFlight } from './sessionQuiescence.js';
+import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 
 /** Prompt/cadence state that survives an IN-PLACE respawn — switchModel, restart and the vision hop all
  *  rehydrate the SAME conversation from SQLite, so from the model's side nothing happened: these fields
@@ -47,6 +50,9 @@ interface LifecycleDeps {
   attachments: ClientAttachments;
   elicitation: ElicitationRegistry;
   goals: GoalLoopService;
+  /** The conversation's display cards (todo checklist) — `/clear` empties the panel with the history it
+   *  belongs to, and the cache has to be evicted along with the rows it mirrors. */
+  cards: Pick<CardRegistry, 'forSession' | 'clearSession'>;
   /** Session composition (LiveSessionSpawner.spawn) — the single spawn source. */
   spawn(opts: SpawnOpts): Promise<LiveBrain>;
   policy?: (userId: number) => Policy;
@@ -151,6 +157,10 @@ export class ConversationLifecycle {
     const row = this.d.store.getSession(sessionId);
     if (!row) return;
     if (this.d.store.lastMessageAt(sessionId) !== undefined) return;       // it was spoken in — keep it
+    // A CLEARED conversation is empty on purpose: the user emptied a real conversation to carry on in it,
+    // and the clear destroyed the very messages this check reads. `cleared_at` is what still says it was
+    // used, so it is kept exactly like a spoken-in one (see brain_sessions.cleared_at).
+    if (row.cleared_at) return;
     if (!this.d.attachments.availableForDefaultStart(sessionId)) return;   // a client is sitting in it
     if (this.d.sessions.has(sessionId)) return;                            // still live — not ours to remove
     this.d.store.deleteSession(sessionId);
@@ -312,7 +322,13 @@ export class ConversationLifecycle {
       const projectRoot = gitProjectRoot(policy, resolvedCwd);
       const stored = storedModel && storedProvider
         && storedModel !== userCfg?.visionModel
-        && this.d.store.lastMessageAt(sessionId) !== undefined
+        // "Has this conversation been spoken in?" — the pin is only restored for one that has, so a
+        // brand-new shell still follows the current preference. A CLEARED conversation counts: it WAS
+        // spoken in, and the clear is what removed the messages this reads (see brain_sessions.cleared_at);
+        // without that second half the first cold respawn after a /clear silently moves the conversation
+        // off the model it was running on. Kept inside the same && chain so the store is still only
+        // consulted once there is a pin worth restoring.
+        && (this.d.store.lastMessageAt(sessionId) !== undefined || !!storedRow?.cleared_at)
         ? { provider: storedProvider, model: storedModel }
         : undefined;
       const candidates = [
@@ -418,6 +434,115 @@ export class ConversationLifecycle {
       this.d.goals.resumeAfterRespawn(userId, sessionId);
       return { model: live.model };
     });
+  }
+
+  /** Why `/clear` refuses instead of waiting: every signal below means something is either WRITING this
+   *  conversation's history or is about to read it, and the wipe would land underneath it — an agent_end
+   *  that persists a run after the DELETE, a compaction summarizing rows that no longer exist, a queued
+   *  steer delivered into the fresh session, a child whose result points at a transcript that is gone.
+   *  Refusing is the honest outcome: the user stops the turn (Esc) and clears a quiet conversation.
+   *
+   *  {@link sessionHasWorkInFlight} is the shared fail-closed predicate (running turn, queued messages,
+   *  parked question, live/spared children, background jobs, active goal). The two compaction signals are
+   *  added on top because a compaction is not a turn: PI reports `isCompacting` once its controller runs,
+   *  and `hasActiveNativeCompactionCheck` covers the auth-before-controller gap where a native check is
+   *  already in flight while both `isStreaming` and `isCompacting` still read false. An undelivered child
+   *  result completes the set — the delivery would otherwise arrive into a cleared context. */
+  private clearRefusal(sessionId: string): string | null {
+    const live = this.d.sessions.get(sessionId);
+    if (live && (live.session.isCompacting || hasActiveNativeCompactionCheck(live.session))) {
+      return 'the conversation is compacting — try again once it finishes';
+    }
+    if (sessionHasWorkInFlight({ store: this.d.store, sessions: this.d.sessions, elicitation: this.d.elicitation }, sessionId)) {
+      return 'the conversation is busy — stop the running work before clearing it';
+    }
+    // Both of these are checked INDEPENDENTLY of the live record, which the shared predicate is not:
+    // it answers "no work" for a session with no live entry (there is nothing live to protect), while a
+    // cold conversation can still own an armed goal that re-prompts it from a timer and a delivered-to-
+    // nobody child result — both of which would land in the freshly cleared context.
+    if (this.d.store.getGoal(sessionId)?.status === 'active') {
+      return 'a goal is still driving this conversation — pause or clear the goal first';
+    }
+    if (this.d.store.pendingSubagentResults(sessionId).length > 0) {
+      return 'a delegated result is still waiting to be delivered — try again once it lands';
+    }
+    return null;
+  }
+
+  /** Clear ONE conversation's content in place (the `/clear` command): the durable history, the transcript
+   *  markers, the card panel and the live PI context are emptied, while the conversation keeps its id,
+   *  title, model/provider, work dir and every attached client — so the next message starts from an empty
+   *  context without the user having to open a new conversation.
+   *
+   *  The live half is the in-place respawn every other same-id path uses (switchModel/restart/vision hop):
+   *  dispose the PI session and spawn a fresh one under the same id, which rehydrates from the store —
+   *  now empty. That is also what resets the session-scoped derived state for free: PI's steering/follow-up
+   *  queue, the tool-search handle (re-seeded from an empty history), the compaction coordinators and the
+   *  cold-start assessment all belong to the disposed session. Deliberately NOT an in-place respawn in the
+   *  {@link InPlaceRespawnState} sense: a cleared context must not inherit `lastTurnMode` /
+   *  `orientedForCompaction` / `modeReminderTurns`, whose whole meaning is "the model already read this
+   *  earlier in THIS conversation" — after a clear it never did (same reason maybeRollover skips them).
+   *
+   *  The model is passed EXPLICITLY rather than left to the spawn's own resolution: that path only restores
+   *  a conversation's stored pin once it has been spoken in (`lastMessageAt`), which an emptied history no
+   *  longer reports, and `/clear` must not quietly move the conversation onto the user's default model.
+   *
+   *  Locking follows the topology in LiveSessionRegistry EXACTLY as a send does — outer `send-<id>`, then
+   *  the bare session id. The outer lock is load-bearing, not belt-and-braces: a send holds it across its
+   *  idle-rollover and vision-hop awaits while the inner lock is free and `isStreaming` is still false, so
+   *  a clear taking only the inner lock would see a quiet conversation, dispose the live session under
+   *  that send, and let it prompt() a disposed session holding the pre-clear context in memory — the
+   *  cleared history would go straight back to the provider and be persisted again by its agent_end.
+   *  Refuses (never waits) while work is in flight; see {@link clearRefusal}. */
+  async clearConversation(userId: number, session?: string): Promise<{ sessionId: string; model: string }> {
+    const sessionId = session ? this.ownedUserSession(userId, session) : this.activeSessionId(userId);
+    // Checked BEFORE queueing on the locks as well: a running turn holds them for its full duration, and a
+    // destructive command must answer "the conversation is busy" now rather than after the turn it was
+    // meant to protect has finished.
+    const refusal = this.clearRefusal(sessionId);
+    if (refusal) throw new Error(refusal);
+    return this.serial(sendLockKey(sessionId), () => this.serial(sessionId, async () => {
+      // Re-checked under the locks: a child, a goal timer or a parked question can arrive in the window
+      // between the pre-check and acquiring them (the same double evaluation stopSession does).
+      const blocked = this.clearRefusal(sessionId);
+      if (blocked) throw new Error(blocked);
+      const previous = this.d.sessions.get(sessionId);
+      const clearedCardIds = this.d.cards.forSession(sessionId).map((c) => c.id);
+      this.d.store.clearSessionHistory(sessionId);
+      this.d.cards.clearSession(sessionId); // evict the write-through cache over the rows just deleted
+      const storedModel = this.d.store.getSession(sessionId)?.model ?? '';
+      if (!previous) return { sessionId, model: storedModel }; // cold conversation: nothing live to reset
+      const prevWorkDir = previous.workDir; // clearing must not move the session cwd
+      const userCfg = this.d.userSettings?.(userId);
+      const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+      this.d.sessions.dispose(sessionId);
+      // No goal cancel/resume around this respawn, unlike switchModel: an ACTIVE goal is work in flight
+      // and was already refused above, so there is no continuation to carry across or to pause on failure.
+      // A failed spawn leaves the conversation with no live record, which the next send/ensureLive
+      // respawns exactly as it does after any other dispose.
+      const live = await this.d.spawn({
+        sessionId,
+        ownerUserId: userId,
+        selection: { provider: previous.providerId, model: previous.model },
+        policy,
+        thinkingLevel: previous.thinkingLevel ?? undefined,
+        fast: previous.requestProfile.fast,
+        autoCompact: !!userCfg?.autoCompact,
+        autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
+        clientCwd: prevWorkDir,
+      });
+      live.interactedAt = Date.now(); // a clear is a deliberate touch — don't idle-roll it over
+      this.d.sessions.set(sessionId, live);
+      // Tell attached clients on the FRESH stream to rebuild from the server: `compacted` is the existing
+      // "the daemon rewrote this session's stored rows, refetch history" signal (CLI StreamCoordinator and
+      // the web dock both handle it), and the refetch now returns an empty transcript. A raw `session`
+      // event would be wrong — the id did not change, and the surfaces read it as an idle rollover.
+      live.replay.publish({ type: 'compacted' });
+      // The card panel is client-side state seeded from the status snapshot, so the rows being gone is not
+      // enough: re-emit each cleared card empty, which is the panel's own REMOVE signal (see upsertCard).
+      for (const id of clearedCardIds) live.replay.publish({ type: 'card', card: { id, pinned: false } });
+      return { sessionId, model: live.model };
+    }));
   }
 
   /** Idle rollover — the ONE chokepoint every owner-chat message funnels through (web, CLI): a

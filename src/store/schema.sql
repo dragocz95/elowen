@@ -149,6 +149,13 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- Empty on rows minted by older builds; db.ts backfills those to their then-current id, freezing the
   -- layout the files already sit in. Read through BrainStore.spillNamespace ('' falls back to the id).
   spill_ns TEXT NOT NULL DEFAULT '',
+  -- When the /clear command last emptied this conversation (NULL = never). It is the ONLY durable record
+  -- that a conversation with no messages HAS been used: "was this ever spoken in?" is derived everywhere
+  -- else from the existence of a brain_messages row, and clearing destroys exactly that evidence. Without
+  -- it a cleared conversation reads as a never-used empty shell — the pickers hide it, dropIfUnspoken and
+  -- pruneEmptyConversations delete the very row the clear had to preserve, and the next cold respawn drops
+  -- the conversation's model pin.
+  cleared_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

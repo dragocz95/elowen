@@ -195,6 +195,9 @@ function applyAdditiveMigrations(db: Db): void {
   // before any runtime re-key could change what "current id" means.
   addColumn(db, 'brain_sessions', 'spill_ns', "TEXT NOT NULL DEFAULT ''");
   db.exec("UPDATE brain_sessions SET spill_ns = id WHERE spill_ns = ''");
+  // When this conversation was last emptied by /clear (see brain_sessions in schema.sql). NULL on every
+  // existing row — nothing had been cleared before the command existed.
+  addColumn(db, 'brain_sessions', 'cleared_at', 'TEXT');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.

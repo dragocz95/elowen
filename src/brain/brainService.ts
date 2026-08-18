@@ -235,7 +235,7 @@ export class BrainService {
     });
     this.lifecycle = new ConversationLifecycle({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, goals: this.goals,
+      elicitation: this.elicitation, goals: this.goals, cards: this.cards,
       spawn: (o) => this.spawner.spawn(o),
       get policy() { return d.policy; },
       get userSettings() { return d.userSettings; },
@@ -496,6 +496,14 @@ export class BrainService {
       result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(live.sessionId));
       return result;
     });
+  }
+
+  /** Clear a conversation's content (the /clear command): the stored history, transcript markers, card
+   *  panel and live PI context are emptied while the conversation keeps its id, title, model and attached
+   *  clients — see ConversationLifecycle.clearConversation. Targets the active conversation, or the
+   *  caller's explicit `session` (a bound CLI). Throws (409 at the route) while work is in flight. */
+  async clearSession(userId: number, session?: string): Promise<{ sessionId: string; model: string }> {
+    return this.lifecycle.clearConversation(userId, session);
   }
 
   /** Stop the streaming turn (the Esc key in chat clients) — on the active conversation, or on the

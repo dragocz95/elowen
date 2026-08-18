@@ -36,6 +36,14 @@ describe('parseCommand — /compact custom instructions', () => {
   });
 });
 
+/** Without this route the TUI would fall through to the "unknown slash" path and SEND `/clear` as an
+ *  ordinary message — the model would read the destructive command as a prompt. */
+describe('parseCommand — /clear', () => {
+  it('routes /clear as its own command rather than as chat text', () => {
+    expect(parseCommand('/clear')).toEqual({ cmd: 'clear' });
+  });
+});
+
 describe('parseCommand — /stats', () => {
   it('recognises a bare /stats with no argument', () => {
     expect(parseCommand('/stats')).toEqual({ cmd: 'stats' });

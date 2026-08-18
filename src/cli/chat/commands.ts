@@ -20,12 +20,13 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'status' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
     case 'quit': case 'exit': return { cmd: 'quit' };
     case 'new': return { cmd: 'new' };
+    case 'clear': return { cmd: 'clear' };
     case 'stop': return { cmd: 'stop' };
     case 'status': return { cmd: 'status' };
     case 'stats': return { cmd: 'stats' };
@@ -296,6 +297,17 @@ export function wireSubmit(
         case 'new':
           runApplication(() => stream.switchTo({ fresh: true }), () => {}, fail);
           return;
+        case 'clear': {
+          // Server-side and destructive: the daemon empties the bound conversation in place and publishes
+          // the `compacted` rebuild signal, so StreamCoordinator refetches the (now empty) history and
+          // drops the cleared cards on its own — this handler only reports the outcome. The conversation
+          // keeps its id, so there is nothing to rebind and no stream to reopen (unlike /new).
+          runSession(() => client.command('clear'), (r) => {
+            rt.notice = color.dim(r?.message ?? 'conversation cleared');
+            render();
+          }, fail);
+          return;
+        }
         case 'sessions':
         case 'resume': {
           if (!command.arg) {
