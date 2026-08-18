@@ -1,4 +1,4 @@
-import { ProcessTerminal, TUI, visibleWidth } from '@earendil-works/pi-tui';
+import { ProcessTerminal, TuiMainScreen, visibleWidth, type TUI } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { color } from '../chat/theme.js';
 import { box, mascotHeaderLines, setProgressSink, type ProgressKind, type ProgressSink, type Spinner, type SpinnerKind } from './prompts.js';
@@ -84,7 +84,7 @@ class InstallerSurface implements ProgressSink {
         return [...mascotHeaderLines(width), ...rows.map((line) => pad + line)];
       },
     };
-    this.tui = new TUI(new ProcessTerminal(), false);
+    this.tui = new TuiMainScreen(new ProcessTerminal(), false);
     this.tui.addChild(component);
     this.tui.start();
     this.tui.requestRender(true);

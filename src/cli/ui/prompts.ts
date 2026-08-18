@@ -1,4 +1,4 @@
-import { CURSOR_MARKER, ProcessTerminal, SelectList, TUI, decodeKittyPrintable, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, ProcessTerminal, SelectList, TuiMainScreen, decodeKittyPrintable, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Focusable, SelectItem } from '@earendil-works/pi-tui';
 import { color, chatTheme, paintRow } from '../chat/theme.js';
 import { MASCOT_ART } from '../chat/mascot.js';
@@ -272,7 +272,7 @@ function promptModal<T>(componentFactory: (finish: (value: MaybeCancel<T>) => vo
   if (!interactive()) return Promise.resolve(CANCEL);
   return new Promise((resolve) => {
     const terminal = new ProcessTerminal();
-    const tui = new TUI(terminal, true);
+    const tui = new TuiMainScreen(terminal, true);
     let done = false;
     const finish = (value: MaybeCancel<T>): void => {
       if (done) return;

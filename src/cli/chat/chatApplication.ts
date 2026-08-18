@@ -1,4 +1,6 @@
-import { Container, ProcessTerminal, TUI } from '@earendil-works/pi-tui';
+// `TUI` is an interface since pi-tui 0.84: the concrete renderers are TuiMainScreen (regular terminal
+// scrollback) and TuiAltScreen (fullscreen). The chat owns the terminal's scrollback, so it is the former.
+import { Container, ProcessTerminal, TuiMainScreen } from '@earendil-works/pi-tui';
 import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import type { BrainEvent } from '../../brain/events.js';
@@ -207,7 +209,7 @@ export class ChatApplication {
     const commandDefs = serverCommands.length ? serverCommands : offlineCommands();
 
     const term = new ProcessTerminal();
-    const tui = new TUI(term);
+    const tui = new TuiMainScreen(term);
     tui.setClearOnShrink(true);
     const editor = new ChatEditor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
     // The ↑-recall depth is the user's own (Account → Terminal) and travels with the account, while the

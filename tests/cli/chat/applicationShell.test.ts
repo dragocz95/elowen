@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TUI, visibleWidth } from '@earendil-works/pi-tui';
+import { TuiMainScreen, visibleWidth, type TUI } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { AnimationController } from '../../../src/cli/chat/animationController.js';
@@ -75,8 +75,8 @@ function realOverlayTui(columns = 80, rows = 24): TUI {
     clearScreen: () => {},
     setTitle: () => {},
     setProgress: () => {},
-  } as unknown as ConstructorParameters<typeof TUI>[0];
-  const tui = new TUI(terminal);
+  } as unknown as ConstructorParameters<typeof TuiMainScreen>[0];
+  const tui = new TuiMainScreen(terminal);
   tui.requestRender = vi.fn();
   return tui;
 }

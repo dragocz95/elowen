@@ -1,4 +1,6 @@
 import { beforeEach, describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor, inMemoryModelRuntime, modelsMissingToolSearchCompat, OAUTH_BUILTIN } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities, qwenThinkingWire } from '../../src/brain/modelCapabilities.js';
@@ -395,14 +397,14 @@ describe('brain providers', () => {
       for (const model of models) expect(model.baseUrl).toBe('https://api.kimi.com/coding');
     });
 
-    it("keeps Kimi's per-model User-Agent on the wire", async () => {
-      // Asserted on the resolved request headers, NOT on `model.headers`: registration moves them into a
-      // side store and nulls the descriptor field, so a test reading the descriptor would pass while the
-      // header silently vanished from every request. Kimi's endpoint rejects requests without it.
+    it("leaves Kimi's User-Agent to PI, which stamps its own", async () => {
+      // Kimi's endpoint rejects requests without a User-Agent, and until PI 0.84.2 the header was a
+      // per-model `KimiCLI/x` that registration moved into a side store. That release made the Anthropic
+      // transport stamp PI's runtime agent instead, DISCARDING whatever the caller set — so a per-model
+      // header here would be dead weight that reads as if it still mattered.
       //
-      // The shape is matched rather than a pinned version, so a PI bump to KimiCLI/1.6 stays green while
-      // the header going missing — the failure that actually breaks chat — still fails. Every model is
-      // checked because headers resolve per model, so one losing it would otherwise hide behind the rest.
+      // Pinned on both halves, because either one alone passes for the wrong reason: the resolved headers
+      // must carry no agent of ours, and the transport Kimi actually rides must still set one.
       const reg = buildBrainRegistry(empty, runtime);
       const models = reg.getAll().filter((m) => m.provider === 'kimi-coding');
       expect(models.length).toBeGreaterThan(0);
@@ -410,8 +412,14 @@ describe('brain providers', () => {
         const resolved = await (reg as unknown as {
           getApiKeyAndHeaders(m: unknown): Promise<{ headers?: Record<string, string> }>;
         }).getApiKeyAndHeaders(model);
-        expect(resolved.headers?.['User-Agent']).toMatch(/^KimiCLI\/\d/);
+        expect(resolved.headers?.['User-Agent']).toBeUndefined();
+        expect(model.api).toBe('anthropic-messages');
       }
+      const transport = readFileSync(
+        fileURLToPath(new URL('../../node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js', import.meta.url)),
+        'utf8',
+      );
+      expect(transport).toContain('merged["User-Agent"] = getPiUserAgent()');
     });
 
     it('reads k3 as a reasoning model', () => {
