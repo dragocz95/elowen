@@ -415,7 +415,7 @@ export async function buildApp(opts: BuildOpts) {
     // The task domain resolves per use: its owning plugin can be disabled or swapped by a reload while
     // a worker runs, and a captured store would keep writing into a dead generation.
     tasks: () => tasksDomain()?.store(), taskUsage: () => tasksDomain()?.usage(),
-    config: brainConfig, runtime: brainRuntime, prompts,
+    config: brainConfig, runtimeConfig: () => config.get().runtime, runtime: brainRuntime, prompts,
     url: elowenCli.url, token: elowenCli.token,
     plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
     userSettings: (userId) => userSettings.cliSettings(userId), // the task owner's auto-compact threshold

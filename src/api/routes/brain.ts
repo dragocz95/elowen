@@ -6,6 +6,9 @@ import { brainStartSchema, brainStopSchema, brainVisibilitySchema, brainSendSche
 import { brainConfigFromElowen } from '../../brain/config.js';
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
+import { probeAzureHostedToolSearch } from '../../brain/hostedToolSearchProbe.js';
+import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider } from '../../brain/session/hostedToolSearch.js';
+import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/wireContract.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { brainProviderIds } from '../../store/configStore.js';
 import type { BrainEvent } from '../../brain/events.js';
@@ -381,6 +384,54 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!apiKey && typeof b.id === 'string') apiKey = d.config.brainProviders().find((p) => p.id === b.id)?.apiKey ?? null;
     const models = await fetchOpenAiModels({ id: 'probe', label: 'probe', type: 'openai', baseUrl, models: [], apiKey }, fetch);
     return c.json({ models });
+  });
+
+  app.get('/brain/providers/hosted-tool-search/status', c => {
+    const u = d.users ? c.get('user') : undefined;
+    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    const capabilities = d.config.get().runtime.hostedToolSearch;
+    return c.json({ providers: d.config.brainProviders()
+      .filter(isAzureOpenAIResponsesProvider)
+      .map((provider) => ({
+        providerId: provider.id,
+        models: provider.models.map((modelId) => {
+          const saved = capabilities[provider.id]?.[modelId];
+          const current = !!saved && saved.fingerprint === hostedToolSearchFingerprint(provider, modelId)
+            && saved.protocol === HOSTED_TOOL_SEARCH_PROTOCOL;
+          return {
+            modelId,
+            status: current ? saved.status : 'unverified',
+            checkedAt: current ? saved.checkedAt : null,
+          };
+        }),
+      })) });
+  });
+
+  // Verify Azure hosted tool search end-to-end with one synthetic function and an isolated transcript.
+  // Admin-only: it exercises the stored provider key. Provider errors stay structured and never expose raw
+  // response bodies (which can include request metadata or echoed prompt content).
+  app.post('/brain/providers/hosted-tool-search/probe', async c => {
+    const u = d.users ? c.get('user') : undefined;
+    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    const body = (await c.req.json().catch(() => ({}))) as { providerId?: unknown; modelId?: unknown };
+    const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : '';
+    const modelId = typeof body.modelId === 'string' ? body.modelId.trim() : '';
+    if (!providerId || !modelId) return c.json({ error: 'providerId and modelId required' }, 400);
+    const provider = d.config.brainProviders().find((entry) => entry.id === providerId);
+    if (!provider) return c.json({ error: 'provider not found' }, 404);
+    if (!isAzureOpenAIResponsesProvider(provider)) return c.json({ error: 'provider is not Azure OpenAI Responses' }, 400);
+    if (!provider.models.includes(modelId)) return c.json({ error: 'model not configured for provider' }, 400);
+
+    const result = await probeAzureHostedToolSearch({ provider, modelId });
+    if (result.status !== 'error') {
+      d.config.setHostedToolSearchCapability(providerId, modelId, {
+        status: result.status,
+        fingerprint: hostedToolSearchFingerprint(provider, modelId),
+        checkedAt: result.checkedAt,
+        protocol: HOSTED_TOOL_SEARCH_PROTOCOL,
+      });
+    }
+    return c.json({ providerId, modelId, ...result });
   });
 
   // Smoke-test the configured brain: run ONE minimal non-streaming completion to prove it actually

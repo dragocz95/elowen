@@ -41,6 +41,31 @@ const OAUTH_ICON: Record<string, string> = {
 };
 const API_TYPES: BrainProviderType[] = ['openai', 'anthropic'];
 
+type HostedSearchStatus = 'supported' | 'unsupported' | 'unverified';
+type HostedSearchStatusMap = Record<string, Record<string, HostedSearchStatus>>;
+type HostedSearchStatusResponse = Awaited<ReturnType<typeof elowenClient.brainHostedToolSearchStatus>>;
+
+const toHostedSearchStatusMap = (response: HostedSearchStatusResponse): HostedSearchStatusMap => Object.fromEntries(
+  response.providers.map((provider) => [
+    provider.providerId,
+    Object.fromEntries(provider.models.map((model) => [model.modelId, model.status])),
+  ]),
+);
+
+function isAzureResponsesProvider(provider: BrainProvider): boolean {
+  if (provider.type !== 'openai' || provider.api !== 'openai-responses') return false;
+  try {
+    const url = new URL(provider.baseUrl);
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+    return url.protocol === 'https:'
+      && url.hostname !== 'openai.azure.com'
+      && url.hostname.endsWith('.openai.azure.com')
+      && path === '/openai/v1';
+  } catch {
+    return false;
+  }
+}
+
 /** The importance levels the retention block carries a half-life for (mirrors the daemon's clamp keys). */
 const RETENTION_IMPORTANCE_KEYS = [1, 2, 3, 4, 5] as const;
 
@@ -311,6 +336,23 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
   const [retentionOpen, setRetentionOpen] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<BrainProviderType | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [hostedSearchStatus, setHostedSearchStatus] = useState<HostedSearchStatusMap>({});
+  const [verifyingProvider, setVerifyingProvider] = useState<string | null>(null);
+  const hostedStatusGeneration = useRef(0);
+
+  const refreshHostedSearchStatus = async () => {
+    const generation = ++hostedStatusGeneration.current;
+    const response = await elowenClient.brainHostedToolSearchStatus();
+    if (hostedStatusGeneration.current === generation) setHostedSearchStatus(toHostedSearchStatusMap(response));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    const generation = ++hostedStatusGeneration.current;
+    void elowenClient.brainHostedToolSearchStatus().then((response) => {
+      if (!cancelled && hostedStatusGeneration.current === generation) setHostedSearchStatus(toHostedSearchStatusMap(response));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [config?.brain?.providers]);
 
   // The assistant's display identity ("Elowen" by default) — feeds the persona everywhere it speaks.
   const updateConfig = useUpdateConfig();
@@ -376,6 +418,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
         limits: config.runtime?.limits ?? RUNTIME_LIMIT_DEFAULTS,
         toolDeferralEnabled: config.runtime?.toolDeferralEnabled ?? true,
         toolDeferralOverrides: config.runtime?.toolDeferralOverrides ?? { sources: {}, tools: {} },
+        hostedToolSearch: config.runtime?.hostedToolSearch ?? {},
         // A daemon predating the feature serves the runtime block without the retention group — seed the
         // defaults so the editor always has the full block to edit (mirrors `brain.limits ?? defaults`).
         memoryRetention: config.runtime?.memoryRetention ?? DEFAULT_MEMORY_RETENTION,
@@ -395,7 +438,7 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
     try {
       // Tool loading owns its own explicit save. Omitting only those fields prevents this debounced editor
       // from replaying a stale tool-loading draft while preserving the runtime and retention controls it owns.
-      const { toolDeferralEnabled: _toolDeferralEnabled, toolDeferralOverrides: _toolDeferralOverrides, ...runtimePatch } = runtime;
+      const { toolDeferralEnabled: _toolDeferralEnabled, toolDeferralOverrides: _toolDeferralOverrides, hostedToolSearch: _hostedToolSearch, ...runtimePatch } = runtime;
       const { toolDeferThreshold: _toolDeferThreshold, ...limits } = runtimePatch.limits;
       const saved = await updateConfig.mutateAsync({ runtime: { ...runtimePatch, limits } });
       const effective = saved.runtime?.limits;
@@ -505,6 +548,23 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
     void elowenClient.brainOauthStart(type)
       .then((f) => setFlow(f))
       .catch(() => toast(t.brain.connectError, 'error'));
+
+  const verifyHostedSearch = (provider: BrainProvider) => void (async () => {
+    setVerifyingProvider(provider.id);
+    try {
+      const results = [];
+      for (const modelId of provider.models) {
+        results.push(await elowenClient.brainHostedToolSearchProbe({ providerId: provider.id, modelId }));
+      }
+      await refreshHostedSearchStatus();
+      if (results.length > 0 && results.every((result) => result.status === 'supported')) toast(t.brain.hostedSearchVerified);
+      else toast(t.brain.hostedSearchVerifyFailed, 'error');
+    } catch {
+      toast(t.brain.hostedSearchVerifyFailed, 'error');
+    } finally {
+      setVerifyingProvider(null);
+    }
+  })();
 
   return (
     <>
@@ -667,27 +727,48 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
           <SettingsState>{t.brain.noProviders}</SettingsState>
         ) : (
           <>
-            {apiProviders.map((p) => (
-              <SettingsRow
-                key={p.id}
-                label={p.label}
-                icon={BrainCircuit}
-                status={(
-                  <span className="flex flex-col gap-1">
-                    {p.baseUrl ? <span className="truncate font-mono">{p.baseUrl}</span> : null}
-                    <span>{p.models.length > 0 ? t.brain.modelCount.replace('{n}', String(p.models.length)) : t.brain.modelsAuto}</span>
-                  </span>
-                )}
-                actions={(
-                  <>
-                  <Badge>{t.brain.types[p.type]}</Badge>
-                  {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
-                  <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature) })} />
-                  <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />
-                  </>
-                )}
-              />
-            ))}
+            {apiProviders.map((p) => {
+              const azure = isAzureResponsesProvider(p);
+              const modelStates = p.models.map((modelId) => hostedSearchStatus[p.id]?.[modelId] ?? 'unverified');
+              const hostedState: HostedSearchStatus = modelStates.length > 0 && modelStates.every((status) => status === 'supported')
+                ? 'supported'
+                : modelStates.some((status) => status === 'unsupported') ? 'unsupported' : 'unverified';
+              const hostedLabel = hostedState === 'supported' ? t.brain.hostedSearchVerified
+                : hostedState === 'unsupported' ? t.brain.hostedSearchUnsupported
+                  : t.brain.hostedSearchUnverified;
+              return (
+                <SettingsRow
+                  key={p.id}
+                  label={p.label}
+                  icon={BrainCircuit}
+                  status={(
+                    <span className="flex flex-col gap-1">
+                      {p.baseUrl ? <span className="truncate font-mono">{p.baseUrl}</span> : null}
+                      <span>{p.models.length > 0 ? t.brain.modelCount.replace('{n}', String(p.models.length)) : t.brain.modelsAuto}</span>
+                    </span>
+                  )}
+                  actions={(
+                    <>
+                    <Badge>{t.brain.types[p.type]}</Badge>
+                    {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
+                    {azure ? <Badge tone={hostedState === 'supported' ? 'accent' : hostedState === 'unsupported' ? 'danger' : 'default'}>{hostedLabel}</Badge> : null}
+                    {azure ? (
+                      <Button
+                        variant="ghost"
+                        icon={ShieldCheck}
+                        disabled={p.models.length === 0 || verifyingProvider === p.id}
+                        onClick={() => verifyHostedSearch(p)}
+                      >
+                        {verifyingProvider === p.id ? t.brain.hostedSearchVerifying : t.brain.hostedSearchVerify}
+                      </Button>
+                    ) : null}
+                    <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '', api: p.api ?? '', temperature: p.temperature === undefined ? '' : String(p.temperature) })} />
+                    <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />
+                    </>
+                  )}
+                />
+              );
+            })}
           </>
         )}
       </SettingsGroup>

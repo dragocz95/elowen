@@ -5,6 +5,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { TaskStoreContract, TaskUsageContract } from '../../store/taskStoreContract.js';
 import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
+import type { RuntimeConfig } from '../../shared/wireContract.js';
 import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
 import { newCostMeter, runWithMeter, type CostMeter } from '../openrouterMeter.js';
 import { projectUserTurn } from '../persistence.js';
@@ -14,8 +15,7 @@ import type { BrainResourceLoaderOptions } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { composeSessionTools } from '../session/capabilities.js';
-import { supportsOpenAIHostedToolSearch } from '../session/openAiHostedToolSearch.js';
-import { supportsAnthropicHostedToolSearch } from '../session/anthropicHostedToolSearch.js';
+import { resolveHostedToolSearchRoute } from '../session/hostedToolSearch.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
@@ -46,6 +46,8 @@ export interface BrainWorkerDeps {
   chatImagesDir?: string;
   /** Live provider config resolver (null → nothing configured, launch fails clearly). */
   config: () => BrainRuntimeConfig | null;
+  /** Same runtime snapshot chat spawns use for deferral kill-switch + Azure capability routing. */
+  runtimeConfig?: () => RuntimeConfig;
   runtime: ModelRuntime;
   prompts?: PromptService;
   /** Daemon REST base + token the close tool calls (same reach-back the CLI workers use). */
@@ -190,10 +192,13 @@ export class BrainWorkerService {
     const registry = buildBrainRegistry(cfg, this.d.runtime);
     const route = resolveBrainModelRoute(registry, cfg, selectionFor(cfg, input.spec.model));
     const { model } = route;
-    const providerType = cfg.providers.find((provider) => provider.id === route.providerId)?.type;
-    const hostedToolSearch = supportsOpenAIHostedToolSearch(model, providerType) ? 'openai'
-      : supportsAnthropicHostedToolSearch(model, providerType) ? 'anthropic'
-        : undefined;
+    const providerEntry = cfg.providers.find((provider) => provider.id === route.providerId);
+    if (!providerEntry) throw new Error(`brain provider '${route.providerId}' is not configured`);
+    const runtimeConfig = this.d.runtimeConfig?.();
+    const hostedToolSearch = resolveHostedToolSearchRoute(providerEntry, model, {
+      toolDeferralEnabled: runtimeConfig?.toolDeferralEnabled ?? false,
+      hostedToolSearch: runtimeConfig?.hostedToolSearch ?? {},
+    })?.provider;
     const sessionId = taskSessionId(input.taskId);
     const resumed = !!this.d.store.getSession(sessionId);
     // Same resolution the chat spawner runs: the owner's per-model override for THIS model wins over

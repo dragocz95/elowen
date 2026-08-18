@@ -51,6 +51,12 @@ const probeMock = vi.hoisted(() => {
     })),
   };
 });
+const hostedMocks = vi.hoisted(() => ({
+  status: vi.fn<() => Promise<{ providers: { providerId: string; models: { modelId: string; status: 'supported' | 'unsupported' | 'unverified'; checkedAt: number | null }[] }[] }>>()
+    .mockResolvedValue({ providers: [] }),
+  probe: vi.fn<() => Promise<{ providerId: string; modelId: string; status: 'supported' | 'unsupported' | 'error'; reason: string; checkedAt: number }>>()
+    .mockResolvedValue({ providerId: 'azure', modelId: 'deployment', status: 'supported', reason: 'server_search_and_replay_ok', checkedAt: 1 }),
+}));
 
 /** The pending probe for `baseUrl`, as an explicit failure when the component never issued it. */
 const probeFor = (baseUrl: string) => {
@@ -88,6 +94,8 @@ vi.mock('../../../lib/elowenClient', async (importOriginal) => {
       brainOauthStart: oauthFlowMocks.start,
       brainOauthFlow: oauthFlowMocks.flow,
       brainProviderProbe: probeMock.probe,
+      brainHostedToolSearchStatus: hostedMocks.status,
+      brainHostedToolSearchProbe: hostedMocks.probe,
     },
   };
 });
@@ -101,6 +109,9 @@ beforeEach(() => {
   oauthRefetch.mockClear(); rateLimitsRefetch.mockClear();
   oauthFlowMocks.start.mockClear(); oauthFlowMocks.flow.mockClear(); oauthFlowMocks.pending.resolve = null;
   probeMock.probe.mockClear(); probeMock.pending.length = 0;
+  hostedMocks.status.mockReset(); hostedMocks.status.mockResolvedValue({ providers: [] });
+  hostedMocks.probe.mockClear();
+  (CONFIG.brain.providers as unknown[]).length = 0;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -115,6 +126,39 @@ describe('BrainSection — OAuth account model picker', () => {
     expect(container.querySelectorAll('.settings-row')).toHaveLength(10);
     expect(container.querySelector('.spatial-group')).toBeNull();
     expect(container.querySelector('.border-y.divide-y')).toBeNull();
+  });
+
+  it('shows persisted Azure verification status and probes the exact configured deployment', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
+    });
+    hostedMocks.status
+      .mockResolvedValueOnce({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }] })
+      .mockResolvedValue({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] }] });
+
+    renderSection();
+    expect(await screen.findByText(en.brain.hostedSearchUnverified)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.hostedSearchVerify }));
+    await waitFor(() => expect(hostedMocks.probe).toHaveBeenCalledWith({ providerId: 'azure', modelId: 'deployment' }));
+    await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
+  });
+
+  it('does not let an older status request overwrite a completed verification', async () => {
+    (CONFIG.brain.providers as unknown[]).push({
+      id: 'azure', label: 'Azure production', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://resource.openai.azure.com/openai/v1', models: ['deployment'], apiKeySet: true,
+    });
+    let resolveInitial!: (value: { providers: { providerId: string; models: { modelId: string; status: 'unverified'; checkedAt: null }[] }[] }) => void;
+    hostedMocks.status
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValue({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'supported', checkedAt: 1 }] }] });
+
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.hostedSearchVerify }));
+    await waitFor(() => expect(screen.getAllByText(en.brain.hostedSearchVerified).length).toBeGreaterThan(0));
+    await act(async () => resolveInitial({ providers: [{ providerId: 'azure', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }] }));
+    expect(screen.queryByText(en.brain.hostedSearchUnverified)).not.toBeInTheDocument();
   });
 
   it('opens the manage modal for a connected account, picks a model (icon rows), and saves the selection', async () => {

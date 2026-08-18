@@ -27,6 +27,7 @@ describe('ConfigStore runtime limits', () => {
       },
       toolDeferralEnabled: true,
       toolDeferralOverrides: { sources: {}, tools: {} },
+      hostedToolSearch: {},
       // ON: in-process sub-agents share the daemon's one JS thread, so a fan-out starves the interactive
       // path. `false` remains the pre-runner code path, i.e. the rollback an operator can reach for.
       subagentRunnerEnabled: true,
@@ -117,6 +118,26 @@ describe('ConfigStore runtime limits', () => {
     expect(cs.get().runtime.toolDeferralEnabled).toBe(false);
     cs.update({ runtime: { toolDeferralEnabled: true } });
     expect(cs.get().runtime.toolDeferralEnabled).toBe(true);
+  });
+
+  it('persists probe-owned hosted search capabilities and ignores generic config spoofing', () => {
+    const db = openDb(':memory:');
+    const cs = new ConfigStore(db);
+    cs.update({ runtime: { hostedToolSearch: { forged: { model: {
+      status: 'supported', fingerprint: 'a'.repeat(64), checkedAt: 1, protocol: 'hosted-tool-search-v1',
+    } } } } } as never);
+    expect(cs.get().runtime.hostedToolSearch).toEqual({});
+
+    cs.setHostedToolSearchCapability('azure', 'deployment/name', {
+      status: 'supported', fingerprint: 'b'.repeat(64), checkedAt: 123, protocol: 'hosted-tool-search-v1',
+    });
+    expect(new ConfigStore(db).get().runtime.hostedToolSearch).toEqual({
+      azure: { 'deployment/name': {
+        status: 'supported', fingerprint: 'b'.repeat(64), checkedAt: 123, protocol: 'hosted-tool-search-v1',
+      } },
+    });
+    cs.update({ runtime: { toolDeferralEnabled: false } });
+    expect(cs.get().runtime.hostedToolSearch.azure?.['deployment/name']?.status).toBe('supported');
   });
 
   it('round-trips the sub-agent runner switch and leaves it alone on a limits-only patch', () => {

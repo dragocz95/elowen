@@ -337,13 +337,59 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, brainAuth: opts.brainAuth, plugins: opts.plugins,
   });
-  return { app, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain };
+  return { app, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain, config };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
+  it('admin verifies and persists Azure hosted search while non-admin is forbidden', async () => {
+    const { app, adminTok, amyTok, config } = setup();
+    config.update({ brain: { providers: [{
+      id: 'azure-openai', label: 'Azure', type: 'openai', api: 'openai-responses',
+      baseUrl: 'https://test.openai.azure.com/openai/v1', models: ['deployment'], apiKey: 'secret-key',
+    }] } } as never);
+    expect((await app.request('/brain/providers/hosted-tool-search/probe', post(amyTok, {
+      providerId: 'azure-openai', modelId: 'deployment',
+    }))).status).toBe(403);
+    expect(await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json()).toEqual({
+      providers: [{ providerId: 'azure-openai', models: [{ modelId: 'deployment', status: 'unverified', checkedAt: null }] }],
+    });
+
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output: [
+        { type: 'tool_search_call', execution: 'server', call_id: null, status: 'completed' },
+        { type: 'tool_search_output', execution: 'server', call_id: null, status: 'completed', tools: [
+          { type: 'function', name: 'hosted_search_probe_echo', defer_loading: true },
+        ] },
+        { type: 'function_call', call_id: 'call_1', name: 'hosted_search_probe_echo', arguments: '{"value":"AZURE_HOSTED_OK"}' },
+      ] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output: [
+        { type: 'message', content: [{ type: 'output_text', text: 'AZURE_REPLAY_OK' }] },
+      ] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const response = await app.request('/brain/providers/hosted-tool-search/probe', post(adminTok, {
+        providerId: 'azure-openai', modelId: 'deployment',
+      }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        providerId: 'azure-openai', modelId: 'deployment', status: 'supported',
+        reason: 'server_search_and_replay_ok',
+      });
+      expect(config.get().runtime.hostedToolSearch['azure-openai']?.deployment).toMatchObject({
+        status: 'supported', protocol: 'hosted-tool-search-v1', checkedAt: expect.any(Number),
+      });
+      expect(await (await app.request('/brain/providers/hosted-tool-search/status', auth(adminTok))).json()).toMatchObject({
+        providers: [{ providerId: 'azure-openai', models: [{ modelId: 'deployment', status: 'supported' }] }],
+      });
+      expect(config.brainProviders()[0]?.apiKey).toBe('secret-key');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('status → start → send happy path', async () => {
     const { app, amyTok } = setup();
     expect((await (await app.request('/brain/status', auth(amyTok))).json() as { running: boolean }).running).toBe(false);

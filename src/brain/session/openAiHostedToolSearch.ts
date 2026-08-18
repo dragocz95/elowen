@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { stripLocalToolActivations } from './hostedToolSearch.js';
+import { isGpt54OrLater, stripLocalToolActivations } from './hostedToolSearch.js';
+export { isGpt54OrLater } from './hostedToolSearch.js';
 
 /** The narrow model shape that decides whether the ChatGPT account backend gets server-side tool search. */
 export interface OpenAIHostedToolSearchModel {
@@ -22,22 +23,10 @@ interface ProviderTool {
   [key: string]: unknown;
 }
 
-const GPT_FAMILY = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/;
 const LOCAL_TOOL_SEARCH = 'ToolSearch';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/** OpenAI documents hosted tool search for GPT-5.4 onward. Keep the family parser independent of catalog
- *  compat flags: pi 0.84.2 does not advertise or implement the hosted mode, while the ChatGPT OAuth backend
- *  itself does (verified against `/backend-api/codex/responses`). */
-export function isGpt54OrLater(modelId: string): boolean {
-  const match = GPT_FAMILY.exec(modelId);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2] ?? 0);
-  return major > 5 || (major === 5 && minor >= 4);
-}
 
 /** Exact product boundary: the private ChatGPT-account Responses adapter, never OpenAI API-key/Azure
  *  Responses or a compatible relay that happens to use the same model id. */

@@ -133,9 +133,11 @@ export interface MemoryRetentionConfig {
 /** The runtime block the daemon serves extends the wire shape with the retention group (see the daemon's
  *  `RuntimeConfigWithRetention` in src/store/configStore.ts). Optional like `brain.limits`: a daemon
  *  predating the feature serves the wire shape alone, and the editor seeds the defaults. */
-export type RuntimeConfig = Omit<WireRuntimeConfig, 'toolDeferralOverrides'> & {
+export type RuntimeConfig = Omit<WireRuntimeConfig, 'toolDeferralOverrides' | 'hostedToolSearch'> & {
   /** Optional while a web client may still receive a response from a daemon predating tool deferral overrides. */
   toolDeferralOverrides?: ToolDeferralOverrides;
+  /** Probe-owned server state; optional for compatibility and omitted from generic runtime PATCHes. */
+  hostedToolSearch?: WireRuntimeConfig['hostedToolSearch'];
   memoryRetention?: MemoryRetentionConfig;
 };
 

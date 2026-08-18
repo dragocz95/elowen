@@ -289,6 +289,17 @@ export interface ToolDeferralOverrides {
   tools: Record<string, Record<string, ToolLoadingMode>>;
 }
 
+export const HOSTED_TOOL_SEARCH_PROTOCOL = 'hosted-tool-search-v1' as const;
+export type HostedToolSearchCapabilityStatus = 'supported' | 'unsupported';
+export interface HostedToolSearchCapability {
+  status: HostedToolSearchCapabilityStatus;
+  fingerprint: string;
+  checkedAt: number;
+  protocol: typeof HOSTED_TOOL_SEARCH_PROTOCOL;
+}
+/** Nested rather than slash-delimited: provider/model ids may themselves contain `/`. Missing = unknown. */
+export type HostedToolSearchCapabilities = Record<string, Record<string, HostedToolSearchCapability>>;
+
 /** Operator-tunable runtime limits (Settings → Elowen AI → Runtime): each a whole number the daemon
  *  clamps to a sane range. A SIBLING of `BrainLimits` rather than more fields on it: these govern the
  *  daemon's surrounding runtime — the CLI's `!` escape, the memory relevance floor, the deferred-tool
@@ -351,6 +362,8 @@ export interface RuntimeConfig {
   /** Owner-qualified loading decisions. Missing keys inherit the source's default; maps replace wholesale
    *  so removing a key restores that inheritance. */
   toolDeferralOverrides: ToolDeferralOverrides;
+  /** Probe-backed hosted-search capabilities (currently Azure OpenAI). Missing entry = unknown/fallback. */
+  hostedToolSearch: HostedToolSearchCapabilities;
   /** Execute delegated sub-agent turns in a forked runner process instead of on the daemon's own event
    *  loop. OFF by default, and `false` is literally the old in-process path — which is what makes this
    *  the operator's rollback with no redeploy. Read live, so the next delegated turn follows it. */

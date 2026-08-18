@@ -23,8 +23,7 @@ import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
-import { supportsOpenAIHostedToolSearch } from '../session/openAiHostedToolSearch.js';
-import { supportsAnthropicHostedToolSearch } from '../session/anthropicHostedToolSearch.js';
+import { resolveHostedToolSearchRoute } from '../session/hostedToolSearch.js';
 import { createSpawnEventReducer } from './spawnEventReducer.js';
 import { userInstructionsBlock } from '../../prompts/userInstructions.js';
 
@@ -109,6 +108,9 @@ export class LiveSessionSpawner {
     const { sessionId, ownerUserId } = opts;
 
     const cfg = this.runtimeConfig();
+    // One spawn-time snapshot: hosted routing and local deferral must agree on the same kill switch and
+    // Azure capability map. A settings change applies on the next respawn, never mid-turn.
+    const runtime = this.d.runtimeConfig?.();
     const registry = buildBrainRegistry(cfg, this.d.runtime);
     // The owner's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
     // session model (or the provider's stable default). Validated at save time; resolved defensively here
@@ -133,16 +135,16 @@ export class LiveSessionSpawner {
     // into the right absolute reserve down in the factory.
     const autoCompactAtPct = resolveAutoCompactPct(settings?.autoCompactAtByModel, route.providerId, model.id, opts.autoCompactAtPct);
     const capabilities = modelCapabilities(model);
-    // Supported ChatGPT/Anthropic OAuth models can search the full sender-visible tool catalog server-side
-    // and call a discovered tool in the SAME response. Hosted mode replaces (rather than supplements)
-    // Elowen's local ToolSearch for this session; every other provider/model keeps the client-side path.
-    const providerType = cfg.providers.find((provider) => provider.id === route.providerId)?.type;
-    const openAIHostedToolSearch = supportsOpenAIHostedToolSearch(model, providerType);
-    const anthropicHostedToolSearch = supportsAnthropicHostedToolSearch(model, providerType);
-    const hostedToolSearch = openAIHostedToolSearch ? 'openai'
-      : anthropicHostedToolSearch ? 'anthropic'
-        : undefined;
-    const providerHostedToolSearch = hostedToolSearch !== undefined;
+    // One resolver owns OAuth, official API-key and probe-backed Azure classification. It consumes the
+    // config entry (auth + URL), never guesses from PI's registry provider name.
+    const providerEntry = cfg.providers.find((provider) => provider.id === route.providerId);
+    if (!providerEntry) throw new Error(`brain provider '${route.providerId}' is not configured`);
+    const hostedRoute = resolveHostedToolSearchRoute(providerEntry, model, {
+      toolDeferralEnabled: runtime?.toolDeferralEnabled ?? false,
+      hostedToolSearch: runtime?.hostedToolSearch ?? {},
+    });
+    const hostedToolSearch = hostedRoute?.provider;
+    const providerHostedToolSearch = hostedRoute !== undefined;
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
@@ -185,9 +187,6 @@ export class LiveSessionSpawner {
     const toolHookBus = plugins && plugins.hooks.length > 0
       ? new PluginHookBus({ hooks: plugins.hooks, hookOwners: plugins.hookOwners, capabilities: plugins.pluginCapabilities, logger: logger('plugin-hooks') })
       : undefined;
-    // Read the entire runtime policy once per spawn. Minimal callers may omit runtimeConfig altogether;
-    // persisted settings changes apply to the next spawn without a daemon restart.
-    const runtime = this.d.runtimeConfig?.();
     const toolDeferralOverrides = runtime?.toolDeferralOverrides;
     const planSafeToolNames = new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]);
     let toolSearchHandle: ToolSearchHandle | undefined;

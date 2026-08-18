@@ -3,7 +3,7 @@ import { stripControlChars } from '../shared/text.js';
 import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
-import type { BrainLimits, RuntimeConfig, RuntimeLimits, ToolDeferralOverrides } from '../shared/wireContract.js';
+import { HOSTED_TOOL_SEARCH_PROTOCOL, type BrainLimits, type HostedToolSearchCapabilities, type HostedToolSearchCapability, type RuntimeConfig, type RuntimeLimits, type ToolDeferralOverrides } from '../shared/wireContract.js';
 import { DEFAULT_MEMORY_RETENTION, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 
 // The brain-limits shape is the daemon↔web wire contract (Settings → Elowen AI → Limits) — defined
@@ -620,6 +620,31 @@ function sanitizeToolDeferralOverrides(input: unknown): ToolDeferralOverrides {
   return { sources, tools };
 }
 
+function sanitizeHostedToolSearchCapabilities(input: unknown): HostedToolSearchCapabilities {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: HostedToolSearchCapabilities = {};
+  for (const [providerId, providerModels] of Object.entries(input as Record<string, unknown>)) {
+    if (!providerId.trim() || !providerModels || typeof providerModels !== 'object' || Array.isArray(providerModels)) continue;
+    const models: HostedToolSearchCapabilities[string] = {};
+    for (const [modelId, raw] of Object.entries(providerModels as Record<string, unknown>)) {
+      if (!modelId.trim() || !raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const value = raw as Record<string, unknown>;
+      if ((value.status !== 'supported' && value.status !== 'unsupported')
+        || typeof value.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(value.fingerprint)
+        || typeof value.checkedAt !== 'number' || !Number.isFinite(value.checkedAt)
+        || value.protocol !== HOSTED_TOOL_SEARCH_PROTOCOL) continue;
+      models[modelId] = {
+        status: value.status,
+        fingerprint: value.fingerprint,
+        checkedAt: Math.max(0, Math.floor(value.checkedAt)),
+        protocol: HOSTED_TOOL_SEARCH_PROTOCOL,
+      };
+    }
+    if (Object.keys(models).length > 0) out[providerId] = models;
+  }
+  return out;
+}
+
 const DEFAULT_CONFIG: ElowenConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
@@ -666,7 +691,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
     removed: [],
   },
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
-  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, memoryRetention: defaultMemoryRetention() },
+  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
 };
@@ -803,7 +828,7 @@ const defaultStored = (): Stored => ({
   editorPluginMigrated: true,
   workPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
-  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, memoryRetention: defaultMemoryRetention() },
+  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
 });
@@ -914,6 +939,7 @@ export class ConfigStore {
           limits: clampRuntimeLimits(p.runtime?.limits, d.runtime.limits),
           toolDeferralEnabled: typeof p.runtime?.toolDeferralEnabled === 'boolean' ? p.runtime.toolDeferralEnabled : d.runtime.toolDeferralEnabled,
           toolDeferralOverrides: sanitizeToolDeferralOverrides(p.runtime?.toolDeferralOverrides),
+          hostedToolSearch: sanitizeHostedToolSearchCapabilities(p.runtime?.hostedToolSearch),
           subagentRunnerEnabled: typeof p.runtime?.subagentRunnerEnabled === 'boolean' ? p.runtime.subagentRunnerEnabled : d.runtime.subagentRunnerEnabled,
           subagentRunnerPoolMax: p.runtime?.subagentRunnerPoolMax !== undefined ? sanitizePoolMax(p.runtime.subagentRunnerPoolMax, d.runtime.subagentRunnerPoolMax) : d.runtime.subagentRunnerPoolMax,
           remoteCompactionEnabled: typeof p.runtime?.remoteCompactionEnabled === 'boolean' ? p.runtime.remoteCompactionEnabled : d.runtime.remoteCompactionEnabled,
@@ -1001,6 +1027,14 @@ export class ConfigStore {
   /** Persist a freshly generated VAPID keypair. */
   setWebPushKeys(keys: { publicKey: string; privateKey: string }): void {
     this.write({ ...this.read(), webPush: { publicKey: keys.publicKey, privateKey: keys.privateKey } });
+  }
+
+  /** Persist one server-verified hosted-search capability. Generic config PATCH cannot forge this map. */
+  setHostedToolSearchCapability(providerId: string, modelId: string, capability: HostedToolSearchCapability): void {
+    const current = this.read();
+    const hostedToolSearch = structuredClone(current.runtime.hostedToolSearch);
+    hostedToolSearch[providerId] = { ...(hostedToolSearch[providerId] ?? {}), [modelId]: capability };
+    this.write({ ...current, runtime: { ...current.runtime, hostedToolSearch } });
   }
 
   /** Whether a settings row has been persisted (i.e. config has been saved at least once). */
@@ -1210,6 +1244,9 @@ export class ConfigStore {
         toolDeferralOverrides: patch.runtime?.toolDeferralOverrides !== undefined
           ? sanitizeToolDeferralOverrides(patch.runtime.toolDeferralOverrides)
           : cur.runtime.toolDeferralOverrides,
+        // Probe-owned, read-only through the generic config API. Provider/model changes invalidate at
+        // route resolution via the endpoint fingerprint rather than accepting a client-spoofed status.
+        hostedToolSearch: cur.runtime.hostedToolSearch,
         subagentRunnerEnabled: typeof patch.runtime?.subagentRunnerEnabled === 'boolean' ? patch.runtime.subagentRunnerEnabled : cur.runtime.subagentRunnerEnabled,
         subagentRunnerPoolMax: patch.runtime?.subagentRunnerPoolMax !== undefined ? sanitizePoolMax(patch.runtime.subagentRunnerPoolMax, cur.runtime.subagentRunnerPoolMax) : cur.runtime.subagentRunnerPoolMax,
         remoteCompactionEnabled: typeof patch.runtime?.remoteCompactionEnabled === 'boolean' ? patch.runtime.remoteCompactionEnabled : cur.runtime.remoteCompactionEnabled,

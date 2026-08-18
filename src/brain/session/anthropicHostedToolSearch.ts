@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { stripLocalToolActivations } from './hostedToolSearch.js';
+import { isAnthropicHostedToolSearchModelId, stripLocalToolActivations } from './hostedToolSearch.js';
+export { isAnthropicHostedToolSearchModelId } from './hostedToolSearch.js';
 
 export interface AnthropicHostedToolSearchModel {
   id: string;
@@ -28,16 +29,6 @@ const LOCAL_TOOL_SEARCH = 'ToolSearch';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/** Anthropic's documented server-search floor: Claude 4.5+, plus the named generation-5 families. */
-export function isAnthropicHostedToolSearchModelId(modelId: string): boolean {
-  if (/^claude-(?:fable|mythos)-5(?:-|$)/.test(modelId)) return true;
-  const match = /^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d+))?(?:-|$)/.exec(modelId);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2] ?? 0);
-  return major > 4 || (major === 4 && minor >= 5);
-}
 
 /** Exact OAuth boundary. Custom API-key Anthropic providers use an `elowen-*` registry provider name and
  *  intentionally keep the established local path until they are tested independently. */
