@@ -235,6 +235,33 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     ]));
     // No local handle means the factory leaves these tools active/executable; the provider module defers
     // their per-turn sender-visible wire definitions instead of removing them from PI's registry.
-    expect((create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown }).toolSearch).toBeUndefined();
+    const spec = create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown; hostedToolSearch?: string };
+    expect(spec.toolSearch).toBeUndefined();
+    expect(spec.hostedToolSearch).toBe('openai');
+  });
+
+  it('omits local ToolSearch for supported Anthropic OAuth while preserving the full PI registry', async () => {
+    const registry = registryWithMcpTools(12);
+    addTool(registry, 'security-scan', 'ScanCode');
+    const config: BrainRuntimeConfig = {
+      providers: [{
+        id: 'anthropic', label: 'Claude', type: 'oauth-anthropic', baseUrl: '',
+        models: ['claude-opus-5'], apiKey: null,
+      }],
+    };
+    const isolatedRuntime = await inMemoryModelRuntime();
+    const { spawn, create } = makeSpawner(registry, () => runtime(5), config, isolatedRuntime);
+
+    const live = await spawn();
+    const names = factoryToolNames(create);
+    expect(live.toolSearch).toBeUndefined();
+    expect(names).not.toContain('ToolSearch');
+    expect(names).toEqual(expect.arrayContaining([
+      'ScanCode',
+      ...Array.from({ length: 12 }, (_, index) => `mcp__github__op_${index}`),
+    ]));
+    const spec = create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown; hostedToolSearch?: string };
+    expect(spec.toolSearch).toBeUndefined();
+    expect(spec.hostedToolSearch).toBe('anthropic');
   });
 });

@@ -146,7 +146,12 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
 });
 
 describe('BrainSessionFactory context-saving installers', () => {
-  async function createWithProvider(provider: string, api?: string, modelId = 'test-model') {
+  async function createWithProvider(
+    provider: string,
+    api?: string,
+    modelId = 'test-model',
+    hostedToolSearch?: 'openai' | 'anthropic',
+  ) {
     // Spills resolve through dataDir(HOME) — point HOME at a tmp dir so the test never touches the
     // real ~/.config/elowen.
     const home = mkdtempSync(join(tmpdir(), 'elowen-home-'));
@@ -161,13 +166,13 @@ describe('BrainSessionFactory context-saving installers', () => {
       setSteeringMode: vi.fn(),
     };
     let cacheMonitor: unknown;
-    let openAIHostedToolSearch: boolean | undefined;
+    let capturedHostedToolSearch: { provider: 'openai' | 'anthropic'; modelId: string } | undefined;
     const factory = new BrainSessionFactory({
       store: new BrainStore(openDb(':memory:')),
       createSession: vi.fn(async () => ({ session })) as never,
       resourceLoaderFactory: (options) => {
         cacheMonitor = options.cacheMonitor;
-        openAIHostedToolSearch = options.openAIHostedToolSearch;
+        capturedHostedToolSearch = options.hostedToolSearch;
         return undefined;
       },
     });
@@ -175,10 +180,10 @@ describe('BrainSessionFactory context-saving installers', () => {
       sessionId: session.sessionId, ownerUserId: 1,
       runtime: undefined,
       model: { id: modelId, provider, contextWindow: 200_000, ...(api ? { api } : {}) },
-      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
+      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [], hostedToolSearch,
       autoCompact: false, autoCompactAtPct: 80,
     } as never);
-    return { home, listeners, session, cacheMonitor, openAIHostedToolSearch };
+    return { home, listeners, session, cacheMonitor, hostedToolSearch: capturedHostedToolSearch };
   }
 
   it('installs tool-result clearing (with spill under the data dir) and subscribes cacheWatch', async () => {
@@ -244,16 +249,20 @@ describe('BrainSessionFactory context-saving installers', () => {
     }
   });
 
-  it('installs hosted search only for GPT-5.4+ ChatGPT OAuth sessions', async () => {
-    const supported = await createWithProvider('openai-codex', 'openai-codex-responses', 'gpt-5.6-luna');
+  it('installs only the explicit auth-bound hosted route and pins it to the session model', async () => {
+    const supported = await createWithProvider('openai-codex', 'openai-codex-responses', 'gpt-5.6-luna', 'openai');
     const tooOld = await createWithProvider('openai-codex', 'openai-codex-responses', 'gpt-5.3-codex-spark');
     const apiKey = await createWithProvider('openai', 'openai-responses', 'gpt-5.6-luna');
     const azure = await createWithProvider('azure-openai', 'openai-responses', 'gpt-5.6-luna');
+    const anthropic = await createWithProvider('anthropic', 'anthropic-messages', 'claude-opus-5', 'anthropic');
+    const oldAnthropic = await createWithProvider('anthropic', 'anthropic-messages', 'claude-opus-4-1');
     try {
-      expect(supported.openAIHostedToolSearch).toBe(true);
-      expect(tooOld.openAIHostedToolSearch).toBeUndefined();
-      expect(apiKey.openAIHostedToolSearch).toBeUndefined();
-      expect(azure.openAIHostedToolSearch).toBeUndefined();
+      expect(supported.hostedToolSearch).toEqual({ provider: 'openai', modelId: 'gpt-5.6-luna' });
+      expect(tooOld.hostedToolSearch).toBeUndefined();
+      expect(apiKey.hostedToolSearch).toBeUndefined();
+      expect(azure.hostedToolSearch).toBeUndefined();
+      expect(anthropic.hostedToolSearch).toEqual({ provider: 'anthropic', modelId: 'claude-opus-5' });
+      expect(oldAnthropic.hostedToolSearch).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
     }

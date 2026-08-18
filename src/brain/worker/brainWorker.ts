@@ -14,6 +14,8 @@ import type { BrainResourceLoaderOptions } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { composeSessionTools } from '../session/capabilities.js';
+import { supportsOpenAIHostedToolSearch } from '../session/openAiHostedToolSearch.js';
+import { supportsAnthropicHostedToolSearch } from '../session/anthropicHostedToolSearch.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
@@ -188,6 +190,10 @@ export class BrainWorkerService {
     const registry = buildBrainRegistry(cfg, this.d.runtime);
     const route = resolveBrainModelRoute(registry, cfg, selectionFor(cfg, input.spec.model));
     const { model } = route;
+    const providerType = cfg.providers.find((provider) => provider.id === route.providerId)?.type;
+    const hostedToolSearch = supportsOpenAIHostedToolSearch(model, providerType) ? 'openai'
+      : supportsAnthropicHostedToolSearch(model, providerType) ? 'anthropic'
+        : undefined;
     const sessionId = taskSessionId(input.taskId);
     const resumed = !!this.d.store.getSession(sessionId);
     // Same resolution the chat spawner runs: the owner's per-model override for THIS model wins over
@@ -270,7 +276,7 @@ export class BrainWorkerService {
       sessionId, ownerUserId: input.ownerId ?? 0, runtime: this.d.runtime, model, providerId: route.providerId,
       compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt, appendSystemPrompt: append, skills,
-      tools: [closeTool, ...pluginTools],
+      tools: [closeTool, ...pluginTools], hostedToolSearch,
       // Task workers run long and unattended — keep their context bounded with PI-native compaction (the
       // factory persists each compaction into the store, so a rehydrated/resumed task keeps the savings)
       // at the owner's own threshold. An ownerless task has nobody to read a setting from → the default.

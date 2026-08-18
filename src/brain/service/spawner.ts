@@ -24,6 +24,7 @@ import { clientDir, turnWorkDir } from './workDir.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
 import { supportsOpenAIHostedToolSearch } from '../session/openAiHostedToolSearch.js';
+import { supportsAnthropicHostedToolSearch } from '../session/anthropicHostedToolSearch.js';
 import { createSpawnEventReducer } from './spawnEventReducer.js';
 import { userInstructionsBlock } from '../../prompts/userInstructions.js';
 
@@ -132,10 +133,16 @@ export class LiveSessionSpawner {
     // into the right absolute reserve down in the factory.
     const autoCompactAtPct = resolveAutoCompactPct(settings?.autoCompactAtByModel, route.providerId, model.id, opts.autoCompactAtPct);
     const capabilities = modelCapabilities(model);
-    // GPT-5.4+ on the ChatGPT-account backend can search the full allowed tool catalog server-side and call
-    // a discovered tool in the SAME response. It replaces (rather than supplements) Elowen's local
-    // ToolSearch for this session; every other provider/model keeps the established client-side path.
-    const openAIHostedToolSearch = supportsOpenAIHostedToolSearch(model);
+    // Supported ChatGPT/Anthropic OAuth models can search the full sender-visible tool catalog server-side
+    // and call a discovered tool in the SAME response. Hosted mode replaces (rather than supplements)
+    // Elowen's local ToolSearch for this session; every other provider/model keeps the client-side path.
+    const providerType = cfg.providers.find((provider) => provider.id === route.providerId)?.type;
+    const openAIHostedToolSearch = supportsOpenAIHostedToolSearch(model, providerType);
+    const anthropicHostedToolSearch = supportsAnthropicHostedToolSearch(model, providerType);
+    const hostedToolSearch = openAIHostedToolSearch ? 'openai'
+      : anthropicHostedToolSearch ? 'anthropic'
+        : undefined;
+    const providerHostedToolSearch = hostedToolSearch !== undefined;
     // Temperature is the provider entry's own setting, read from the same route that chose the model, and
     // absent unless the operator set one — see ProviderRequestProfile on why absent must stay the default.
     const requestProfile = {
@@ -206,7 +213,7 @@ export class LiveSessionSpawner {
         // denials stay gates rather than visibility changes, preserving the established cache contract. Do not
         // add the local search tool or a local handle: mixing both paths costs the extra model round again
         // and lets historical `addedToolNames` trigger pi's additional_tools replay.
-        if (openAIHostedToolSearch) return [];
+        if (providerHostedToolSearch) return [];
         toolSearchHandle = createToolSearchHandle(deferred);
         return [toolSearchTool(toolSearchHandle)];
       },
@@ -307,7 +314,8 @@ export class LiveSessionSpawner {
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
-      tools: allTools, toolSearch: toolSearchHandle, thinkingLevel: opts.thinkingLevel, requestProfile,
+      tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,
+      thinkingLevel: opts.thinkingLevel, requestProfile,
       autoCompact: opts.autoCompact, autoCompactAtPct,
       // Read per call rather than from the `runtime` snapshot above: the operator can turn provider-side
       // compaction off while a long conversation is running, and the next request must already follow it.

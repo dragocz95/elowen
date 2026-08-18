@@ -28,7 +28,9 @@ import {
 } from './remoteCompactionV2.js';
 import { bearerFromAuth } from '../providerUsage.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
-import { installOpenAIHostedToolSearch, supportsOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
+import { installOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
+import { installAnthropicHostedToolSearch } from './anthropicHostedToolSearch.js';
+import type { HostedToolSearchProvider } from './hostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
 
 let missingBoundaryCompactionWarned = false;
@@ -82,6 +84,9 @@ export interface SessionSpec {
    *  (they stay in the registry so ToolSearch can activate them), and the live session is wired onto it
    *  after creation so ToolSearch can change the active slice. Undefined → every tool starts active. */
   toolSearch?: ToolSearchHandle;
+  /** Explicitly AUTH-BOUND hosted route resolved from BrainProviderEntry.type by the caller. The factory
+   *  never infers OAuth from a model/provider label; compaction may route requests elsewhere. */
+  hostedToolSearch?: HostedToolSearchProvider;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
   /** Mutable provider switches (currently ChatGPT OAuth Fast) read before every request. */
@@ -167,9 +172,9 @@ export interface BrainResourceLoaderOptions {
    *  `cacheMonitor`: that one only watches, this one changes the request, so switching observability off
    *  must not switch the fix off with it. */
   cacheBreakpoints?: boolean;
-  /** GPT-5.4+ ChatGPT OAuth: send the already sender-visible tool catalog through OpenAI's hosted server
-   *  search instead of the local ToolSearch/additional_tools round-trip. */
-  openAIHostedToolSearch?: boolean;
+  /** Auth-bound provider route + expected request model. The model pin prevents a same-session compaction
+   *  fallback from inheriting the chat provider's hosted wire transform. */
+  hostedToolSearch?: { provider: HostedToolSearchProvider; modelId: string };
   requestProfile?: ProviderRequestProfile;
   settingsManager: SettingsManager;
 }
@@ -343,7 +348,12 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
         // Before cacheMonitor: observability must see the FINAL hosted-search body (deferred definitions +
         // server tool), not pi-ai's immediate-tools intermediate that never leaves the process.
-        ...(o.openAIHostedToolSearch ? [installOpenAIHostedToolSearch] : []),
+        ...(o.hostedToolSearch?.provider === 'openai'
+          ? [((modelId) => (pi: ExtensionAPI): void => { installOpenAIHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
+          : []),
+        ...(o.hostedToolSearch?.provider === 'anthropic'
+          ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
+          : []),
         ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
         ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
         // AFTER the monitor, so the snapshot it takes is the payload as pi-ai built it. The monitor hashes
@@ -464,7 +474,9 @@ export class BrainSessionFactory {
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
       ...(cacheMonitor ? { cacheMonitor } : {}),
       ...(spec.model.provider === 'anthropic' ? { cacheBreakpoints: true } : {}),
-      ...(supportsOpenAIHostedToolSearch(spec.model) ? { openAIHostedToolSearch: true } : {}),
+      ...(spec.hostedToolSearch ? {
+        hostedToolSearch: { provider: spec.hostedToolSearch, modelId: spec.model.id },
+      } : {}),
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls

@@ -8,9 +8,9 @@ import type { Api, Context, Model, Tool, Usage } from '@earendil-works/pi-ai';
 import { buildBrainRegistry, inMemoryModelRuntime, resolveBrainModel, type BrainRuntimeConfig } from '../../../src/brain/providers.js';
 import {
   projectOpenAIHostedToolSearchPayload,
-  stripLocalToolActivations,
   supportsOpenAIHostedToolSearch,
 } from '../../../src/brain/session/openAiHostedToolSearch.js';
+import { stripLocalToolActivations } from '../../../src/brain/session/hostedToolSearch.js';
 
 /** GPT-5.6 ChatGPT-OAuth wire regression for SERVER-SIDE hosted tool search.
  *
@@ -70,7 +70,7 @@ function buildHostedWire(model: Model<Api>, source: Context) {
   const tools = convertResponsesTools(placement.immediate, {
     strict: null, supportsStrictMode: compat.supportsStrictMode ?? true,
   }) as unknown as Record<string, unknown>[];
-  const payload = projectOpenAIHostedToolSearchPayload({ model: model.id, input, tools });
+  const payload = projectOpenAIHostedToolSearchPayload({ model: model.id, input, tools }, model.id);
   if (!payload) throw new Error('hosted projector unexpectedly declined the GPT-5.6 payload');
   return { input: payload.input as Record<string, unknown>[], tools: payload.tools as Record<string, unknown>[] };
 }
@@ -90,7 +90,7 @@ describe('openai-codex-responses hosted-tool wire (GPT-5.6)', () => {
   it('gates the real pinned descriptor onto hosted mode', () => {
     expect(model.api).toBe('openai-codex-responses');
     expect(model.provider).toBe('openai-codex');
-    expect(supportsOpenAIHostedToolSearch(model)).toBe(true);
+    expect(supportsOpenAIHostedToolSearch(model, 'oauth-openai-codex')).toBe(true);
   });
 
   it('sends the whole application catalog deferred plus one hosted server-search tool', () => {

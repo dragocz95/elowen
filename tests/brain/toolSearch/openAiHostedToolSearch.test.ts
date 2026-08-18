@@ -4,9 +4,9 @@ import {
   installOpenAIHostedToolSearch,
   isGpt54OrLater,
   projectOpenAIHostedToolSearchPayload,
-  stripLocalToolActivations,
   supportsOpenAIHostedToolSearch,
 } from '../../../src/brain/session/openAiHostedToolSearch.js';
+import { stripLocalToolActivations } from '../../../src/brain/session/hostedToolSearch.js';
 import { applyToolVisibility } from '../../../src/brain/session/capabilities.js';
 
 describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
@@ -26,19 +26,22 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
   it('gates on the ChatGPT OAuth registry/API, never Azure, API-key OpenAI or a relay', () => {
     expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.6-luna', provider: 'openai-codex', api: 'openai-codex-responses',
-    })).toBe(true);
+    }, 'oauth-openai-codex')).toBe(true);
     expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.3-codex-spark', provider: 'openai-codex', api: 'openai-codex-responses',
-    })).toBe(false);
+    }, 'oauth-openai-codex')).toBe(false);
+    expect(supportsOpenAIHostedToolSearch({
+      id: 'gpt-5.6-luna', provider: 'openai-codex', api: 'openai-codex-responses',
+    }, 'openai')).toBe(false); // same registry labels are not proof of OAuth
     expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.6-luna', provider: 'azure-openai', api: 'openai-responses',
-    })).toBe(false);
+    }, 'openai')).toBe(false);
     expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.6-luna', provider: 'openai', api: 'openai-responses',
-    })).toBe(false);
+    }, 'openai')).toBe(false);
     expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.6-luna', provider: 'relay', api: 'openai-codex-responses',
-    })).toBe(false);
+    }, 'openai')).toBe(false);
   });
 
   it('defers every sender-visible function, removes local ToolSearch and appends one server search tool', () => {
@@ -56,7 +59,7 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
       ],
     };
 
-    const projected = projectOpenAIHostedToolSearchPayload(payload);
+    const projected = projectOpenAIHostedToolSearchPayload(payload, 'gpt-5.6-luna');
     expect(projected).toBeDefined();
     expect(projected?.tools).toEqual([
       { type: 'function', name: 'Read', parameters: { type: 'object' }, strict: null, defer_loading: true },
@@ -92,9 +95,9 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
       { allow: new Set(['AllowedPluginTool']) },
     );
     const payload = projectOpenAIHostedToolSearchPayload({
-      input: [],
+      model: 'gpt-5.6-luna', input: [],
       tools: active.map((name) => ({ type: 'function', name })),
-    });
+    }, 'gpt-5.6-luna');
 
     expect(active).toEqual(['Read', 'AllowedPluginTool']);
     expect((payload?.tools as { name?: string }[]).map((tool) => tool.name).filter(Boolean)).toEqual([
@@ -104,11 +107,18 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
   });
 
   it('leaves compaction/text-only payloads and unsupported tool kinds alone', () => {
-    expect(projectOpenAIHostedToolSearchPayload({ model: 'gpt-5.6-luna', input: [] })).toBeUndefined();
+    expect(projectOpenAIHostedToolSearchPayload(
+      { model: 'gpt-5.6-luna', input: [] }, 'gpt-5.6-luna',
+    )).toBeUndefined();
     expect(projectOpenAIHostedToolSearchPayload({
       model: 'gpt-5.6-luna', input: [], tools: [{ type: 'custom', name: 'GrammarTool' }],
-    })).toBeUndefined();
-    expect(projectOpenAIHostedToolSearchPayload({ messages: [], tools: [{ type: 'function', name: 'x' }] })).toBeUndefined();
+    }, 'gpt-5.6-luna')).toBeUndefined();
+    expect(projectOpenAIHostedToolSearchPayload(
+      { model: 'gpt-5.5', input: [], tools: [{ type: 'function', name: 'Read' }] }, 'gpt-5.6-luna',
+    )).toBeUndefined(); // compaction/model-route request
+    expect(projectOpenAIHostedToolSearchPayload(
+      { messages: [], tools: [{ type: 'function', name: 'x' }] }, 'gpt-5.6-luna',
+    )).toBeUndefined();
   });
 
   it('strips legacy addedToolNames only from the provider view', () => {
@@ -134,7 +144,7 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
     const pi = {
       on: vi.fn((event: string, handler: (event: never) => unknown) => { handlers.set(event, handler); }),
     } as unknown as ExtensionAPI;
-    installOpenAIHostedToolSearch(pi);
+    installOpenAIHostedToolSearch(pi, 'gpt-5.6-luna');
 
     expect([...handlers.keys()]).toEqual(['context', 'before_provider_request']);
     const context = handlers.get('context')?.({
@@ -142,7 +152,7 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
     } as never) as { messages: Record<string, unknown>[] };
     expect(context.messages[0]).not.toHaveProperty('addedToolNames');
     const payload = handlers.get('before_provider_request')?.({
-      payload: { input: [], tools: [{ type: 'function', name: 'Read' }] },
+      payload: { model: 'gpt-5.6-luna', input: [], tools: [{ type: 'function', name: 'Read' }] },
     } as never) as { tools: Record<string, unknown>[] };
     expect(payload.tools).toEqual([
       { type: 'function', name: 'Read', defer_loading: true },

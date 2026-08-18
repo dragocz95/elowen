@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { stripLocalToolActivations } from './hostedToolSearch.js';
 
 /** The narrow model shape that decides whether the ChatGPT account backend gets server-side tool search. */
 export interface OpenAIHostedToolSearchModel {
@@ -40,25 +41,14 @@ export function isGpt54OrLater(modelId: string): boolean {
 
 /** Exact product boundary: the private ChatGPT-account Responses adapter, never OpenAI API-key/Azure
  *  Responses or a compatible relay that happens to use the same model id. */
-export function supportsOpenAIHostedToolSearch(model: OpenAIHostedToolSearchModel): boolean {
-  return model.provider === 'openai-codex'
+export function supportsOpenAIHostedToolSearch(
+  model: OpenAIHostedToolSearchModel,
+  providerType: string | undefined,
+): boolean {
+  return providerType === 'oauth-openai-codex'
+    && model.provider === 'openai-codex'
     && model.api === 'openai-codex-responses'
     && isGpt54OrLater(model.id);
-}
-
-/** Remove the transcript metadata that makes pi's client-side splitter replay a locally activated tool as
- *  `additional_tools`/`tool_search_output`. Hosted mode sends the full allowed catalog on EVERY request,
- *  so an old local ToolSearch activation is neither needed nor authoritative. Egress-only: PI's context
- *  hook clones this request view and leaves the stored transcript untouched. */
-export function stripLocalToolActivations<T>(messages: readonly T[]): T[] {
-  let changed = false;
-  const next = messages.map((message) => {
-    if (!isRecord(message) || message.role !== 'toolResult' || !('addedToolNames' in message)) return message;
-    const { addedToolNames: _addedToolNames, ...rest } = message;
-    changed = true;
-    return rest as T;
-  });
-  return changed ? next : [...messages];
 }
 
 /** Project pi-ai's already-built, PER-TURN SENDER-VISIBLE tool list onto OpenAI hosted search.
@@ -75,8 +65,12 @@ export function stripLocalToolActivations<T>(messages: readonly T[]): T[] {
  *  grammar tool for a future tool definition; leave such non-function entries immediate instead of
  *  guessing that the server can defer them. The built-in hosted search tool is the only thing appended.
  *  No function tools means no search tool — compaction and text-only requests remain byte-identical. */
-export function projectOpenAIHostedToolSearchPayload(payload: unknown): ProviderPayload | undefined {
-  if (!isRecord(payload) || !Array.isArray(payload.input) || !Array.isArray(payload.tools)) return undefined;
+export function projectOpenAIHostedToolSearchPayload(
+  payload: unknown,
+  expectedModelId: string,
+): ProviderPayload | undefined {
+  if (!isRecord(payload) || payload.model !== expectedModelId
+    || !Array.isArray(payload.input) || !Array.isArray(payload.tools)) return undefined;
 
   const projected: ProviderTool[] = [];
   let deferredFunctions = 0;
@@ -99,10 +93,10 @@ export function projectOpenAIHostedToolSearchPayload(payload: unknown): Provider
 
 /** One provider-owned extension: scrub legacy local activations before pi-ai splits tools, then replace its
  *  final Responses payload after it has applied sender visibility and model-specific schema conversion. */
-export function installOpenAIHostedToolSearch(pi: ExtensionAPI): void {
+export function installOpenAIHostedToolSearch(pi: ExtensionAPI, expectedModelId: string): void {
   pi.on('context', (event) => {
     const messages = stripLocalToolActivations(event.messages);
     return messages.some((message, index) => message !== event.messages[index]) ? { messages } : undefined;
   });
-  pi.on('before_provider_request', (event) => projectOpenAIHostedToolSearchPayload(event.payload));
+  pi.on('before_provider_request', (event) => projectOpenAIHostedToolSearchPayload(event.payload, expectedModelId));
 }
