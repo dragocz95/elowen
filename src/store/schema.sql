@@ -28,6 +28,19 @@ CREATE TABLE IF NOT EXISTS users (
   advisor_exec TEXT NOT NULL DEFAULT '',
   advisor_autostart INTEGER NOT NULL DEFAULT 1
 );
+-- Immutable identities proven by an external identity provider. The composite primary key prevents one
+-- provider identity from ever resolving to two local accounts; the unique user key also prevents a local
+-- account from silently changing who it represents in the same provider tenant.
+CREATE TABLE IF NOT EXISTS user_external_identities (
+  provider TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (provider, tenant_id, subject_id),
+  UNIQUE (provider, tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_external_identities_user ON user_external_identities(user_id);
 CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
   scope TEXT NOT NULL DEFAULT 'full',

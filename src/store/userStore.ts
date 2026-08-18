@@ -25,6 +25,18 @@ export type StoredScope = TokenScope | 'advisor' | 'terminal';
  *  specific task — that task's id, so route guards can narrow an agent to its own work. `taskId` is
  *  null for every other token (interactive sessions, and the unbound shared service token). */
 export interface Principal { user: User; scope: TokenScope; taskId: string | null }
+export interface ExternalIdentityInput {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  preferredUsername: string;
+  name?: string;
+  email?: string;
+}
+export interface ExternalIdentityResult { user: User; created: boolean }
+export class ExternalIdentityConflictError extends Error {
+  constructor(message: string) { super(message); this.name = 'ExternalIdentityConflictError'; }
+}
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
 const canonicalExec = (value: unknown): string => {
   if (typeof value !== 'string' || !value) return '';
@@ -53,6 +65,29 @@ function verifyPassword(password: string, stored: string): boolean {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function externalKey(value: string, label: string, pattern?: RegExp): string {
+  const raw = String(value ?? '');
+  if (!raw || raw !== raw.trim() || raw.length > 255 || /[\u0000-\u001f\u007f]/.test(raw) || (pattern && !pattern.test(raw))) {
+    throw new TypeError(`invalid external identity ${label}`);
+  }
+  return raw;
+}
+
+function externalProfile(value: string | undefined, label: string, maxLength: number): string {
+  const normalized = String(value ?? '').trim();
+  if (normalized.length > maxLength || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new TypeError(`invalid external identity ${label}`);
+  }
+  return normalized;
+}
+
+function usernameStem(value: string): string {
+  return externalProfile(value, 'preferred username', 255).toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 48);
+}
+
 export class UserStore {
   constructor(private db: Db) {}
 
@@ -62,6 +97,67 @@ export class UserStore {
       .prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)')
       .run(username, hashPassword(password), isAdmin);
     return this.get(Number(info.lastInsertRowid))!;
+  }
+
+  /** Resolve one immutable external subject to its local account. External tokens never enter this store. */
+  externalIdentity(provider: string, tenantId: string, subjectId: string): User | null {
+    const key = {
+      provider: externalKey(provider, 'provider', /^[a-z][a-z0-9._-]{0,63}$/),
+      tenantId: externalKey(tenantId, 'tenant'),
+      subjectId: externalKey(subjectId, 'subject'),
+    };
+    const row = this.db.prepare(`SELECT u.* FROM user_external_identities e
+      JOIN users u ON u.id = e.user_id
+      WHERE e.provider = @provider AND e.tenant_id = @tenantId AND e.subject_id = @subjectId`)
+      .get(key) as Row | undefined;
+    return row ? mask(row) : null;
+  }
+
+  /**
+   * Resolve a proven external subject or atomically provision a passwordless, non-admin account. Existing
+   * account bindings are intentionally outside this plugin-facing seam and require an administrative path.
+   * A random 256-bit password is hashed and discarded:
+   * the account can be reached only through the external identity until an authenticated reset flow is
+   * deliberately added. The first-ever account is never provisioned here, so an external login cannot
+   * become the bootstrap operator.
+   */
+  linkExternalIdentity(input: ExternalIdentityInput): ExternalIdentityResult {
+    const provider = externalKey(input.provider, 'provider', /^[a-z][a-z0-9._-]{0,63}$/);
+    const tenantId = externalKey(input.tenantId, 'tenant');
+    const subjectId = externalKey(input.subjectId, 'subject');
+    return this.db.transaction(() => {
+      const linked = this.externalIdentity(provider, tenantId, subjectId);
+      if (linked) return { user: linked, created: false };
+
+      if (this.adminCount() === 0) throw new ExternalIdentityConflictError('external provisioning requires an existing administrator');
+      const base = usernameStem(input.preferredUsername) || `${provider}-${usernameStem(subjectId).slice(0, 16) || 'user'}`;
+      let username = base;
+      for (let suffix = 2; this.db.prepare('SELECT 1 FROM users WHERE username = ?').get(username); suffix++) {
+        username = `${base.slice(0, Math.max(1, 63 - String(suffix).length))}-${suffix}`;
+      }
+      const info = this.db.prepare(`INSERT INTO users
+        (username, password_hash, is_admin, name, email)
+        VALUES (?, ?, 0, ?, ?)`)
+        .run(
+          username,
+          hashPassword(randomBytes(32).toString('base64url')),
+          externalProfile(input.name, 'name', 200),
+          externalProfile(input.email, 'email', 320),
+        );
+      const user = this.get(Number(info.lastInsertRowid))!;
+
+      try {
+        this.db.prepare(`INSERT INTO user_external_identities
+          (provider, tenant_id, subject_id, user_id) VALUES (?, ?, ?, ?)`)
+          .run(provider, tenantId, subjectId, user.id);
+      } catch (error) {
+        if ((error as { code?: string }).code?.startsWith('SQLITE_CONSTRAINT')) {
+          throw new ExternalIdentityConflictError('external identity was linked concurrently');
+        }
+        throw error;
+      }
+      return { user, created: true };
+    }).immediate();
   }
 
   /** Whether the user is the bootstrap admin (full access + manages project assignments). */
@@ -178,6 +274,7 @@ export class UserStore {
       // it in the SAME transaction, not on the next retention sweep.
       this.db.prepare('DELETE FROM usage_by_origin WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_origins WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM user_external_identities WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }

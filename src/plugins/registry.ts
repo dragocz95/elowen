@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -77,6 +77,7 @@ export interface PluginHostWiring {
   brainWorker?: () => PluginBrainWorker | undefined;
   elowenCli?: PluginElowenCli;
   stores?: PluginHostStores;
+  externalUsers?: PluginHostExternalUsers;
   prompts?: PluginHostPrompts;
   config?: PluginHostConfig;
   relayClient?: (cfg: RelayConfig) => InferenceClient;
@@ -780,6 +781,11 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('stores')) throw new Error(`plugin "${name}" did not declare the reads:['stores'] capability`);
           if (!host?.stores) throw new Error('no store seams wired for plugins in this process');
           return host.stores;
+        },
+        externalUsers: () => {
+          if (!capabilities.mutates?.includes('users')) throw new Error(`plugin "${name}" did not declare the mutates:['users'] capability`);
+          if (!host?.externalUsers) throw new Error('no external user account seam wired for plugins in this process');
+          return host.externalUsers;
         },
         prompts: () => {
           if (!capabilities.reads?.includes('prompts')) throw new Error(`plugin "${name}" did not declare the reads:['prompts'] capability`);

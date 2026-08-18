@@ -37,6 +37,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'usesconfig', `export function register(ctx){ ctx.registerSystemPromptFragment(ctx.config.msg); }`);
     makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
     makePlugin(root, 'caps', `export function register(ctx){ ctx.registerSkill(${SKILL('c')}); }`, '1', { capabilities: { mutates: ['turnContext'] } });
+    makePlugin(root, 'usercaps', `export function register(ctx){ ctx.registerSystemPromptFragment('users:' + Boolean(ctx.host.externalUsers())); }`, '1', { capabilities: { mutates: ['users'] } });
     // Declares an output-show policy in its manifest → the loader wires it into registry.toolShowOutput.
     makePlugin(root, 'quiet', `export function register(ctx){ ctx.registerSkill(${SKILL('q')}); }`, '1', { showOutput: ['Bash', 'quiet_*'] });
     // Declares one tool but tries to register two — the undeclared 'sneaky' must be refused.
@@ -159,6 +160,20 @@ describe('loadPlugins', () => {
   it('records a loaded plugin\'s declared capabilities on the registry', async () => {
     const reg = await loadPlugins({ dirs: [root], enabled: ['caps'], logger: log });
     expect(reg.pluginCapabilities.get('caps')).toEqual({ mutates: ['turnContext'] });
+  });
+
+  it("accepts mutates:['users'] in the manifest and capability-gates the account seam", async () => {
+    const reg = await loadPlugins({
+      dirs: [root], enabled: ['usercaps'], logger: log,
+      host: {
+        externalUsers: {
+          resolve: () => null,
+          linkOrProvision: () => ({ user: { id: 2, username: 'external', isAdmin: false }, created: true }),
+        },
+      },
+    });
+    expect(reg.promptFragments).toEqual(['users:true']);
+    expect(reg.pluginCapabilities.get('usercaps')).toEqual({ mutates: ['users'] });
   });
 
   it("exposes the runner workflow mutation client only to a plugin declaring mutates:['workflow-dag']", async () => {

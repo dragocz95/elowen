@@ -554,6 +554,19 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           taskConversation: (taskId: string) => shapeBrainMessages(
             brainStore.getMessages(taskSessionId(taskId)), brainStore.getSubagentRuns(taskSessionId(taskId))),
         },
+        externalUsers: {
+          resolve: (provider, tenantId, subjectId) => {
+            const user = users.externalIdentity(provider, tenantId, subjectId);
+            return user ? { id: user.id, username: user.username, isAdmin: user.is_admin } : null;
+          },
+          linkOrProvision: (input) => {
+            const result = users.linkExternalIdentity(input);
+            return {
+              created: result.created,
+              user: { id: result.user.id, username: result.user.username, isAdmin: result.user.is_admin },
+            };
+          },
+        },
         prompts: {
           render: (name, vars, userId) => prompts.render(name, vars ?? {}, userId),
           rawTemplate,

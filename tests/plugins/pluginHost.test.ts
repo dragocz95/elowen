@@ -54,11 +54,16 @@ describe('ctx.userConfig()', () => {
 });
 
 describe('ctx.host capability gates', () => {
+  const externalUsers = {
+    resolve: () => ({ id: 2, username: 'external', isAdmin: false }),
+    linkOrProvision: () => ({ user: { id: 2, username: 'external', isAdmin: false }, created: true }),
+  };
   const fullHost: PluginHostWiring = {
     tmux: fakeTmux,
     brainWorker: () => fakeWorker,
     elowenCli: { cli: 'elowen', cliArgv: ['elowen'], url: 'http://localhost:4400', token: 't', tokenForTask: () => 'tt', tokenForUser: (id) => (id === 1 ? 'user-1-token' : undefined) },
     stores: fakeStores,
+    externalUsers,
     projectFiles: { safe: (root, path) => `${root}/${path}` },
   };
 
@@ -68,6 +73,7 @@ describe('ctx.host capability gates', () => {
     expect(() => denied.host.brainWorker()).toThrow("reads:['brain-worker']");
     expect(() => denied.host.elowenCli()).toThrow("reads:['elowen-cli']");
     expect(() => denied.host.stores()).toThrow("reads:['stores']");
+    expect(() => denied.host.externalUsers()).toThrow("mutates:['users']");
     expect(() => denied.host.projectFiles()).toThrow("reads:['project-files']");
     // one grant does not open the others
     const tmuxOnly = wire({ reads: ['tmux'] }, fullHost);
@@ -81,6 +87,7 @@ describe('ctx.host capability gates', () => {
     expect(ctx.host.brainWorker()).toBe(fakeWorker);
     expect(ctx.host.elowenCli().tokenForTask('t1')).toBe('tt');
     expect(ctx.host.stores()).toBe(fakeStores);
+    expect(wire({ mutates: ['users'] }, fullHost).host.externalUsers()).toBe(externalUsers);
     expect(ctx.host.projectFiles().safe('/project', 'file.ts')).toBe('/project/file.ts');
   });
 
@@ -120,6 +127,7 @@ describe('ctx.host capability gates', () => {
     expect(() => ctx.host.brainWorker()).toThrow('not available in this process');
     expect(() => ctx.host.elowenCli()).toThrow('no elowen CLI wiring');
     expect(() => ctx.host.stores()).toThrow('no store seams wired');
+    expect(() => wire({ mutates: ['users'] }, undefined).host.externalUsers()).toThrow('no external user account seam wired');
   });
 
   it('brainWorker resolves LIVE — late bootstrap wiring is visible to an already-built context', () => {

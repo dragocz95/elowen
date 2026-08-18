@@ -137,7 +137,7 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
  *  a hardcoded plugin name so ownership of the workflow surface can move, be renamed or be replaced
  *  without core knowing who holds it. */
 export interface PluginCapabilities {
-  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag')[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory' | 'events' | 'workflow-dag' | 'users')[];
   reads?: string[];
   network?: boolean;
 }
@@ -151,7 +151,7 @@ export interface PluginCapabilities {
  *  `prompt` and `turnContext` are deliberately absent: they ride the ephemeral prompt of a single turn
  *  and leave nothing behind, which is the reach any instruction in the chat already has. */
 export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
-  ['tools', 'memory', 'events', 'workflow-dag'];
+  ['tools', 'memory', 'events', 'workflow-dag', 'users'];
 
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
@@ -432,6 +432,21 @@ export interface PluginElowenCli {
 /** Read-only user view handed through host stores — identity only, no secrets, no mutation. */
 export interface PluginUserView { id: number; username: string; isAdmin: boolean }
 
+export interface PluginExternalUserInput {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  preferredUsername: string;
+  name?: string;
+  email?: string;
+}
+export interface PluginExternalUserResult { user: PluginUserView; created: boolean }
+/** Narrow account-write seam. External access/refresh tokens are deliberately absent from this contract. */
+export interface PluginHostExternalUsers {
+  resolve(provider: string, tenantId: string, subjectId: string): PluginUserView | null;
+  linkOrProvision(input: PluginExternalUserInput): PluginExternalUserResult;
+}
+
 /** Typed store seams for a plugin that extracts a CORE subsystem. Deliberately interfaces over the
  *  core stores (one shared SQLite underneath — see PluginDb), NOT the store classes themselves: the
  *  seam is the documented contract, and users are read-only by design. */
@@ -544,6 +559,8 @@ export interface PluginHost {
   elowenCli(): PluginElowenCli;
   /** Typed seams over the core stores. Gated by `reads:['stores']`. */
   stores(): PluginHostStores;
+  /** External identity account provisioning. Gated by `mutates:['users']` and operator consent. */
+  externalUsers(): PluginHostExternalUsers;
   /** User-override-aware prompt rendering. Gated by `reads:['prompts']`. */
   prompts(): PluginHostPrompts;
   /** Workspace config slice + secret accessors. Gated by `reads:['config']`. */
