@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -251,15 +251,33 @@ describe('OrbitalNav menu customization', () => {
 
     expect(screen.getByText('Hide')).toBeInTheDocument();
     expect(screen.getByText('Move up')).toBeInTheDocument();
-    expect(screen.getByText('Customize menu…')).toBeInTheDocument();
+    expect(screen.getByText('Move down')).toBeInTheDocument();
+    // Everything the menu can do is in the menu; there is no editor to send the reader off to.
+    expect(screen.getByText('Restore default order')).toBeInTheDocument();
   });
 
-  it('offers only the editor on a system destination, which the layout must not be able to hide', () => {
+  it('offers no hiding on a system destination, which the layout must not be able to remove', () => {
     mount();
     fireEvent.contextMenu(screen.getByRole('link', { name: 'Settings' }));
 
-    expect(screen.getByText('Customize menu…')).toBeInTheDocument();
+    expect(screen.getByText('Restore default order')).toBeInTheDocument();
     expect(screen.queryByText('Hide')).not.toBeInTheDocument();
+    expect(screen.queryByText('Move up')).not.toBeInTheDocument();
+  });
+
+  // Hiding is one click; getting a space back must not be harder. The hidden ones hang off the same
+  // menu, because there is nowhere else to look for them.
+  it('lists the hidden spaces in the menu so they can come back', async () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['plugin-ui', 'en'], []);
+    client.setQueryData(['my-nav-settings'], { hidden: ['memory'], order: [] });
+    render(<Wrapper><OrbitalNav /></Wrapper>);
+
+    fireEvent.contextMenu(screen.getByRole('navigation'));
+    fireEvent.click(screen.getByText('Hidden (1)'));
+    expect(await screen.findByText('Memory')).toBeInTheDocument();
   });
 
   it('drops a hidden world from the rail', () => {
@@ -335,21 +353,131 @@ describe('OrbitalNav as a phone drawer', () => {
     expect(onDrawerClose).toHaveBeenCalled();
   });
 
-  // Right-click is a pointer gesture with no touch equivalent, so without a button of its own the
-  // editor — and with it every hidden space — would be unreachable on the device that needs it most.
-  it('offers the menu editor as a button, not only as a right-click', async () => {
-    mount(false, { drawer: true, drawerOpen: true });
-    fireEvent.click(screen.getByRole('button', { name: 'Customize menu' }));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('keeps that button off surfaces that have a right-click', () => {
-    mount(false, { drawer: false });
-    expect(screen.queryByRole('button', { name: 'Customize menu' })).not.toBeInTheDocument();
-  });
-
   it('reports the daemon state the old sidebar used to carry', () => {
     mount(false, { drawer: true, drawerOpen: true });
     expect(screen.getByRole('status')).toHaveAttribute('title', 'Ready');
+  });
+});
+
+/** Reordering happens ON the rail: grab a space and carry it. The browser's own link dragging is what
+ *  a user hits first if this is not wired, which is exactly what happened. */
+describe('OrbitalNav dragging a space', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  const railLabels = () => [...document.querySelectorAll('[data-testid="future-navigation"] [role="listitem"] a')]
+    .map((link) => (link.getAttribute('title') ?? link.textContent ?? '').trim());
+
+  const rowOf = (label: string) => screen.getByRole('link', { name: label }).closest('[role="listitem"]') as HTMLElement;
+
+  function carry(label: string, dy: number, pointerType: 'mouse' | 'touch' = 'mouse') {
+    const row = rowOf(label);
+    row.setPointerCapture = () => {};
+    row.releasePointerCapture = () => {};
+    const opts = (y: number) => ({ bubbles: true, cancelable: true, pointerId: 1, pointerType, button: 0, clientX: 20, clientY: y });
+    fireEvent.pointerDown(row, opts(400));
+    fireEvent.pointerMove(row, opts(400 + dy));
+    return { row, drop: () => fireEvent.pointerUp(row, opts(400 + dy)) };
+  }
+
+  it('leaves the browser to do nothing of its own with the link', () => {
+    mount();
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('draggable', 'false');
+  });
+
+  /** The vertical offset the row is parked at, straight out of its transform. */
+  const offsetOf = (row: HTMLElement) => {
+    const match = /calc\(-50% \+ (-?[\d.]+)px\)/.exec(row.getAttribute('style') ?? '');
+    if (!match) throw new Error(`no offset in style: ${row.getAttribute('style')}`);
+    return Number(match[1]);
+  };
+
+  it('carries the space with the pointer while it is held', () => {
+    mount();
+    const atRest = offsetOf(rowOf('Home'));
+    const { row } = carry('Home', 120);
+    expect(row.getAttribute('data-dragging')).toBe('true');
+    expect(offsetOf(row) - atRest).toBe(120);
+  });
+
+  it('makes its neighbours step aside to open the gap it will land in', () => {
+    mount();
+    const neighbour = rowOf('Chat');
+    const atRest = offsetOf(neighbour);
+    carry('Home', 200);
+    expect(offsetOf(neighbour)).toBeLessThan(atRest);
+  });
+
+  // Without a threshold every click would be a one-pixel drag and navigation would stop working.
+  it('treats a small movement as a click, not a drag', () => {
+    mount();
+    const { row } = carry('Home', 3);
+    expect(row.hasAttribute('data-dragging')).toBe(false);
+  });
+
+  it('commits the new order when the space is dropped', async () => {
+    const patches: unknown[] = [];
+    server.use(http.patch('*/api/auth/me/nav-settings', async ({ request }) => {
+      const body = await request.json();
+      patches.push(body);
+      return HttpResponse.json(body);
+    }));
+    mount();
+    const before = railLabels();
+    const { drop } = carry('Home', 200);
+    drop();
+
+    await waitFor(() => expect(patches).toHaveLength(1));
+    await waitFor(() => expect(railLabels()).not.toEqual(before));
+    expect(railLabels()).toContain('Home');
+  });
+
+  it('does not write anything when the space is dropped where it started', () => {
+    const patches: unknown[] = [];
+    server.use(http.patch('*/api/auth/me/nav-settings', async ({ request }) => {
+      patches.push(await request.json());
+      return HttpResponse.json({ hidden: [], order: [] });
+    }));
+    mount();
+    const { drop } = carry('Home', 8);
+    drop();
+    expect(patches).toEqual([]);
+  });
+
+  // A drag whose click never arrives (released off the row, or a browser that synthesises none) must
+  // not leave anything armed: the next click would be eaten and navigation would just stop working.
+  it('still navigates on the click after a drag that produced none', () => {
+    mount();
+    carry('Home', 200).drop();
+
+    // A real click always begins with a press on the row it lands on.
+    const row = rowOf('Chat');
+    row.setPointerCapture = () => {};
+    const at = { bubbles: true, pointerId: 9, button: 0, clientX: 20, clientY: 400 };
+    fireEvent.pointerDown(row, at);
+    fireEvent.pointerUp(row, at);
+
+    const link = screen.getByRole('link', { name: 'Chat' });
+    const click = createEvent.click(link, { bubbles: true, cancelable: true });
+    fireEvent(link, click);
+    expect(click.defaultPrevented).toBe(false);
+  });
+
+  // Touch has no right-click, so holding still is how a finger reaches hide and the hidden spaces.
+  it('opens the same menu on a long press', async () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      const row = rowOf('Home');
+      row.setPointerCapture = () => {};
+      // jsdom's synthetic pointer events carry no pointerType of their own, and the long press is armed
+      // for touch alone — a mouse held still is not asking for anything.
+      const press = createEvent.pointerDown(row, { bubbles: true, clientX: 20, clientY: 400 });
+      Object.defineProperty(press, 'pointerType', { get: () => 'touch' });
+      fireEvent(row, press);
+      act(() => { vi.advanceTimersByTime(600); });
+      expect(screen.getByText('Hide')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

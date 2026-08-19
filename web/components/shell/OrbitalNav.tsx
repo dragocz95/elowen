@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useHealth, useTasks, useSessionInfos, useWorkPlugin } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useShellNavigation } from './useShellNavigation';
@@ -44,6 +44,16 @@ function isAxisPage(href: string | undefined): boolean {
 
 /** A rail destination plus the world it came from, which is the unit the navigation layout addresses. */
 type RailEntry = NavEntry & { worldId?: string; worldIndex?: number };
+
+/** A world being carried to a new place: where it started, where it would land, and how far the pointer
+ *  has moved. Nothing is committed until the pointer is released. */
+type RailDrag = { worldId: string; from: number; to: number; dy: number };
+
+/** A pointer resting on a destination, before it is known whether this is a click, a drag or a hold. */
+type RailPress = { worldId: string; slot: number; startY: number; longPress?: number };
+
+/** How far the pointer must travel before it counts as carrying the entry rather than clicking it. */
+const DRAG_THRESHOLD = 6;
 
 const DAEMON_STATUS = {
   ready: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)' },
@@ -153,10 +163,103 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
   const stageRef = useRef<HTMLDivElement>(null);
   const stageHeight = useElementHeight(stageRef);
+  const spacing = railSpacing(routeEntries.length, stageHeight);
   const positions = useMemo(
-    () => getStableOffsets(routeEntries.length, railSpacing(routeEntries.length, stageHeight)),
-    [routeEntries.length, stageHeight],
+    () => getStableOffsets(routeEntries.length, spacing),
+    [routeEntries.length, spacing],
   );
+
+  // Where each world sits on the axis. A world can contribute several destinations (the work register,
+  // board, timeline and stats are all one world), but it moves as ONE thing, so a drag is expressed in
+  // world slots rather than in rail rows.
+  const worldSlots = useMemo(() => {
+    const seen = new Set<string>();
+    return routeEntries.flatMap((entry, index) => {
+      if (!entry.worldId || seen.has(entry.worldId)) return [];
+      seen.add(entry.worldId);
+      return [{ worldId: entry.worldId, index }];
+    });
+  }, [routeEntries]);
+
+  const [drag, setDrag] = useState<RailDrag | null>(null);
+  const dragRef = useRef<RailDrag | null>(null);
+  const pressRef = useRef<RailPress | null>(null);
+  const suppressClick = useRef(false);
+
+  const clearPress = () => {
+    if (pressRef.current?.longPress) window.clearTimeout(pressRef.current.longPress);
+    pressRef.current = null;
+  };
+
+  const onEntryPointerDown = (event: React.PointerEvent<HTMLElement>, entry: RailEntry) => {
+    if (!entry.worldId || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const slot = worldSlots.findIndex((candidate) => candidate.worldId === entry.worldId);
+    if (slot < 0) return;
+    // A drag that produced no click (released outside, or a browser that synthesises none) would
+    // otherwise leave this armed and swallow the NEXT click — navigation silently stops working.
+    // Every fresh press starts from a clean slate.
+    suppressClick.current = false;
+    const element = event.currentTarget;
+    element.setPointerCapture(event.pointerId);
+    pressRef.current = {
+      worldId: entry.worldId,
+      slot,
+      startY: event.clientY,
+      // Touch has no right-click, so a press held still opens the same menu a mouse gets. It is armed
+      // only for touch: a mouse user holding still is not asking for anything.
+      longPress: event.pointerType === 'touch'
+        ? window.setTimeout(() => {
+            clearPress();
+            customization.openEntryMenu(event.clientX, event.clientY, { ...entry, id: entry.worldId });
+          }, 500)
+        : undefined,
+    };
+  };
+
+  const onEntryPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const press = pressRef.current;
+    if (!press) return;
+    const dy = event.clientY - press.startY;
+    // A drag only starts once the pointer has actually travelled, so a plain click still navigates.
+    if (!dragRef.current && Math.abs(dy) < DRAG_THRESHOLD) return;
+    if (press.longPress) { window.clearTimeout(press.longPress); press.longPress = undefined; }
+    const originY = positions[worldSlots[press.slot].index] ?? 0;
+    const carriedY = originY + dy;
+    let to = press.slot;
+    let nearest = Number.POSITIVE_INFINITY;
+    worldSlots.forEach((candidate, index) => {
+      const distance = Math.abs((positions[candidate.index] ?? 0) - carriedY);
+      if (distance < nearest) { nearest = distance; to = index; }
+    });
+    const next = { worldId: press.worldId, from: press.slot, to, dy };
+    dragRef.current = next;
+    setDrag(next);
+  };
+
+  const onEntryPointerUp = () => {
+    const dragged = dragRef.current;
+    clearPress();
+    dragRef.current = null;
+    if (!dragged) return;
+    setDrag(null);
+    // The pointer travelled, so whatever click the browser is about to synthesise was a drag, not a
+    // request to navigate.
+    suppressClick.current = true;
+    if (dragged.to !== dragged.from) customization.reorderTo(dragged.worldId, dragged.to);
+  };
+
+  // How far a destination steps aside to open the gap the dragged world will land in. The dragged
+  // world's own destinations travel with the pointer instead.
+  const shiftOf = (entry: RailEntry): number => {
+    if (!drag) return 0;
+    if (entry.worldId === drag.worldId) return drag.dy;
+    const slot = worldSlots.findIndex((candidate) => candidate.worldId === entry.worldId);
+    if (slot < 0) return 0;
+    const span = routeEntries.filter((candidate) => candidate.worldId === drag.worldId).length * spacing;
+    if (drag.from < drag.to && slot > drag.from && slot <= drag.to) return -span;
+    if (drag.from > drag.to && slot < drag.from && slot >= drag.to) return span;
+    return 0;
+  };
 
   const onWheel = (event: WheelEvent<HTMLElement>) => {
     if (Math.abs(event.deltaY) < 8 || routeEntries.length === 0) return;
@@ -216,25 +319,39 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           const distance = Math.abs(index - activeIndex);
           const active = entryIsActive(entry, pathname);
           const Icon = entry.icon;
+          const dragged = drag?.worldId !== undefined && entry.worldId === drag.worldId;
           const scale = active ? 1 : Math.max(0.78, 0.94 - distance * 0.025);
           const opacity = active ? 1 : Math.max(0.52, 0.9 - distance * 0.045);
           return (
             <div
               key={entryKey}
               role="listitem"
+              data-dragging={dragged || undefined}
               onContextMenu={entry.worldId
                 ? (event) => customization.onEntryContextMenu(event, { ...entry, id: entry.worldId })
                 : customization.onSurfaceContextMenu}
-              className={`absolute left-0 top-1/2 z-10 ${animate ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
+              onPointerDown={(event) => onEntryPointerDown(event, entry)}
+              onPointerMove={onEntryPointerMove}
+              onPointerUp={onEntryPointerUp}
+              onPointerCancel={onEntryPointerUp}
+              onClickCapture={(event) => {
+                if (!suppressClick.current) return;
+                suppressClick.current = false;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              className={`absolute left-0 top-1/2 ${dragged ? 'z-20 cursor-grabbing' : 'z-10'} ${entry.worldId && !drag ? 'cursor-grab' : ''} ${animate && !dragged ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
               style={{
-                transform: `translate(0, calc(-50% + ${positions[index]}px)) scale(${scale})`,
+                transform: `translate(0, calc(-50% + ${positions[index] + shiftOf(entry)}px)) scale(${dragged ? scale * 1.06 : scale})`,
                 opacity,
                 filter: `blur(${Math.max(0, distance - 6) * 0.08}px)`,
                 transformOrigin: `${axis} center`,
+                touchAction: entry.worldId ? 'none' : undefined,
               }}
             >
               <Link
                 href={entry.href ?? '#'}
+                draggable={false}
                 aria-label={compact ? entry.label : undefined}
                 aria-current={active ? 'page' : undefined}
                 className={`group flex items-center gap-2 whitespace-nowrap ${active ? 'text-accent' : 'text-text-muted hover:text-text'}`}
@@ -265,16 +382,6 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
             <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
             <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
           </div>
-          {drawer ? (
-            <button
-              type="button"
-              onClick={customization.openEditor}
-              className="mb-3 flex items-center gap-2 rounded-lg border border-border-strong/70 px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-text"
-            >
-              <SlidersHorizontal size={13} aria-hidden />
-              {t.nav.customizeTitle}
-            </button>
-          ) : null}
           <div className="flex items-center justify-center gap-2 font-mono text-[9px] tracking-[.14em] text-text-muted/35">
             <span
               role="status"

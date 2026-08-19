@@ -1,18 +1,11 @@
 export const sk = {
   nav: {
-    worlds: 'Priestory',
-    customize: 'Upraviť menu…',
-    reorderEntry: 'Zmeniť poradie',
-    customizeTitle: 'Upraviť menu',
-    customizeHint: 'Vyberte, ktoré priestory sa zobrazia v menu a v akom poradí. Skryté priestory zostávajú dostupné z príkazovej palety a cez priamy odkaz.',
     hideEntry: 'Skryť',
-    showEntry: 'Zobraziť',
     moveUp: 'Posunúť nahor',
     moveDown: 'Posunúť nadol',
     showHidden: 'Zobraziť skryté',
     hiddenCount: 'Skryté ({count})',
     restoreDefaults: 'Obnoviť predvolené poradie',
-    allHidden: 'Všetky priestory sú skryté. Tlačidlom Zobraziť niektorý vrátite späť.',
     home: 'Domov',
     chat: 'Chat',
     system: 'Systém',
