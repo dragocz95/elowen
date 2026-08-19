@@ -30,6 +30,7 @@ import { bearerFromAuth } from '../providerUsage.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { installOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
 import { installAnthropicHostedToolSearch } from './anthropicHostedToolSearch.js';
+import { createAnthropicHostedToolReplay, type AnthropicHostedToolReplay } from './anthropicHostedToolReplay.js';
 import type { HostedToolSearchProvider } from './hostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
 
@@ -175,6 +176,8 @@ export interface BrainResourceLoaderOptions {
   /** Auth-bound provider route + expected request model. The model pin prevents a same-session compaction
    *  fallback from inheriting the chat provider's hosted wire transform. */
   hostedToolSearch?: { provider: HostedToolSearchProvider; modelId: string };
+  /** Preserve Anthropic's server-owned hosted-search blocks before cache hashing and breakpoint insertion. */
+  anthropicHostedReplayExtension?: AnthropicHostedToolReplay['extension'];
   requestProfile?: ProviderRequestProfile;
   settingsManager: SettingsManager;
 }
@@ -354,6 +357,9 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.hostedToolSearch?.provider === 'anthropic'
           ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
           : []),
+        // Anthropic requires server_tool_use/tool_search_tool_result to be replayed verbatim. Restore them
+        // before observability and cache breakpoints so both see/hash the exact request sent upstream.
+        ...(o.anthropicHostedReplayExtension ? [o.anthropicHostedReplayExtension] : []),
         ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
         ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
         // AFTER the monitor, so the snapshot it takes is the payload as pi-ai built it. The monitor hashes
@@ -419,6 +425,9 @@ export class BrainSessionFactory {
     // `projectTrusted` lets those session-local writes land in the in-memory store instead of erroring.
     const settingsManager = SettingsManager.inMemory(undefined, { projectTrusted: true });
     const compactionModelRoute = createCompactionModelRoute(spec.compactionFallbackModel);
+    const anthropicHostedReplay = spec.hostedToolSearch === 'anthropic'
+      ? createAnthropicHostedToolReplay(spec.model)
+      : undefined;
     // A context that is irrecoverably over the limit fails the same way on every retry, and PI re-checks
     // the threshold after every turn — so without this the conversation would pay for a doomed
     // summarization request for the rest of its life. The breaker only refuses attempts; it never
@@ -477,6 +486,7 @@ export class BrainSessionFactory {
       ...(spec.hostedToolSearch ? {
         hostedToolSearch: { provider: spec.hostedToolSearch, modelId: spec.model.id },
       } : {}),
+      ...(anthropicHostedReplay ? { anthropicHostedReplayExtension: anthropicHostedReplay.extension } : {}),
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls
@@ -505,12 +515,15 @@ export class BrainSessionFactory {
       noTools: 'builtin',
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
-    // Install after PI has built the Agent so the wrapper delegates to the exact SDK-native stream
-    // pipeline created for this session. The extension above has already been loaded and only marks
-    // PI's own compaction signal; it never executes or returns a custom compaction.
+    // Install replay closest to the provider stream. The compaction route wraps it next, so a cross-model
+    // fallback reaches replay with the ACTUAL fallback model and bypasses Anthropic capture/restoration.
+    // Installing replay outside compaction would classify from the chat model, then parse OpenAI/Kimi SSE
+    // as Anthropic and reject a valid cross-provider compaction.
+    anthropicHostedReplay?.install(session);
+    // PI's compaction marker extension was loaded above; this wrapper makes only the model substitution.
     compactionModelRoute?.install(session);
-    // After the compaction route, so a stale-blob retry re-issues through whatever wrapper that installed
-    // — the retry must be the same request, not a differently routed one.
+    // Outermost: a stale-blob retry re-issues through both the compaction route and replay wrapper, so the
+    // retry remains the exact same routed request rather than bypassing either provider-specific seam.
     remoteCompaction?.install(session);
     // PI's steering queue defaults to "one-at-a-time", so N messages sent during a running turn cost N
     // model rounds and the agent answers each without seeing the ones behind it. "all" hands the whole

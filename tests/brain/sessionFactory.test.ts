@@ -151,6 +151,7 @@ describe('BrainSessionFactory context-saving installers', () => {
     api?: string,
     modelId = 'test-model',
     hostedToolSearch?: 'openai' | 'anthropic',
+    compactionFallbackModel?: { id: string; provider: string; api: string },
   ) {
     // Spills resolve through dataDir(HOME) — point HOME at a tmp dir so the test never touches the
     // real ~/.config/elowen.
@@ -158,21 +159,27 @@ describe('BrainSessionFactory context-saving installers', () => {
     dirs.push(home);
     vi.stubEnv('HOME', home);
     const listeners: ((e: unknown) => void)[] = [];
+    const nativeResult = { native: true };
+    const nativeStream = vi.fn(() => nativeResult);
     const session = {
       sessionId: `sess-${provider}`,
-      agent: {} as { transformContext?: (m: unknown[]) => Promise<unknown[]> },
+      agent: { streamFunction: nativeStream } as { streamFunction: typeof nativeStream; transformContext?: (m: unknown[]) => Promise<unknown[]> },
       subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
       messages: [] as unknown[],
       setSteeringMode: vi.fn(),
     };
     let cacheMonitor: unknown;
     let capturedHostedToolSearch: { provider: 'openai' | 'anthropic'; modelId: string } | undefined;
+    let capturedAnthropicReplayExtension: unknown;
+    let capturedCompactionRouteExtension: unknown;
     const factory = new BrainSessionFactory({
       store: new BrainStore(openDb(':memory:')),
       createSession: vi.fn(async () => ({ session })) as never,
       resourceLoaderFactory: (options) => {
         cacheMonitor = options.cacheMonitor;
         capturedHostedToolSearch = options.hostedToolSearch;
+        capturedAnthropicReplayExtension = options.anthropicHostedReplayExtension;
+        capturedCompactionRouteExtension = options.compactionModelRouteExtension;
         return undefined;
       },
     });
@@ -180,10 +187,17 @@ describe('BrainSessionFactory context-saving installers', () => {
       sessionId: session.sessionId, ownerUserId: 1,
       runtime: undefined,
       model: { id: modelId, provider, contextWindow: 200_000, ...(api ? { api } : {}) },
+      ...(compactionFallbackModel ? { compactionFallbackModel } : {}),
       cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [], hostedToolSearch,
       autoCompact: false, autoCompactAtPct: 80,
     } as never);
-    return { home, listeners, session, cacheMonitor, hostedToolSearch: capturedHostedToolSearch };
+    return {
+      home, listeners, session, cacheMonitor, hostedToolSearch: capturedHostedToolSearch,
+      anthropicReplayExtension: capturedAnthropicReplayExtension,
+      compactionRouteExtension: capturedCompactionRouteExtension,
+      streamWrapped: session.agent.streamFunction !== nativeStream,
+      nativeStream, nativeResult,
+    };
   }
 
   it('installs tool-result clearing (with spill under the data dir) and subscribes cacheWatch', async () => {
@@ -262,10 +276,39 @@ describe('BrainSessionFactory context-saving installers', () => {
       expect(apiKey.hostedToolSearch).toBeUndefined();
       expect(azure.hostedToolSearch).toBeUndefined();
       expect(anthropic.hostedToolSearch).toEqual({ provider: 'anthropic', modelId: 'claude-opus-5' });
+      expect(typeof anthropic.anthropicReplayExtension).toBe('function');
+      expect(anthropic.streamWrapped).toBe(true);
+      expect(supported.anthropicReplayExtension).toBeUndefined();
       expect(oldAnthropic.hostedToolSearch).toBeUndefined();
+      expect(oldAnthropic.anthropicReplayExtension).toBeUndefined();
+      expect(oldAnthropic.streamWrapped).toBe(false);
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it('routes cross-provider compaction outside the Anthropic replay wrapper', async () => {
+    const fallback = { id: 'claude-opus-5', provider: 'elowen-anthropic-proxy', api: 'anthropic-messages' };
+    const created = await createWithProvider('anthropic', 'anthropic-messages', 'claude-opus-5', 'anthropic', fallback);
+    let beforeCompact: ((event: { signal: AbortSignal }) => void) | undefined;
+    (created.compactionRouteExtension as (pi: { on(name: string, handler: (event: { signal: AbortSignal }) => void): void }) => void)({
+      on(name, handler) { if (name === 'session_before_compact') beforeCompact = handler; },
+    });
+    const signal = new AbortController().signal;
+    beforeCompact?.({ signal });
+    const originalFetch = vi.fn();
+    const result = created.session.agent.streamFunction(
+      { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' },
+      { messages: [], tools: [] },
+      { signal, fetch: originalFetch },
+    );
+
+    expect(result).toBe(created.nativeResult);
+    expect(created.nativeStream).toHaveBeenCalledWith(
+      expect.objectContaining(fallback),
+      expect.anything(),
+      expect.objectContaining({ signal, fetch: originalFetch }),
+    );
   });
 
   it('uses OpenAI maximum cache retention for destructive Responses transforms', async () => {
