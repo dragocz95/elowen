@@ -199,6 +199,6 @@ elowen status
 elowen update
 ```
 
-API-backed commands can start a local daemon when necessary; lifecycle commands manage services explicitly. `elowen down` sends the daemon a graceful stop: it finishes running turns, sub-agents and undelivered results first, so a restart or deploy does not discard in-flight work; `--force` skips that wait. `status` and `down` only ever signal a process whose identity is verified as an elowen service (its entry script and the `ELOWEN_SERVICE` environment marker) — a live process that merely reused a pid is never touched. See [Configuration](configuration) for environment variables and [Production & Updates](production-updates) for the service layout.
+API-backed commands can start a local daemon when necessary; lifecycle commands manage services explicitly. `elowen down` sends the daemon a graceful stop: it finishes running turns and sub-agents first, so a restart or deploy does not discard in-flight work; undelivered delegated results get a ten-second window and are otherwise left to the durable outbox, which delivers them after the restart. `--force` skips the wait entirely. `status` and `down` only ever signal a process whose identity is verified as an elowen service (its entry script and the `ELOWEN_SERVICE` environment marker) — a live process that merely reused a pid is never touched. See [Configuration](configuration) for environment variables and [Production & Updates](production-updates) for the service layout.
 
 [Next: Slash Commands](slash-commands)

@@ -38,7 +38,9 @@ The same readiness data powers the setup wizard's finish screen and `GET /system
 
 **Symptom:** `elowen down` takes minutes, or the daemon log shows `Stopping — waiting for N turn(s), M sub-agent(s)…`.
 
-The daemon shuts down gracefully by design: on SIGTERM or SIGINT it first finishes what is in flight — running turns, sub-agents, and undelivered results — and only then exits. That drain is deliberate: a deploy's `systemctl restart` or a reboot would otherwise cut a model turn or sub-agent off mid-work and discard its result. The daemon checks every half second and waits up to 10 minutes before giving up; the systemd unit's stop timeout is slightly longer, so systemd waits with it instead of killing it. `elowen down` uses this same path and only reports success once the services have actually exited (up to roughly 11 minutes).
+The daemon shuts down gracefully by design: on SIGTERM or SIGINT it first finishes what is in flight — running turns and sub-agents — and only then exits. That drain is deliberate: a deploy's `systemctl restart` or a reboot would otherwise cut a model turn or sub-agent off mid-work and discard its result. The daemon checks every half second and waits up to 10 minutes before giving up; the systemd unit's stop timeout is slightly longer, so systemd waits with it instead of killing it. `elowen down` uses this same path and only reports success once the services have actually exited (up to roughly 11 minutes).
+
+A delegated result that hasn't reached its parent yet gets a shorter window of its own, ten seconds. Handing it over needs another turn from that parent, which the shutdown is already refusing to start, so waiting longer cannot help — and the results are stored, so the daemon delivers them after it comes back up.
 
 If you can't wait:
 
