@@ -10,6 +10,7 @@ function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollap
   const { wrapper: Wrapper, client } = createWrapper();
   client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+  client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
   // The work pages, Sessions and the Editor are plugin-supplied now — seed the /plugins/ui listing the
   // shell nav maps into worlds (key carries the locale; tests run with the default 'en').
   client.setQueryData(['plugin-ui', 'en'], [
@@ -220,5 +221,41 @@ describe('OrbitalNav long labels', () => {
     expect(link.getAttribute('title')).toBe('Stats');
     expect(label.className).toContain('truncate');
     expect(label.className).toContain('min-w-0');
+  });
+});
+
+// The rail is what the desktop actually renders — the sidebar only ever appears as the mobile drawer.
+// Wiring the customization menu into the sidebar alone left the feature unreachable for every desktop
+// user, which is exactly the gap these tests close.
+describe('OrbitalNav menu customization', () => {
+  beforeEach(() => { currentPath.value = '/p/work/stats'; });
+
+  it('offers hide and reorder on a destination, addressed by the world it belongs to', () => {
+    mount();
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Memory' }));
+
+    expect(screen.getByText('Hide')).toBeInTheDocument();
+    expect(screen.getByText('Move up')).toBeInTheDocument();
+    expect(screen.getByText('Customize menu…')).toBeInTheDocument();
+  });
+
+  it('offers only the editor on a system destination, which the layout must not be able to hide', () => {
+    mount();
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Settings' }));
+
+    expect(screen.getByText('Customize menu…')).toBeInTheDocument();
+    expect(screen.queryByText('Hide')).not.toBeInTheDocument();
+  });
+
+  it('drops a hidden world from the rail', () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['plugin-ui', 'en'], []);
+    client.setQueryData(['my-nav-settings'], { hidden: ['memory'], order: [] });
+    render(<Wrapper><OrbitalNav /></Wrapper>);
+
+    expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
   });
 });

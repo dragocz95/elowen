@@ -8,6 +8,7 @@ import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { entryIsActive } from './NavGroup';
 import { useShellNavigation } from './useShellNavigation';
+import { useNavCustomization } from './NavCustomization';
 import { CollapseHandle } from './CollapseHandle';
 import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
@@ -42,6 +43,9 @@ function isAxisPage(href: string | undefined): boolean {
   return href !== undefined && SPATIAL_ROUTE_ORDER.includes(href);
 }
 
+/** A rail destination plus the world it came from, which is the unit the navigation layout addresses. */
+type RailEntry = NavEntry & { worldId?: string; worldIndex?: number };
+
 /** The public site's rail spacing — the look this rail matches. */
 const SPACING = 66;
 /** Vertical room the largest (active) node needs, so the end destinations never clip. */
@@ -75,19 +79,34 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { worlds, systemItems } = useShellNavigation();
+  const { worlds, systemItems, allWorlds, layout } = useShellNavigation();
+  const customization = useNavCustomization(allWorlds, layout);
   const health = useHealth();
   const { t } = useTranslation();
   const lastWheelAt = useRef(0);
-  const routeEntries = useMemo<NavEntry[]>(() => [
-    ...worlds.flatMap((world) => {
+  // `worldId` is what the customization menu acts on: a world can contribute several axis pages, and
+  // hiding or moving any of them means hiding or moving the world they belong to. System destinations
+  // carry none, which is exactly what keeps them out of reach of the menu.
+  const routeEntries = useMemo<RailEntry[]>(() => {
+    const fromWorlds = worlds.flatMap((world, worldIndex) => {
       const pages = (world.subItems ?? []).filter((item) => isAxisPage(item.href));
-      return pages.length > 0 ? pages.map((item) => ({ ...item, icon: item.icon ?? world.icon })) : [world];
-    }),
-    ...systemItems.flatMap((group) => group.subItems?.length
+      const entries: NavEntry[] = pages.length > 0
+        ? pages.map((item) => ({ ...item, icon: item.icon ?? world.icon }))
+        : [world];
+      return entries.map((entry) => ({ ...entry, worldId: world.id, worldIndex }));
+    });
+    const fromSystem: RailEntry[] = systemItems.flatMap((group) => group.subItems?.length
       ? group.subItems.map((item) => ({ ...item, icon: item.icon ?? group.icon }))
-      : [group]),
-  ].sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href)), [worlds, systemItems]);
+      : [group]);
+    const all = [...fromWorlds, ...fromSystem];
+    const axisRank = (entry: RailEntry) => spatialOrderIndex(entry.href);
+    // Untouched menu keeps the spatial axis, which carries meaning of its own (the work, what it runs
+    // on, administration). Once the user has arranged the menu, their order wins — but only over the
+    // worlds; system destinations have no worldIndex and stay at the end where the axis put them.
+    if (layout.order.length === 0) return all.sort((a, b) => axisRank(a) - axisRank(b));
+    const worldRank = (entry: RailEntry) => entry.worldIndex ?? Number.MAX_SAFE_INTEGER;
+    return all.sort((a, b) => worldRank(a) - worldRank(b) || axisRank(a) - axisRank(b));
+  }, [worlds, systemItems, layout]);
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
   const stageRef = useRef<HTMLDivElement>(null);
   const stageHeight = useElementHeight(stageRef);
@@ -118,6 +137,9 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
       data-testid="future-navigation"
       aria-label={t.common.primaryNav}
       onWheel={onWheel}
+      // Anywhere on the rail that is not a destination opens the editor — that is how a hidden space
+      // is found again.
+      onContextMenu={customization.onSurfaceContextMenu}
       className={`relative h-full shrink-0 overflow-hidden border-border/45 bg-black ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}
     >
       {/* Ambient sparks behind the rail. The nav is already `relative` + `overflow-hidden`, so it is the
@@ -140,6 +162,9 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
             <div
               key={entryKey}
               role="listitem"
+              onContextMenu={entry.worldId
+                ? (event) => customization.onEntryContextMenu(event, { ...entry, id: entry.worldId })
+                : customization.onSurfaceContextMenu}
               className="absolute left-0 top-[49%] z-10 transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]"
               style={{
                 transform: `translate(0, calc(-50% + ${positions[index]}px)) scale(${scale})`,
@@ -186,6 +211,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
       {onToggleCollapse ? (
         <CollapseHandle side={side} label={compact ? t.common.expandNav : t.common.collapseNav} onToggle={onToggleCollapse} />
       ) : null}
+      {customization.overlays}
     </nav>
   );
 }
