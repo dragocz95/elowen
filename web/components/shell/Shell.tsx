@@ -8,7 +8,6 @@ import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
-import { Sidebar, type SidebarMode } from './Sidebar';
 import { OrbitalNav } from './OrbitalNav';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
@@ -25,10 +24,14 @@ import { PageHeaderProvider } from '../../lib/pageHeader';
 import { RouteTransition } from './RouteTransition';
 import { EffectsProvider } from '../../lib/useEffects';
 
-/** Below this many px of room for the sidebar+content region the sidebar becomes a hamburger drawer
- *  (real phones, or a dock dragged nearly full-width); below the next it auto-collapses to an icon rail
- *  so the content keeps usable room; above it the user's own pin decides. Driven by the MEASURED region
- *  width (window − dock), not the viewport — so dragging the dock adapts the chrome just like resizing. */
+/** How the rail presents itself, decided by the shell from the measured room it has. */
+export type NavMode = 'full' | 'rail' | 'drawer';
+
+/** Below this many px of room for the nav+content region the rail slides in over the content from a
+ *  hamburger (real phones, or a dock dragged nearly full-width); below the next it auto-collapses to an
+ *  icon rail so the content keeps usable room; above it the user's own pin decides. Driven by the
+ *  MEASURED region width (window − dock), not the viewport — so dragging the dock adapts the chrome
+ *  just like resizing. */
 const DRAWER_MAX = 760;
 const RAIL_MAX = 1320;
 
@@ -47,7 +50,7 @@ const NAV_PINS: readonly NavPin[] = ['full', 'rail'];
  *  roomier. So the collapse handle is offered exactly when the pin is what decides — in a window already
  *  too narrow for the full rail, a toggle would be a dead control, and before the first measurement
  *  (`regionW === 0`) there is nothing to decide yet. */
-export function resolveNav(regionW: number, pin: NavPin): { mode: SidebarMode; pinnable: boolean } {
+export function resolveNav(regionW: number, pin: NavPin): { mode: NavMode; pinnable: boolean } {
   if (regionW === 0) return { mode: 'full', pinnable: false };
   if (regionW < DRAWER_MAX) return { mode: 'drawer', pinnable: false };
   if (regionW < RAIL_MAX) return { mode: 'rail', pinnable: false };
@@ -91,13 +94,19 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const [pin, setPin] = usePersistentState<NavPin>('elowen.nav.pin', 'full', NAV_PINS);
   const { mode, pinnable } = resolveNav(regionW, pin);
 
-  const navigation = mode === 'drawer'
-    ? <Sidebar mode="drawer" drawerOpen={drawerOpen} onDrawerClose={() => setDrawerOpen(false)} side={dockLeft ? 'right' : 'left'} />
-    : <OrbitalNav
-        compact={mode === 'rail'}
-        side={dockLeft ? 'right' : 'left'}
-        onToggleCollapse={pinnable ? () => setPin(pin === 'rail' ? 'full' : 'rail') : undefined}
-      />;
+  // One menu at every width. A phone gets the same rail, in its full labelled form, slid in over the
+  // content; wider windows give it a column of its own. Collapsing is offered only where the pin is
+  // what decides, and never in the drawer, where there is no column to narrow.
+  const navigation = (
+    <OrbitalNav
+      compact={mode === 'rail'}
+      side={dockLeft ? 'right' : 'left'}
+      drawer={mode === 'drawer'}
+      drawerOpen={drawerOpen}
+      onDrawerClose={() => setDrawerOpen(false)}
+      onToggleCollapse={pinnable ? () => setPin(pin === 'rail' ? 'full' : 'rail') : undefined}
+    />
+  );
   const content = (
     <div className="flex min-w-0 flex-1 flex-col">
       {/* NOTE: no `container-type` here on purpose — it would make <main> a containing block for

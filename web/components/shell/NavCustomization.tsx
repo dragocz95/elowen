@@ -9,7 +9,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useSaveMyNavSettings } from '../../lib/mutations';
 import { EMPTY_NAV_LAYOUT, applyNavLayout, moveNavEntry, reorderNavEntry, setNavEntryHidden } from '../../lib/navLayout';
 import type { NavLayout } from '../../lib/types';
-import type { NavEntry } from './NavItem';
+import type { NavEntry } from './navEntry';
 
 /** Right-click customization of the primary navigation: hide an entry, move it past its neighbour, or
  *  open the full editor. Shared by the sidebar and the orbital shell so both surfaces behave identically.
@@ -69,6 +69,10 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
       event.preventDefault();
       setMenu({ x: event.clientX, y: event.clientY, items: surfaceItems() });
     },
+    /** Opens the editor directly. Right-click is a pointer gesture with no touch equivalent, so the
+     *  surfaces a finger uses put this behind a button of their own rather than leaving the editor —
+     *  and with it every hidden space — unreachable on a phone. */
+    openEditor: () => setEditorOpen(true),
     /** Rendered by the surface that owns the navigation. */
     overlays: (
       <>

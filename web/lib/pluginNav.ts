@@ -1,6 +1,6 @@
 import { pluginLucideIcon } from './pluginIcons';
 import type { PluginUiListing } from './types';
-import type { NavEntry } from '../components/shell/NavItem';
+import type { NavEntry } from '../components/shell/navEntry';
 
 /** Where a plugin's settings section lives. Sections are pages of the plugin's own world — Settings is
  *  core-only — so this is the one rule that decides their address, shared by the menu and by every

@@ -12,7 +12,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { Sidebar } from '../../components/shell/Sidebar';
+import { OrbitalNav } from '../../components/shell/OrbitalNav';
 import { CommandPalette } from '../../components/shell/CommandPalette';
 import { DashboardView } from '../../modules/dashboard/DashboardView';
 
@@ -40,7 +40,7 @@ describe('core surfaces without the work plugin', () => {
   it('does not even ask for tasks', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['plugin-ui', 'en'], []);
-    render(<Wrapper><Sidebar /></Wrapper>);
+    render(<Wrapper><OrbitalNav /></Wrapper>);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(tasksCalls).toEqual([]);
   });
@@ -49,7 +49,7 @@ describe('core surfaces without the work plugin', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['plugin-ui', 'en'], []);
     client.setQueryData(['sessions'], [{ name: 'elowen-7', role: 'agent' }]);
-    render(<Wrapper><Sidebar /></Wrapper>);
+    render(<Wrapper><OrbitalNav /></Wrapper>);
     const dot = await screen.findByTitle('Busy');
     expect(dot).toBeInTheDocument();
   });

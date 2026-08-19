@@ -99,7 +99,7 @@ export const cs = {
     daemonBusy: 'Pracuje',
     daemonOffline: 'Offline',
     daemonUnreachable: 'daemon elowen není dostupný',
-    toggleSidebar: 'Přepnout sidebar',
+    toggleSidebar: 'Přepnout menu',
     cancel: 'Zrušit',
     save: 'Uložit',
     delete: 'Smazat',

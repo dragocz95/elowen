@@ -99,7 +99,7 @@ export const sk = {
     daemonBusy: 'Pracuje',
     daemonOffline: 'Offline',
     daemonUnreachable: 'daemon elowen nie je dostupný',
-    toggleSidebar: 'Prepnúť bočný panel',
+    toggleSidebar: 'Prepnúť menu',
     cancel: 'Zrušiť',
     save: 'Uložiť',
     delete: 'Vymazať',

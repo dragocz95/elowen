@@ -3,16 +3,15 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { useHealth } from '../../lib/queries';
+import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { useHealth, useTasks, useSessionInfos, useWorkPlugin } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
-import { entryIsActive } from './NavGroup';
 import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
 import { CollapseHandle } from './CollapseHandle';
 import { EmberFall } from './EmberFall';
 import { useElementHeight } from '../../lib/useElementWidth';
-import type { NavEntry } from './NavItem';
+import { entryIsActive, type NavEntry } from './navEntry';
 
 /** Top to bottom: where you land, then the work, then the context behind it, then administration.
  *  Home first and the admin surfaces last, so the axis reads in the order you actually use it. */
@@ -46,9 +45,19 @@ function isAxisPage(href: string | undefined): boolean {
 /** A rail destination plus the world it came from, which is the unit the navigation layout addresses. */
 type RailEntry = NavEntry & { worldId?: string; worldIndex?: number };
 
+const DAEMON_STATUS = {
+  ready: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)' },
+  busy: { color: 'var(--color-warning)', ring: 'color-mix(in srgb, var(--color-warning) 50%, transparent)' },
+  fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
+} as const;
+
 /** The public site's rail spacing — the look this rail matches. */
 const SPACING = 66;
-/** Vertical room the largest (active) node needs, so the end destinations never clip. */
+/** Vertical room the largest (active) node needs, so the end destinations never clip. It is the
+ *  diameter of the active node (4.65rem), and it only works because the items are anchored at exactly
+ *  half the axis: `getStableOffsets` spreads them symmetrically around the centre, so an anchor even
+ *  one percent off centre spends that much of this headroom and clips the first node on a short
+ *  screen — which is what a phone is. */
 const NODE_HEADROOM = 80;
 
 /** Where each destination is parked on the axis: a fixed, centered order that does NOT depend on which
@@ -72,16 +81,34 @@ export function railSpacing(count: number, stageHeight: number): number {
  *  `onToggleCollapse` is what puts the collapse handle on the edge. It is absent whenever collapsing is
  *  not the user's call — a window too narrow for the full rail is already forced compact, and a handle
  *  that cannot change anything is worse than no handle at all. */
-export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }: {
+export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, drawer = false, drawerOpen = false, onDrawerClose }: {
   compact?: boolean;
   side?: 'left' | 'right';
   onToggleCollapse?: () => void;
+  /** On a phone the rail slides in over the content instead of holding a column of its own. Same rail,
+   *  same order, same editor — only the way it claims room differs, so there is one menu to learn.
+   *  It deliberately stops short of the full width: the strip of backdrop left showing is both the
+   *  signal that this is a layer over the page and the target that dismisses it. */
+  drawer?: boolean;
+  drawerOpen?: boolean;
+  onDrawerClose?: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const { worlds, systemItems, allWorlds, layout, layoutReady } = useShellNavigation();
   const health = useHealth();
+  const tasks = useTasks();
+  const sessions = useSessionInfos();
+  const work = useWorkPlugin();
   const { t } = useTranslation();
+  // "Busy" means work is genuinely under way. With the work plugin it is a task in progress; without it
+  // there is no register to ask, so fall back to a live agent session — reporting a permanent "ready"
+  // while agents are running would be the dot lying about the very thing it exists to show.
+  const up = health.data?.ok === true;
+  const working = work
+    ? (tasks.data ?? []).some((task) => task.status === 'in_progress')
+    : (sessions.data ?? []).some((session) => session.role === 'agent');
+  const daemon: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
   const lastWheelAt = useRef(0);
   // `worldId` is what the customization menu acts on: a world can contribute several axis pages, and
   // hiding or moving any of them means hiding or moving the world they belong to. System destinations
@@ -120,6 +147,9 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
     const frame = requestAnimationFrame(() => setAnimate(true));
     return () => cancelAnimationFrame(frame);
   }, [layoutReady, animate]);
+  // Arriving somewhere is the end of navigating, so the panel gets out of the way on its own. The
+  // close callback is an unstable inline prop from the shell — deliberately not a dependency.
+  useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
   const stageRef = useRef<HTMLDivElement>(null);
   const stageHeight = useElementHeight(stageRef);
@@ -144,16 +174,33 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
 
   const axis = compact ? '2.2rem' : '2.5rem';
 
+  const hidden = drawer && !drawerOpen;
+
   return (
+    <>
+      {drawer ? (
+        <div
+          aria-hidden
+          onClick={onDrawerClose}
+          className={`fixed inset-0 z-40 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        />
+      ) : null}
     <nav
       data-side={side}
       data-testid="future-navigation"
       aria-label={t.common.primaryNav}
+      aria-hidden={hidden ? true : undefined}
+      inert={hidden ? true : undefined}
       onWheel={onWheel}
       // Anywhere on the rail that is not a destination opens the editor — that is how a hidden space
       // is found again.
       onContextMenu={customization.onSurfaceContextMenu}
-      className={`relative h-full shrink-0 overflow-hidden border-border/45 bg-black ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}
+      className={`overflow-hidden border-border/45 bg-black ${drawer
+        ? `fixed inset-y-0 z-50 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
+          ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
+          : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}`
+        : `relative h-full shrink-0 ${side === 'right' ? 'border-l' : 'border-r'} ${compact ? 'w-[4.75rem]' : 'w-[17rem]'}`}`}
+      style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : undefined}
     >
       {/* Ambient sparks behind the rail. The nav is already `relative` + `overflow-hidden`, so it is the
           containing block that both sizes and clips them; every item below sits on z-10, above the canvas. */}
@@ -178,7 +225,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
               onContextMenu={entry.worldId
                 ? (event) => customization.onEntryContextMenu(event, { ...entry, id: entry.worldId })
                 : customization.onSurfaceContextMenu}
-              className={`absolute left-0 top-[49%] z-10 ${animate ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
+              className={`absolute left-0 top-1/2 z-10 ${animate ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
               style={{
                 transform: `translate(0, calc(-50% + ${positions[index]}px)) scale(${scale})`,
                 opacity,
@@ -218,13 +265,33 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
             <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
             <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
           </div>
-          <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
+          {drawer ? (
+            <button
+              type="button"
+              onClick={customization.openEditor}
+              className="mb-3 flex items-center gap-2 rounded-lg border border-border-strong/70 px-3 py-2 text-xs text-text-muted transition-colors hover:border-accent/60 hover:text-text"
+            >
+              <SlidersHorizontal size={13} aria-hidden />
+              {t.nav.customizeTitle}
+            </button>
+          ) : null}
+          <div className="flex items-center justify-center gap-2 font-mono text-[9px] tracking-[.14em] text-text-muted/35">
+            <span
+              role="status"
+              aria-label={up ? t.common.daemonUp : t.common.daemonDown}
+              title={daemon === 'fail' ? t.common.daemonOffline : daemon === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${up ? 'live-dot' : ''}`}
+              style={{ backgroundColor: DAEMON_STATUS[daemon].color, ['--live-ring' as string]: DAEMON_STATUS[daemon].ring }}
+            />
+            <span>{health.data?.version ? `v${health.data.version}` : '—'}</span>
+          </div>
         </div>
       ) : null}
       {onToggleCollapse ? (
         <CollapseHandle side={side} label={compact ? t.common.expandNav : t.common.collapseNav} onToggle={onToggleCollapse} />
       ) : null}
-      {customization.overlays}
     </nav>
+    {customization.overlays}
+    </>
   );
 }

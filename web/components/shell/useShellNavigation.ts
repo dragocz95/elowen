@@ -12,7 +12,7 @@ import { EMPTY_NAV_LAYOUT, applyNavLayout, parseNavLayout } from '../../lib/navL
  *  wrong order first. It is a cache, never the source of truth. */
 const NAV_LAYOUT_CACHE_KEY = 'elowen.nav.layout';
 import type { NavLayout } from '../../lib/types';
-import type { NavEntry } from './NavItem';
+import type { NavEntry } from './navEntry';
 
 /** One registry-driven navigation model shared by the orbital desktop shell and mobile drawer.
  *

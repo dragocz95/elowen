@@ -13,7 +13,7 @@ const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok
 beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 beforeEach(() => localStorage.clear());
 
-function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollapse?: () => void } = {}) {
+function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollapse?: () => void; drawer?: boolean; drawerOpen?: boolean; onDrawerClose?: () => void } = {}) {
   const { wrapper: Wrapper, client } = createWrapper();
   client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
@@ -51,6 +51,14 @@ describe('railSpacing', () => {
   it('uses the public rail spacing whenever the axis has room for it', () => {
     expect(railSpacing(12, 1000)).toBe(66);
     expect(railSpacing(8, 845)).toBe(66);
+  });
+
+  // A phone is the shortest axis there is, and the rail is its only menu now.
+  it('seats the outermost destination fully on a phone-height axis', () => {
+    const stage = 748; // a 844px phone viewport minus the rail's footer
+    const offsets = getStableOffsets(12, railSpacing(12, stage));
+    // The active node is the largest (4.65rem); half of it has to clear the end of the axis.
+    expect(Math.abs(offsets[0]) + 37.2).toBeLessThanOrEqual(stage / 2);
   });
 
   it('tightens rather than clipping the end destinations on a short axis', () => {
@@ -287,5 +295,61 @@ describe('OrbitalNav order stability', () => {
 
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument());
     expect(railLabels()).toEqual(before.filter((label) => label !== 'Memory'));
+  });
+});
+
+/** On a phone the same rail slides in over the page. It is the ONLY menu now — the separate sidebar
+ *  drawer is gone — so everything the old one carried has to be reachable here, by finger. */
+describe('OrbitalNav as a phone drawer', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  const nav = () => document.querySelector('[data-testid="future-navigation"]')!;
+
+  it('sits off-screen and inert until it is opened', () => {
+    mount(false, { drawer: true, drawerOpen: false });
+    expect(nav().className).toContain('-translate-x-full');
+    expect(nav().hasAttribute('inert')).toBe(true);
+    expect(nav().getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('slides in and becomes reachable once opened', () => {
+    mount(false, { drawer: true, drawerOpen: true });
+    expect(nav().className).toContain('translate-x-0');
+    expect(nav().hasAttribute('inert')).toBe(false);
+    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
+  });
+
+  // Covering the whole screen would remove both the signal that this is a layer over the page and the
+  // target that dismisses it.
+  it('stops short of the full width, leaving backdrop to tap', () => {
+    mount(false, { drawer: true, drawerOpen: true });
+    expect(nav().className).toContain('w-[min(20rem,85vw)]');
+    expect(nav().className).not.toContain('w-full');
+  });
+
+  it('is dismissed by tapping the backdrop', () => {
+    const onDrawerClose = vi.fn();
+    mount(false, { drawer: true, drawerOpen: true, onDrawerClose });
+    const backdrop = document.querySelector('.fixed.inset-0')!;
+    fireEvent.click(backdrop);
+    expect(onDrawerClose).toHaveBeenCalled();
+  });
+
+  // Right-click is a pointer gesture with no touch equivalent, so without a button of its own the
+  // editor — and with it every hidden space — would be unreachable on the device that needs it most.
+  it('offers the menu editor as a button, not only as a right-click', async () => {
+    mount(false, { drawer: true, drawerOpen: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Customize menu' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('keeps that button off surfaces that have a right-click', () => {
+    mount(false, { drawer: false });
+    expect(screen.queryByRole('button', { name: 'Customize menu' })).not.toBeInTheDocument();
+  });
+
+  it('reports the daemon state the old sidebar used to carry', () => {
+    mount(false, { drawer: true, drawerOpen: true });
+    expect(screen.getByRole('status')).toHaveAttribute('title', 'Ready');
   });
 });

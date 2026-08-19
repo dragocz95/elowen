@@ -99,7 +99,7 @@ export const en = {
     daemonBusy: 'Busy',
     daemonOffline: 'Offline',
     daemonUnreachable: 'elowen daemon unreachable',
-    toggleSidebar: 'Toggle sidebar',
+    toggleSidebar: 'Toggle menu',
     cancel: 'Cancel',
     save: 'Save',
     delete: 'Delete',
