@@ -37,21 +37,14 @@ const WORK_LISTING = [{ name: 'work', nav: [{ label: 'Tasks', icon: 'ListChecks'
  *  against is the quiet one, where an empty list is rendered as "nothing to do" and the operator reads
  *  a claim about work that was never tracked. */
 describe('core surfaces without the work plugin', () => {
+  // The navigation reads no plugin data at all now, so this holds trivially — which is the point:
+  // it fails the moment the menu starts asking a disabled plugin for something again.
   it('does not even ask for tasks', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['plugin-ui', 'en'], []);
     render(<Wrapper><OrbitalNav /></Wrapper>);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(tasksCalls).toEqual([]);
-  });
-
-  it('reads the busy dot off live agent sessions instead of reporting ready', async () => {
-    const { wrapper: Wrapper, client } = createWrapper();
-    client.setQueryData(['plugin-ui', 'en'], []);
-    client.setQueryData(['sessions'], [{ name: 'elowen-7', role: 'agent' }]);
-    render(<Wrapper><OrbitalNav /></Wrapper>);
-    const dot = await screen.findByTitle('Busy');
-    expect(dot).toBeInTheDocument();
   });
 
   it('drops the task creation commands from the palette', () => {

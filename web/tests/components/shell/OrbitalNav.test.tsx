@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 const pushSpy = vi.hoisted(() => vi.fn());
 const currentPath = vi.hoisted(() => ({ value: '/p/work/stats' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value, useRouter: () => ({ push: pushSpy }) }));
-import { getStableOffsets, OrbitalNav, railSpacing } from '../../../components/shell/OrbitalNav';
+import { getStableOffsets, OrbitalNav, railScrollRange, railSpacing } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok: true })));
@@ -356,10 +356,6 @@ describe('OrbitalNav as a phone drawer', () => {
     expect(onDrawerClose).toHaveBeenCalled();
   });
 
-  it('reports the daemon state the old sidebar used to carry', () => {
-    mount(false, { drawer: true, drawerOpen: true });
-    expect(screen.getByRole('status')).toHaveAttribute('title', 'Ready');
-  });
 });
 
 /** Reordering happens ON the rail: grab a space and carry it. The browser's own link dragging is what
@@ -515,5 +511,51 @@ describe('OrbitalNav pointer capture', () => {
     const { captured, released } = press('Home', [40, 200]);
     expect(captured).toEqual([4]);
     expect(released).toEqual([4]);
+  });
+});
+
+/** With more destinations than the screen can seat, the rail has to move rather than keep shrinking. */
+describe('railScrollRange', () => {
+  it('stays still while everything already fits', () => {
+    expect(railScrollRange(8, 66, 1000)).toBe(0);
+    expect(railScrollRange(1, 66, 400)).toBe(0);
+    expect(railScrollRange(8, 66, 0)).toBe(0);
+  });
+
+  it('opens up exactly as much travel as the overflow needs', () => {
+    // 20 destinations at the legible floor need (19 * 46) + 80 = 954 of a 700-tall axis.
+    expect(railScrollRange(20, 46, 700)).toBe(127);
+  });
+
+  // Crushing the spacing indefinitely turns the rail into a stripe; past the floor it scrolls instead.
+  it('never tightens past the legible floor', () => {
+    expect(railSpacing(30, 700)).toBe(46);
+    expect(railScrollRange(30, railSpacing(30, 700), 700)).toBeGreaterThan(0);
+  });
+});
+
+describe('OrbitalNav scrolling the axis', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  const offsetOfLabel = (label: string) => {
+    const row = screen.getByRole('link', { name: label }).closest('[role="listitem"]')!;
+    const match = /calc\(-50% \+ (-?[\d.]+)px\)/.exec(row.getAttribute('style') ?? '');
+    return match ? Number(match[1]) : NaN;
+  };
+
+  // jsdom reports every element as zero-height, so the axis never overflows and the wheel keeps its
+  // original job. That is the behaviour to pin here; the scrolling maths is covered above.
+  it('still steps through routes when every destination fits', () => {
+    mount();
+    pushSpy.mockClear();
+    fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
+    expect(pushSpy).toHaveBeenCalled();
+  });
+
+  it('leaves the axis parked while nothing overflows', () => {
+    mount();
+    const before = offsetOfLabel('Home');
+    fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 200 });
+    expect(offsetOfLabel('Home')).toBe(before);
   });
 });

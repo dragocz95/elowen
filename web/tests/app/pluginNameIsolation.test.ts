@@ -36,6 +36,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
     '/p/work': 'The nav ORDER is core (which slot a world occupies) while the worlds themselves come from the plugin listing; an unlisted plugin simply never claims its slot. Removal path: a manifest-declared nav weight.',
     '/p/agents': 'Same ordered-slot list — the order is core, the world is not.',
     '/p/editor': 'Same ordered-slot list — the order is core, the world is not.',
+    '/p/subagent': 'Same ordered-slot list — the order is core, the world is not.',
+    '/p/cronjob': 'Same ordered-slot list — the order is core, the world is not.',
+    '/p/skills': 'Same ordered-slot list — the order is core, the world is not.',
+    '/p/stats': 'Same ordered-slot list — the order is core, the world is not.',
   },
   'components/shell/TopBar.tsx': {
     '/p/agents': 'Page-title resolution for a plugin route, already gated on agentsUi. Removal path: page titles declared by the plugin manifest instead of matched by pathname.',

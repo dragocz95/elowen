@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { useHealth, useTasks, useSessionInfos, useWorkPlugin } from '../../lib/queries';
+import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useShellNavigation } from './useShellNavigation';
 import { useNavCustomization } from './NavCustomization';
@@ -56,16 +56,20 @@ type RailEntry = NavEntry & { worldId?: string; worldIndex?: number };
 type RailDrag = { worldId: string; from: number; to: number; dy: number };
 
 /** A pointer resting on a destination, before it is known whether this is a click, a drag or a hold. */
-type RailPress = { worldId: string; slot: number; startY: number; pointerId: number; element: HTMLElement; longPress?: number };
+type RailPress = {
+  worldId: string;
+  slot: number;
+  startY: number;
+  pointerId: number;
+  pointerType: string;
+  /** Where the axis stood when the finger landed, so a touch scroll is absolute rather than cumulative. */
+  startOffset: number;
+  element: HTMLElement;
+  longPress?: number;
+};
 
 /** How far the pointer must travel before it counts as carrying the entry rather than clicking it. */
 const DRAG_THRESHOLD = 6;
-
-const DAEMON_STATUS = {
-  ready: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)' },
-  busy: { color: 'var(--color-warning)', ring: 'color-mix(in srgb, var(--color-warning) 50%, transparent)' },
-  fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
-} as const;
 
 /** The public site's rail spacing — the look this rail matches. */
 const SPACING = 66;
@@ -83,12 +87,24 @@ export function getStableOffsets(count: number, spacing: number): number[] {
   return Array.from({ length: count }, (_, index) => (index - center) * spacing);
 }
 
-/** The public rail carries 8 destinations at SPACING; this one carries up to 12, which overflows a
- *  laptop-height axis. Keep SPACING wherever it fits and otherwise tighten just enough to seat every
- *  destination — a rail that clips its first and last entries is worse than a slightly denser one. */
+/** Below this the destinations stop being separate things and start being a stripe, so the axis
+ *  scrolls instead of tightening any further. */
+const MIN_SPACING = 46;
+
+/** The public rail carries 8 destinations at SPACING; this one carries more, which overflows a
+ *  laptop-height axis. Keep SPACING wherever it fits and otherwise tighten — but only down to a
+ *  legible floor. Past that the answer is to move the axis, not to crush it. */
 export function railSpacing(count: number, stageHeight: number): number {
   if (stageHeight <= 0 || count < 2) return SPACING;
-  return Math.min(SPACING, Math.max(28, (stageHeight - NODE_HEADROOM) / (count - 1)));
+  return Math.min(SPACING, Math.max(MIN_SPACING, (stageHeight - NODE_HEADROOM) / (count - 1)));
+}
+
+/** How far the axis may travel in each direction. Zero means every destination already fits, and the
+ *  rail must not move at all — an axis that drifts when there is nothing to reach reads as broken. */
+export function railScrollRange(count: number, spacing: number, stageHeight: number): number {
+  if (stageHeight <= 0 || count < 2) return 0;
+  const span = (count - 1) * spacing + NODE_HEADROOM;
+  return Math.max(0, (span - stageHeight) / 2);
 }
 
 /** A straight spatial axis. The active route is always the largest node; surrounding destinations
@@ -113,18 +129,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   const router = useRouter();
   const { worlds, allWorlds, layout, layoutReady } = useShellNavigation();
   const health = useHealth();
-  const tasks = useTasks();
-  const sessions = useSessionInfos();
-  const work = useWorkPlugin();
   const { t } = useTranslation();
-  // "Busy" means work is genuinely under way. With the work plugin it is a task in progress; without it
-  // there is no register to ask, so fall back to a live agent session — reporting a permanent "ready"
-  // while agents are running would be the dot lying about the very thing it exists to show.
-  const up = health.data?.ok === true;
-  const working = work
-    ? (tasks.data ?? []).some((task) => task.status === 'in_progress')
-    : (sessions.data ?? []).some((session) => session.role === 'agent');
-  const daemon: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
   const lastWheelAt = useRef(0);
   // `worldId` is what the customization menu acts on: a world can contribute several axis pages, and
   // hiding or moving any of them means hiding or moving the world they belong to. System destinations
@@ -173,6 +178,25 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     [routeEntries.length, spacing],
   );
 
+  // How far the axis has been moved from its centred rest position. It only ever leaves zero when the
+  // destinations genuinely outgrow the stage.
+  const [axisOffset, setAxisOffset] = useState(0);
+  const scrollRange = railScrollRange(routeEntries.length, spacing, stageHeight);
+  const clampAxis = (value: number) => Math.max(-scrollRange, Math.min(scrollRange, value));
+  // A rail that shrinks (window resize, a space hidden) must not stay parked past its new end.
+  useEffect(() => { setAxisOffset((current) => Math.max(-scrollRange, Math.min(scrollRange, current))); }, [scrollRange]);
+  // Landing somewhere off-screen and having to hunt for it would be worse than not scrolling at all,
+  // so ARRIVING somewhere brings the active destination back to the middle. Keyed on the arrival and
+  // nothing else: `scrollRange` is recomputed on every render and a resize observer nudges it, so
+  // reacting to it as well would snap the axis back to centre while the user was still scrolling it.
+  const centredFor = useRef(-1);
+  useEffect(() => {
+    if (scrollRange <= 0) { centredFor.current = -1; return; }
+    if (centredFor.current === activeIndex) return;
+    centredFor.current = activeIndex;
+    setAxisOffset(Math.max(-scrollRange, Math.min(scrollRange, -(positions[activeIndex] ?? 0))));
+  }, [activeIndex, scrollRange]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Where each world sits on the axis. A world can contribute several destinations (the work register,
   // board, timeline and stats are all one world), but it moves as ONE thing, so a drag is expressed in
   // world slots rather than in rail rows.
@@ -208,6 +232,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       slot,
       startY: event.clientY,
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      startOffset: axisOffset,
       // Capturing the pointer is what lets a drag follow it outside the row, but it also stops the
       // browser synthesising the click on the link inside. So it is taken only once this is KNOWN to
       // be a drag, never on a press that may still turn out to be a plain click.
@@ -230,6 +256,12 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     // A drag only starts once the pointer has actually travelled, so a plain click still navigates.
     if (!dragRef.current && Math.abs(dy) < DRAG_THRESHOLD) return;
     if (press.longPress) { window.clearTimeout(press.longPress); press.longPress = undefined; }
+    // A finger dragging the rail is scrolling it, not rearranging it — one vertical drag cannot mean
+    // both. Rearranging by touch goes through the long-press menu.
+    if (press.pointerType === 'touch') {
+      if (scrollRange > 0) setAxisOffset(clampAxis(press.startOffset + dy));
+      return;
+    }
     if (!dragRef.current) {
       try { press.element.setPointerCapture(press.pointerId); } catch { /* pointer already gone */ }
     }
@@ -277,6 +309,13 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
 
   const onWheel = (event: WheelEvent<HTMLElement>) => {
     if (Math.abs(event.deltaY) < 8 || routeEntries.length === 0) return;
+    // With more destinations than fit, the wheel does what a wheel does: it moves the list. Stepping
+    // through routes instead would navigate somewhere just to look at the rest of the menu.
+    if (scrollRange > 0) {
+      event.preventDefault();
+      setAxisOffset((current) => clampAxis(current - event.deltaY));
+      return;
+    }
     event.preventDefault();
     const now = performance.now();
     if (now - lastWheelAt.current < 420) return;
@@ -357,7 +396,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
               }}
               className={`absolute left-0 top-1/2 ${dragged ? 'z-20 cursor-grabbing' : 'z-10'} ${entry.worldId && !drag ? 'cursor-grab' : ''} ${animate && !dragged ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
               style={{
-                transform: `translate(0, calc(-50% + ${positions[index] + shiftOf(entry)}px)) scale(${dragged ? scale * 1.06 : scale})`,
+                transform: `translate(0, calc(-50% + ${positions[index] + shiftOf(entry) + axisOffset}px)) scale(${dragged ? scale * 1.06 : scale})`,
                 opacity,
                 filter: `blur(${Math.max(0, distance - 6) * 0.08}px)`,
                 transformOrigin: `${axis} center`,
@@ -397,16 +436,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
             <span className="mt-1 h-3 w-px bg-gradient-to-b from-accent/45 to-transparent" />
             <ChevronDown size={11} className="-mt-0.5 text-accent/55" />
           </div>
-          <div className="flex items-center justify-center gap-2 font-mono text-[9px] tracking-[.14em] text-text-muted/35">
-            <span
-              role="status"
-              aria-label={up ? t.common.daemonUp : t.common.daemonDown}
-              title={daemon === 'fail' ? t.common.daemonOffline : daemon === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${up ? 'live-dot' : ''}`}
-              style={{ backgroundColor: DAEMON_STATUS[daemon].color, ['--live-ring' as string]: DAEMON_STATUS[daemon].ring }}
-            />
-            <span>{health.data?.version ? `v${health.data.version}` : '—'}</span>
-          </div>
+          <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
         </div>
       ) : null}
       {onToggleCollapse ? (
