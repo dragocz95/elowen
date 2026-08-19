@@ -101,7 +101,7 @@ describe('exec identity persistence migration', () => {
     // half-migrated database — the one state that could not be told apart — never exists.
     db = openDb(path);
     expect(snapshot()).toEqual(before);
-    expect(db.pragma('user_version', { simple: true })).toBe(13);
+    expect(db.pragma('user_version', { simple: true })).toBe(14);
     db.close();
   });
 
