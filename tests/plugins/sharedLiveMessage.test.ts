@@ -178,9 +178,21 @@ describe('shared LiveMessage tool activity cleanup', () => {
     summaryLine: (s: string) => s,
   };
 
-  async function run(cfg: Record<string, unknown>, mode: 'finalize' | 'fail' = 'finalize', editFails = false) {
+  async function run(
+    cfg: Record<string, unknown>,
+    mode: 'finalize' | 'fail' = 'finalize',
+    editFails = false,
+    collapseStillOrdered?: () => boolean,
+  ) {
     const { createLiveMessage } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
-      createLiveMessage: (deps: Record<string, unknown>) => new (adapter: unknown, channelId: string, replyToId?: string) => Lm;
+      createLiveMessage: (deps: Record<string, unknown>) => new (
+        adapter: unknown,
+        channelId: string,
+        replyToId?: string,
+        askerId?: string,
+        display?: unknown,
+        options?: { collapseStillOrdered?: () => boolean },
+      ) => Lm;
     };
     const events: string[] = [];
     let nextId = 0;
@@ -201,10 +213,19 @@ describe('shared LiveMessage tool activity cleanup', () => {
       style,
       CHUNK: 4000,
       splitContent: (text: string) => [text],
-      postWithImages: async () => { events.push('answer'); },
+      postWithImages: async (_a: unknown, _channel: string, _content: string, replyToId?: string) => {
+        events.push(`answer:${replyToId ?? 'plain'}`);
+      },
       footerLine: () => '',
     });
-    const lm = new LiveMessage({ cfg: { runtimeFooter: false, ...cfg } }, 'channel', 'trigger');
+    const lm = new LiveMessage(
+      { cfg: { runtimeFooter: false, ...cfg } },
+      'channel',
+      'trigger',
+      undefined,
+      undefined,
+      { collapseStillOrdered },
+    );
     lm.onEvent({ type: 'tool', id: 'one', name: 'Read' });
     await new Promise((resolve) => setTimeout(resolve, 0)); // let the live progress create land before finalize
     lm.onEvent({ type: 'tool', id: 'two', name: 'Bash' });
@@ -214,7 +235,7 @@ describe('shared LiveMessage tool activity cleanup', () => {
   }
 
   it('keeps tool progress and posts a separate answer by default', async () => {
-    expect(await run({})).toEqual(['create:progress-1:plain', 'edit:🔧 `Read`\n🔧 `Bash`', 'answer']);
+    expect(await run({})).toEqual(['create:progress-1:plain', 'edit:🔧 `Read`\n🔧 `Bash`', 'answer:trigger']);
   });
 
   it('replaces the replied progress message with the final answer without deleting it', async () => {
@@ -222,6 +243,32 @@ describe('shared LiveMessage tool activity cleanup', () => {
       'create:progress-1:trigger',
       'edit:Done.',
     ]);
+  });
+
+  it('posts a new anchored final reply when a newer user message made the progress bubble stale', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true }, 'finalize', false, () => false)).toEqual([
+      'create:progress-1:trigger',
+      'edit:🔧 `Read`\n🔧 `Bash`',
+      'answer:trigger',
+    ]);
+  });
+
+  it('posts a new anchored error when a newer user message made the progress bubble stale', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true }, 'fail', false, () => false)).toEqual([
+      'create:progress-1:trigger',
+      'edit:🔧 `Read` — boom\n🔧 `Bash` — boom',
+      'handled:false',
+    ]);
+  });
+
+  it('does not evaluate collapse ordering outside the collapse mode', async () => {
+    let checks = 0;
+    expect(await run({}, 'finalize', false, () => { checks++; return false; })).toEqual([
+      'create:progress-1:plain',
+      'edit:🔧 `Read`\n🔧 `Bash`',
+      'answer:trigger',
+    ]);
+    expect(checks).toBe(0);
   });
 
   it('normalizes per-tool/live settings to one collapsible bubble and handles failures in place', async () => {
@@ -235,7 +282,7 @@ describe('shared LiveMessage tool activity cleanup', () => {
       'create:progress-1:trigger',
       'edit:Done.',
       'edit:Done.',
-      'answer',
+      'answer:trigger',
     ]);
   });
 
@@ -266,5 +313,39 @@ describe('shared LiveMessage tool activity cleanup', () => {
     await lm.finalize('FirstSecond');
 
     expect(events).toEqual(['create:1', 'edit:First', 'create:2', 'create:3', 'fallback:Second']);
+  });
+});
+
+describe('conversation order tracker', () => {
+  it('invalidates an older marker when another visible user message arrives', async () => {
+    const { createConversationOrderTracker } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
+      createConversationOrderTracker: () => {
+        mark: (key: string) => { key: string; sequence: number };
+        isCurrent: (marker: { key: string; sequence: number }) => boolean;
+      };
+    };
+    const tracker = createConversationOrderTracker();
+    const first = tracker.mark('channel');
+    expect(tracker.isCurrent(first)).toBe(true);
+    const second = tracker.mark('channel');
+    expect(tracker.isCurrent(first)).toBe(false);
+    expect(tracker.isCurrent(second)).toBe(true);
+  });
+
+  it('fails closed for expired and LRU-evicted markers', async () => {
+    const { createConversationOrderTracker } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
+      createConversationOrderTracker: (options: { maxEntries: number; ttlMs: number; now: () => number }) => {
+        mark: (key: string) => { key: string; sequence: number };
+        isCurrent: (marker: { key: string; sequence: number }) => boolean;
+      };
+    };
+    let time = 0;
+    const tracker = createConversationOrderTracker({ maxEntries: 1, ttlMs: 10, now: () => time });
+    const evicted = tracker.mark('one');
+    const current = tracker.mark('two');
+    expect(tracker.isCurrent(evicted)).toBe(false);
+    expect(tracker.isCurrent(current)).toBe(true);
+    time = 11;
+    expect(tracker.isCurrent(current)).toBe(false);
   });
 });

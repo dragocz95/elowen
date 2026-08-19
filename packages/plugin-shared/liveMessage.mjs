@@ -26,6 +26,37 @@ const DEFAULT_EDIT_THROTTLE_MS = 1200; // stays under Discord's ~5 edits / 5 s a
 const STALL_HINT_MS = 60_000;
 const DIVIDER = '┈┈┈┈┈┈┈┈┈┈'; // separates the tool trace from each display card (wrapped in style.subtext)
 
+/** Bounded process-local arrival order for visible user messages. Platform message ids are deliberately
+ *  not compared: their ordering contracts differ, while a local sequence says exactly what the adapter
+ *  has already observed. Missing/expired markers fail closed so an old bubble is never edited on a guess. */
+export function createConversationOrderTracker({ maxEntries = 2048, ttlMs = 24 * 60 * 60_000, now = Date.now } = {}) {
+  const latest = new Map();
+  let sequence = 0;
+  const prune = () => {
+    const cutoff = now() - ttlMs;
+    for (const [key, value] of latest) {
+      if (value.at > cutoff) break;
+      latest.delete(key);
+    }
+    while (latest.size > maxEntries) latest.delete(latest.keys().next().value);
+  };
+  return {
+    mark(key) {
+      const normalized = String(key);
+      const marker = { key: normalized, sequence: ++sequence };
+      latest.delete(normalized);
+      latest.set(normalized, { sequence: marker.sequence, at: now() });
+      prune();
+      return marker;
+    },
+    isCurrent(marker) {
+      if (!marker || typeof marker.key !== 'string' || typeof marker.sequence !== 'number') return false;
+      prune();
+      return latest.get(marker.key)?.sequence === marker.sequence;
+    },
+  };
+}
+
 /** Build the live-message classes for one surface. Returns the `LiveMessage` class the plugin re-exports;
  *  `EditableMessage`/`StreamingAnswer` stay internal. */
 export function createLiveMessage({ transport, style, CHUNK, splitContent, postWithImages, footerLine, editThrottleMs = DEFAULT_EDIT_THROTTLE_MS }) {
@@ -197,11 +228,14 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
    *  answer text either streams into separate editable messages or is posted once at finalize. Keeping those
    *  surfaces independent lets the chat feel alive without forcing token-by-token answer noise. */
   class LiveMessage {
-    constructor(adapter, channelId, replyToId, askerId, display) {
+    constructor(adapter, channelId, replyToId, askerId, display, options = {}) {
       this.a = adapter;
       this.channelId = channelId;
       this.replyToId = replyToId; // the triggering message — the answer bubble is a real reply to it
       this.askerId = askerId;     // who to route an AskUserQuestion prompt to (and gate its answer on)
+      this.collapseStillOrdered = typeof options.collapseStillOrdered === 'function'
+        ? options.collapseStillOrdered
+        : null;
       const resolvedDisplay = display ?? resolveDisplaySettings(adapter.cfg);
       // Collapsing progress into the final reply requires one reusable bubble and a non-streamed answer.
       // Normalize conflicting presentation knobs here so no earlier per-tool/live-answer messages survive.
@@ -401,6 +435,16 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
      *  the first chunk of a StreamingAnswer, so long replies can still add ordered continuation messages. */
     async collapseToolActivity(content) {
       if (!this.display.deleteToolActivityAfterTurn || !this.progress || !content) return false;
+      if (this.collapseStillOrdered) {
+        let ordered = false;
+        try { ordered = this.collapseStillOrdered() === true; } catch { /* fail closed */ }
+        if (!ordered) {
+          const progress = this.progress;
+          this.progress = null;
+          await progress.settle(progress.content);
+          return false;
+        }
+      }
       const answer = new StreamingAnswer(this.a, this.channelId, this.replyToId, this.progress);
       const delivery = await answer.finalize(content);
       this.progress = null;
