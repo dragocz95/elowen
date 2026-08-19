@@ -254,12 +254,14 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
     description: [
-      'Execute a shell command and return its output.',
+      'Execute a shell command in a real shell and return its combined stdout and stderr with the exit code.',
+      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. It is reserved for the verified operator: any other caller, including a platform member with an admin role, is refused outright.',
       'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `Foreground runs are killed after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)} s; raise it with \`timeout\` (seconds, max ${MAX_TIMEOUT_S}) for a slow but finite command such as an install or a full build.`,
       'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no time limit. Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
+      `Output is capped: only the LAST ~${Math.round(outputCap / 1000)} kB is returned and the result says so when it was truncated, so redirect a long build or test run to a file and grep it instead of re-running it.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
@@ -360,7 +362,11 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'ListProcesses', label: 'List processes',
-    description: 'List background processes started with Bash(background=true).',
+    description: [
+      'List the background shell processes of THIS conversation — the ones started with Bash(background=true) or moved to the background with Ctrl+B — with each process id, whether it is still RUNNING or has exited (and with which code), when it started and the command line.',
+      'Use it to recover a process id you no longer have, to check what is still running before starting another dev server or watcher, and before KillProcess so you kill the right one. It takes no arguments and cannot be pointed at another conversation or at arbitrary system processes: a command still running in the FOREGROUND is deliberately not listed, and neither is anything you did not start here.',
+      'It reports state only — read a process\'s output with ProcessOutput and stop one with KillProcess. Like every terminal tool it is available to the verified operator only, and a background sub-agent is a different thing entirely (see DelegateList).',
+    ].join(' '),
     parameters: Type.Object({}),
     execute: async () => {
       const denied = denyNonOwner();
@@ -383,7 +389,8 @@ export function register(ctx) {
       'By default this returns only what was written SINCE your last read and does not wait — the process keeps running.',
       'Pass all=true for the whole buffer from process start.',
       `Pass block=true to WAIT for the process to finish instead of polling: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running. Use it whenever you need a finite command's result — never call this in a polling loop.`,
-      'The process id comes from the Bash call that started it; use ListProcesses if you did not start it yourself. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
+      'The process id comes from the Bash call that started it; use ListProcesses if you no longer have it. Only processes of THIS conversation are readable, and the buffer keeps the last part of the output — an extremely chatty process loses its earliest lines.',
+      'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult — and, like every terminal tool, it is available to the verified operator only.',
     ].join(' '),
     parameters: Type.Object({
       id: Type.String({ description: 'Process id returned by Bash(background=true)' }),
@@ -420,8 +427,15 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'KillProcess', label: 'Kill process',
-    description: 'Kill a background process by id.',
-    parameters: Type.Object({ id: Type.String() }),
+    description: [
+      'Stop a background shell process of this conversation by id — a dev server, watcher or build you no longer need, or one that is stuck.',
+      'The process id comes from the Bash(background=true) call that started it, or from ListProcesses when you no longer have it; only processes started in THIS conversation can be killed, and an unknown id is reported back as an error rather than killing anything.',
+      'This is IRREVERSIBLE and abrupt: the whole process group is SIGKILLed, so the shell and everything it forked die immediately with no chance to shut down cleanly or flush — a killed build or migration can leave partial state behind. Read what it has produced with ProcessOutput first if the output still matters, because the entry is dropped afterwards and its buffer is gone.',
+      'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput block=true), and never to kill processes you did not start. Terminal tools are available to the verified operator only.',
+    ].join(' '),
+    parameters: Type.Object({
+      id: Type.String({ description: 'Process id from Bash(background=true) or ListProcesses. The process group is SIGKILLed immediately and its output buffer is discarded.' }),
+    }),
     execute: async (_id, p) => {
       const denied = denyNonOwner();
       if (denied) return denied;

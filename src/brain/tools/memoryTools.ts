@@ -53,9 +53,18 @@ function renderMemory(m: MemoryRow): string {
 function memorySearch(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemorySearch', label: 'Search memory',
-    description: 'Search your long-term memory about the user for durable facts relevant to a query '
-      + '(stable preferences, decisions, project/infra details). Semantic when embeddings are configured, '
-      + 'keyword otherwise. Only usable in the user\'s personal chat.',
+    description: 'Search your long-term memory about the user for durable facts relevant to a query — '
+      + 'stable preferences, past decisions, project, infra and environment details stored in earlier '
+      + 'conversations. Use it when the task depends on prior work, a standing preference or non-obvious '
+      + 'project context; to browse what was stored most recently use MemoryListRecent instead, and to '
+      + 'write a new fact use MemoryAdd. Ranking is semantic when an embedding model is configured and '
+      + 'degrades to keyword + recency otherwise; `limit` caps how many memories come back (default 6) and '
+      + 'the set is additionally trimmed to a character budget, so a vague query can legitimately return '
+      + 'nothing even though the fact is stored. Matches are returned as `#id [kind imp:N] body` lines and '
+      + 'are counted as recalled; those ids are what MemoryUpdate, MemoryMerge and MemoryDelete take. '
+      + 'Memory is per-user and private: this reads only the acting user\'s own memories, from their own '
+      + 'Elowen chat or their linked platform account, and it is refused outright for an unlinked sender '
+      + 'or a task worker.',
     parameters: Type.Object({
       query: Type.String({ description: 'What to look up' }),
       limit: Type.Optional(Type.Number({ description: 'Max memories to return (default 6)' })),
@@ -75,14 +84,22 @@ function memorySearch(d: MemoryToolDeps) {
 function memoryAdd(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryAdd', label: 'Add memory',
-    description: 'Store ONE durable, reusable fact about the user (a stable preference, a decision, a '
-      + 'project/infra detail). Do NOT store chit-chat, greetings or transient state. Before inserting, '
-      + 'this checks for a near-duplicate — if one exists it does NOT insert and returns the existing id '
-      + 'so you can MemoryUpdate or MemoryMerge instead of piling up paraphrases. Personal chat only.',
+    description: 'Store ONE durable, reusable fact about the user in long-term memory — a stable '
+      + 'preference, an architectural or process decision, a project, infra or environment detail worth '
+      + 'having in a future conversation. Use it the moment such a fact is discovered or confirmed; do NOT '
+      + 'store chit-chat, greetings, secrets, transient task state or anything already obvious from the '
+      + 'code. To correct or re-rank a fact that already exists use MemoryUpdate, and to fold several '
+      + 'overlapping ones together use MemoryMerge — this tool refuses to pile up paraphrases: before '
+      + 'inserting it looks for a near-duplicate and, if one exists, it does NOT insert and returns the '
+      + 'existing id instead. `body` must be self-contained (it is read without this conversation), `kind` '
+      + 'labels the fact and `importance` (1..5) biases later recall. The memory is filed into a category '
+      + 'in the background — inside a project conversation it falls back to that project\'s own category — '
+      + 'because an uncategorized memory is never recalled. Memory is per-user and private, so this is '
+      + 'refused for an unlinked platform sender or a task worker.',
     parameters: Type.Object({
-      body: Type.String({ description: 'The fact, self-contained' }),
-      kind: Type.Optional(Type.String({ description: "e.g. 'fact', 'preference', 'decision', 'feedback' (default 'fact')" })),
-      importance: Type.Optional(Type.Number({ description: '1..5 (default 3)' })),
+      body: Type.String({ description: 'The fact, self-contained — it will be read without this conversation for context. Empty text is rejected.' }),
+      kind: Type.Optional(Type.String({ description: "What sort of fact this is: e.g. 'fact', 'preference', 'decision', 'feedback' (default 'fact')" })),
+      importance: Type.Optional(Type.Number({ description: 'How strongly this should be recalled, 1..5 (default 3)' })),
     }),
     execute: async (_id, p: { body: string; kind?: string; importance?: number }) => {
       const userId = actingUserId();
@@ -171,13 +188,19 @@ async function categorizeNewMemoryForProject(
 function memoryUpdate(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryUpdate', label: 'Update memory',
-    description: 'Revise an existing memory by id — correct the fact, change its kind, or re-rank its '
-      + 'importance (1..5). Prefer this over adding a paraphrase. Personal chat only.',
+    description: 'Revise ONE existing long-term memory in place, addressed by its id — correct a fact that '
+      + 'has changed, relabel its kind, or re-rank how strongly it is recalled. Use this whenever current '
+      + 'evidence contradicts something stored, so a stale and a corrected version never coexist; use '
+      + 'MemoryAdd only for a genuinely new fact, MemoryMerge to collapse several redundant ones, and '
+      + 'MemoryDelete when the fact should stop being recalled entirely. The id comes from MemorySearch or '
+      + 'MemoryListRecent; only the fields you pass are changed, the rest are left alone. An unknown id is '
+      + 'reported back as "no memory found" rather than creating anything, and the tool is refused for an '
+      + 'unlinked platform sender or a task worker because memory is per-user and private.',
     parameters: Type.Object({
-      id: Type.Number({ description: 'The memory id to update' }),
-      body: Type.Optional(Type.String()),
-      kind: Type.Optional(Type.String()),
-      importance: Type.Optional(Type.Number({ description: '1..5' })),
+      id: Type.Number({ description: 'The memory id to update, as shown by MemorySearch or MemoryListRecent' }),
+      body: Type.Optional(Type.String({ description: 'Replacement text for the fact, self-contained. Omit to keep the current wording.' })),
+      kind: Type.Optional(Type.String({ description: "Replacement label, e.g. 'fact', 'preference', 'decision', 'feedback'. Omit to keep it." })),
+      importance: Type.Optional(Type.Number({ description: 'New recall weight, 1..5. Omit to keep the current one.' })),
     }),
     execute: async (_id, p: { id: number; body?: string; kind?: string; importance?: number }) => {
       const userId = actingUserId();
@@ -196,11 +219,16 @@ function memoryUpdate(d: MemoryToolDeps) {
 function memoryMerge(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryMerge', label: 'Merge memories',
-    description: 'Collapse several redundant memories into one consolidated fact. The source ids are '
-      + 'soft-deleted; the merged body becomes a new memory. Personal chat only.',
+    description: 'Collapse several redundant memories — paraphrases of one fact, or a fact and its later '
+      + 'correction — into a single consolidated memory. Use it after MemorySearch or MemoryListRecent '
+      + 'shows the same thing stored more than once; for a single memory that is merely wrong use '
+      + 'MemoryUpdate instead. Every id in `ids` is soft-deleted and `body` is stored as a NEW memory whose '
+      + 'id is returned, so the sources stop being recalled and there is no tool that brings them back — '
+      + 'write the consolidated text before calling. An empty `body` or an empty `ids` list is rejected, '
+      + 'and the whole tool is refused for an unlinked platform sender or a task worker.',
     parameters: Type.Object({
-      ids: Type.Array(Type.Number(), { description: 'The source memory ids to merge' }),
-      body: Type.String({ description: 'The consolidated fact' }),
+      ids: Type.Array(Type.Number(), { description: 'The source memory ids to merge — all of them are soft-deleted by this call' }),
+      body: Type.String({ description: 'The consolidated fact, self-contained — stored as a new memory replacing the sources' }),
     }),
     execute: async (_id, p: { ids: number[]; body: string }) => {
       const userId = actingUserId();
@@ -217,9 +245,15 @@ function memoryMerge(d: MemoryToolDeps) {
 function memoryDelete(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryDelete', label: 'Delete memory',
-    description: 'Soft-delete a memory by id (it is retained for audit, just no longer recalled). '
-      + 'Personal chat only.',
-    parameters: Type.Object({ id: Type.Number({ description: 'The memory id to delete' }) }),
+    description: 'Delete ONE long-term memory by id so it stops being recalled — use it when the user asks '
+      + 'you to forget something, or when a stored fact is obsolete and nothing should replace it. Prefer '
+      + 'MemoryUpdate when the fact merely changed and MemoryMerge when it is a duplicate; both keep the '
+      + 'knowledge, this one removes it. The delete is a soft delete (the row is retained for audit) but it '
+      + 'is irreversible from your side: no tool restores a deleted memory, so confirm the id with '
+      + 'MemorySearch or MemoryListRecent before calling, and delete one memory per call. An unknown id '
+      + 'reports "no memory found" and changes nothing; the tool is refused for an unlinked platform sender '
+      + 'or a task worker, since memory is per-user and private.',
+    parameters: Type.Object({ id: Type.Number({ description: 'The memory id to delete, from MemorySearch or MemoryListRecent — deletion cannot be undone' }) }),
     execute: async (_id, p: { id: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
@@ -232,8 +266,16 @@ function memoryDelete(d: MemoryToolDeps) {
 function memoryListRecent(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryListRecent', label: 'List recent memories',
-    description: 'List the most recently stored memories about the user. Personal chat only.',
-    parameters: Type.Object({ limit: Type.Optional(Type.Number({ description: 'Max to list (default 10)' })) }),
+    description: 'List the most recently stored memories about the user, newest first, without a query — '
+      + 'the right tool when the user asks what you remember or what was saved lately, and a quick way to '
+      + 'find an id before MemoryUpdate, MemoryMerge or MemoryDelete. When you are looking for facts about '
+      + 'a specific topic use MemorySearch instead; this one ranks nothing and simply returns the latest '
+      + 'entries. It is scoped to the categories recalled in this conversation, so memories that are '
+      + 'uncategorized — or belong to another project\'s category — do not appear here even though they '
+      + 'exist; an empty result is not proof that nothing is stored. Rows are rendered as `#id [kind '
+      + 'imp:N] body`, `limit` caps how many are returned (default 10), and the tool is refused for an '
+      + 'unlinked platform sender or a task worker because memory is per-user and private.',
+    parameters: Type.Object({ limit: Type.Optional(Type.Number({ description: 'Max memories to list, newest first (default 10)' })) }),
     execute: async (_id, p: { limit?: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
@@ -247,8 +289,13 @@ function memoryListRecent(d: MemoryToolDeps) {
 function memoryCategories(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryCategories', label: 'List memory categories',
-    description: 'List your memory categories — each id, name and the guide the auto-classifier matches '
-      + 'memories against. Use this before creating (avoid duplicates) or deleting one. Personal chat only.',
+    description: 'List the user\'s memory categories — the folders long-term memories are sorted into — '
+      + 'with each category\'s id, name and the description the auto-classifier matches memories against. '
+      + 'Use it before MemoryCategoryCreate so you do not add a near-duplicate category, and to get the id '
+      + 'MemoryCategoryDelete needs; to list the memories themselves use MemoryListRecent or MemorySearch. '
+      + 'It takes no arguments and returns `#id name — description` lines, or a note that no category '
+      + 'exists yet. Categories are per-user and private, so the tool is refused for an unlinked platform '
+      + 'sender or a task worker.',
     parameters: Type.Object({}),
     execute: async () => {
       const userId = actingUserId();
@@ -263,10 +310,15 @@ function memoryCategories(d: MemoryToolDeps) {
 function memoryCategoryCreate(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryCategoryCreate', label: 'Create memory category',
-    description: 'Create a new memory category. `description` is the guide the auto-classifier matches '
-      + 'memories against, so make it specific about what belongs here. `icon` is optional (a lucide name '
-      + `from: ${ICON_ALLOWLIST.join(', ')}; anything else falls back to a folder). Fails if the name `
-      + 'already exists — call MemoryCategories first. Personal chat only.',
+    description: 'Create a new memory category — a folder the auto-classifier files long-term memories '
+      + 'into. Use it when the user wants their memories organized by a topic that does not exist yet; '
+      + 'call MemoryCategories first to see what is already there, because a name that is already taken is '
+      + 'rejected rather than reused. `description` is the guide the classifier matches memories against, '
+      + 'so state specifically what belongs here — a vague guide means memories land elsewhere. `icon` is '
+      + `optional (a lucide name from: ${ICON_ALLOWLIST.join(', ')}; anything else falls back to a folder), `
+      + 'and an empty name is rejected. Creating a category sorts nothing by itself: run MemoryRecategorize '
+      + 'afterwards to move existing memories into it. Per-user and private, so the tool is refused for an '
+      + 'unlinked platform sender or a task worker.',
     parameters: Type.Object({
       name: Type.String({ description: 'Short category name (unique)' }),
       description: Type.Optional(Type.String({ description: 'What belongs here — the classifier guide' })),
@@ -292,9 +344,15 @@ function memoryCategoryCreate(d: MemoryToolDeps) {
 function memoryCategoryDelete(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryCategoryDelete', label: 'Delete memory category',
-    description: 'Delete a memory category by id. Its memories are NOT deleted — they just become '
-      + 'uncategorized. Personal chat only.',
-    parameters: Type.Object({ id: Type.Number({ description: 'Category id (from MemoryCategories)' }) }),
+    description: 'Delete ONE memory category by id — the folder only, never the memories in it. Use it '
+      + 'when a category is redundant or was created by mistake; to remove an actual fact use MemoryDelete '
+      + 'instead, and to move memories somewhere else create the better category first and run '
+      + 'MemoryRecategorize. The memories that lived here become UNCATEGORIZED, which means they stop '
+      + 'being recalled until something files them again — so deleting a category quietly takes its '
+      + 'memories out of circulation, and there is no tool that undoes it. Get the id from '
+      + 'MemoryCategories; an unknown id reports "no category" and changes nothing. Refused for an '
+      + 'unlinked platform sender or a task worker, since memory is per-user and private.',
+    parameters: Type.Object({ id: Type.Number({ description: 'Category id from MemoryCategories — the category is removed permanently, its memories become uncategorized' }) }),
     execute: async (_id, p: { id: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
@@ -307,11 +365,17 @@ function memoryCategoryDelete(d: MemoryToolDeps) {
 function memoryRecategorize(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemoryRecategorize', label: 'Recategorize memories',
-    description: 'Re-run the auto-classifier over your memories to sort them into the current categories. '
-      + 'By default only UNcategorized memories are touched; set `all: true` to re-sort every memory '
-      + '(e.g. after adding or renaming categories). Personal chat only.',
+    description: 'Re-run the auto-classifier over the user\'s stored memories and file them into the '
+      + 'categories that exist now. Use it after creating or reworking a category with '
+      + 'MemoryCategoryCreate, or when memories are not being recalled because they were never '
+      + 'categorized; it changes only which category each memory belongs to, never the facts themselves. '
+      + 'By default only UNcategorized memories are touched — set `all: true` to re-sort every memory, '
+      + 'which can move memories out of the category they are in today. It refuses when no categorization '
+      + 'model is configured (Settings → memory model) or when no category exists yet, and it reports how '
+      + 'many memories were scanned and how many were sorted. Personal and per-user, so it is refused for '
+      + 'an unlinked platform sender or a task worker.',
     parameters: Type.Object({
-      all: Type.Optional(Type.Boolean({ description: 'Re-sort every memory, not just uncategorized ones' })),
+      all: Type.Optional(Type.Boolean({ description: 'Re-sort EVERY memory, not just the uncategorized ones — existing category assignments may change (default false)' })),
     }),
     execute: async (_id, p: { all?: boolean }) => {
       const userId = actingUserId();

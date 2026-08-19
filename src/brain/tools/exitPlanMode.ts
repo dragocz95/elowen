@@ -25,7 +25,14 @@ export function buildExitPlanModeTool() {
   return defineTool({
     name: EXIT_PLAN_MODE_TOOL,
     label: 'Submit plan',
-    description: 'Prompts the user to exit plan mode and start coding. Call this only after you have written your plan to the plan file named in the plan mode instructions — the plan is read from that file, not passed here.',
+    description: 'Submit the plan you wrote in plan mode and ask the user to approve leaving plan mode and '
+      + 'starting implementation. Call it exactly once, at the END of a planning turn, and only after you '
+      + 'have written the plan to the plan file named in the plan mode instructions — the plan is READ from '
+      + 'that file and is not a parameter, so this tool takes no arguments. It refuses outside plan mode '
+      + '(if your plan was already approved, just continue implementing) and refuses when the plan file is '
+      + 'empty or missing, answering with the exact path to write first. Calling it ENDS your turn and is '
+      + 'not approval: stop, do not start implementing and do not ask again in prose — the user\'s decision '
+      + 'arrives afterwards, and the plan stays on disk so you can re-read it while you work.',
     parameters: Type.Object({}),
     execute: async () => {
       // Mode first. Outside plan mode there is nothing to exit, and reading a stale plan file would let a

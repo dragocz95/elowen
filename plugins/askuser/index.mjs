@@ -105,6 +105,11 @@ export function register(ctx) {
       + 'to SEE the choice rather than read about it — comparing UI layouts, API shapes or config. The picker '
       + 'then shows the focused option\'s preview beside the list. Single-select only; do not use previews for '
       + 'plain preference questions where the labels already say it.\n'
+      + 'The question is rendered wherever the user actually is — the CLI picker, the web form, Discord '
+      + 'buttons or a numbered WhatsApp reply — and the turn stays parked until they answer, so do not use '
+      + 'it in unattended work (a scheduled job or a task worker has nobody to click). You get back one '
+      + '"question" = "answer" line per question, with multiple picks and any free-text answer joined by '
+      + 'commas; a question with fewer than 2 options or an empty text is rejected.\n'
       + 'Minimal example: {"questions":[{"question":"Which colour?","options":["Blue","Green","Red"]}]}',
     parameters: Type.Object({
       questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: '1–4 questions asked together.' }),

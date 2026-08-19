@@ -346,8 +346,14 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DelegateModels', label: 'List sub-agent models',
-    description: 'List the models a sub-agent can run on (values for the delegate tool\'s "model" argument). '
-      + 'Only consult this when the user explicitly asked to run a sub-agent on a different model.',
+    description: 'List the models a sub-agent can be run on — the exact "provider/model" values accepted by '
+      + 'the `model` argument of Delegate, DelegateContinue and a workflow node. Consult it ONLY when the '
+      + 'user explicitly asked to run a sub-agent on a different model, or when a delegation was refused '
+      + 'because the model you named is not configured; by default a sub-agent inherits your own model and '
+      + 'you should not pass `model` at all. It takes no arguments and returns one line per configured '
+      + 'model with its provider label, or a note that none are configured. This is a read-only lookup of '
+      + 'what this Elowen instance has wired up — it does not switch YOUR model, change any setting, or say '
+      + 'anything about pricing or availability at the provider.',
     parameters: Type.Object({}),
     execute: async () => {
       const list = await ctx.listModels().catch(() => []);
@@ -663,10 +669,18 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DelegateStatus', label: 'Check sub-agent status',
-    description: 'Return the current state and latest progress for one background delegation. This is a '
-      + 'one-off snapshot for when the user asks how a job is doing — it is NOT how you collect a result. '
-      + 'An auto-delivered result arrives on its own in a new turn; never call this in a loop to wait for one.',
-    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by delegate(background=true)' }) }),
+    description: 'Report the live state and latest progress of ONE background delegation started with '
+      + 'Delegate(background=true) — whether it is still running, how many tools it has used, roughly how '
+      + 'many tokens it has spent and what it is doing right now. This is a one-off snapshot for when the '
+      + 'user asks how a job is going; it is NOT how you collect a result. A background result is '
+      + 'delivered to you automatically in a NEW turn, so never call this in a polling loop to wait for '
+      + 'one — read the finished text with DelegateResult, and use DelegateList when you want the '
+      + 'conversation\'s sub-agents rather than one job. Live progress is in-memory: after a daemon '
+      + 'restart the job is no longer tracked and the answer says so while pointing at DelegateResult and '
+      + 'DelegateContinue, which still work; an id that never existed or has expired comes back as an '
+      + 'error. It only ever reports this conversation\'s own delegations, and it neither waits, nor '
+      + 'stops, nor changes anything.',
+    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by Delegate(background=true) ("dlg-…"), or the child session id DelegateList shows' }) }),
     execute: async (_id, p) => {
       const job = getJob(p.id);
       if (job) return ok(describeJob(job), jobDetails(job));
@@ -689,9 +703,17 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'DelegateResult', label: 'Read sub-agent result',
-    description: 'Return a completed background delegation result. If it is still running, this reports '
-      + 'that state immediately instead of waiting; continue other work before checking again.',
-    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by delegate(background=true)' }) }),
+    description: 'Return the final text of a background delegation started with Delegate(background=true), '
+      + 'or its error when the sub-agent failed. On most surfaces you do not need it at all: a background '
+      + 'result is delivered to you automatically in a NEW turn, so reach for this only when the delivery '
+      + 'was reported as unavailable, when you deliberately skipped past a result earlier, or after a '
+      + 'daemon restart — the final text is durable and is read back from the store even once the live job '
+      + 'is gone. It NEVER waits: a job that is still running is reported as running straight away, so do '
+      + 'not busy-wait or loop on it; use DelegateStatus for a progress snapshot and DelegateRead when the '
+      + 'result is long enough to need paging through with offset/limit. The id is scoped to this '
+      + 'conversation — another conversation\'s sub-agent is not readable — and an expired or unknown id '
+      + 'comes back as an error.',
+    parameters: Type.Object({ id: Type.String({ description: 'Job id returned by Delegate(background=true) ("dlg-…"), or the child session id DelegateList shows' }) }),
     execute: async (_id, p) => {
       const job = getJob(p.id);
       if (job) {

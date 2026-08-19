@@ -880,12 +880,19 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
 
   ctx.registerTool(defineTool({
     name: 'WorkflowAddNodes', label: 'Extend a workflow',
-    description: 'Add nodes to a workflow that is already running (dynamic expansion). New node ids must be '
-      + 'unique, may depend on existing or new nodes, and must not create a cycle. Available to the node '
-      + 'sub-agents themselves so a workflow can grow as work reveals more work. Returns which nodes were added.',
+    description: 'Add nodes to a workflow that is ALREADY RUNNING — dynamic expansion, so a DAG can grow as '
+      + 'the work reveals more work. Use it from inside a node sub-agent when what you just found needs '
+      + 'follow-up steps the original plan did not have; to start a new DAG use WorkflowStart, and to '
+      + 're-run the unfinished nodes of one that already stopped use WorkflowResume. Each new node needs a '
+      + 'unique id and a complete self-contained task, may depend on existing or new nodes through `deps`, '
+      + 'and must not create a cycle — a duplicate id, an unknown dependency or a cycle is rejected and '
+      + 'nothing is added. A node added by a child inherits that child\'s narrower access and can never '
+      + 'widen it, and a workflow that has already finished or been evicted from memory cannot be '
+      + 'extended. Returns which node ids were added; the new nodes start as soon as their dependencies '
+      + 'allow it, and they are part of the workflow\'s own result, not a separate one you collect.',
     parameters: Type.Object({
-      workflowId: Type.String({ description: 'The id of the running workflow (from WorkflowStart / your node briefing).' }),
-      nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add.' }),
+      workflowId: Type.String({ description: 'The id of the RUNNING workflow to extend — from WorkflowStart, WorkflowStatus, or the briefing of the node you are running as.' }),
+      nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add: each with a new unique id, a self-contained task, and optional deps on existing or newly added node ids (no cycles).' }),
     }),
     // `_id` is THIS call's tool id, and this tool usually runs inside a NODE's own turn. It is
     // deliberately unused: the snapshot must address the origin's WorkflowStart row, which `snapshot()`
@@ -911,11 +918,17 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
 
   ctx.registerTool(defineTool({
     name: 'WorkflowStatus', label: 'Check a workflow',
-    description: 'Return a snapshot of a workflow: each node\'s status, dependencies and progress. A one-off '
-      + 'view for when the user asks how it is going. A foreground WorkflowStart already blocks and returns '
-      + 'the full result; a background one delivers its result to you on its own in a new turn — so either '
-      + 'way you do not need this to collect results, and polling it in a loop is never the answer.',
-    parameters: Type.Object({ workflowId: Type.String({ description: 'The workflow id from WorkflowStart.' }) }),
+    description: 'Return a live snapshot of one workflow DAG: its overall status plus, for every node, its '
+      + 'id, current status (pending, running, done, error, skipped), the nodes it depends on and how much '
+      + 'it has spent so far in tokens and seconds. It is a one-off view for when the user asks how a '
+      + 'workflow is going, or when you need a node id before WorkflowAddNodes or WorkflowResume. A '
+      + 'foreground WorkflowStart already blocks and returns the full result, and a background one '
+      + 'delivers its summary to you in a NEW turn — so you never need this to collect results, and '
+      + 'polling it in a loop is never the answer. It returns node STATUS only, not any node\'s output '
+      + 'text, and it changes nothing: to end a run early use WorkflowStop. Workflows live in memory on '
+      + 'this daemon, so one that expired, was evicted, ran before a restart, or belongs to another '
+      + 'conversation is reported as unknown.',
+    parameters: Type.Object({ workflowId: Type.String({ description: 'The workflow id returned by WorkflowStart (e.g. "wf-…").' }) }),
     execute: async (_id, p) => {
       const wf = authWorkflow(p.workflowId);
       if (!wf) return ok(`Error: no workflow ${p.workflowId}, or it has expired.`);

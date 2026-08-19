@@ -243,10 +243,18 @@ export class BrainWorkerService {
     // REST route, so ReviewService/mission advancement fire exactly as for a CLI worker's `elowen close`.
     const closeTool = defineTool({
       name: 'ElowenCloseTask', label: 'Close task',
-      description: 'Close YOUR task when the work is finished. Call exactly once, at the end.',
+      description: 'Close YOUR OWN task — the one this worker was launched for — and report how it went. '
+        + 'Call it exactly once, as the last thing you do, once the work is finished and verified; ending '
+        + 'your turn without it leaves the task in_progress, gets you nudged once and then handed back to '
+        + 'the scheduler for a relaunch. The task id is baked into this tool, so there is no way to close, '
+        + 'reopen or touch any other task from here, and no other control-plane call is available to you. '
+        + '`summary` is the handoff the reviewer and the user read afterwards, and `outcome` must be '
+        + 'honest: report \'fail\' when you could not complete the work instead of closing blocked or '
+        + 'partial work as done. Closing starts the review pipeline and cannot be undone from this '
+        + 'session; if the API call fails the error text comes back and the task stays open.',
       parameters: Type.Object({
-        summary: Type.String({ description: 'What you did and the result' }),
-        outcome: Type.Union([Type.Literal('ok'), Type.Literal('fail')], { description: "'ok' when done, 'fail' when you could not complete it" }),
+        summary: Type.String({ description: 'What you did, how you verified it, the result, and anything left unfinished — read by the reviewer and the user' }),
+        outcome: Type.Union([Type.Literal('ok'), Type.Literal('fail')], { description: "'ok' when the task is genuinely done and verified, 'fail' when you could not complete it — never 'ok' for blocked or partial work" }),
       }),
       execute: async (_id: string, p: { summary: string; outcome: 'ok' | 'fail' }) => {
         const r = await callElowenApi('PATCH', `/tasks/${input.taskId}`, { status: 'closed', result_summary: p.summary, outcome: p.outcome }, { url: this.d.url, token: this.d.token, fetchImpl: this.d.fetchImpl });
