@@ -38,7 +38,10 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
   let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
   const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {}, control: () => {} };
   const orch = new PlatformOrchestrator({
-    plugins: async () => ({ platforms: [adapter] }) as never,
+    plugins: async () => ({
+      platforms: [adapter],
+      platformPromptsFor: (platform: string) => platform === 'discord' ? ['You are replying through Discord.'] : [],
+    }) as never,
     platformOwner: () => 1,
     policyForProjects: () => rolePolicy,
     policyForUser: () => userPolicy,
@@ -53,6 +56,11 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
 }
 
 describe('PlatformOrchestrator — unified per-turn access', () => {
+  it('appends the platform prompt even when a personal chat has no channel name', async () => {
+    const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3] } });
+    expect(sent.promptAppend).toEqual(['You are replying through Discord.']);
+  });
+
   it('a LINKED sender runs fully through their Elowen account: their policy + their tool deny-list', async () => {
     const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
     expect(sent.policy).toBe(userPolicy); // Elowen account policy, NOT the role's

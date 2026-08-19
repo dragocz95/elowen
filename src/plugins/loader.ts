@@ -51,6 +51,46 @@ function loadPluginI18n(pluginDir: string): Record<string, PluginI18n> | undefin
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+const PLATFORM_PROMPT_MAX_FILES = 16;
+const PLATFORM_PROMPT_MAX_FILE_CHARS = 8_000;
+const PLATFORM_PROMPT_MAX_TOTAL_CHARS = 32_000;
+
+/** Convention-owned platform instructions. A plugin may place ordered Markdown files in `prompt/`; the
+ *  loader applies them only to the platforms that same plugin declares and actually registers. */
+function loadPlatformPrompts(pluginDir: string, manifest: PluginManifest, logger: PluginLogger): { platform: string; file: string; text: string }[] {
+  const dir = join(pluginDir, 'prompt');
+  if (!existsSync(dir)) return [];
+  const platforms = manifest.provides?.platforms ?? [];
+  if (!platforms.length) {
+    logger.warn(`[plugin:${manifest.name}] prompt/*.md ignored — manifest provides no platforms`);
+    return [];
+  }
+  const files = readdirSync(dir)
+    .filter((file) => file.endsWith('.md'))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, PLATFORM_PROMPT_MAX_FILES);
+  let remaining = PLATFORM_PROMPT_MAX_TOTAL_CHARS;
+  const fragments: { file: string; text: string }[] = [];
+  for (const file of files) {
+    const path = join(dir, file);
+    if (!statSync(path).isFile()) continue;
+    let text = readFileSync(path, 'utf-8').trim();
+    if (!text) continue;
+    if (text.length > PLATFORM_PROMPT_MAX_FILE_CHARS) {
+      logger.warn(`[plugin:${manifest.name}] prompt/${file} truncated to ${PLATFORM_PROMPT_MAX_FILE_CHARS} characters`);
+      text = text.slice(0, PLATFORM_PROMPT_MAX_FILE_CHARS);
+    }
+    if (text.length > remaining) {
+      if (remaining <= 0) break;
+      logger.warn(`[plugin:${manifest.name}] platform prompts truncated to ${PLATFORM_PROMPT_MAX_TOTAL_CHARS} characters total`);
+      text = text.slice(0, remaining);
+    }
+    remaining -= text.length;
+    fragments.push({ file, text });
+  }
+  return platforms.flatMap((platform) => fragments.map((fragment) => ({ platform, ...fragment })));
+}
+
 /** Scan `dirs` for plugin folders and parse their manifests WITHOUT importing any code — safe to call
  *  from a request handler. The first occurrence of a name wins (bundled dir is scanned first), matching
  *  the loader's dedupe rule. A folder with a broken manifest is skipped silently (the loader logs it at
@@ -220,6 +260,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           (name) => registry.control(name),
           opts.deleteEvents);
         await mod.register(ctx);
+        const registeredPlatforms = new Set(staging.platforms.map((platform) => platform.name));
+        for (const fragment of loadPlatformPrompts(pluginDir, manifest, opts.logger)) {
+          if (!registeredPlatforms.has(fragment.platform)) {
+            opts.logger.warn(`[plugin:${name}] prompt/${fragment.file} ignored for '${fragment.platform}' — plugin did not register that platform`);
+            continue;
+          }
+          staging.addPlatformPrompt(name, fragment.platform, fragment.file, fragment.text);
+        }
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
@@ -241,6 +289,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         if (manifest.userGrantable === true) {
           const ungated = [
             staging.promptFragments.length > 0 ? 'prompt fragments' : '',
+            staging.platformPromptFragments.size > 0 ? 'platform prompts' : '',
             staging.commands.size > 0 ? 'slash commands' : '',
             staging.hooks.length > 0 ? 'hooks' : '',
           ].filter((x) => x !== '');

@@ -104,6 +104,9 @@ export class PluginRegistry {
   readonly toolOwner = new Map<string, string>();
   readonly skills: PluginSkill[] = [];
   readonly promptFragments: string[] = [];
+  /** Static Markdown fragments loaded from a platform plugin's `prompt/*.md` directory. Unlike global
+   *  prompt fragments, these apply only to sessions arriving through the named platform. */
+  readonly platformPromptFragments = new Map<string, { plugin: string; file: string; text: string }[]>();
   readonly hooks: PluginHook[] = [];
   readonly turnContexts: TurnContextContribution[] = [];
   readonly platforms: PlatformAdapter[] = [];
@@ -211,6 +214,10 @@ export class PluginRegistry {
     }
     this.skills.push(...other.skills);
     this.promptFragments.push(...other.promptFragments);
+    for (const [platform, fragments] of other.platformPromptFragments) {
+      const current = this.platformPromptFragments.get(platform) ?? [];
+      this.platformPromptFragments.set(platform, [...current, ...fragments]);
+    }
     this.hooks.push(...other.hooks);
     this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
@@ -409,6 +416,19 @@ export class PluginRegistry {
    *  loader alongside the other manifest facts, so the gate reads the generation that actually loaded. */
   setUserGrantable(name: string, on: boolean | undefined): void {
     if (on) this.userGrantable.add(name);
+  }
+
+  /** Add one loader-owned platform prompt fragment. Plugin code cannot call this directly: the file must
+   *  live under its own directory and the platform must be declared in `provides.platforms`. */
+  addPlatformPrompt(plugin: string, platform: string, file: string, text: string): void {
+    const current = this.platformPromptFragments.get(platform) ?? [];
+    current.push({ plugin, file, text });
+    this.platformPromptFragments.set(platform, current);
+  }
+
+  /** Stable prompt chunks for one platform session, in plugin-name/file-name load order. */
+  platformPromptsFor(platform: string): string[] {
+    return (this.platformPromptFragments.get(platform) ?? []).map((fragment) => fragment.text);
   }
 
   /** Record a plugin's manifest tool icons (from its parsed manifest `icons`). Called by the loader

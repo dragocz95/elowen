@@ -57,11 +57,26 @@ describe('loadPlugins', () => {
     makePlugin(root, 'alpha', `export function register(ctx){ ctx.registerTool({name:'alpha_tool'}); }`);
     makePlugin(root, 'mike', `export function register(ctx){ ctx.registerTool({name:'mike_tool'}); }`);
     makePlugin(root, 'zeta', `export function register(ctx){ ctx.registerTool({name:'zeta_tool'}); }`);
+    const surface = makePlugin(root, 'surface', `export function register(ctx){ ctx.registerPlatform({name:'msteams',listen(){},connect(){}}); }`, '1', { provides: { platforms: ['msteams'] } });
+    mkdirSync(join(surface, 'prompt'));
+    writeFileSync(join(surface, 'prompt', '20-tools.md'), 'Use TeamsSendFile for generated files.');
+    writeFileSync(join(surface, 'prompt', '10-surface.md'), 'You are replying through Microsoft Teams.');
+    writeFileSync(join(surface, 'prompt', 'ignored.txt'), 'not a prompt');
     // The first owner wins the tool collision. Only a merged tool may receive its owner's defer default.
     makePlugin(root, 'collisionalpha', `export function register(ctx){ ctx.registerTool({name:'CollisionTool'}); }`);
     makePlugin(root, 'collisionzeta', `export function register(ctx){ ctx.registerTool({name:'CollisionTool'}); }`, '1', { deferLoading: ['CollisionTool'] });
   });
   afterAll(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('loads ordered prompt/*.md fragments only for the platform the plugin registered', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['surface'], logger: log });
+    expect(reg.platformPromptsFor('msteams')).toEqual([
+      'You are replying through Microsoft Teams.',
+      'Use TeamsSendFile for generated files.',
+    ]);
+    expect(reg.platformPromptsFor('discord')).toEqual([]);
+    expect(reg.platformPromptFragments.get('msteams')?.map((fragment) => fragment.file)).toEqual(['10-surface.md', '20-tools.md']);
+  });
 
   it('wires a plugin manifest showOutput into the registry tool-output policy set', async () => {
     const reg = await loadPlugins({ dirs: [root], enabled: ['quiet'], logger: log });

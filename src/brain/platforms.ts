@@ -115,7 +115,12 @@ export class PlatformOrchestrator {
             ? this.d.agents?.().get(src.access.agentType)
             : undefined;
           const rolePrompt = agentDef ? renderAgentPrompt(agentDef.body) : src.access.prompt;
+          const platformPrompts = src.platform === 'subagent' ? [] : (plugins?.platformPromptsFor?.(src.platform) ?? []);
           const promptAppend = [
+            // Platform-owned surface instructions apply even in a personal chat with no channel metadata.
+            // They lead the append so role/context blocks can specialize the task without erasing where the
+            // reply is being delivered or which native communication tools own that surface.
+            ...platformPrompts,
             // Trimmed like every other section: a blank role is no role, and an append that survives only
             // as whitespace is what the scope normalizer rejects the whole delegation over.
             ...(rolePrompt?.trim() ? [rolePrompt] : []),
