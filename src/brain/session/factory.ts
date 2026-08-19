@@ -33,6 +33,7 @@ import { installAnthropicHostedToolSearch } from './anthropicHostedToolSearch.js
 import { createAnthropicHostedToolReplay, type AnthropicHostedToolReplay } from './anthropicHostedToolReplay.js';
 import type { HostedToolSearchProvider } from './hostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
+import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 
 let missingBoundaryCompactionWarned = false;
 
@@ -101,6 +102,8 @@ export interface SessionSpec {
    *  consulted for a ChatGPT-account session; every other provider is unaffected either way. A caller
    *  that omits it (task workers) keeps the text-summary path. */
   remoteCompactionEnabled?: () => boolean;
+  /** Runtime kill switch for exact provider request capture. Read for every new attempt. */
+  providerRequestCaptureEnabled?: () => boolean;
   /** Context-window fill percentage (30–95) at which PI auto-compacts. Translated to PI's absolute
    *  `reserveTokens` = round(contextWindow · (1 − pct/100)) — `shouldCompact` fires when the context
    *  exceeds `contextWindow − reserveTokens`, i.e. once the window is `pct`% full. */
@@ -463,6 +466,17 @@ export class BrainSessionFactory {
     // as text by a build that no longer swaps them.
     const remoteCompactionUsable = (): boolean =>
       spec.model.provider === 'openai-codex' && spec.remoteCompactionEnabled?.() === true;
+    const requestRecorder = new ProviderRequestRecorder({
+      store: this.d.store.providerRequests,
+      sessionId: spec.sessionId,
+      configuredProvider: spec.providerId ?? '',
+      enabled: spec.providerRequestCaptureEnabled ?? (() => true),
+    });
+    // A few factory unit tests inject a createSession stub and deliberately omit a runtime; production
+    // SessionSpec always carries one. Preserve that test seam rather than proxying an undefined sentinel.
+    const captureRuntime = spec.runtime && typeof spec.runtime === 'object'
+      ? requestRecorder.wrapRuntime(spec.runtime)
+      : spec.runtime;
     const remoteCompaction: RemoteCompactionV2 | undefined = spec.model.provider === 'openai-codex'
       ? createRemoteCompactionV2({
         enabled: remoteCompactionUsable,
@@ -471,6 +485,12 @@ export class BrainSessionFactory {
         // The same resolve-and-refresh path a normal turn takes, so a token that expired mid-conversation
         // is renewed here rather than turning into a silent compaction failure.
         token: async () => bearerFromAuth((await spec.runtime.getAuth(spec.model))?.auth),
+        capture: {
+          start: (model, payload) => requestRecorder.startRemoteCompaction(model, payload),
+          response: (requestId, status) => requestRecorder.markRemoteCompactionResponse(requestId, status),
+          finish: (requestId, result) => requestRecorder.finishRemoteCompaction(requestId, result),
+        },
+        onStaleBlobRetry: () => requestRecorder.armVerifiedRetry(),
       })
       : undefined;
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
@@ -503,7 +523,7 @@ export class BrainSessionFactory {
     const { session } = await create({
       cwd: spec.cwd,
       sessionManager,
-      modelRuntime: spec.runtime,
+      modelRuntime: captureRuntime,
       model: spec.model,
       resourceLoader,
       settingsManager,
@@ -528,6 +548,7 @@ export class BrainSessionFactory {
     // Outermost: a stale-blob retry re-issues through both the compaction route and replay wrapper, so the
     // retry remains the exact same routed request rather than bypassing either provider-specific seam.
     remoteCompaction?.install(session);
+    session.subscribe(requestRecorder.observe);
     // PI's steering queue defaults to "one-at-a-time", so N messages sent during a running turn cost N
     // model rounds and the agent answers each without seeing the ones behind it. "all" hands the whole
     // queue to the loop, which injects every message into the context before a SINGLE model call. The

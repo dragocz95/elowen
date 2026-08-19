@@ -234,6 +234,26 @@ function applyAdditiveMigrations(db: Db): void {
   // Mid-turn (provisional) message rows — see brain_messages in schema.sql. Every existing row was written
   // by a settled agent_end, so the 0 default correctly reads the whole back catalogue as durable history.
   addColumn(db, 'brain_messages', 'pending', 'INTEGER NOT NULL DEFAULT 0');
+  // Provider request rows are opened before the network call and terminally accounted exactly once. Any
+  // pending row surviving process startup belongs to a request whose in-memory correlator died; mark it
+  // interrupted before sessions can respawn, and never fold it into the summary a second time.
+  db.exec(
+    `INSERT INTO brain_request_session_summary
+       (session_id, capture_started_at, request_count, error_count, first_request_at, last_request_at)
+     SELECT session_id, MIN(started_at), COUNT(*), COUNT(*), MIN(started_at), unixepoch('now') * 1000
+       FROM brain_provider_requests WHERE status = 'pending' GROUP BY session_id
+     ON CONFLICT(session_id) DO UPDATE SET
+       request_count = request_count + excluded.request_count,
+       error_count = error_count + excluded.error_count,
+       first_request_at = MIN(first_request_at, excluded.first_request_at),
+       last_request_at = MAX(last_request_at, excluded.last_request_at);
+     UPDATE brain_provider_requests
+        SET status = 'interrupted', finished_at = COALESCE(finished_at, unixepoch('now') * 1000),
+            duration_ms = COALESCE(duration_ms, MAX(0, unixepoch('now') * 1000 - started_at)),
+            error_code = COALESCE(error_code, 'daemon_restart'),
+            error_message = COALESCE(error_message, 'Provider request interrupted by daemon restart')
+      WHERE status = 'pending'`
+  );
   // A linked Discord snowflake is an identity key — enforce one-owner-per-id with a partial UNIQUE index
   // so a squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs.
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId'");

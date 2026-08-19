@@ -190,6 +190,24 @@ describe('remote compaction v2 — session_before_compact', () => {
     expect(decodeCompactionMarker(result?.compaction?.summary ?? '')).toEqual({ model: 'gpt-5.5', blob: BLOB });
   });
 
+  it('reports the exact body and terminal response without exposing request headers', async () => {
+    const capture = {
+      start: vi.fn(() => 'request-1'),
+      response: vi.fn(),
+      finish: vi.fn(),
+    };
+    const { api, handlers } = fakePi();
+    createRemoteCompactionV2(deps({ capture })).extension(api);
+
+    await handler(handlers, 'session_before_compact')({ preparation: preparation(), signal: undefined });
+
+    expect(capture.start).toHaveBeenCalledWith(MODEL, expect.objectContaining({ model: 'gpt-5.5', input: expect.any(Array) }));
+    expect(capture.response).toHaveBeenCalledWith('request-1', 200);
+    expect(capture.finish).toHaveBeenCalledWith('request-1', { response: { encryptedContent: BLOB } });
+    expect(JSON.stringify(capture.start.mock.calls[0]?.[1])).not.toContain('Bearer');
+    expect(JSON.stringify(capture.start.mock.calls[0]?.[1])).not.toContain('acct-1');
+  });
+
   it('sends the split-turn prefix inside the blob too, since PI drops it from the live context', async () => {
     const fetchImpl = vi.fn(async () => okResponse(sse([compactionItem(BLOB), completed])));
     const { api, handlers } = fakePi();
@@ -330,8 +348,8 @@ describe('remote compaction v2 — stale blob recovery', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], timestamp: 2 },
     ] as never),
   });
-  function install(streamFunction: unknown) {
-    const remote = createRemoteCompactionV2(deps());
+  function install(streamFunction: unknown, over: Record<string, unknown> = {}) {
+    const remote = createRemoteCompactionV2(deps(over));
     const session = { agent: { streamFunction } } as unknown as AgentSession;
     remote.install(session);
     return { remote, session: session as unknown as { agent: { streamFunction: Function } } };
@@ -339,12 +357,17 @@ describe('remote compaction v2 — stale blob recovery', () => {
 
   it('retries the request once and forwards only the second attempt\'s events', async () => {
     const calls: number[] = [];
+    const onStaleBlobRetry = vi.fn();
     let attempt = 0;
-    const { session } = install(() => { attempt += 1; calls.push(attempt); return attempt === 1 ? refusingStream() : okStream('recovered'); });
+    const { session } = install(
+      () => { attempt += 1; calls.push(attempt); return attempt === 1 ? refusingStream() : okStream('recovered'); },
+      { onStaleBlobRetry },
+    );
     const out = session.agent.streamFunction(MODEL, markerContext(), undefined);
     const events: string[] = [];
     for await (const event of out as AsyncIterable<{ type: string }>) events.push(event.type);
     expect(calls).toEqual([1, 2]);
+    expect(onStaleBlobRetry).toHaveBeenCalledOnce();
     // The refused attempt is invisible to the caller: no error event leaked out ahead of the retry.
     expect(events).toEqual(['start', 'done']);
   });

@@ -17,6 +17,7 @@ import {
 import { BrainUsageStore, numeric, rollupDroppedUsage } from './brainUsageStore.js';
 import { BrainDelegationStore } from './brainDelegationStore.js';
 import type { BrainCard, BrainGoalState } from '../brain/events.js';
+import { ProviderRequestStore } from './providerRequestStore.js';
 
 // The delegated-execution slice (sub-agent runs/results + workflow-run DAGs) lives in its own store;
 // BrainStore is the facade that delegates to it. Re-export the parts of its surface external callers
@@ -113,6 +114,9 @@ export class BrainStore {
   /** Delegated-execution views (sub-agent runs/results, workflow-run DAGs) live in their own store;
    *  BrainStore is the facade that delegates to it so callers are unchanged. Shares only the Db handle. */
   private readonly delegation: BrainDelegationStore;
+  /** Exact provider request attempts and their content-addressed payload segments. Public so the session
+   * recorder and later debugger API share one store contract instead of reaching for the raw Db. */
+  readonly providerRequests: ProviderRequestStore;
   constructor(
     private db: Db,
     /** Whether the task domain has a loaded owner — passed straight through to the usage views, which
@@ -122,6 +126,7 @@ export class BrainStore {
   ) {
     this.usage = new BrainUsageStore(db, Date.now, taskDomainOwned);
     this.delegation = new BrainDelegationStore(db);
+    this.providerRequests = new ProviderRequestStore(db);
   }
 
   /** Create a top-level or delegated session. A supplied parent must already exist and belong to the
@@ -321,7 +326,11 @@ export class BrainStore {
 
   /** Irreversibly clear this user's recorded chat spend — see {@link BrainUsageStore.clearUsage}. */
   clearUsage(userId: number): number {
-    return this.usage.clearUsage(userId);
+    return this.db.transaction(() => {
+      const changed = this.usage.clearUsage(userId);
+      this.providerRequests.clearUsageForUser(userId);
+      return changed;
+    })();
   }
 
   /** Cumulative token total per session (summed from each stored assistant message's usage) for the
@@ -872,6 +881,7 @@ export class BrainStore {
       // stops resolving that node's drill-in), so deleting a node session must not take the DAG with it.
       this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_tool_result_spills WHERE session_id = ?').run(id);
+      this.providerRequests.clearSession(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
@@ -920,6 +930,7 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_tool_result_spills WHERE session_id = ?').run(id);
+      this.providerRequests.clearSession(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       // The clear itself is the conversation's remaining evidence of ever having been used — see
       // brain_sessions.cleared_at. Written in the same transaction as the wipe that erases the messages
@@ -972,6 +983,7 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_subagent_results SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_subagent_results SET child_session_id = ? WHERE child_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_messages SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+      this.providerRequests.reassignSession(oldId, newId);
       // The latch rows follow the conversation — left behind they would resurrect another
       // conversation's placeholders in the next session minted onto the freed id. `path` moves
       // VERBATIM: the spill dir is keyed by the immutable spill_ns (which travels inside the session
@@ -1095,6 +1107,9 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_request_session_summary WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_provider_requests WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_request_segments WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
     })();

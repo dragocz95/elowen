@@ -389,6 +389,8 @@ export interface RuntimeConfig {
    *  trades the readable summary the clients render today for a marker nobody can read. `false` is the
    *  pre-feature path exactly, so it is also the operator's rollback with no redeploy. */
   remoteCompactionEnabled: boolean;
+  /** Persist exact post-transform model request bodies for admin diagnostics. */
+  providerRequestCaptureEnabled: boolean;
 }
 
 /** Statusline data for one live conversation: current context fill + session totals. The breakdown

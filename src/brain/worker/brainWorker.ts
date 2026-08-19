@@ -294,6 +294,7 @@ export class BrainWorkerService {
       // factory persists each compaction into the store, so a rehydrated/resumed task keeps the savings)
       // at the owner's own threshold. An ownerless task has nobody to read a setting from → the default.
       autoCompact: true, autoCompactAtPct,
+      providerRequestCaptureEnabled: () => this.d.runtimeConfig?.().providerRequestCaptureEnabled !== false,
       title: `${input.taskId}${input.taskTitle ? `: ${input.taskTitle}` : ''}`,
       onSpawned: toolHookBus ? (e) => toolHookBus.emit('brain.session.afterSpawn', e) : undefined,
     });

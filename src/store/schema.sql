@@ -176,6 +176,74 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   pending INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
+
+-- Exact provider request capture for the conversation debugger. Requests are attempts, not turns: a retry,
+-- a compaction summary call, and every tool-loop model step each get their own monotonically ordered row.
+-- Payload content is split into session-scoped content-addressed segments below, so repeated prompt prefixes
+-- and dynamic tool schemas are stored once without creating a second brain_messages archive.
+CREATE TABLE IF NOT EXISTS brain_provider_requests (
+  request_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  turn_id TEXT NOT NULL,
+  retry_of TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('chat', 'compaction', 'remote_compaction')),
+  configured_provider TEXT NOT NULL DEFAULT '',
+  wire_provider TEXT NOT NULL DEFAULT '',
+  api TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  started_at INTEGER NOT NULL,
+  response_at INTEGER,
+  finished_at INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'error', 'interrupted')),
+  http_status INTEGER,
+  error_code TEXT,
+  error_message TEXT,
+  canonicalization_version INTEGER NOT NULL,
+  manifest TEXT NOT NULL,
+  response_segment TEXT,
+  assistant_message_id TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  reasoning_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
+  total_tokens INTEGER,
+  cost_usd REAL,
+  duration_ms INTEGER,
+  UNIQUE (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_brain_provider_requests_session_seq ON brain_provider_requests(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_brain_provider_requests_session_status ON brain_provider_requests(session_id, status, seq);
+
+CREATE TABLE IF NOT EXISTS brain_request_segments (
+  session_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  canonicalization_version INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  byte_length INTEGER NOT NULL,
+  estimated_tokens INTEGER NOT NULL,
+  PRIMARY KEY (session_id, kind, digest, canonicalization_version)
+);
+
+CREATE TABLE IF NOT EXISTS brain_request_session_summary (
+  session_id TEXT PRIMARY KEY,
+  capture_started_at INTEGER NOT NULL,
+  request_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  first_request_at INTEGER,
+  last_request_at INTEGER,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  costed_request_count INTEGER NOT NULL DEFAULT 0
+);
+
 -- The persisted egress latch of tool-result clearing (brain/session/toolResultClearing.ts). A row means
 -- "this session already replaced one tool-result OCCURRENCE with a spill placeholder on the wire", and
 -- holds that placeholder VERBATIM (`placeholder`) so a respawn re-sends the exact bytes the provider

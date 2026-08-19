@@ -190,10 +190,17 @@ export function accountIdFromToken(token: string): string | null {
   }
 }
 
+export interface RemoteCompactionCapture {
+  start: (model: Model<Api>, payload: unknown) => string | undefined;
+  response: (requestId: string, status: number) => void;
+  finish: (requestId: string, result: { response?: unknown; errorCode?: string; errorMessage?: string }) => void;
+}
+
 export interface RemoteCompactionRequest extends CompactionRequestInput {
   token: string;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  capture?: RemoteCompactionCapture;
 }
 
 /**
@@ -211,6 +218,9 @@ export async function requestRemoteCompaction(req: RemoteCompactionRequest): Pro
     return null;
   }
   const doFetch = req.fetchImpl ?? fetch;
+  const body = buildCompactionRequestBody(req);
+  const captureId = req.capture?.start(req.model, body);
+  let captureTerminal = false;
   try {
     const res = await doFetch(resolveCodexUrl(req.model.baseUrl), {
       method: 'POST',
@@ -225,16 +235,36 @@ export async function requestRemoteCompaction(req: RemoteCompactionRequest): Pro
         // may start gating. Sending it costs one header and keeps the feature working if it ever does.
         'x-codex-beta-features': 'remote_compaction_v2',
       },
-      body: JSON.stringify(buildCompactionRequestBody(req)),
+      body: JSON.stringify(body),
       ...(req.signal ? { signal: req.signal } : {}),
     });
+    if (captureId) req.capture?.response(captureId, res.status);
     if (!res.ok) {
+      if (captureId) {
+        captureTerminal = true;
+        req.capture?.finish(captureId, {
+          errorCode: `http_${res.status}`,
+          errorMessage: `Remote compaction returned HTTP ${res.status}`,
+        });
+      }
       log.warn(`remote compaction request failed with HTTP ${res.status}`);
       return null;
     }
-    return parseCompactionStream(await res.text());
+    const blob = parseCompactionStream(await res.text());
+    if (captureId) {
+      captureTerminal = true;
+      req.capture?.finish(captureId, blob
+        ? { response: { encryptedContent: blob } }
+        : { errorCode: 'invalid_response', errorMessage: 'Remote compaction returned no encrypted content' });
+    }
+    return blob;
   } catch (err) {
-    log.warn(`remote compaction request errored: ${err instanceof Error ? err.message : String(err)}`);
+    const message = err instanceof Error ? err.message : String(err);
+    if (captureId && !captureTerminal) {
+      captureTerminal = true;
+      req.capture?.finish(captureId, { errorCode: 'request_error', errorMessage: message });
+    }
+    log.warn(`remote compaction request errored: ${message}`);
     return null;
   }
 }
@@ -331,6 +361,9 @@ export interface RemoteCompactionV2Deps {
   /** The ChatGPT OAuth bearer, resolved (and refreshed) through the runtime the same way a turn does. */
   token: () => Promise<string | undefined>;
   fetchImpl?: typeof fetch;
+  capture?: RemoteCompactionCapture;
+  /** Verified stale-blob retry signal for request-attempt correlation. */
+  onStaleBlobRetry?: () => void;
 }
 
 export interface RemoteCompactionV2 {
@@ -376,6 +409,7 @@ export function createRemoteCompactionV2(deps: RemoteCompactionV2Deps): RemoteCo
             token,
             signal: event.signal,
             ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+            ...(deps.capture ? { capture: deps.capture } : {}),
           })
           : null;
         if (!blob) {
@@ -416,7 +450,7 @@ export function createRemoteCompactionV2(deps: RemoteCompactionV2Deps): RemoteCo
         // Transparent unless this request actually carries a live blob: every other request gets the
         // native stream object itself, not a proxy of it.
         if (!marker || isRejected(marker.blob)) return nativeStream(model, context, options);
-        return streamWithStaleBlobRecovery(nativeStream, model, context, options, marker.blob, rejected);
+        return streamWithStaleBlobRecovery(nativeStream, model, context, options, marker.blob, rejected, deps.onStaleBlobRetry);
       };
     },
   };
@@ -444,6 +478,7 @@ function streamWithStaleBlobRecovery(
   options: Parameters<AgentSession['agent']['streamFunction']>[2],
   blob: string,
   rejected: RejectedBlobs,
+  onRetry?: () => void,
 ): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
   void (async () => {
@@ -455,6 +490,7 @@ function streamWithStaleBlobRecovery(
         if (attempt === 0 && forwarded === 0 && event.type === 'error' && isStaleBlobError(event.error.errorMessage)) {
           log.warn('provider refused the stored compaction blob; retrying this request without it');
           rejected.reject(blob);
+          onRetry?.();
           retrying = true;
           break;
         }

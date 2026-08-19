@@ -38,6 +38,7 @@ describe('ConfigStore runtime limits', () => {
       // cannot produce a blob falls back to the very text summary it replaces — so the switch is the kill
       // switch for an undocumented beta, not an opt-in an operator has to find.
       remoteCompactionEnabled: true,
+      providerRequestCaptureEnabled: true,
       memoryRetention: DEFAULT_MEMORY_RETENTION,
     });
   });
@@ -169,6 +170,17 @@ describe('ConfigStore runtime limits', () => {
     expect(cs.get().runtime.remoteCompactionEnabled).toBe(false);
     cs.update({ runtime: { remoteCompactionEnabled: true } });
     expect(cs.get().runtime.remoteCompactionEnabled).toBe(true);
+  });
+
+  it('round-trips the provider-request capture kill switch without deleting its state on sibling patches', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(true);
+    cs.update({ runtime: { providerRequestCaptureEnabled: false } });
+    expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(false);
+    cs.update({ runtime: { limits: { toolDeferThreshold: 12 }, remoteCompactionEnabled: false } });
+    expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(false);
+    cs.update({ runtime: { providerRequestCaptureEnabled: true } });
+    expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(true);
   });
 
   it('round-trips the pool size knob, including the two values that are not "a number"', () => {
