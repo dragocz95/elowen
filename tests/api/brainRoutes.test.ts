@@ -257,6 +257,31 @@ function fakeBrain() {
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
     bindContextCalls,
     __failBindContext: (message: string | null) => { bindContextError = message ? new Error(message) : null; },
+    debugSessions: (opts: { cursor?: string; limit?: number; search?: string } = {}) => ({
+      items: [{ id: opts.cursor ? 'debug-2' : 'debug-1', title: opts.search ?? '', userId: 1 }],
+      nextCursor: opts.limit === 1 && !opts.cursor ? 'next' : null,
+    }),
+    debugSession: (id: string) => id === 'missing' ? undefined : { id, title: 'Debug session' },
+    debugRequests: (sessionId: string, opts: { cursor?: string; limit?: number } = {}) => sessionId === 'missing' ? undefined : ({
+      items: [{ requestId: opts.cursor ? 'r2' : 'r1', sessionId, seq: opts.cursor ? 2 : 1 }],
+      nextCursor: opts.limit === 1 && !opts.cursor ? 'next-request' : null,
+    }),
+    debugRequest: (sessionId: string, requestId: string) => requestId === 'missing' ? undefined : ({ sessionId, requestId, segments: [] }),
+    debugRequestSegments: (sessionId: string, requestId: string, opts: { maxBytes?: number } = {}) => {
+      if (requestId === 'missing') return undefined;
+      if (opts.maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
+      return { items: [{ sessionId, requestId }], nextCursor: null, loadedBytes: 12 };
+    },
+    debugRawRequest: (sessionId: string, requestId: string, maxBytes?: number) => {
+      if (requestId === 'missing') return undefined;
+      if (maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
+      return { payload: { sessionId, requestId }, byteLength: 12 };
+    },
+    debugLegacyTranscript: (sessionId: string, opts: { maxBytes?: number } = {}) => {
+      if (sessionId === 'missing') return undefined;
+      if (opts.maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
+      return { items: [{ role: 'user', content: 'legacy' }], nextCursor: null, loadedBytes: 6, exact: false };
+    },
     // Two conversations, so a limit=1 window has a real second page (hasMore).
     listSessions: (id: number, opts?: { limit?: number; offset?: number }) => {
       const all = [
@@ -337,13 +362,56 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, brainAuth: opts.brainAuth, plugins: opts.plugins,
   });
-  return { app, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain, config };
+  return {
+    app,
+    adminTok: users.issueToken(admin.id),
+    adminAgentTok: users.issueToken(admin.id, 'agent'),
+    amyTok: users.issueToken(amy.id),
+    agentTok: users.issueToken(amy.id, 'agent'),
+    brain,
+    config,
+  };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
+  it('protects the request-debug namespace and marks every response private no-store', async () => {
+    const { app, adminTok, adminAgentTok, amyTok } = setup();
+    for (const token of [amyTok, adminAgentTok]) {
+      const denied = await app.request('/brain/debug/sessions', auth(token));
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get('cache-control')).toBe('private, no-store');
+    }
+    const allowed = await app.request('/brain/debug/sessions?limit=1&search=needle', auth(adminTok));
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('cache-control')).toBe('private, no-store');
+    expect(await allowed.json()).toEqual({ items: [{ id: 'debug-1', title: 'needle', userId: 1 }], nextCursor: 'next' });
+  });
+
+  it('serves debug cursors, 404s, lazy payloads, and explicit byte-limit failures', async () => {
+    const { app, adminTok } = setup();
+    const next = await app.request('/brain/debug/sessions?limit=1&cursor=next', auth(adminTok));
+    expect(await next.json()).toEqual({ items: [{ id: 'debug-2', title: '', userId: 1 }], nextCursor: null });
+    expect((await app.request('/brain/debug/sessions?from=not-a-date', auth(adminTok))).status).toBe(400);
+
+    const missing = await app.request('/brain/debug/sessions/missing/requests', auth(adminTok));
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get('cache-control')).toBe('private, no-store');
+
+    const detail = await app.request('/brain/debug/sessions/debug-1/requests/r1', auth(adminTok));
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ sessionId: 'debug-1', requestId: 'r1' });
+
+    const limited = await app.request('/brain/debug/sessions/debug-1/requests/r1/raw?maxBytes=1', auth(adminTok));
+    expect(limited.status).toBe(413);
+    expect(await limited.json()).toEqual({ error: 'payload exceeds byte limit', requiredBytes: 42 });
+
+    const legacy = await app.request('/brain/debug/sessions/debug-1/legacy-transcript', auth(adminTok));
+    expect(await legacy.json()).toMatchObject({ exact: false, items: [{ role: 'user', content: 'legacy' }] });
+  });
+
   it('admin verifies and persists Azure hosted search while non-admin is forbidden', async () => {
     const { app, adminTok, amyTok, config } = setup();
     config.update({ brain: { providers: [{

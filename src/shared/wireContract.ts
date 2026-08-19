@@ -282,6 +282,120 @@ export interface BrainLimits {
   askHistoryTurns: number;
 }
 
+export type BrainDebugSurface = 'conversation' | 'channel' | 'task' | 'subagent';
+export type BrainDebugRequestKind = 'chat' | 'compaction' | 'remote_compaction';
+export type BrainDebugRequestStatus = 'pending' | 'succeeded' | 'error' | 'interrupted';
+
+export interface BrainDebugPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+export interface BrainDebugSessionItem {
+  id: string;
+  userId: number;
+  username: string;
+  userName: string;
+  title: string;
+  surface: BrainDebugSurface;
+  provider: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+  captureStartedAt: number | null;
+  requestCount: number;
+  errorCount: number;
+  firstRequestAt: number | null;
+  lastRequestAt: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  costedRequestCount: number;
+  latestRequestStatus: BrainDebugRequestStatus | null;
+}
+
+export interface BrainDebugRequestItem {
+  requestId: string;
+  sessionId: string;
+  seq: number;
+  turnId: string;
+  retryOf: string | null;
+  kind: BrainDebugRequestKind;
+  configuredProvider: string;
+  wireProvider: string;
+  api: string;
+  model: string;
+  startedAt: number;
+  responseAt: number | null;
+  finishedAt: number | null;
+  status: BrainDebugRequestStatus;
+  httpStatus: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
+  durationMs: number | null;
+}
+
+export interface BrainDebugSegmentManifestItem {
+  index: number;
+  section: 'system' | 'input' | 'tool' | 'options' | 'response';
+  key: string | null;
+  kind: string;
+  digest: string;
+  canonicalizationVersion: number;
+  byteLength: number;
+  estimatedTokens: number;
+}
+
+export interface BrainDebugRequestDetail extends BrainDebugRequestItem {
+  canonicalizationVersion: number;
+  assistantMessageId: string | null;
+  segments: BrainDebugSegmentManifestItem[];
+  /** Sum of stored request-segment bytes; exact reconstructed JSON size is returned only by the lazy raw endpoint. */
+  segmentBytes: number;
+}
+
+export interface BrainDebugSegmentPayload extends BrainDebugSegmentManifestItem {
+  payload: unknown;
+}
+
+export interface BrainDebugPayloadPage {
+  items: BrainDebugSegmentPayload[];
+  nextCursor: string | null;
+  loadedBytes: number;
+}
+
+export interface BrainDebugRawPayload {
+  payload: unknown;
+  byteLength: number;
+}
+
+export interface BrainDebugLegacyTranscriptItem {
+  cursor: number;
+  id: string;
+  role: string;
+  content: unknown;
+  createdAt: string;
+  byteLength: number;
+}
+
+export interface BrainDebugLegacyTranscriptPage {
+  items: BrainDebugLegacyTranscriptItem[];
+  nextCursor: string | null;
+  loadedBytes: number;
+  exact: false;
+}
+
 export type ToolLoadingMode = 'immediate' | 'deferred';
 
 export interface ToolDeferralOverrides {

@@ -12,6 +12,7 @@ afterEach(() => {
 
 function fixture() {
   const db = openDb(':memory:');
+  db.prepare("INSERT INTO users (id, username, password_hash, name) VALUES (7, 'seven', 'x', 'Seven'), (8, 'eight', 'x', 'Eight')").run();
   const brain = new BrainStore(db);
   brain.createSession({ id: 's1', userId: 7, model: 'm', provider: 'configured' });
   brain.createSession({ id: 's2', userId: 8, model: 'm', provider: 'configured' });
@@ -116,6 +117,75 @@ describe('ProviderRequestStore', () => {
     expect(secondDb.prepare("SELECT request_count, error_count FROM brain_request_session_summary WHERE session_id = 's1'").get())
       .toEqual({ request_count: 1, error_count: 1 });
     secondDb.close();
+  });
+
+  it('lists managed sessions and requests with stable cursors and indexed filters', () => {
+    const { db, brain, requests } = fixture();
+    db.prepare("UPDATE brain_sessions SET updated_at = '2026-08-19 20:00:00' WHERE id = 's1'").run();
+    db.prepare("UPDATE brain_sessions SET updated_at = '2026-08-18 20:00:00' WHERE id = 's2'").run();
+    const first = start(brain);
+    finish(brain, first.requestId);
+    const second = requests.start({
+      sessionId: 's1', turnId: 'turn:2', kind: 'compaction', configuredProvider: 'configured',
+      wireProvider: 'anthropic', api: 'anthropic-messages', model: 'wire-model', payload: body(), startedAt: 2_000,
+    });
+    requests.finish({ requestId: second.requestId, status: 'error', errorMessage: 'overflow', finishedAt: 2_010 });
+
+    const sessions = requests.debugSessions({ limit: 1 });
+    expect(sessions.items[0]).toMatchObject({ id: 's1', username: 'seven', requestCount: 2, errorCount: 1, latestRequestStatus: 'error' });
+    expect(sessions.nextCursor).toBeTruthy();
+    expect(requests.debugSessions({ cursor: sessions.nextCursor!, limit: 1 }).items[0]?.id).toBe('s2');
+    expect(requests.debugSessions({ status: 'legacy' }).items.map((item) => item.id)).toEqual(['s2']);
+    expect(requests.debugSessions({ search: 'seven', provider: 'configured', model: 'wire-model', status: 'error' }).items).toHaveLength(1);
+    start(brain, 's2');
+    expect(requests.debugSessions({ status: 'captured' }).items.map((item) => item.id)).toContain('s2');
+    expect(requests.debugSessions({ status: 'legacy' }).items).toEqual([]);
+    expect(requests.debugSession('s2')?.captureStartedAt).not.toBeNull();
+
+    const requestPage = requests.debugRequests('s1', { limit: 1 });
+    expect(requestPage?.items[0]).toMatchObject({ requestId: first.requestId, seq: 1, status: 'succeeded' });
+    expect(requests.debugRequests('s1', { cursor: requestPage!.nextCursor!, limit: 1 })?.items[0])
+      .toMatchObject({ requestId: second.requestId, seq: 2, kind: 'compaction' });
+    expect(requests.debugRequests('missing')).toBeUndefined();
+  });
+
+  it('loads manifests and payloads lazily, enforces byte limits, and reconstructs the exact body', () => {
+    const { db, brain, requests } = fixture();
+    const attempt = start(brain);
+    finish(brain, attempt.requestId);
+
+    const detail = requests.debugRequest('s1', attempt.requestId)!;
+    expect(detail.segments.map((segment) => segment.section)).toEqual(['system', 'input', 'tool', 'options', 'response']);
+    expect(detail.segmentBytes).toBeGreaterThan(0);
+    let metadataReads = 0;
+    const originalPrepare = db.prepare.bind(db);
+    (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+      if (/SELECT kind, digest, canonicalization_version, byte_length, estimated_tokens/.test(sql)) metadataReads += 1;
+      return originalPrepare(sql);
+    }) as typeof db.prepare;
+    const firstPage = requests.debugSegmentPayloads('s1', attempt.requestId, { limit: 2, maxBytes: 1_000_000 })!;
+    expect(firstPage.items).toHaveLength(2);
+    expect(metadataReads).toBe(1);
+    expect(firstPage.nextCursor).toBeTruthy();
+    expect(requests.debugSegmentPayloads('s1', attempt.requestId, { cursor: firstPage.nextCursor!, maxBytes: 1_000_000 })!.items.length).toBeGreaterThan(0);
+    expect(() => requests.debugSegmentPayloads('s1', attempt.requestId, { maxBytes: 1 })).toThrow(/byte limit/);
+    const raw = requests.debugRawPayload('s1', attempt.requestId, 1_000_000)!;
+    expect(raw.payload).toEqual(body());
+    expect(raw.byteLength).toBeGreaterThan(0);
+    expect(() => requests.debugRawPayload('s1', attempt.requestId, 1)).toThrow(/byte limit/);
+    expect(requests.debugRequest('s2', attempt.requestId)).toBeUndefined();
+  });
+
+  it('pages the best-effort legacy transcript by session and byte budget', () => {
+    const { brain } = fixture();
+    brain.appendMessage({ id: 'm1', sessionId: 's2', parentId: null, role: 'user', content: { text: 'first' } });
+    brain.appendMessage({ id: 'm2', sessionId: 's2', parentId: null, role: 'assistant', content: { text: 'second' } });
+    const first = brain.debugLegacyTranscript('s2', { limit: 1, maxBytes: 1_000 })!;
+    expect(first).toMatchObject({ exact: false, items: [{ id: 'm1', role: 'user', content: { text: 'first' } }] });
+    expect(first.nextCursor).toBeTruthy();
+    expect(brain.debugLegacyTranscript('s2', { cursor: first.nextCursor!, limit: 1, maxBytes: 1_000 })?.items[0]?.id).toBe('m2');
+    expect(() => brain.debugLegacyTranscript('s2', { maxBytes: 1 })).toThrow(/byte limit/);
+    expect(brain.debugLegacyTranscript('missing')).toBeUndefined();
   });
 
   it('follows delete, clear, rekey, fork, user deletion, retention delete, and usage reset lifecycle', () => {

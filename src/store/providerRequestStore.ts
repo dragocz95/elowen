@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
+import { CHANNEL_PREFIX, SUBAGENT_PLATFORM, TASK_PREFIX } from '../brain/sessionId.js';
+import type {
+  BrainDebugPage, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugRequestDetail,
+  BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem,
+  BrainDebugSessionItem, BrainDebugSurface,
+} from '../shared/wireContract.js';
 
 export const PROVIDER_REQUEST_CANONICALIZATION_VERSION = 1;
 
@@ -59,6 +65,60 @@ interface RequestRow {
   seq: number;
   status: ProviderRequestStatus;
   started_at: number;
+}
+
+export interface ProviderRequestDebugSessionFilters {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  from?: string;
+  to?: string;
+  userId?: number;
+  surface?: BrainDebugSurface;
+  provider?: string;
+  model?: string;
+  status?: BrainDebugRequestStatus | 'captured' | 'legacy';
+}
+
+export interface ProviderRequestDebugRequestFilters {
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  kind?: ProviderRequestKind;
+  provider?: string;
+  model?: string;
+  status?: BrainDebugRequestStatus;
+}
+
+interface SegmentRefEntry {
+  section: BrainDebugSegmentManifestItem['section'];
+  key: string | null;
+  ref: ProviderRequestSegmentRef;
+}
+
+interface SegmentEntry extends BrainDebugSegmentManifestItem {
+  ref: ProviderRequestSegmentRef;
+}
+
+function encodeCursor(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function decodeCursor<T>(cursor: string | undefined): T | undefined {
+  if (!cursor) return undefined;
+  try { return JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as T; }
+  catch { throw new Error('invalid debug cursor'); }
+}
+
+function boundedLimit(limit: number | undefined, fallback: number, max: number): number {
+  return Number.isFinite(limit) ? Math.max(1, Math.min(max, Math.floor(limit!))) : fallback;
+}
+
+function sessionSurface(id: string): BrainDebugSurface {
+  if (id.startsWith(`${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-`)) return 'subagent';
+  if (id.startsWith(CHANNEL_PREFIX)) return 'channel';
+  if (id.startsWith(TASK_PREFIX)) return 'task';
+  return 'conversation';
 }
 
 function jsonValue(value: unknown, seen = new Set<object>()): unknown {
@@ -289,6 +349,251 @@ export class ProviderRequestStore {
     if (manifest.input) payload[manifest.input.key] = manifest.input.segments.map((ref) => this.segmentPayload(row.session_id, ref));
     if (manifest.tools) payload[manifest.tools.key] = manifest.tools.segments.map((ref) => this.segmentPayload(row.session_id, ref));
     return payload;
+  }
+
+  private sessionItem(row: Record<string, unknown>): BrainDebugSessionItem {
+    return {
+      id: String(row.id), userId: Number(row.user_id), username: String(row.username), userName: String(row.name ?? ''),
+      title: String(row.title), surface: sessionSurface(String(row.id)), provider: String(row.latest_provider ?? ''),
+      model: String(row.latest_model ?? ''), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+      captureStartedAt: row.capture_started_at === null || row.capture_started_at === undefined ? null : Number(row.capture_started_at),
+      requestCount: Number(row.request_count ?? 0), errorCount: Number(row.error_count ?? 0),
+      firstRequestAt: row.first_request_at === null || row.first_request_at === undefined ? null : Number(row.first_request_at),
+      lastRequestAt: row.last_request_at === null || row.last_request_at === undefined ? null : Number(row.last_request_at),
+      inputTokens: Number(row.input_tokens ?? 0), outputTokens: Number(row.output_tokens ?? 0),
+      reasoningTokens: Number(row.reasoning_tokens ?? 0), cacheReadTokens: Number(row.cache_read_tokens ?? 0),
+      cacheWriteTokens: Number(row.cache_write_tokens ?? 0), totalTokens: Number(row.total_tokens ?? 0),
+      costUsd: Number(row.cost_usd ?? 0), costedRequestCount: Number(row.costed_request_count ?? 0),
+      latestRequestStatus: (row.latest_status as BrainDebugRequestStatus | null | undefined) ?? null,
+    };
+  }
+
+  debugSessions(filters: ProviderRequestDebugSessionFilters = {}): BrainDebugPage<BrainDebugSessionItem> {
+    const limit = boundedLimit(filters.limit, 50, 100);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const cursor = decodeCursor<{ updatedAt: string; id: string }>(filters.cursor);
+    if (cursor) {
+      if (typeof cursor.updatedAt !== 'string' || typeof cursor.id !== 'string') throw new Error('invalid debug cursor');
+      where.push('(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))');
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+    }
+    const search = filters.search?.trim().toLowerCase();
+    if (search) {
+      where.push(`(lower(s.id) LIKE ? OR lower(s.title) LIKE ? OR lower(u.username) LIKE ? OR lower(u.name) LIKE ?)`);
+      const pattern = `%${search}%`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
+    if (filters.from) { where.push('s.updated_at >= ?'); params.push(filters.from); }
+    if (filters.to) { where.push('s.updated_at <= ?'); params.push(filters.to); }
+    if (filters.userId !== undefined) { where.push('s.user_id = ?'); params.push(filters.userId); }
+    if (filters.surface) {
+      const subagent = `${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-%`;
+      if (filters.surface === 'subagent') { where.push('s.id LIKE ?'); params.push(subagent); }
+      else if (filters.surface === 'channel') { where.push('s.id LIKE ? AND s.id NOT LIKE ?'); params.push(`${CHANNEL_PREFIX}%`, subagent); }
+      else if (filters.surface === 'task') { where.push('s.id LIKE ?'); params.push(`${TASK_PREFIX}%`); }
+      else { where.push('s.id NOT LIKE ? AND s.id NOT LIKE ?'); params.push(`${CHANNEL_PREFIX}%`, `${TASK_PREFIX}%`); }
+    }
+    if (filters.provider) {
+      where.push(`COALESCE((SELECT r.configured_provider FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.provider) = ?`);
+      params.push(filters.provider);
+    }
+    if (filters.model) {
+      where.push(`COALESCE((SELECT r.model FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.model) = ?`);
+      params.push(filters.model);
+    }
+    if (filters.status === 'captured') where.push('EXISTS (SELECT 1 FROM brain_provider_requests r WHERE r.session_id = s.id)');
+    else if (filters.status === 'legacy') where.push('NOT EXISTS (SELECT 1 FROM brain_provider_requests r WHERE r.session_id = s.id)');
+    else if (filters.status) {
+      where.push('EXISTS (SELECT 1 FROM brain_provider_requests r WHERE r.session_id = s.id AND r.status = ?)');
+      params.push(filters.status);
+    }
+    const rows = this.db.prepare(
+      `SELECT s.id, s.user_id, s.title, s.provider, s.model, s.created_at, s.updated_at,
+              u.username, u.name,
+              COALESCE(summary.capture_started_at, (SELECT MIN(r.started_at) FROM brain_provider_requests r WHERE r.session_id = s.id)) capture_started_at,
+              summary.request_count, summary.error_count,
+              summary.first_request_at, summary.last_request_at, summary.input_tokens,
+              summary.output_tokens, summary.reasoning_tokens, summary.cache_read_tokens,
+              summary.cache_write_tokens, summary.total_tokens, summary.cost_usd,
+              summary.costed_request_count,
+              (SELECT r.status FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1) latest_status,
+              COALESCE((SELECT r.configured_provider FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.provider) latest_provider,
+              COALESCE((SELECT r.model FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.model) latest_model
+         FROM brain_sessions s
+         JOIN users u ON u.id = s.user_id
+         LEFT JOIN brain_request_session_summary summary ON summary.session_id = s.id
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY s.updated_at DESC, s.id DESC LIMIT ?`
+    ).all(...params, limit + 1) as Record<string, unknown>[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const items = page.map((row) => this.sessionItem(row));
+    const last = items.at(-1);
+    return { items, nextCursor: hasMore && last ? encodeCursor({ updatedAt: last.updatedAt, id: last.id }) : null };
+  }
+
+  debugSession(sessionId: string): BrainDebugSessionItem | undefined {
+    const row = this.db.prepare(
+      `SELECT s.id, s.user_id, s.title, s.provider, s.model, s.created_at, s.updated_at,
+              u.username, u.name,
+              COALESCE(summary.capture_started_at, (SELECT MIN(r.started_at) FROM brain_provider_requests r WHERE r.session_id = s.id)) capture_started_at,
+              summary.request_count, summary.error_count,
+              summary.first_request_at, summary.last_request_at, summary.input_tokens,
+              summary.output_tokens, summary.reasoning_tokens, summary.cache_read_tokens,
+              summary.cache_write_tokens, summary.total_tokens, summary.cost_usd,
+              summary.costed_request_count,
+              (SELECT r.status FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1) latest_status,
+              COALESCE((SELECT r.configured_provider FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.provider) latest_provider,
+              COALESCE((SELECT r.model FROM brain_provider_requests r WHERE r.session_id = s.id ORDER BY r.seq DESC LIMIT 1), s.model) latest_model
+         FROM brain_sessions s
+         JOIN users u ON u.id = s.user_id
+         LEFT JOIN brain_request_session_summary summary ON summary.session_id = s.id
+        WHERE s.id = ?`
+    ).get(sessionId) as Record<string, unknown> | undefined;
+    return row ? this.sessionItem(row) : undefined;
+  }
+
+  private requestItem(row: Record<string, unknown>): BrainDebugRequestItem {
+    return {
+      requestId: String(row.request_id), sessionId: String(row.session_id), seq: Number(row.seq), turnId: String(row.turn_id),
+      retryOf: row.retry_of === null ? null : String(row.retry_of), kind: row.kind as ProviderRequestKind,
+      configuredProvider: String(row.configured_provider), wireProvider: String(row.wire_provider), api: String(row.api), model: String(row.model),
+      startedAt: Number(row.started_at), responseAt: row.response_at === null ? null : Number(row.response_at),
+      finishedAt: row.finished_at === null ? null : Number(row.finished_at), status: row.status as BrainDebugRequestStatus,
+      httpStatus: row.http_status === null ? null : Number(row.http_status), errorCode: row.error_code === null ? null : String(row.error_code),
+      errorMessage: row.error_message === null ? null : String(row.error_message), inputTokens: row.input_tokens === null ? null : Number(row.input_tokens),
+      outputTokens: row.output_tokens === null ? null : Number(row.output_tokens), reasoningTokens: row.reasoning_tokens === null ? null : Number(row.reasoning_tokens),
+      cacheReadTokens: row.cache_read_tokens === null ? null : Number(row.cache_read_tokens), cacheWriteTokens: row.cache_write_tokens === null ? null : Number(row.cache_write_tokens),
+      totalTokens: row.total_tokens === null ? null : Number(row.total_tokens), costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+      durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
+    };
+  }
+
+  debugRequests(sessionId: string, filters: ProviderRequestDebugRequestFilters = {}): BrainDebugPage<BrainDebugRequestItem> | undefined {
+    if (!this.db.prepare('SELECT 1 FROM brain_sessions WHERE id = ?').get(sessionId)) return undefined;
+    const limit = boundedLimit(filters.limit, 50, 100);
+    const where = ['session_id = ?'];
+    const params: unknown[] = [sessionId];
+    const cursor = decodeCursor<{ seq: number }>(filters.cursor);
+    if (cursor) {
+      if (!Number.isInteger(cursor.seq) || cursor.seq < 0) throw new Error('invalid debug cursor');
+      where.push('seq > ?'); params.push(cursor.seq);
+    }
+    if (filters.status) { where.push('status = ?'); params.push(filters.status); }
+    if (filters.kind) { where.push('kind = ?'); params.push(filters.kind); }
+    if (filters.provider) { where.push('(configured_provider = ? OR wire_provider = ?)'); params.push(filters.provider, filters.provider); }
+    if (filters.model) { where.push('model = ?'); params.push(filters.model); }
+    const search = filters.search?.trim().toLowerCase();
+    if (search) {
+      where.push(`(lower(request_id) LIKE ? OR lower(turn_id) LIKE ? OR lower(COALESCE(error_code, '')) LIKE ? OR lower(COALESCE(error_message, '')) LIKE ?)`);
+      const pattern = `%${search}%`; params.push(pattern, pattern, pattern, pattern);
+    }
+    const rows = this.db.prepare(
+      `SELECT request_id, session_id, seq, turn_id, retry_of, kind, configured_provider, wire_provider,
+              api, model, started_at, response_at, finished_at, status, http_status, error_code,
+              error_message, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+              cache_write_tokens, total_tokens, cost_usd, duration_ms
+         FROM brain_provider_requests WHERE ${where.join(' AND ')} ORDER BY seq ASC LIMIT ?`
+    ).all(...params, limit + 1) as Record<string, unknown>[];
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit).map((row) => this.requestItem(row));
+    return { items, nextCursor: hasMore ? encodeCursor({ seq: items.at(-1)!.seq }) : null };
+  }
+
+  private segmentRefs(row: { manifest: string; response_segment: string | null }): SegmentRefEntry[] {
+    const manifest = JSON.parse(row.manifest) as ProviderRequestManifest;
+    const refs: SegmentRefEntry[] = [];
+    if (manifest.system) refs.push({ section: 'system', key: manifest.system.key, ref: manifest.system.segment });
+    for (const ref of manifest.input?.segments ?? []) refs.push({ section: 'input', key: manifest.input!.key, ref });
+    for (const ref of manifest.tools?.segments ?? []) refs.push({ section: 'tool', key: manifest.tools!.key, ref });
+    refs.push({ section: 'options', key: null, ref: manifest.options });
+    if (row.response_segment) refs.push({ section: 'response', key: null, ref: JSON.parse(row.response_segment) as ProviderRequestSegmentRef });
+    return refs;
+  }
+
+  private segmentEntries(sessionId: string, refs: SegmentRefEntry[], start = 0, count = refs.length - start): SegmentEntry[] {
+    const selected = refs.slice(start, start + count);
+    const metadata = new Map<string, { byte_length: number; estimated_tokens: number }>();
+    for (let offset = 0; offset < selected.length; offset += 100) {
+      const chunk = selected.slice(offset, offset + 100);
+      const clauses = chunk.map(() => '(kind = ? AND digest = ? AND canonicalization_version = ?)').join(' OR ');
+      const params = chunk.flatMap((entry) => [entry.ref.kind, entry.ref.digest, entry.ref.canonicalizationVersion]);
+      const rows = this.db.prepare(
+        `SELECT kind, digest, canonicalization_version, byte_length, estimated_tokens
+           FROM brain_request_segments WHERE session_id = ? AND (${clauses})`
+      ).all(sessionId, ...params) as { kind: string; digest: string; canonicalization_version: number; byte_length: number; estimated_tokens: number }[];
+      for (const row of rows) metadata.set(`${row.kind}\0${row.digest}\0${row.canonicalization_version}`, row);
+    }
+    return selected.map((entry, relativeIndex) => {
+      const key = `${entry.ref.kind}\0${entry.ref.digest}\0${entry.ref.canonicalizationVersion}`;
+      const segment = metadata.get(key);
+      if (!segment) throw new Error(`provider request segment missing: ${sessionId}/${entry.ref.kind}/${entry.ref.digest}`);
+      return {
+        index: start + relativeIndex, section: entry.section, key: entry.key, kind: entry.ref.kind, digest: entry.ref.digest,
+        canonicalizationVersion: entry.ref.canonicalizationVersion, byteLength: segment.byte_length,
+        estimatedTokens: segment.estimated_tokens, ref: entry.ref,
+      };
+    });
+  }
+
+  debugRequest(sessionId: string, requestId: string): BrainDebugRequestDetail | undefined {
+    const row = this.db.prepare('SELECT * FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const refs = this.segmentRefs({ manifest: String(row.manifest), response_segment: row.response_segment as string | null });
+    const entries = this.segmentEntries(sessionId, refs);
+    return {
+      ...this.requestItem(row), canonicalizationVersion: Number(row.canonicalization_version),
+      assistantMessageId: row.assistant_message_id === null ? null : String(row.assistant_message_id),
+      segments: entries.map(({ ref: _ref, ...entry }) => entry),
+      segmentBytes: entries.filter((entry) => entry.section !== 'response').reduce((sum, entry) => sum + entry.byteLength, 0),
+    };
+  }
+
+  debugSegmentPayloads(sessionId: string, requestId: string, opts: { cursor?: string; limit?: number; maxBytes?: number } = {}): BrainDebugPayloadPage | undefined {
+    const row = this.db.prepare('SELECT session_id, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { session_id: string; manifest: string; response_segment: string | null } | undefined;
+    if (!row) return undefined;
+    const refs = this.segmentRefs(row);
+    const cursor = decodeCursor<{ index: number }>(opts.cursor);
+    const start = cursor?.index ?? 0;
+    if (!Number.isInteger(start) || start < 0) throw new Error('invalid debug cursor');
+    const limit = boundedLimit(opts.limit, 20, 100);
+    const maxBytes = boundedLimit(opts.maxBytes, 256 * 1024, 4 * 1024 * 1024);
+    const items: BrainDebugPayloadPage['items'] = [];
+    let loadedBytes = 0;
+    let index = start;
+    const entries = this.segmentEntries(sessionId, refs, start, limit);
+    for (const entry of entries) {
+      if (entry.byteLength > maxBytes - loadedBytes) {
+        if (items.length === 0) throw new Error(`debug payload exceeds byte limit:${entry.byteLength}`);
+        break;
+      }
+      const payload = this.segmentPayload(sessionId, entry.ref);
+      const { ref: _ref, ...manifestItem } = entry;
+      items.push({ ...manifestItem, payload });
+      loadedBytes += entry.byteLength;
+      index = entry.index + 1;
+    }
+    return { items, nextCursor: index < refs.length ? encodeCursor({ index }) : null, loadedBytes };
+  }
+
+  debugRawPayload(sessionId: string, requestId: string, maxBytes?: number): BrainDebugRawPayload | undefined {
+    const row = this.db.prepare('SELECT manifest FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { manifest: string } | undefined;
+    if (!row) return undefined;
+    const cap = boundedLimit(maxBytes, 256 * 1024, 4 * 1024 * 1024);
+    const refs = this.segmentRefs({ manifest: row.manifest, response_segment: null });
+    let segmentBytes = 0;
+    for (let start = 0; start < refs.length; start += 100) {
+      for (const entry of this.segmentEntries(sessionId, refs, start, 100)) segmentBytes += entry.byteLength;
+      if (segmentBytes > cap) throw new Error(`debug payload exceeds byte limit:${segmentBytes}`);
+    }
+    const payload = this.reconstruct(requestId);
+    const byteLength = Buffer.byteLength(canonicalProviderJson(payload));
+    if (byteLength > cap) throw new Error(`debug payload exceeds byte limit:${byteLength}`);
+    return { payload, byteLength };
   }
 
   latestPending(sessionId: string): RequestRow | undefined {

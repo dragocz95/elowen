@@ -38,7 +38,12 @@ import { BrainTurnRunner } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
 import type { SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
-import type { BrainContextBreakdown, BrainForkedSession } from '../shared/wireContract.js';
+import type {
+  BrainContextBreakdown, BrainDebugLegacyTranscriptPage, BrainDebugPage, BrainDebugPayloadPage,
+  BrainDebugRawPayload, BrainDebugRequestDetail, BrainDebugRequestItem, BrainDebugSessionItem,
+  BrainForkedSession,
+} from '../shared/wireContract.js';
+import type { ProviderRequestDebugRequestFilters, ProviderRequestDebugSessionFilters } from '../store/providerRequestStore.js';
 import { SessionTeardownService } from './service/sessionTeardown.js';
 import { SessionProcessService } from './service/sessionProcesses.js';
 import { SessionQueueService } from './service/sessionQueue.js';
@@ -870,6 +875,36 @@ export class BrainService {
   /** ADMIN session-management view (the sessions/ panel) — see BrainStatusService.listManagedSessions. */
   listManagedSessions(userId: number): ManagedSessionView[] {
     return this.statusView.listManagedSessions(userId);
+  }
+
+  /** Admin-only request diagnostics. Authorization lives at the HTTP boundary; these methods intentionally
+   *  span every managed user/channel/task session instead of applying caller ownership. */
+  debugSessions(filters?: ProviderRequestDebugSessionFilters): BrainDebugPage<BrainDebugSessionItem> {
+    return this.d.store.providerRequests.debugSessions(filters);
+  }
+
+  debugSession(sessionId: string): BrainDebugSessionItem | undefined {
+    return this.d.store.providerRequests.debugSession(sessionId);
+  }
+
+  debugRequests(sessionId: string, filters?: ProviderRequestDebugRequestFilters): BrainDebugPage<BrainDebugRequestItem> | undefined {
+    return this.d.store.providerRequests.debugRequests(sessionId, filters);
+  }
+
+  debugRequest(sessionId: string, requestId: string): BrainDebugRequestDetail | undefined {
+    return this.d.store.providerRequests.debugRequest(sessionId, requestId);
+  }
+
+  debugRequestSegments(sessionId: string, requestId: string, opts?: { cursor?: string; limit?: number; maxBytes?: number }): BrainDebugPayloadPage | undefined {
+    return this.d.store.providerRequests.debugSegmentPayloads(sessionId, requestId, opts);
+  }
+
+  debugRawRequest(sessionId: string, requestId: string, maxBytes?: number): BrainDebugRawPayload | undefined {
+    return this.d.store.providerRequests.debugRawPayload(sessionId, requestId, maxBytes);
+  }
+
+  debugLegacyTranscript(sessionId: string, opts?: { cursor?: string; limit?: number; maxBytes?: number }): BrainDebugLegacyTranscriptPage | undefined {
+    return this.d.store.debugLegacyTranscript(sessionId, opts);
   }
 
   /** Delete ANY of the owner's brain sessions by id (admin panel) — see

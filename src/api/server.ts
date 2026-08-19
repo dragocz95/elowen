@@ -67,6 +67,13 @@ export function createServer(d: ServerDeps): ElowenApp {
   // Public: lets the web decide whether to show onboarding (no users yet) or the login form.
   app.get('/setup', c => c.json({ needsSetup: d.users ? d.users.count() === 0 : false }));
 
+  // Registered before auth so even an authentication/agent-scope rejection from the global guards cannot
+  // leave sensitive request-debug responses cacheable. Route-level admin checks still own authorization.
+  app.use('/brain/debug/*', async (c, next) => {
+    await next();
+    c.res.headers.set('Cache-Control', 'private, no-store');
+  });
+
   registerRoutes(app, ctx);
   return app;
 }

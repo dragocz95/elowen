@@ -18,6 +18,7 @@ import { BrainUsageStore, numeric, rollupDroppedUsage } from './brainUsageStore.
 import { BrainDelegationStore } from './brainDelegationStore.js';
 import type { BrainCard, BrainGoalState } from '../brain/events.js';
 import { ProviderRequestStore } from './providerRequestStore.js';
+import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 
 // The delegated-execution slice (sub-agent runs/results + workflow-run DAGs) lives in its own store;
 // BrainStore is the facade that delegates to it. Re-export the parts of its surface external callers
@@ -580,6 +581,60 @@ export class BrainStore {
   getMessages(sessionId: string): BrainMessageRow[] {
     return this.db.prepare('SELECT * FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC')
       .all(sessionId) as BrainMessageRow[];
+  }
+
+  /** Best-effort transcript for admin diagnostics of sessions created before exact provider capture.
+   *  This is deliberately session-indexed and lazy: the global debugger listings never touch brain_messages. */
+  debugLegacyTranscript(sessionId: string, opts: { cursor?: string; limit?: number; maxBytes?: number } = {}): BrainDebugLegacyTranscriptPage | undefined {
+    if (!this.getSession(sessionId)) return undefined;
+    let after = 0;
+    if (opts.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(opts.cursor, 'base64url').toString('utf8')) as { rowid?: unknown };
+        if (!Number.isInteger(decoded.rowid) || Number(decoded.rowid) < 0) throw new Error();
+        after = Number(decoded.rowid);
+      } catch { throw new Error('invalid debug cursor'); }
+    }
+    const limit = Number.isFinite(opts.limit) ? Math.max(1, Math.min(100, Math.floor(opts.limit!))) : 50;
+    const maxBytes = Number.isFinite(opts.maxBytes) ? Math.max(1, Math.min(4 * 1024 * 1024, Math.floor(opts.maxBytes!))) : 256 * 1024;
+    const candidates = this.db.prepare(
+      `SELECT rowid cursor, id, role, created_at, length(CAST(content AS BLOB)) byte_length
+         FROM brain_messages WHERE session_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT ?`
+    ).all(sessionId, after, limit + 1) as { cursor: number; id: string; role: string; created_at: string; byte_length: number }[];
+    const accepted: typeof candidates = [];
+    let loadedBytes = 0;
+    for (const row of candidates.slice(0, limit)) {
+      if (row.byte_length > maxBytes - loadedBytes) {
+        if (accepted.length === 0) throw new Error(`debug payload exceeds byte limit:${row.byte_length}`);
+        break;
+      }
+      accepted.push(row);
+      loadedBytes += row.byte_length;
+    }
+    const hasMore = candidates.length > accepted.length;
+    const contentByCursor = new Map<number, string>();
+    if (accepted.length > 0) {
+      const placeholders = accepted.map(() => '?').join(',');
+      const contents = this.db.prepare(
+        `SELECT rowid cursor, content FROM brain_messages WHERE session_id = ? AND rowid IN (${placeholders})`
+      ).all(sessionId, ...accepted.map((row) => row.cursor)) as { cursor: number; content: string }[];
+      for (const row of contents) contentByCursor.set(row.cursor, row.content);
+    }
+    const items: BrainDebugLegacyTranscriptPage['items'] = accepted.map((row) => {
+      const stored = contentByCursor.get(row.cursor);
+      if (stored === undefined) throw new Error(`brain message missing during debug read: ${row.id}`);
+      let content: unknown;
+      try { content = JSON.parse(stored) as unknown; }
+      catch { content = stored; }
+      return { cursor: row.cursor, id: row.id, role: row.role, content, createdAt: row.created_at, byteLength: row.byte_length };
+    });
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ rowid: last.cursor })).toString('base64url') : null,
+      loadedBytes,
+      exact: false,
+    };
   }
 
   /** The newest turn's rows only — everything after the last user message (or the whole session when it
