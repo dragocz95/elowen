@@ -674,6 +674,9 @@ describe('OrbitalNav drawer as a layer', () => {
   it('closes on Escape', () => {
     const onDrawerClose = vi.fn();
     mount(false, { drawer: true, drawerOpen: true, onDrawerClose });
+    // Mounting already closes the drawer once (the close-on-navigation effect), so without clearing
+    // this the assertion passes whatever Escape does.
+    onDrawerClose.mockClear();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onDrawerClose).toHaveBeenCalled();
   });
@@ -689,5 +692,32 @@ describe('OrbitalNav drawer as a layer', () => {
   it('does not steal focus when it is not a drawer at all', () => {
     mount();
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+/** Two edits in quick succession, before the first round trip lands. */
+describe('OrbitalNav consecutive edits', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  it('builds each edit on the previous one instead of the render it started from', async () => {
+    const saved: unknown[] = [];
+    server.use(http.patch('*/api/auth/me/nav-settings', async ({ request }) => {
+      const body = await request.json();
+      saved.push(body);
+      // Never settles: the point is what the SECOND edit computes while the first is still in flight.
+      return new Promise(() => {});
+    }));
+    mount();
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Memory' }));
+    fireEvent.click(screen.getByText('Hide'));
+    await waitFor(() => expect(saved).toHaveLength(1));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Projects' }));
+    fireEvent.click(screen.getByText('Hide'));
+    await waitFor(() => expect(saved).toHaveLength(2));
+
+    // The second write has to carry BOTH; carrying only 'projects' would put 'memory' back.
+    expect((saved[1] as { hidden: string[] }).hidden).toEqual(expect.arrayContaining(['memory', 'projects']));
   });
 });

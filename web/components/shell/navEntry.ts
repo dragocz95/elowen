@@ -17,7 +17,6 @@ export interface NavEntry {
   href?: string;
   label: string;
   icon: LucideIcon;
-  badge?: number;
   activeRoutes?: readonly string[];
   subItems?: readonly NavSubEntry[];
 }

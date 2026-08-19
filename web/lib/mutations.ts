@@ -240,6 +240,9 @@ export function useSaveMyNavSettings() {
   return useMutation({
     mutationFn: (patch: Partial<NavLayout>) => elowenClient.saveMyNavSettings(patch),
     onSuccess: (layout) => { qc.setQueryData(['my-nav-settings'], layout); },
+    // The menu writes the new arrangement into the cache before the round trip, so a rejected save has
+    // to be undone from the server rather than left showing an arrangement that was never stored.
+    onError: () => { void qc.invalidateQueries({ queryKey: ['my-nav-settings'] }); },
   });
 }
 /** Delete one log file. Both the list and any cached read of that file are dropped — the viewer must not

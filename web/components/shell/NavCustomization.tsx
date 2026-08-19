@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../ui/ContextMenu';
 import { useTranslation } from '../../lib/i18n';
@@ -20,6 +21,7 @@ import type { NavEntry } from './navEntry';
 export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, displayOrder?: string[]) {
   const { t } = useTranslation();
   const save = useSaveMyNavSettings();
+  const qc = useQueryClient();
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   // The stored order starts out empty, so the first edit has to seed it — and it must seed it with the
@@ -35,7 +37,14 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
   const visible = useMemo(() => applyNavLayout(allWorlds, layout), [allWorlds, layout]);
   const hidden = useMemo(() => hiddenNavEntries(allWorlds, layout), [allWorlds, layout]);
 
-  const apply = (next: NavLayout) => save.mutate(next);
+  // Every edit is computed from the layout the LAST edit produced, not from the one this render was
+  // built with. Two quick edits — hide something, then immediately move something else — would
+  // otherwise both start from the same base and the second would undo the first.
+  const apply = (compute: (current: NavLayout) => NavLayout) => {
+    const next = compute(qc.getQueryData<NavLayout>(['my-nav-settings']) ?? layout);
+    qc.setQueryData(['my-nav-settings'], next);
+    save.mutate(next);
+  };
 
   /** The hidden spaces, each one click from coming back. This is the ONLY way back, so it hangs off
    *  every menu the navigation opens rather than only off empty space. */
@@ -46,7 +55,7 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
       items: hidden.map((entry) => ({
         label: entry.label,
         icon: entry.icon,
-        onClick: () => apply(setNavEntryHidden(layout, entry.id as string, false)),
+        onClick: () => apply((current) => setNavEntryHidden(current, entry.id as string, false)),
       })),
     },
     DIVIDER,
@@ -56,7 +65,7 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
     label: t.nav.restoreDefaults,
     icon: RotateCcw,
     disabled: layout.hidden.length === 0 && layout.order.length === 0,
-    onClick: () => apply(EMPTY_NAV_LAYOUT),
+    onClick: () => apply(() => EMPTY_NAV_LAYOUT),
   });
 
   const surfaceItems = (): MenuEntry[] => [...hiddenGroup(), restoreItem()];
@@ -67,9 +76,9 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
     const position = visible.findIndex((candidate) => candidate.id === id);
     // The arrows stay beside the drag: they are the only way to arrange the menu from a keyboard.
     return [
-      { label: t.nav.hideEntry, icon: EyeOff, onClick: () => apply(setNavEntryHidden(layout, id, true)) },
-      { label: t.nav.moveUp, icon: ChevronUp, disabled: position <= 0, onClick: () => apply(moveNavEntry(layout, entryIds, id, -1)) },
-      { label: t.nav.moveDown, icon: ChevronDown, disabled: position < 0 || position >= visible.length - 1, onClick: () => apply(moveNavEntry(layout, entryIds, id, 1)) },
+      { label: t.nav.hideEntry, icon: EyeOff, onClick: () => apply((current) => setNavEntryHidden(current, id, true)) },
+      { label: t.nav.moveUp, icon: ChevronUp, disabled: position <= 0, onClick: () => apply((current) => moveNavEntry(current, entryIds, id, -1)) },
+      { label: t.nav.moveDown, icon: ChevronDown, disabled: position < 0 || position >= visible.length - 1, onClick: () => apply((current) => moveNavEntry(current, entryIds, id, 1)) },
       DIVIDER,
       ...surfaceItems(),
     ];
@@ -96,7 +105,7 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
      *  entry leaves nothing to right-click ON, so this is the way back. */
     openSurfaceMenu: (x: number, y: number) => openMenu(x, y, surfaceItems()),
     /** Commits a drag: put `id` at `toIndex` among the entries currently on show. */
-    reorderTo: (id: string, toIndex: number) => apply(reorderNavEntry(layout, entryIds, id, toIndex)),
+    reorderTo: (id: string, toIndex: number) => apply((current) => reorderNavEntry(current, entryIds, id, toIndex)),
     /** Rendered by the surface that owns the navigation. */
     overlays: menu ? <ContextMenu state={menu} onClose={() => setMenu(null)} /> : null,
   };

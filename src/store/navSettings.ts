@@ -2,8 +2,10 @@
  *  `user_settings` key `nav`. Both fields address entries by their navigation id, so the layout
  *  survives label translation and route changes.
  *
- *  Only the "worlds" section is customizable; the system section (account/settings/users) is deliberately
- *  not addressable here, so a user can never hide their own way back into settings.
+ *  Every destination is addressable, account/settings/users included. They were once a fixed section
+ *  the layout could not touch, which meant half the menu could be arranged and half could not. Hiding
+ *  them all is recoverable: the menu keeps a control that reaches the hidden set without depending on
+ *  any entry being on show.
  *
  *  An id that matches no current entry is KEPT rather than dropped: a plugin world disappears from the
  *  listing while its plugin is disabled, and discarding its position would silently reset the user's

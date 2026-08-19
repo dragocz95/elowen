@@ -134,8 +134,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   const { t } = useTranslation();
   const lastWheelAt = useRef(0);
   // `worldId` is what the customization menu acts on: a world can contribute several axis pages, and
-  // hiding or moving any of them means hiding or moving the world they belong to. System destinations
-  // carry none, which is exactly what keeps them out of reach of the menu.
+  // hiding or moving any of them means hiding or moving the world they belong to. Account, Settings and
+  // Users are ordinary worlds here and carry one like everything else.
   const routeEntries = useMemo<RailEntry[]>(() => {
     const all = worlds.flatMap((world, worldIndex) => {
       const pages = (world.subItems ?? []).filter((item) => isAxisPage(item.href));
