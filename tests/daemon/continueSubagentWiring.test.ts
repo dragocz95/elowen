@@ -132,6 +132,34 @@ describe('DelegateContinue wiring — plugin tool to the brain core', () => {
     expect(updates.some((u) => u.status === 'running' && u.tools === 1 && u.detail === 'Read a.ts')).toBe(true);
   });
 
+  // Promotion is the one thing a continuation can WIDEN, so it must never be reachable as a side effect of
+  // an ordinary follow-up: the flag has to travel the whole chain explicitly, and the access the gate is
+  // measured against has to be the registry's own, carrying the principal it will be checked on.
+  it('promotes only when the tool was explicitly asked to, and never otherwise', async () => {
+    const { store, svc } = setup();
+    const continueSpy = vi.spyOn(svc, 'continueSubagent');
+    const reg = await loadRegistry(store, svc);
+    const tool = reg.tools.find((t) => t.name === 'DelegateContinue');
+    if (!tool) throw new Error('DelegateContinue tool is not registered');
+    const executor = tool as unknown as { execute: (id: string, p: unknown) => Promise<{ content: { text: string }[] }> };
+    const run = (params: Record<string, unknown>): Promise<{ content: { text: string }[] }> => runWithPolicy(
+      adminPolicy,
+      () => executor.execute('call-44', { id: CHILD, message: 'now do it', ...params }),
+      { identity: owner, sessionId: PARENT },
+    );
+
+    await run({});
+    await run({ write_access: false });
+    expect(continueSpy.mock.calls.map((call) => call[6])).toEqual([false, false]);
+
+    const res = await run({ write_access: true });
+    expect(continueSpy.mock.calls[2]?.[6]).toBe(true);
+    expect((continueSpy.mock.calls[2]?.[3] as DelegatedAccess & { principal?: string }).principal).toBe('elowen:1');
+    // This child records no read-only origin (it is the plain scope every other case here uses), so the
+    // request is refused rather than granted — the fail-closed default for anything unmarked.
+    expect(res.content[0]?.text).toMatch(/cannot give that sub-agent write access/);
+  });
+
   it('continues on the child\'s recorded row model when the tool passes none', async () => {
     const { store, svc, send } = setup();
     const continueSpy = vi.spyOn(svc, 'continueSubagent');

@@ -916,12 +916,14 @@ export class PluginRegistry {
         }
         return delegatedChildren.read(parentSessionId, sessionId);
       },
-      continueSubagent: (sessionId, text, onEvent, model) => {
+      continueSubagent: (sessionId, text, onEvent, model, promote) => {
         const parentSessionId = currentSessionId();
         if (!parentSessionId || !delegatedChildren) {
           return Promise.reject(new Error('continuing a sub-agent is only available inside a conversation turn'));
         }
-        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model);
+        // `currentAccess()` is read HERE, from the live turn scope, for the promotion ceiling as much as for
+        // the continuation check: the plugin never supplies the authority a promotion is measured against.
+        return delegatedChildren.continue(parentSessionId, sessionId, text, currentAccess(), onEvent, model, promote === true);
       },
       stopSubagent: (sessionId) => {
         const parentSessionId = currentSessionId();

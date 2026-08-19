@@ -14,7 +14,7 @@ import type { BrainEvent } from './events.js';
 import type { DelegatedTurnRequest } from './delegatedTurn.js';
 import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agents/agentRegistry.js';
 import { renderAgentPrompt } from './agents/agentPrompt.js';
-import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
+import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
 
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
@@ -144,6 +144,14 @@ export class PlatformOrchestrator {
             // readOnlyBoundary.ts). This is the single source of "read-only"; the subagent plugin no longer
             // carries its own toolset.
             const readOnlyMode = agentDef?.toolsSpec === 'read-only' || src.access.readOnly === true;
+            // WHERE the clamp came from, recorded on the durable scope because a later DelegateContinue may
+            // lift one the delegating turn chose and may never lift one it was subject to. `planMode` is
+            // stamped next to `readOnly` by pathGuard precisely so the two stay distinguishable here.
+            const readOnlyOrigin = resolveReadOnlyOrigin({
+              agentReadOnly: agentDef?.toolsSpec === 'read-only',
+              requested: src.access.readOnly === true,
+              planMode: src.access.planMode === true,
+            });
             // What the type / read-only mode contributes to the toolset (undefined = no constraint of its own).
             const preset = readOnlyMode ? READ_ONLY_AGENT_TOOLS : agentDef ? resolveAgentTools(agentDef) : undefined;
             // INTERSECT the preset with any call-level allow-list (an explicit `tools`, or a restricted
@@ -183,6 +191,10 @@ export class PlatformOrchestrator {
               permissionBoundary: boundary,
               ...(effectiveToolPolicy !== undefined ? { toolPolicy: effectiveToolPolicy } : {}),
               ...(packed.promptAppend.length ? { promptAppend: packed.promptAppend } : {}),
+              ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
+              // Host-stamped on the delegating turn (pathGuard.currentAccess), so the child records the
+              // identity that actually spawned it. Absent leaves the child unpromotable, never wider.
+              ...(typeof src.access.principal === 'string' ? { spawnedBy: src.access.principal } : {}),
             });
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union

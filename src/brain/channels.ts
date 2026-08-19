@@ -133,6 +133,12 @@ export interface ChannelSendOpts {
    *  passes a shorter value so a frequent job past the cache window starts fresh — or `Infinity` to
    *  disable rollover entirely for a job that must keep continuity across runs. */
   idleRolloverMs?: number;
+  /** Dispose this channel's live session before the turn so it is reassembled from current state, keeping
+   *  the durable transcript (it rehydrates from SQLite). Set only where something the live session baked
+   *  in at construction has changed underneath it — today a promoted delegated scope, whose new toolset
+   *  the already-assembled session would otherwise ignore. NOT a rollover: nothing is archived and the
+   *  session id is unchanged. */
+  rebuildSession?: boolean;
   identity?: TurnIdentity;
   /** Identity line spliced ABOVE an ordinary message's text (the `[Verified: …]` prefix from
    *  identity.forPlatformTurn, or empty). Kept out of the raw `text` so the prompt-command gate can see the
@@ -370,7 +376,7 @@ export class ChannelSessionService {
       // to survive it — otherwise every model switch re-sends the whole post-compaction block for a
       // compaction the model has already been told about.
       let carriedOrientation: string | undefined;
-      if (ch && (providerChanged || modelChanged || thinkingChanged)) {
+      if (ch && (providerChanged || modelChanged || thinkingChanged || opts.rebuildSession)) {
         carriedOrientation = ch.orientedForCompaction;
         this.d.registry.channelDispose(opts.channelId);
         ch = undefined;

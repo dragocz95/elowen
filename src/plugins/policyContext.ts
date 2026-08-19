@@ -53,6 +53,19 @@ export interface TurnIdentity {
   owner: boolean;
 }
 
+/** Who this turn belongs to, as one stable string — the ACCOUNT when there is one, else the raw platform
+ *  sender. Two senders in the SAME shared channel share a session but never a principal, which is what
+ *  lets a durable object record which of them created it (see DelegatedExecutionScope.spawnedBy).
+ *  Undefined when the turn carries no identity at all; every caller must then fail closed rather than
+ *  treat "unknown" as a match. */
+export function turnPrincipal(identity: TurnIdentity | null | undefined): string | undefined {
+  if (!identity) return undefined;
+  if (Number.isSafeInteger(identity.elowenUserId)) return `elowen:${identity.elowenUserId}`;
+  const platform = identity.platform.trim();
+  const userId = identity.userId.trim();
+  return platform && userId ? `${platform}:${userId}` : undefined;
+}
+
 /** Per-turn tool access — the SINGLE abstraction both sources (a user's Elowen account and a platform
  *  role policy) resolve into, so tool gating has one shape everywhere. `allow` (when set) is an
  *  allow-list: only those plugin tools are permitted (a role's tool allowlist for an unlinked sender).

@@ -400,7 +400,7 @@ export function register(ctx) {
         description: 'Start asynchronously and return a stable job id immediately. Omit or false to wait for the result.',
       })),
       read_only: Type.Optional(Type.Boolean({
-        description: 'Give the sub-agent read-only tools (no Write/Edit) plus a shell clamped to non-destructive commands — inspection (ls/cat/grep/find/git status) and data transforms, but not rm/mv/chmod, git commit/push, npm, systemctl, curl/wget or sudo. It cannot delegate further. Note the clamp still allows writing a file through redirection, so it is not a sandbox. Use it for any task that just explores and reports.',
+        description: 'Give the sub-agent read-only tools (no Write/Edit) plus a shell clamped to non-destructive commands — inspection (ls/cat/grep/find/git status) and data transforms, but not rm/mv/chmod, git commit/push, npm, systemctl, curl/wget or sudo. It cannot delegate further. Note the clamp still allows writing a file through redirection, so it is not a sandbox. Use it for any task that just explores and reports — and if its findings turn out to be worth acting on, DelegateContinue({"write_access":true}) hands that same sub-agent your full access instead of making a fresh one rediscover everything.',
       })),
       tools: Type.Optional(Type.Array(Type.String(), {
         description: 'Give the sub-agent EXACTLY these tools and nothing else. Names must match your own toolset. Combined with read_only, it narrows further (the intersection). You can only narrow your own access, never widen it.',
@@ -838,7 +838,8 @@ export function register(ctx) {
       + 'through the delegation\'s normal result path (the blocked Delegate call, or background delivery). '
       + 'Only a sub-agent caught between model steps (starting up, or collecting background work) is '
       + 'refused — retry in a moment. It resumes under the exact access it was originally given, narrowed '
-      + 'by whatever you hold now, so continuing one can never widen anything.',
+      + 'by whatever you hold now, so continuing one can never widen anything — unless you explicitly pass '
+      + 'write_access=true to lift a read-only sub-agent you yourself started into full write mode.',
     parameters: Type.Object({
       id: Type.String({ description: 'Which sub-agent — either the job id Delegate returned ("dlg-…") or the session id DelegateList shows ("brain-ch-subagent-sub-dlg-…"). Both name the same one.' }),
       message: Type.String({
@@ -851,6 +852,18 @@ export function register(ctx) {
           + 'which is almost always what you want. Use it only when that model is unavailable or the user '
           + 'explicitly asked to switch. A sub-agent whose turn is still running cannot switch model; a '
           + 'follow-up carrying one is refused while it runs.',
+      })),
+      write_access: Type.Optional(Type.Boolean({
+        description: 'Lift a sub-agent you started with read_only=true out of read-only mode: it continues '
+          + 'with its full context AND the tools and permissions YOU hold right now, for this and every '
+          + 'later follow-up. Pass it only when you actually want that sub-agent to make the changes it just '
+          + 'reported on — a read-only sub-agent whose findings you only wanted does not need it. Note it '
+          + 'restores your CURRENT access in full, so an explicit `tools` list from the original Delegate '
+          + 'call is lifted too, and the sub-agent may then delegate further like any writing one. It is '
+          + 'refused for a sub-agent that is mid-turn (wait for it to finish), for one started by somebody '
+          + 'else, and for one whose read-only mode was not your choice — a read-only subagent_type, or a '
+          + 'delegation you made while in plan mode. In those cases delegate the writing work to a new '
+          + 'sub-agent instead.',
       })),
     }),
     execute: async (_id, p) => {
@@ -904,7 +917,7 @@ export function register(ctx) {
       // running turn" and "run an idle turn" by reading the very registry this row writes to (a `running`
       // update registers the child as live), so raising it first made every idle continuation see ITSELF
       // as the running child. continueSubagent runs all its guards synchronously before its first await.
-      const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined);
+      const continuation = ctx.continueSubagent(childSessionId, message, onEvent, model || undefined, p.write_access === true);
       const runContinuation = async () => {
         try {
           push('running');

@@ -968,8 +968,9 @@ export class BrainService {
     access: Parameters<DelegatedSessionService['continueSubagent']>[3],
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
+    promote?: boolean,
   ): Promise<DelegatedContinueResult> {
-    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model);
+    return this.delegated.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote);
   }
 
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the

@@ -21,6 +21,27 @@ const READ_ONLY_RESTRICT_RULES: readonly PermissionRule[] = [
 ];
 
 /**
+ * Where a delegated child's read-only mode came from — the value persisted on its durable scope as
+ * `readOnlyOrigin`, and the whole basis on which a later DelegateContinue may or may not lift the clamp.
+ *
+ * Only a clamp the delegating turn CHOSE is liftable, because only then did that turn hold the wider
+ * access it is later asked to hand over. The two `imposed` sources are not the caller's to lift:
+ *  - `agentReadOnly`: the agent TYPE is defined read-only in its `.md` frontmatter. That is the operator's
+ *    definition of the role, not a per-call preference, so promoting an `explore` agent into a writing one
+ *    would quietly redefine a type the operator wrote down.
+ *  - `planMode`: the delegating turn was itself read-only. It never held write access to give, and the
+ *    child must not become a durable handle it can cash in after leaving plan mode.
+ * Returns undefined when the child is not read-only at all — there is nothing to promote, and marking it
+ * would let an ordinary narrow `tools:` delegation be widened to the caller's full toolset.
+ */
+export function resolveReadOnlyOrigin(
+  input: { agentReadOnly: boolean; requested: boolean; planMode: boolean },
+): 'requested' | 'imposed' | undefined {
+  if (!input.agentReadOnly && !input.requested) return undefined;
+  return input.agentReadOnly || input.planMode ? 'imposed' : 'requested';
+}
+
+/**
  * Mint the immutable permission boundary for a read-only sub-agent (explore/plan).
  *
  * A sub-agent runs UNATTENDED — there is no human to answer an `ask`, so an inherited `ask` resolves via

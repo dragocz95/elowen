@@ -5,7 +5,7 @@ import { deniedToolsForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
-import { delegatedToolPolicy, scopeExceedsCurrentAccess } from '../delegatedScope.js';
+import { delegatedToolPolicy, promoteDelegatedScope, scopeExceedsCurrentAccess } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
 import { extractText } from '../messageView.js';
@@ -317,6 +317,7 @@ export class DelegatedSessionService {
     access: Parameters<typeof scopeExceedsCurrentAccess>[1],
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
+    promote?: boolean,
   ): Promise<DelegatedContinueResult> {
     const row = this.d.store.getSession(childSessionId);
     if (!row || row.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) {
@@ -326,6 +327,19 @@ export class DelegatedSessionService {
     if (!scope) throw new Error('delegated access unavailable');
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     if (exceeds) throw new Error(`cannot continue that sub-agent: ${exceeds}`);
+    // Promotion is decided and PERSISTED before anything is delivered, and only for an idle child: a
+    // running turn already assembled its toolset, so widening the scope underneath it would either do
+    // nothing (the steer executes under the old tools) or, worse, read as having taken effect.
+    if (promote) {
+      if (this.d.sessions.isActiveChild(childSessionId)) {
+        throw new Error('that sub-agent has a turn in flight, and a running turn cannot gain tools — wait for it to finish, then send the follow-up with write_access again');
+      }
+      const promoted = promoteDelegatedScope(scope, access);
+      if ('error' in promoted) throw new Error(`cannot give that sub-agent write access: ${promoted.error}`);
+      if (!this.d.store.promoteDelegatedAccess(childSessionId, scope, promoted.scope)) {
+        throw new Error('that sub-agent\'s access changed while this follow-up was being prepared — try again');
+      }
+    }
     if (this.d.sessions.isActiveChild(childSessionId)) {
       if (model) {
         throw new Error('that sub-agent has a turn in flight, and a running turn cannot switch model — retry without `model`, or wait for it to finish');
@@ -349,6 +363,10 @@ export class DelegatedSessionService {
     }
     const reply = await this.sendDelegated(row.user_id, childSessionId, text, {
       extraDeny: access.toolPolicy?.deny ?? [],
+      // A live PI session bakes its tool definitions in at construction, so the promoted scope would sit
+      // in the database doing nothing until the channel happened to be evicted. Respawn it — the same
+      // dispose-and-rebuild a model switch performs, and the transcript rehydrates from SQLite unchanged.
+      ...(promote ? { rebuildSession: true } : {}),
       // The plugin's callback contract is the narrow progress shape, while the child's stream is the full
       // BrainEvent set — narrow every event at this boundary so the value matches the declared contract.
       ...(onEvent ? { onEvent: (e: BrainEvent) => onEvent(narrowSubagentProgress(e)) } : {}),
@@ -398,6 +416,9 @@ export class DelegatedSessionService {
       /** Explicit `provider/model` override for this continuation (from the tool's `model` argument).
        *  Takes precedence over the model stored on the child's session row — see the send call below. */
       model?: string;
+      /** Drop the child's live session before this turn so it is reassembled from the CURRENT stored
+       *  scope. Needed only after a promotion — see continueSubagent. */
+      rebuildSession?: boolean;
       onEvent?: (e: BrainEvent) => void;
     },
   ): Promise<string> {
@@ -449,6 +470,7 @@ export class DelegatedSessionService {
         : row.model ? { model: { model: row.model, ...(row.provider ? { provider: row.provider } : {}) } } : {}),
       ownerSteer: true,
       idleRolloverMs: Number.POSITIVE_INFINITY,
+      ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
       ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
       ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),
     }, content);

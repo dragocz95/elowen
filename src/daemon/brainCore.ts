@@ -97,8 +97,8 @@ export function createDelegatedChildren(
       if (!brain) throw new Error('the brain is not available on this deployment');
       return brain.readSubagent(parentSessionId, childSessionId);
     },
-    continue: (parentSessionId, childSessionId, text, access, onEvent, model) => brain
-      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model)
+    continue: (parentSessionId, childSessionId, text, access, onEvent, model, promote) => brain
+      ? brain.continueSubagent(parentSessionId, childSessionId, text, access, onEvent, model, promote)
       : Promise.reject(new Error('the brain is not available on this deployment')),
     stop: (parentSessionId, childSessionId) => brain
       ? brain.stopSubagent(parentSessionId, childSessionId)

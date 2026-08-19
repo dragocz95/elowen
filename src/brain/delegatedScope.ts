@@ -23,11 +23,25 @@ export interface DelegatedExecutionScope {
   /** System-prompt appendices that describe the child role. Kept with the execution boundary so an
    * evicted child is rebuilt with the same focused-agent instruction before a later continuation. */
   promptAppend?: string[];
+  /** WHY this child holds a read-only toolset, recorded at spawn because nothing else in the scope can
+   *  tell a read-only child from an ordinary narrow `tools:` delegation.
+   *  - `'requested'`: the delegating turn asked for read-only (`read_only: true`) while itself holding
+   *    wider access. It could have spawned a writing child instead, so {@link promoteDelegatedScope} may
+   *    later hand this one exactly what that turn still holds.
+   *  - `'imposed'`: read-only came from something the delegating turn does not control — the agent TYPE's
+   *    own definition, or the parent turn being in plan mode. Locked for good.
+   *  Absent = not spawned in read-only mode, or a child predating this field; both are unpromotable. */
+  readOnlyOrigin?: 'requested' | 'imposed';
+  /** The principal whose turn spawned this child (see turnPrincipal). Only that same identity may widen
+   *  it later: a shared channel gives every member the same parent session, so the session guard alone
+   *  would let one member promote another member's sub-agent. Absent = unknown ⇒ unpromotable. */
+  spawnedBy?: string;
 }
 
 const MAX_PROJECT_IDS = 10_000;
 const MAX_TOOL_NAMES = 2_000;
 const MAX_TOOL_NAME_CHARS = 256;
+const MAX_PRINCIPAL_CHARS = 256;
 const MAX_PROMPT_CHUNKS = 16;
 const MAX_PROMPT_CHARS = 8_000;
 // Shared budget for ALL system-prompt sections of a delegated child (role prompt + parent-supplied
@@ -112,6 +126,20 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     });
   }
 
+  // Unknown values fail the WHOLE scope rather than degrading to "absent": absent means unpromotable but
+  // runnable, so silently dropping a value we cannot read would turn a corrupt row into a running child.
+  let readOnlyOrigin: DelegatedExecutionScope['readOnlyOrigin'];
+  if (own(value, 'readOnlyOrigin')) {
+    if (value.readOnlyOrigin !== 'requested' && value.readOnlyOrigin !== 'imposed') return undefined;
+    readOnlyOrigin = value.readOnlyOrigin;
+  }
+  let spawnedBy: string | undefined;
+  if (own(value, 'spawnedBy')) {
+    if (typeof value.spawnedBy !== 'string') return undefined;
+    spawnedBy = value.spawnedBy.trim();
+    if (!spawnedBy || spawnedBy.length > MAX_PRINCIPAL_CHARS) return undefined;
+  }
+
   return {
     admin: value.admin,
     projectIds: canonicalProjectIds,
@@ -119,6 +147,8 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     permissionBoundary,
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(promptAppend ? { promptAppend } : {}),
+    ...(readOnlyOrigin ? { readOnlyOrigin } : {}),
+    ...(spawnedBy ? { spawnedBy } : {}),
   };
 }
 
@@ -154,6 +184,22 @@ function permissionBoundaryExceeds(
   return 'its captured tool permissions differ from the ones this conversation holds now';
 }
 
+/** What the turn doing the delegating holds RIGHT NOW, as `plugins/pathGuard.ts` stamps it. Everything a
+ *  child may ever be granted is derived from this snapshot, never from what the child was once given. */
+export interface DelegatingTurnAccess {
+  admin: boolean;
+  projectIds: number[];
+  owner: boolean;
+  toolPolicy?: { allow?: string[]; deny?: string[] };
+  permissionBoundary: NoninteractivePermissionBoundary | null;
+  /** The turn itself runs read-only (plan mode). */
+  readOnly?: boolean;
+  /** The read-only above comes from plan mode specifically — see DelegatedExecutionScope.readOnlyOrigin. */
+  planMode?: boolean;
+  /** Who is running this turn (see turnPrincipal). Absent when the turn carries no identity. */
+  principal?: string;
+}
+
 /** Whether a PERSISTED child scope grants more than the delegating turn holds right now — returns the
  *  human-readable reason it exceeds, or undefined when the child fits inside the caller's current
  *  authority.
@@ -167,12 +213,7 @@ function permissionBoundaryExceeds(
  *  the caller's current denies onto the resumed policy, which only ever narrows it. */
 export function scopeExceedsCurrentAccess(
   scope: DelegatedExecutionScope,
-  access: {
-    admin: boolean; projectIds: number[]; owner: boolean;
-    toolPolicy?: { allow?: string[]; deny?: string[] };
-    permissionBoundary: NoninteractivePermissionBoundary | null;
-    readOnly?: boolean;
-  },
+  access: DelegatingTurnAccess,
 ): string | undefined {
   // A planning turn is read-only, and nothing in a persisted scope distinguishes a child that was
   // spawned read-only from an ordinary `tools: ['Read']` delegation whose Bash boundary was never
@@ -197,6 +238,61 @@ export function scopeExceedsCurrentAccess(
     if (extra.length) return `it holds ${extra.join(', ')}, which this conversation does not`;
   }
   return permissionBoundaryExceeds(scope.permissionBoundary, access.permissionBoundary);
+}
+
+/** Lift a read-only child out of read-only mode for its NEXT turn — the one place a delegated scope is
+ *  ever allowed to grow. Returns the replacement scope, or the human-readable reason it is refused.
+ *
+ *  The ceiling: the promoted scope is minted ENTIRELY from `access`, the delegating turn's current
+ *  authority. Nothing about what the child may do is carried over from its old scope, so the result is by
+ *  construction exactly what spawning a fresh writing sub-agent this instant would produce — the caller
+ *  gains no reach it does not already have and could not already use. Only the child's IDENTITY travels:
+ *  its role/context prompt (which is not authority) and the principal that spawned it.
+ *
+ *  Consequently a `tools:` narrowing from the original call is lifted too. That is deliberate rather than
+ *  overlooked: the stored allow-list is the read-only preset intersected with that narrowing, so the two
+ *  are indistinguishable afterwards, and any partial reconstruction would be a guess. The tool advertises
+ *  the full-restore semantics instead.
+ *
+ *  What it refuses, and why each one is not a formality:
+ *  - Anything {@link scopeExceedsCurrentAccess} refuses. Promotion is a superset of continuation, so the
+ *    continuation check has to hold FIRST — otherwise a child holding a project the caller has since lost
+ *    would be "promoted" into a scope that quietly drops it, and a planning turn (readOnly) would be able
+ *    to mint a writing child through a back door.
+ *  - A child not spawned as `readOnlyOrigin: 'requested'`. An `'imposed'` clamp came from the agent type's
+ *    definition or from plan mode — neither is the caller's to lift, and a missing value is a legacy or
+ *    unknown child that must fail closed.
+ *  - A promoter who is not the principal that spawned the child. Members of a shared channel share the
+ *    parent session, so without this the session guard would let one of them widen another's sub-agent.
+ *    An unknown principal on either side is a refusal, never a match. */
+export function promoteDelegatedScope(
+  scope: DelegatedExecutionScope,
+  access: DelegatingTurnAccess,
+): { scope: DelegatedExecutionScope } | { error: string } {
+  const exceeds = scopeExceedsCurrentAccess(scope, access);
+  if (exceeds) return { error: exceeds };
+  if (scope.readOnlyOrigin !== 'requested') {
+    return {
+      error: scope.readOnlyOrigin === 'imposed'
+        ? 'its read-only mode was not yours to choose (a read-only sub-agent type, or a planning turn) and can never be lifted — delegate the writing work to a new sub-agent instead'
+        : 'it was not started as a read-only sub-agent you asked for, so there is nothing to promote — continue it without write_access, or delegate the writing work to a new sub-agent',
+    };
+  }
+  if (!scope.spawnedBy || !access.principal || scope.spawnedBy !== access.principal) {
+    return { error: 'only the person whose request started that sub-agent can give it write access' };
+  }
+  const promoted = normalizeDelegatedExecutionScope({
+    admin: access.admin,
+    // An admin scope carries no project list at all; the normalizer rejects the ambiguous both-shapes row.
+    projectIds: access.admin ? [] : access.projectIds,
+    owner: access.owner,
+    permissionBoundary: access.permissionBoundary,
+    ...(access.toolPolicy ? { toolPolicy: access.toolPolicy } : {}),
+    ...(scope.promptAppend ? { promptAppend: scope.promptAppend } : {}),
+    spawnedBy: scope.spawnedBy,
+  });
+  if (!promoted) return { error: 'the resulting access could not be validated' };
+  return { scope: promoted };
 }
 
 /** Semantically compare canonical durable scopes without trusting caller object identity or array order. */

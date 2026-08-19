@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { resolve, sep, dirname, basename, join } from 'node:path';
-import { currentIdentity, currentPolicy, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir } from './policyContext.js';
+import { currentIdentity, currentPolicy, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 
@@ -31,9 +31,17 @@ export function isAllAccess(): boolean {
  *  A turn running in PLAN mode stamps `readOnly`, which the host bakes into the child's toolset and
  *  permission boundary (brain/platforms.ts). Forced here, at the single source every spawner reads, so
  *  both Delegate and WorkflowStart inherit it by construction: the plugin only ever ADDS `readOnly` from
- *  its own argument and never clears it, so a planning turn cannot talk its way into a writing child. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean } {
+ *  its own argument and never clears it, so a planning turn cannot talk its way into a writing child.
+ *
+ *  `planMode` is stamped ALONGSIDE `readOnly` rather than folded into it because the two answer different
+ *  questions once a child can be promoted out of read-only: `readOnly` says the child gets read-only
+ *  tools, `planMode` says the read-only came from a boundary on the PARENT rather than the parent's own
+ *  choice. Only the second one is a permanent lock (see DelegatedExecutionScope.readOnlyOrigin).
+ *  `principal` identifies whose turn this is, so a child records who spawned it and only that same
+ *  identity can later widen it. */
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean; planMode?: boolean; principal?: string } {
   const p = currentPolicy();
+  const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
   const toolPolicy = tools ? {
     ...(tools.allow ? { allow: [...tools.allow] } : {}),
@@ -45,7 +53,8 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     owner: currentIdentity()?.owner === true,
     permissionBoundary: noninteractivePermissionBoundary(currentTurnPermissions()),
     ...(toolPolicy ? { toolPolicy } : {}),
-    ...(currentTurnMode() === 'plan' ? { readOnly: true } : {}),
+    ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
+    ...(principal ? { principal } : {}),
   };
 }
 

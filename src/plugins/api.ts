@@ -4,6 +4,7 @@ import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnMode
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
+import type { DelegatingTurnAccess } from '../brain/delegatedScope.js';
 import type { SlashCommandDef } from '../brain/slashCommands.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -54,9 +55,13 @@ export interface DelegatedChildBridge {
     parentSessionId: string,
     childSessionId: string,
     text: string,
-    access: { admin: boolean; projectIds: number[]; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; readOnly?: boolean },
+    access: DelegatingTurnAccess,
     onEvent?: (e: SubagentProgressEvent) => void,
     model?: string,
+    /** Lift the child out of read-only mode for this and every later turn, up to what `access` holds now.
+     *  Refused unless the child was spawned read-only BY CHOICE and by this same principal — see
+     *  promoteDelegatedScope, which owns every rule. */
+    promote?: boolean,
   ): Promise<DelegatedContinueResult>;
   stop(parentSessionId: string, childSessionId: string): Promise<{ stopped: boolean }>;
 }
@@ -241,6 +246,13 @@ export interface SessionSource {
      *  READ_ONLY_AGENT_TOOLS preset intersected with the caller's scope, plus a minted read-only permission
      *  boundary — the exact path a read-only agent TYPE takes, so there is one read-only definition. */
     readOnly?: boolean;
+    /** The `readOnly` above originates in the delegating turn's own PLAN mode rather than in what it asked
+     *  for. Stamped by pathGuard.currentAccess and forwarded untouched by every spawner, so the host can
+     *  tell a clamp the caller CHOSE (liftable by a later promotion) from one it was subject to (never). */
+    planMode?: boolean;
+    /** The principal running the delegating turn (see turnPrincipal), recorded on the child's durable scope
+     *  so only that same identity can ever promote it out of read-only. */
+    principal?: string;
     /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
@@ -1399,13 +1411,19 @@ export interface PluginContext {
    *  replays the child's ORIGINAL immutable boundary, narrowed by the caller's current denies — it can
    *  never widen access.
    *
+   *  `promote` is the single exception, and it is never implicit: it lifts a child that was spawned
+   *  read-only BY THE CALLER'S OWN CHOICE up to exactly what this turn holds right now (see
+   *  promoteDelegatedScope for every rule, and note that this rewrites the child's durable scope, so the
+   *  widening persists for its later turns too). Rejected for a mid-turn child — a running turn keeps the
+   *  toolset it started with — and for a clamp the caller did not choose or did not create.
+   *
    *  `onEvent` receives the child's live progress (tool starts, token usage) so the follow-up shows as a
    *  running sub-agent in the CLI rail / web table, the same way the first delegation does — omit it and
    *  the continuation still runs, just invisibly.
    *
    *  `model` optionally overrides the model the sub-agent runs on, as a `provider/model` string (value
    *  from {@link listModels}); omit it to resume on the model recorded on the child's session row. */
-  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string): Promise<DelegatedContinueResult>;
+  continueSubagent(sessionId: string, text: string, onEvent?: (e: SubagentProgressEvent) => void, model?: string, promote?: boolean): Promise<DelegatedContinueResult>;
   /** Stop a DIRECT sub-agent listed by {@link subagentRuns} — a runaway or no-longer-needed one — without
    *  touching its parent or siblings. The host anchors the lookup to the current turn's session, exactly
    *  like {@link readSubagent}; the plugin supplies only the child id and cannot widen the parent scope.

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { rmSync } from 'node:fs';
-import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess } from '../../src/plugins/pathGuard.js';
-import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { assertPathAllowed, allowedRoots, currentAccess, defaultCwd, isAllAccess } from '../../src/plugins/pathGuard.js';
+import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
@@ -156,5 +156,46 @@ describe('own tool-result spill dir', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+/** Everything a delegated child is allowed to be — and later allowed to BECOME — is derived from this one
+ *  snapshot, so the two fields that decide promotion have to be stamped here and nowhere else: `planMode`
+ *  next to `readOnly` (a clamp the caller was subject to can never be lifted), and the principal (only the
+ *  identity that spawned a child may widen it). */
+describe('currentAccess', () => {
+  const owner: TurnIdentity = { platform: 'cli', userId: 'local', elowenUserId: 7, admin: true, owner: true };
+
+  it('stamps the account principal for an identified turn', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess().principal).toBe('elowen:7');
+    }, { identity: owner });
+  });
+
+  it('falls back to the platform sender when there is no linked account', () => {
+    const stranger: TurnIdentity = { platform: 'discord', userId: '4242', admin: false, owner: false };
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess().principal).toBe('discord:4242');
+    }, { identity: stranger });
+  });
+
+  it('stamps no principal at all for a turn with no identity — unknown, never a wildcard', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess().principal).toBeUndefined();
+    });
+  });
+
+  it('marks a planning turn as read-only AND records that plan mode is the reason', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess()).toMatchObject({ readOnly: true, planMode: true });
+    }, { identity: owner, mode: 'plan' });
+  });
+
+  it('leaves both unset for an ordinary turn', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      const access = currentAccess();
+      expect(access.readOnly).toBeUndefined();
+      expect(access.planMode).toBeUndefined();
+    }, { identity: owner });
   });
 });

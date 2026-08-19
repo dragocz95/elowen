@@ -43,8 +43,9 @@ function setup() {
   const registry = new LiveSessionRegistry<Brain>();
   const titler = { run: vi.fn() };
   const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number; seedMessages?: { id: string; role: string; content: unknown }[] }) => {
-    // Mirror the real factory: create the row, atomically seed imported history, then expose the live brain.
-    store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
+    // Mirror the real factory: create the row only when it is missing (a respawn keeps the durable
+    // conversation), atomically seed imported history, then expose the live brain.
+    if (!store.getSession(o.sessionId)) store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     if (o.seedMessages?.length) store.seedMessages(o.sessionId, o.seedMessages);
     return fakeBrain();
   });
@@ -225,6 +226,36 @@ describe('ChannelSessionService.send — idle rollover (cache-cost fix)', () => 
     t.registry.channelTouch(t.channelId, live);
 
     await t.svc.send({ ...t.baseOpts }, 'hello');
+
+    expect(live.session.dispose).not.toHaveBeenCalled();
+    expect(t.spawn).not.toHaveBeenCalled();
+  });
+});
+
+/** A live PI session bakes its tool definitions in when it is assembled, so a caller that changed what the
+ *  session may run has to be able to force a rebuild. Unlike a rollover this keeps the conversation: the
+ *  transcript stays under the same id and rehydrates. Today's only user is a promoted sub-agent scope. */
+describe('ChannelSessionService.send — rebuildSession', () => {
+  it('drops and respawns the live session while keeping the transcript under the same id', async () => {
+    const t = setup();
+    const live = fakeBrain();
+    t.seed(ONE_MIN, live); // well inside the idle threshold: nothing else would touch this session
+
+    await t.svc.send({ ...t.baseOpts, rebuildSession: true }, 'now with more tools');
+
+    expect(live.session.dispose).toHaveBeenCalledOnce();
+    expect(t.spawn).toHaveBeenCalledOnce();
+    // Not a rollover: the earlier message is still in THIS session and nothing was archived.
+    expect(t.store.getMessages(t.sessionId).some((m) => JSON.parse(m.content).content === 'old')).toBe(true);
+    expect(t.store.listSessions(1).some((s) => s.id.startsWith(`brain-ch-${t.channelId}-arch-`))).toBe(false);
+  });
+
+  it('reuses the live session when the flag is absent', async () => {
+    const t = setup();
+    const live = fakeBrain();
+    t.seed(ONE_MIN, live);
+
+    await t.svc.send({ ...t.baseOpts }, 'same tools as before');
 
     expect(live.session.dispose).not.toHaveBeenCalled();
     expect(t.spawn).not.toHaveBeenCalled();

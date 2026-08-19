@@ -223,6 +223,28 @@ export class BrainStore {
     catch { return undefined; }
   }
 
+  /** Replace a child's frozen boundary with a PROMOTED one — the only write to `delegated_access` after
+   *  the first spawn, and the reason every other path can keep treating that column as immutable.
+   *
+   *  A compare-and-swap on the exact stored scope, not a plain UPDATE: the caller decided what `next` may
+   *  be from a scope it read earlier (see promoteDelegatedScope), so anything that changed the row in
+   *  between — a concurrent promotion, a rehydrated stale read — must lose rather than overwrite. Returns
+   *  false instead of throwing so the caller can report a retryable conflict. A row with no parent, no
+   *  stored scope, or a corrupt one is never upgraded here: those must stay unusable.
+   *
+   *  It does NOT re-derive authority. Widening rules live entirely in promoteDelegatedScope; this only
+   *  persists a decision already made, and refuses `next` if it fails canonical validation. */
+  promoteDelegatedAccess(sessionId: string, expected: DelegatedExecutionScope, next: DelegatedExecutionScope): boolean {
+    const normalized = normalizeDelegatedExecutionScope(next);
+    if (!normalized) throw new Error('invalid delegated access');
+    return this.db.transaction(() => {
+      if (!this.hasDelegatedAccess(sessionId, expected)) return false;
+      this.db.prepare('UPDATE brain_sessions SET delegated_access = ? WHERE id = ?')
+        .run(JSON.stringify(normalized), sessionId);
+      return true;
+    })();
+  }
+
   /** A respawn may only use the exact boundary originally minted for this durable child. It never writes
    * a missing/changed value: legacy or corrupt rows stay unusable rather than being upgraded by request input. */
   hasDelegatedAccess(sessionId: string, supplied: DelegatedExecutionScope): boolean {
