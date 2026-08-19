@@ -327,6 +327,7 @@ export class LiveSessionSpawner {
     const replay = new LiveEventReplay(listeners);
     const { session, applyCompaction, assessColdCompaction } = await this.d.factory.create({
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
+      seedMessages: opts.seedMessages,
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, toolSearch: toolSearchHandle, hostedToolSearch,

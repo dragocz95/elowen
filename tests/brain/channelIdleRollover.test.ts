@@ -42,9 +42,10 @@ function setup() {
   const store = new BrainStore(db);
   const registry = new LiveSessionRegistry<Brain>();
   const titler = { run: vi.fn() };
-  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number }) => {
-    // Mirror the real spawn: a channel session's row exists before the first turn persists into it.
+  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number; seedMessages?: { id: string; role: string; content: unknown }[] }) => {
+    // Mirror the real factory: create the row, atomically seed imported history, then expose the live brain.
     store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
+    if (o.seedMessages?.length) store.seedMessages(o.sessionId, o.seedMessages);
     return fakeBrain();
   });
   const svc = new ChannelSessionService({ registry, store, users: { get: () => ({ username: "owner" }) }, spawn, titler } as never);
@@ -82,10 +83,30 @@ describe('ChannelSessionService.send — idle rollover (cache-cost fix)', () => 
     expect(history).toHaveBeenCalledOnce(); // reset → getMessages()==0 → channel-history backfill re-fired
     expect(t.titler.run).toHaveBeenCalledOnce(); // brand-new conversation → titler re-runs
     const msgs = t.store.getMessages(t.sessionId);
-    // The stale 'old' message is gone; the fresh turn's user message carries the backfilled history.
-    expect(msgs).toHaveLength(1);
-    expect(JSON.parse(msgs[0].content).content).toContain('past chatter');
-    expect(JSON.parse(msgs[0].content).content).not.toContain('old');
+    // The stale 'old' message is gone. Imported history and the live request are separate transcript rows.
+    expect(msgs).toHaveLength(2);
+    const imported = JSON.parse(JSON.parse(msgs[0].content).content);
+    expect(imported).toMatchObject({ source: 'platform_history', untrusted: true, text: 'past chatter' });
+    expect(JSON.parse(msgs[1].content).content).toBe('hello');
+    expect(msgs.some((message) => message.content.includes('old'))).toBe(false);
+  });
+
+  it('seeds role-preserving JSON history before the live user message', async () => {
+    const t = setup();
+    const history = vi.fn(async () => [
+      { id: 'p1', role: 'user' as const, author: { id: 'u1', name: 'Amy' }, text: 'Earlier question' },
+      { id: 'p2', role: 'assistant' as const, author: { id: 'bot', name: 'Elowen' }, text: 'Earlier answer' },
+    ]);
+
+    await t.svc.send({ ...t.baseOpts, history, historyPlatform: 'discord' }, 'Current question');
+
+    const rows = t.store.getMessages(t.sessionId);
+    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'user']);
+    const first = JSON.parse(JSON.parse(rows[0].content).content);
+    const second = JSON.parse(JSON.parse(rows[1].content).content[0].text);
+    expect(first).toMatchObject({ source: 'platform_history', platform: 'discord', messageId: 'p1', author: { name: 'Amy' }, text: 'Earlier question' });
+    expect(second).toMatchObject({ source: 'platform_history', platform: 'discord', messageId: 'p2', author: { name: 'Elowen' }, text: 'Earlier answer' });
+    expect(JSON.parse(rows[2].content).content).toBe('Current question');
   });
 
   it('PRESERVES the old transcript+title under an archived session (browsable), never deletes it', async () => {

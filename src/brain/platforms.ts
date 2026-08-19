@@ -277,6 +277,7 @@ export class PlatformOrchestrator {
             // senders have no linkedUserId, so the channel turn gets no memory (shared-space privacy).
             writerUserId: linkedUserId,
             history: src.history,
+            historyPlatform: src.platform,
             onEvent,
             // The identity prefix travels in opts (not concatenated) so channels.send can gate a RAW plugin
             // prompt-command on the un-prefixed text; it is applied to every ordinary message there, exactly

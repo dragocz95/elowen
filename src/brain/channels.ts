@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type { BrainStore } from '../store/brainStore.js';
+import type { PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
@@ -42,6 +44,57 @@ export type DelegatedSteerOutcome = 'delivered' | 'idle';
 
 /** How often a pending delegated steer re-checks the child's transcript/queue for its verdict. */
 const STEER_POLL_MS = 100;
+const PLATFORM_HISTORY_MAX_ITEMS = 100;
+const PLATFORM_HISTORY_MAX_CHARS = 6_000;
+const PLATFORM_HISTORY_MAX_TEXT = 1_200;
+
+type SeededSessionMessage = { id: string; role: 'user' | 'assistant'; content: { role: 'user' | 'assistant'; content: unknown } };
+
+const boundedHistoryString = (value: unknown, max: number): string => String(value ?? '').trim().slice(0, max);
+
+/** Convert adapter history into real transcript messages. Every body is a JSON envelope so provenance is
+ *  explicit and arbitrary platform text cannot masquerade as a fresh unframed request. */
+function platformHistorySeed(history: PlatformHistory, platform: string, channelId: string): SeededSessionMessage[] {
+  const source: PlatformHistoryMessage[] = typeof history === 'string'
+    ? (history.trim() ? [{ role: 'user', text: history.trim(), author: { name: 'Platform history' } }] : [])
+    : [...history];
+  const selected: SeededSessionMessage[] = [];
+  let chars = 0;
+  for (const message of source.slice(-PLATFORM_HISTORY_MAX_ITEMS).reverse()) {
+    if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
+    const text = boundedHistoryString(message.text, PLATFORM_HISTORY_MAX_TEXT);
+    if (!text) continue;
+    const attachments = (message.attachments ?? []).slice(0, 8).map((attachment) => ({
+      ...(boundedHistoryString(attachment.name, 200) ? { name: boundedHistoryString(attachment.name, 200) } : {}),
+      ...(boundedHistoryString(attachment.mimeType, 120) ? { mimeType: boundedHistoryString(attachment.mimeType, 120) } : {}),
+      kind: attachment.kind ?? 'unknown',
+    }));
+    const envelope = JSON.stringify({
+      source: 'platform_history',
+      untrusted: true,
+      platform,
+      channelId,
+      ...(boundedHistoryString(message.id, 256) ? { messageId: boundedHistoryString(message.id, 256) } : {}),
+      ...(message.author ? { author: {
+        ...(boundedHistoryString(message.author.id, 256) ? { id: boundedHistoryString(message.author.id, 256) } : {}),
+        ...(boundedHistoryString(message.author.name, 160) ? { name: boundedHistoryString(message.author.name, 160) } : {}),
+      } } : {}),
+      ...(boundedHistoryString(message.timestamp, 80) ? { timestamp: boundedHistoryString(message.timestamp, 80) } : {}),
+      text,
+      ...(attachments.length ? { attachments } : {}),
+    });
+    if (chars + envelope.length > PLATFORM_HISTORY_MAX_CHARS) break;
+    chars += envelope.length;
+    selected.push({
+      id: randomUUID(),
+      role: message.role,
+      content: message.role === 'assistant'
+        ? { role: 'assistant', content: [{ type: 'text', text: envelope }] }
+        : { role: 'user', content: envelope },
+    });
+  }
+  return selected.reverse();
+}
 
 export interface ChannelSendOpts {
   channelId: string;
@@ -92,7 +145,9 @@ export interface ChannelSendOpts {
    *  recalled under their message and post-turn facts are saved to it — each gated by their own
    *  Account → Memory toggles. Unset (unlinked sender) → no memory at all (shared-space privacy). */
   writerUserId?: number;
-  history?: () => Promise<string>;
+  history?: () => Promise<PlatformHistory>;
+  /** Adapter platform name stamped into imported history provenance. */
+  historyPlatform?: string;
   onEvent?: (e: BrainEvent) => void;
   /** Steer this message into the channel's RUNNING turn even though the sender differs from the turn's
    *  originator. Set ONLY by BrainService.sendToSubagent after verifying the caller OWNS the session row
@@ -293,16 +348,15 @@ export class ChannelSessionService {
         this.d.registry.channelDispose(opts.channelId);
         this.d.store.reassignSession(sessionId, archivedChannelSessionId(opts.channelId));
       }
-      // The post-turn curator must distill ONLY this sender's own words — capture the message BEFORE the
-      // channel-history backfill (other members' chatter, injected as untrusted context) is prepended,
-      // so background from other users never lands in THIS sender's private memory.
+      // The post-turn curator must distill ONLY this sender's own words. Imported platform history is
+      // seeded separately, so it can never land in THIS sender's private memory or conversation title.
       const senderMessage = text;
-      // A BRAND-NEW conversation (no stored turns) may backfill what the platform channel said before
-      // the brain joined — fetched lazily so an ongoing conversation never pays for it. Prepended to
-      // the first user message (not the system prompt) so it persists as normal history.
+      // A BRAND-NEW conversation may import what the platform said before the brain joined. Keep those
+      // entries as individual transcript messages — never concatenate them into the live user's request.
+      let seedMessages: SeededSessionMessage[] = [];
       if (opts.history && this.d.store.getMessages(sessionId).length === 0) {
-        const past = await opts.history().catch(() => '');
-        if (past.trim()) text = `${past.trim()}\n\n${text}`;
+        const past = await opts.history().catch((): PlatformHistory => []);
+        seedMessages = platformHistorySeed(past, opts.historyPlatform ?? 'platform', opts.channelId);
       }
       if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
       let ch = this.d.registry.channelGet(opts.channelId);
@@ -321,6 +375,12 @@ export class ChannelSessionService {
         this.d.registry.channelDispose(opts.channelId);
         ch = undefined;
       }
+      // A live-but-empty session (for example after a failed first prompt) was created before the history
+      // provider ran. Respawn it so the factory can seed the imported transcript before PI is assembled.
+      if (ch && seedMessages.length) {
+        this.d.registry.channelDispose(opts.channelId);
+        ch = undefined;
+      }
       if (!ch) {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
@@ -331,6 +391,7 @@ export class ChannelSessionService {
           selection: opts.model ?? {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
+          ...(seedMessages.length ? { seedMessages } : {}),
           channel: true, // a shared platform channel is NEVER owner-chat — no Elowen* tools, no owner token
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
@@ -363,7 +424,8 @@ export class ChannelSessionService {
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
       // into a stranger's turn in a shared room.
       ch.turnRecallUserId = opts.writerUserId ?? null;
-      // One channel turn. `turnText` is what the model reads (carries any channel-history backfill);
+      // One channel turn. `turnText` is the current sender's message; any platform-history backfill was
+      // seeded as separate transcript entries before this live PI session was assembled.
       // `senderMsg` is the sender's CLEAN words for the title + curator; `turnOnEvent` is the live stream
       // sink (which Discord message the reply edits into). Returns the assistant reply. A same-sender
       // follow-up sent mid-turn is steered into THIS running turn (see send()'s top), not a fresh turn.

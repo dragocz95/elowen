@@ -58,6 +58,8 @@ export interface SessionSpec {
   parentSessionId?: string;
   /** Immutable access boundary for a delegated child; verified on every respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** Imported platform transcript rows inserted atomically before history rehydration. */
+  seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
   runtime: ModelRuntime;
   model: Model<Api>;
   /** The CONFIG provider entry id this session runs on (BrainProviderEntry.id, from the resolved route —
@@ -409,6 +411,7 @@ export class BrainSessionFactory {
     if (spec.title && !this.d.store.getSession(spec.sessionId)?.title) {
       this.d.store.setTitle(spec.sessionId, spec.title.slice(0, 60));
     }
+    if (spec.seedMessages?.length) this.d.store.seedMessages(spec.sessionId, spec.seedMessages);
 
     // A session is only ever spawned when none is live for it, so any rows still marked pending are the
     // remains of a turn the daemon died in the middle of. Settle them into history BEFORE rehydrating, so

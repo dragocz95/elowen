@@ -341,6 +341,25 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_messages WHERE id = ?').get(input.id) as BrainMessageRow;
   }
 
+  /** Seed one brand-new conversation with imported platform transcript rows. The empty-session check and
+   *  every insert share one SQLite transaction, so a crash cannot leave a partial history prefix. */
+  seedMessages(sessionId: string, messages: readonly { id: string; role: string; content: unknown }[]): number {
+    if (!messages.length) return 0;
+    return this.db.transaction(() => {
+      const exists = this.db.prepare('SELECT 1 FROM brain_messages WHERE session_id = ? LIMIT 1').get(sessionId);
+      if (exists) return 0;
+      const insert = this.db.prepare(
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content)
+         VALUES (@id, @session_id, NULL, @role, @content)`,
+      );
+      for (const message of messages) {
+        insert.run({ id: message.id, session_id: sessionId, role: message.role, content: JSON.stringify(message.content) });
+      }
+      this.touchSession(sessionId);
+      return messages.length;
+    })();
+  }
+
   /** Remove one message only from its expected session. Used to roll back a pre-projected user row when
    * PI rejects a prompt before its native preflight boundary; the session condition prevents a stale
    * caller from deleting a row that compaction/session migration moved elsewhere. */

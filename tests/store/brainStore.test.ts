@@ -553,6 +553,24 @@ describe('BrainStore', () => {
     expect(JSON.parse(msgs[0]!.content)).toEqual({ text: 'hi' });
   });
 
+  it('seeds a brand-new transcript atomically and never seeds over existing rows', () => {
+    store.createSession({ id: 's1', userId: 7, model: 'm' });
+    const seed = [
+      { id: 'h1', role: 'user', content: { role: 'user', content: 'history one' } },
+      { id: 'h2', role: 'assistant', content: { role: 'assistant', content: 'history two' } },
+    ];
+    expect(store.seedMessages('s1', seed)).toBe(2);
+    expect(store.seedMessages('s1', [{ id: 'h3', role: 'user', content: { role: 'user', content: 'late' } }])).toBe(0);
+    expect(store.getMessages('s1').map((message) => message.id)).toEqual(['h1', 'h2']);
+
+    store.createSession({ id: 's2', userId: 7, model: 'm' });
+    expect(() => store.seedMessages('s2', [
+      { id: 'fresh', role: 'user', content: { role: 'user', content: 'would insert first' } },
+      { id: 'h1', role: 'assistant', content: { role: 'assistant', content: 'duplicate global id' } },
+    ])).toThrow();
+    expect(store.getMessages('s2')).toEqual([]); // transaction rolled the first insert back too
+  });
+
   it('deleteMessagesFrom removes a row and every message after it, keeping earlier ones', () => {
     store.createSession({ id: 's1', userId: 7, model: 'm' });
     store.appendMessage({ id: 'a1', sessionId: 's1', parentId: null, role: 'assistant', content: { text: 'earlier reply' } });

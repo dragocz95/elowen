@@ -220,6 +220,8 @@ export interface SpawnOpts {
   policy: Policy;
   /** Extra system-prompt chunks appended after the plugin fragments (e.g. a Discord role prompt). */
   extraAppend?: string[];
+  /** Imported platform transcript rows persisted before the session manager rehydrates. */
+  seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
   /** Platform channel session (Discord, …): the sender is NOT the verified Elowen owner, so the owner's
    *  full-scope Elowen* API tools are withheld — only Policy-guarded plugin tools load. ALWAYS true for
    *  a shared channel; such a session is never owner-chat, whatever role the sender holds. */

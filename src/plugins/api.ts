@@ -153,6 +153,22 @@ export interface PluginCapabilities {
 export const CONSENT_REQUIRED_MUTATES: readonly NonNullable<PluginCapabilities['mutates']>[number][] =
   ['tools', 'memory', 'events', 'workflow-dag', 'users'];
 
+export interface PlatformHistoryMessage {
+  /** Stable platform message id when the API exposes one. */
+  id?: string;
+  /** Only conversational roles are accepted. Platform system events must be filtered by the adapter. */
+  role: 'user' | 'assistant';
+  text: string;
+  author?: { id?: string; name?: string };
+  timestamp?: string;
+  /** Historical attachments stay placeholders/metadata — never re-download binary data into context. */
+  attachments?: { name?: string; mimeType?: string; kind?: 'image' | 'file' | 'audio' | 'video' | 'unknown' }[];
+}
+
+/** New adapters return individual transcript messages. A legacy string remains accepted during rollout,
+ *  but core stores it as one explicitly-untrusted history item instead of prefixing the live user prompt. */
+export type PlatformHistory = string | readonly PlatformHistoryMessage[];
+
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
  *  (an unmapped user gets no brain). `admin: true` runs the turn with the owner's full powers (all
@@ -182,10 +198,9 @@ export interface SessionSource {
    *  somebody OWNS uses: it was never created from a particular conversation, but its result still
    *  belongs in its owner's own chat rather than in a channel session only the admin can read. */
   origin?: { sessionId?: string; userId: number };
-  /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation,
-   *  so the brain can see what was said in the channel before it joined. Returns a ready context
-   *  block (or '' when nothing is available). */
-  history?: () => Promise<string>;
+  /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation.
+   *  Individual role-preserving messages are preferred; a legacy string remains accepted during rollout. */
+  history?: () => Promise<PlatformHistory>;
   access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; fast?: boolean; tools?: string[];
     /** Optional background the delegating agent hands to a sub-agent (it cannot see the parent
      *  conversation). Added to the child's system-prompt prefix as stable, cache-friendly blocks. A LIST
