@@ -195,6 +195,11 @@ export class TranscriptModel implements TranscriptRead {
         this.noticeState = event.done ? undefined : event.message;
         this.publish({ kind: 'none' });
         return true;
+      case 'step':
+        // A step is one model round-trip and therefore one durable assistant message. Settling the previous
+        // streaming block here gives the live transcript the same granularity before and after reconnect,
+        // while the first step remains a no-op because it precedes any assistant content.
+        return this.settleStreamingTail();
       case 'tool_authoring': {
         const { turn, index, fresh } = this.ensureAssistant();
         // No visible change only when already composing AND neither the tool nor its streamed detail moved.
@@ -516,14 +521,14 @@ export class TranscriptModel implements TranscriptRead {
    *  after the last paint (a foreground sub-agent flipping to `done`, a `· running…` label going quiet)
    *  would stay frozen until a full reset. Clearing the flag lets that one final repaint through; the turn
    *  can never gain more content anyway, since `ensureAssistant` opens a fresh one. Mirrors `case 'idle'`. */
-  private settleStreamingTail(): void {
+  private settleStreamingTail(): boolean {
     const index = this.turns.length - 1;
-    if (index < 0) return;
+    if (index < 0) return false;
     const tail = this.turns[index]!;
-    if (tail.role === 'elowen' && tail.streaming) {
-      this.turns[index] = { ...tail, streaming: false, composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined };
-      this.publish({ kind: 'turn', index });
-    }
+    if (tail.role !== 'elowen' || !tail.streaming) return false;
+    this.turns[index] = { ...tail, streaming: false, composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined };
+    this.publish({ kind: 'turn', index });
+    return true;
   }
 
   private patchToolEvent(id: string | undefined, patch: (item: ToolItem) => ToolItem): boolean {

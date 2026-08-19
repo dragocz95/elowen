@@ -6,6 +6,9 @@ export const VIEWPORT_HISTORY_PAIRS = Object.freeze([100, 1_000, 5_000]);
 export const VIEWPORT_FRAME_SAMPLES = 40;
 export const VIEWPORT_FRAME_LIMIT_MS = 50;
 export const VIEWPORT_HEIGHT_INDEX_OPERATION_LIMIT = 512;
+export const LONG_RUN_STEPS = 200;
+export const LONG_RUN_FRAME_SAMPLES = 40;
+export const LONG_RUN_FRAME_LIMIT_MS = 50;
 
 function percentile(values, fraction) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -96,6 +99,28 @@ export function validateViewportBenchmarkReport(report) {
       throw new Error(`unbounded finalViewport metrics for ${pairs}-pair history`);
     }
   }
+
+  const longRun = report.longRun;
+  if (!longRun || typeof longRun !== 'object') throw new Error('missing longRun result');
+  if (longRun.steps !== LONG_RUN_STEPS || longRun.turns !== LONG_RUN_STEPS + 1) {
+    throw new Error('step events did not create one render block per model round-trip');
+  }
+  if (!Array.isArray(longRun.boundarySamplesMs) || longRun.boundarySamplesMs.length !== LONG_RUN_FRAME_SAMPLES
+    || longRun.boundarySamplesMs.some((sample) => !finiteNonNegative(sample) || sample > LONG_RUN_FRAME_LIMIT_MS)) {
+    throw new Error(`long-run boundary frame exceeds ${LONG_RUN_FRAME_LIMIT_MS}ms`);
+  }
+  const boundary = summarizeViewportTimings(longRun.boundarySamplesMs);
+  if (longRun.boundaryAvgMs !== boundary.average || longRun.boundaryP95Ms !== boundary.p95
+    || longRun.boundaryMaxMs !== boundary.max) {
+    throw new Error('inconsistent long-run boundary timing summary');
+  }
+  if (!Number.isSafeInteger(longRun.maxRenderedTurns) || longRun.maxRenderedTurns < 0 || longRun.maxRenderedTurns > 2) {
+    throw new Error('long-run boundary rendered an unbounded number of turns');
+  }
+  if (!Number.isSafeInteger(longRun.maxCachedRows) || longRun.maxCachedRows < 0
+    || longRun.maxCachedRows > 2_048) {
+    throw new Error('long-run boundary exceeded the viewport row cache');
+  }
 }
 
 function history(pairs) {
@@ -114,7 +139,26 @@ export async function loadViewportRuntime(root, importer = (specifier) => import
   return { initTheme, getMarkdownTheme, ChatViewport, TranscriptModel };
 }
 
-export async function runViewportBenchmark({ root = process.cwd(), runtime, now = () => performance.now() } = {}) {
+function populateLongRun(transcript) {
+  transcript.apply({ type: 'user', text: 'Run a long production-shaped task.' });
+  for (let index = 1; index <= LONG_RUN_STEPS; index += 1) {
+    const id = `long-run-tool-${index}`;
+    transcript.apply({ type: 'step', step: index, maxSteps: 0 });
+    transcript.apply({ type: 'text', delta: `Step ${index}: checking the next part.\n\n` });
+    transcript.apply({ type: 'tool', id, name: 'Bash', command: `check-step-${index}` });
+    transcript.apply({
+      type: 'tool_output', id,
+      output: {
+        title: `step ${index} output`, kind: 'console',
+        text: Array.from({ length: 10 }, (_, line) => `step ${index} output line ${line + 1}`).join('\n'),
+      },
+    });
+  }
+}
+
+export async function runViewportBenchmark({
+  root = process.cwd(), runtime, now = () => performance.now(), validate = true,
+} = {}) {
   root = resolve(root);
   const { initTheme, getMarkdownTheme, ChatViewport, TranscriptModel } = runtime ?? await loadViewportRuntime(root);
   initTheme();
@@ -172,14 +216,56 @@ export async function runViewportBenchmark({ root = process.cwd(), runtime, now 
     });
   }
 
+  const longTranscript = new TranscriptModel();
+  populateLongRun(longTranscript);
+  const longViewport = new ChatViewport(
+    { transcript: longTranscript, transcriptNotice: longTranscript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 },
+    getMarkdownTheme(), () => 18, () => 1, () => 80,
+  );
+  longViewport.render(80);
+  longViewport.scroll(Number.MAX_SAFE_INTEGER);
+  longViewport.render(80);
+  const boundarySamples = [];
+  const renderedTurns = [];
+  const cachedRows = [];
+  for (let index = 0; index < LONG_RUN_FRAME_SAMPLES; index += 1) {
+    longViewport.scroll(index % 2 === 0 ? -1 : 1);
+    longViewport.setState({
+      transcript: longTranscript, transcriptNotice: longTranscript.notice, notice: '', modelName: 'benchmark',
+      thinkingSeconds: index + 1, spinnerFrame: index,
+    });
+    const started = now();
+    longViewport.render(80);
+    boundarySamples.push(now() - started);
+    const metrics = longViewport.metrics();
+    renderedTurns.push(metrics.renderedTurns);
+    cachedRows.push(metrics.cachedRows);
+  }
+  const boundary = summarizeViewportTimings(boundarySamples);
+
   const report = {
     benchmark: 'cli-viewport-frame',
     root,
     node: process.version,
-    samples: { scroll: VIEWPORT_FRAME_SAMPLES, stream: VIEWPORT_FRAME_SAMPLES },
+    samples: {
+      scroll: VIEWPORT_FRAME_SAMPLES,
+      stream: VIEWPORT_FRAME_SAMPLES,
+      longRunBoundary: LONG_RUN_FRAME_SAMPLES,
+    },
     results,
+    longRun: {
+      steps: LONG_RUN_STEPS,
+      turns: longTranscript.turnCount,
+      boundaryAvgMs: boundary.average,
+      boundaryP95Ms: boundary.p95,
+      boundaryMaxMs: boundary.max,
+      boundarySamplesMs: boundary.samples,
+      maxRenderedTurns: Math.max(...renderedTurns),
+      maxCachedRows: Math.max(...cachedRows),
+      finalViewport: longViewport.metrics(),
+    },
   };
-  validateViewportBenchmarkReport(report);
+  if (validate) validateViewportBenchmarkReport(report);
   return report;
 }
 

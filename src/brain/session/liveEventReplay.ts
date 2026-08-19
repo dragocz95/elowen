@@ -90,7 +90,9 @@ export function withoutBrainEventReplayCursor(event: BrainEvent): BrainEvent {
 /** Mirror LiveEventReplay's event replacement rules in route-local buffers and headless reconcilers.
  * This is deliberately exported instead of duplicated: a snapshot replaces `tool_progress`, cards,
  * queue/process/step state and sub-agent progress in place, so a local journal must do exactly the same
- * before it can compare a reconnect tail. Returns true only when the bounded buffer dropped an entry. */
+ * before it can compare a reconnect tail. Step events are ordering boundaries, not replaceable state: each
+ * one must remain between the assistant/tool events it separates. Returns true only when the bounded buffer
+ * dropped an entry. */
 export function appendReplayBrainEvent(events: BrainEvent[], event: BrainEvent, maxEvents = Number.POSITIVE_INFINITY): boolean {
   const last = events.at(-1);
   if (last?.type === 'text' && event.type === 'text') {
@@ -117,7 +119,7 @@ export function appendReplayBrainEvent(events: BrainEvent[], event: BrainEvent, 
     replace = events.findLastIndex((entry) => entry.type === 'card' && entry.card.id === event.card.id);
   } else if (event.type === 'notice') {
     replace = events.findLastIndex((entry) => entry.type === 'notice' && entry.kind === event.kind);
-  } else if (event.type === 'queue' || event.type === 'step' || event.type === 'process' || event.type === 'goal') {
+  } else if (event.type === 'queue' || event.type === 'process' || event.type === 'goal') {
     replace = events.findLastIndex((entry) => entry.type === event.type);
   }
   if (replace >= 0) {
@@ -231,7 +233,8 @@ export class LiveEventReplay {
     }
 
     // These events are complete snapshots/current state. Keeping only their newest instance loses no
-    // transcript information and prevents progress/status churn from dominating the replay budget.
+    // transcript information and prevents progress/status churn from dominating the replay budget. A step
+    // is deliberately excluded: it orders durable-message render boundaries around transcript events.
     let replace = -1;
     if (stamped.type === 'tool_progress') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'tool_progress' && entry.event.id === stamped.id);
@@ -250,7 +253,7 @@ export class LiveEventReplay {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'card' && entry.event.card.id === stamped.card.id);
     } else if (stamped.type === 'notice') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'notice' && entry.event.kind === stamped.kind);
-    } else if (stamped.type === 'queue' || stamped.type === 'step' || stamped.type === 'process' || stamped.type === 'goal') {
+    } else if (stamped.type === 'queue' || stamped.type === 'process' || stamped.type === 'goal') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === stamped.type);
     }
     if (replace >= 0) this.replaceAt(replace, stamped, seq);

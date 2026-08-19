@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainEvent } from '../../src/brain/events.js';
-import { appendReplayBrainEvent, LiveEventReplay } from '../../src/brain/session/liveEventReplay.js';
+import { LiveEventReplay, appendReplayBrainEvent } from '../../src/brain/session/liveEventReplay.js';
+import { TranscriptModel } from '../../src/brain/transcriptModel.js';
 
 describe('LiveEventReplay', () => {
   it('coalesces concurrent snapshot buffers without mutating their shared event object', () => {
@@ -20,6 +21,31 @@ describe('LiveEventReplay', () => {
     expect(streamA).toEqual([{ type: 'text', delta: 'hello' }]);
     expect(streamB).toEqual([{ type: 'text', delta: 'hello' }]);
     expect(streamA[0]).not.toBe(streamB[0]);
+  });
+
+  it('preserves every step as an ordered render boundary in snapshots and route buffers', () => {
+    const events: BrainEvent[] = [
+      { type: 'step', step: 1, maxSteps: 0 },
+      { type: 'text', delta: 'first' },
+      { type: 'tool', id: 'read-1', name: 'Read', detail: 'a.ts' },
+      { type: 'step', step: 2, maxSteps: 0 },
+      { type: 'text', delta: 'second' },
+    ];
+    const replay = new LiveEventReplay(new Set());
+    const routeBuffer: BrainEvent[] = [];
+    for (const event of events) {
+      replay.publish(event);
+      appendReplayBrainEvent(routeBuffer, event);
+    }
+
+    expect(replay.snapshot().events).toEqual(events);
+    expect(routeBuffer).toEqual(events);
+
+    const transcript = new TranscriptModel();
+    for (const event of replay.snapshot().events) transcript.apply(event);
+    expect(transcript.turnCount).toBe(2);
+    expect(transcript.turnAt(0)).toMatchObject({ role: 'elowen', streaming: false });
+    expect(transcript.turnAt(1)).toMatchObject({ role: 'elowen', streaming: true });
   });
 
   it('fans out every delta but coalesces the bounded replay snapshot', () => {

@@ -5,6 +5,8 @@ import { ChatViewport } from '../../../src/cli/chat/chatViewport.js';
 // The benchmark is an executable repository script rather than compiled application source.
 // @ts-expect-error JavaScript benchmark modules intentionally have no declaration file.
 import {
+  LONG_RUN_FRAME_SAMPLES,
+  LONG_RUN_STEPS,
   VIEWPORT_FRAME_SAMPLES,
   VIEWPORT_HISTORY_PAIRS,
   loadViewportRuntime,
@@ -66,6 +68,17 @@ describe('CLI viewport benchmark contract', () => {
           frameHeightIndexOperations: 20,
         },
       })),
+      longRun: {
+        steps: 200,
+        turns: 201,
+        boundaryAvgMs: 1,
+        boundaryP95Ms: 1,
+        boundaryMaxMs: 1,
+        boundarySamplesMs: Array.from({ length: 40 }, () => 1),
+        maxRenderedTurns: 1,
+        maxCachedRows: 100,
+        finalViewport: {},
+      },
     };
     expect(() => validateViewportBenchmarkReport(report)).not.toThrow();
 
@@ -87,7 +100,7 @@ describe('CLI viewport benchmark contract', () => {
     const transcriptLengths: number[] = [];
     let viewportRenders = 0;
     class InstrumentedTranscriptModel extends TranscriptModel {
-      constructor(history: ConstructorParameters<typeof TranscriptModel>[0]) {
+      constructor(history: ConstructorParameters<typeof TranscriptModel>[0] = []) {
         transcriptLengths.push(history.length);
         super(history);
       }
@@ -110,14 +123,25 @@ describe('CLI viewport benchmark contract', () => {
 
     expect(VIEWPORT_HISTORY_PAIRS).toEqual([100, 1_000, 5_000]);
     expect(VIEWPORT_FRAME_SAMPLES).toBe(40);
-    expect(transcriptLengths).toEqual([200, 2_000, 10_000]);
-    expect(viewportRenders).toBe(3 * (1 + VIEWPORT_FRAME_SAMPLES + 1 + VIEWPORT_FRAME_SAMPLES));
-    expect(report.samples).toEqual({ scroll: 40, stream: 40 });
+    expect(LONG_RUN_STEPS).toBe(200);
+    expect(LONG_RUN_FRAME_SAMPLES).toBe(40);
+    expect(transcriptLengths).toEqual([200, 2_000, 10_000, 0]);
+    expect(viewportRenders).toBe(3 * (1 + VIEWPORT_FRAME_SAMPLES + 1 + VIEWPORT_FRAME_SAMPLES)
+      + 2 + LONG_RUN_FRAME_SAMPLES);
+    expect(report.samples).toEqual({ scroll: 40, stream: 40, longRunBoundary: 40 });
     expect(report.results.map((result: { pairs: number; turns: number }) => [result.pairs, result.turns]))
       .toEqual([[100, 201], [1_000, 2_001], [5_000, 10_001]]);
     expect(report.results.every((result: { scrollHeightIndexOperations: { samples: number[]; maxPerFrame: number } }) =>
       result.scrollHeightIndexOperations.samples.length === 40
       && result.scrollHeightIndexOperations.maxPerFrame <= 512)).toBe(true);
+    expect(report.longRun).toMatchObject({
+      steps: 200,
+      turns: 201,
+      maxRenderedTurns: expect.any(Number),
+      maxCachedRows: expect.any(Number),
+    });
+    expect(report.longRun.maxRenderedTurns).toBeLessThanOrEqual(2);
+    expect(report.longRun.maxCachedRows).toBeLessThanOrEqual(2_048);
   });
 
   it('times scroll plus render as one frame and includes pre-render index operations', async () => {

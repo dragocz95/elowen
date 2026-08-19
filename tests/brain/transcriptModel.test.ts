@@ -214,6 +214,92 @@ describe('TranscriptModel', () => {
     });
   });
 
+  it('uses each model step as a render boundary without splitting parallel tools', () => {
+    const model = new TranscriptModel();
+    model.apply({ type: 'user', text: 'run it' });
+
+    // The first step precedes content and must not create an empty assistant block.
+    expect(model.apply({ type: 'step', step: 1, maxSteps: 0 })).toBe(false);
+    model.apply({ type: 'text', delta: 'first' });
+    model.apply({ type: 'tool', id: 'read-1', name: 'Read', detail: 'a.ts' });
+    model.apply({ type: 'tool', id: 'read-2', name: 'Read', detail: 'b.ts' });
+
+    const beforeStep = model.revision;
+    expect(model.apply({ type: 'step', step: 2, maxSteps: 0 })).toBe(true);
+    expect(model.changesSince(beforeStep)).toMatchObject({ kind: 'turns', indices: [1] });
+    model.apply({ type: 'text', delta: 'second' });
+    model.apply({ type: 'tool', id: 'bash-2', name: 'Bash', command: 'npm test' });
+
+    expect(model.turnCount).toBe(3);
+    expect(model.turnAt(1)).toMatchObject({ role: 'elowen', streaming: false });
+    expect(model.turnAt(2)).toMatchObject({ role: 'elowen', streaming: true });
+    const first = model.turnAt(1);
+    if (first?.role !== 'elowen') throw new Error('expected first assistant block');
+    expect(first.segments).toEqual([
+      { kind: 'text', text: 'first' },
+      { kind: 'tools', items: [
+        expect.objectContaining({ id: 'read-1' }),
+        expect.objectContaining({ id: 'read-2' }),
+      ] },
+    ]);
+  });
+
+  it('matches durable assistant-message boundaries after snapshot replay', () => {
+    const live = new TranscriptModel();
+    live.apply({ type: 'user', text: 'run it', durableId: 'user-1' });
+    live.apply({ type: 'step', step: 1, maxSteps: 0 });
+    live.apply({ type: 'text', delta: 'first' });
+    live.apply({ type: 'tool', id: 'read-1', name: 'Read', detail: 'a.ts' });
+    live.apply({ type: 'tool', id: 'read-2', name: 'Read', detail: 'b.ts' });
+    live.apply({ type: 'step', step: 2, maxSteps: 0 });
+    live.apply({ type: 'text', delta: 'second' });
+    live.apply({ type: 'idle' });
+
+    const hydrated = new TranscriptModel([
+      { role: 'user', id: 'user-1', text: 'run it' },
+      { role: 'assistant', text: '', segments: [
+        { kind: 'text', text: 'first' },
+        { kind: 'tool', id: 'read-1', name: 'Read', detail: 'a.ts' },
+        { kind: 'tool', id: 'read-2', name: 'Read', detail: 'b.ts' },
+      ] },
+      { role: 'assistant', text: 'second' },
+    ]);
+
+    const turns = (model: TranscriptModel) => Array.from(
+      { length: model.turnCount }, (_, index) => {
+        const turn = model.turnAt(index);
+        return turn?.role === 'elowen'
+          ? { role: turn.role, segments: JSON.parse(JSON.stringify(turn.segments)), streaming: turn.streaming }
+          : turn;
+      },
+    );
+    expect(turns(live)).toEqual(turns(hydrated));
+  });
+
+  it('patches tools in older step blocks after later steps have started', () => {
+    const model = new TranscriptModel();
+    model.apply({ type: 'step', step: 1, maxSteps: 0 });
+    model.apply({ type: 'tool', id: 'delegate-1', name: 'Delegate', detail: 'review' });
+    model.apply({ type: 'tool', id: 'workflow-1', name: 'WorkflowStart', detail: 'ship' });
+    model.apply({ type: 'step', step: 2, maxSteps: 0 });
+    model.apply({ type: 'text', delta: 'continuing' });
+
+    const before = model.revision;
+    expect(model.apply({
+      type: 'subagent', id: 'delegate-1', sessionId: 'child-1', status: 'done', task: 'review',
+      tools: 4, tokens: 200, seconds: 8,
+    })).toBe(true);
+    expect(model.apply({
+      type: 'workflow', id: 'wf-1', toolCallId: 'workflow-1', status: 'done',
+      nodes: [{ id: 'review', task: 'review', status: 'done', deps: [] }],
+    })).toBe(true);
+
+    expect(toolItem(model, 0, 'delegate-1').sub).toMatchObject({ status: 'done', tools: 4 });
+    expect(toolItem(model, 0, 'workflow-1').wf).toMatchObject({ id: 'wf-1', status: 'done' });
+    expect(model.changesSince(before)).toMatchObject({ kind: 'turns', indices: [0] });
+    expect(model.turnAt(1)).toMatchObject({ role: 'elowen', streaming: true });
+  });
+
   it('folds streamed text, reasoning, tool lifecycle, notice, idle and error without changing UX state', () => {
     const model = new TranscriptModel();
     model.apply({ type: 'user', text: 'run it' });
