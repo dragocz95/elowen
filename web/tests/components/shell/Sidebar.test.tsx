@@ -128,8 +128,9 @@ describe('Sidebar (registry-driven)', () => {
     expect(screen.getByText('Move up')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Hide'));
 
-    // The saved layout names the hidden entry, and the menu drops it without a refetch.
-    await vi.waitFor(() => expect(patches).toEqual([{ hidden: ['memory'], order: ['home', 'chat', 'projects', 'memory'] }]));
+    // The saved layout names the hidden entry and says nothing about order: hiding is not an
+    // arrangement, and recording one here re-sorts every other surface that sorts by its own rule.
+    await vi.waitFor(() => expect(patches).toEqual([{ hidden: ['memory'], order: [] }]));
     await vi.waitFor(() => expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument());
 
     // Right-clicking the empty part of the nav is how a hidden space is found again.

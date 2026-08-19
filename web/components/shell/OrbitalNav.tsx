@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useMemo, useRef, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -79,8 +79,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { worlds, systemItems, allWorlds, layout } = useShellNavigation();
-  const customization = useNavCustomization(allWorlds, layout);
+  const { worlds, systemItems, allWorlds, layout, layoutReady } = useShellNavigation();
   const health = useHealth();
   const { t } = useTranslation();
   const lastWheelAt = useRef(0);
@@ -107,6 +106,20 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
     const worldRank = (entry: RailEntry) => entry.worldIndex ?? Number.MAX_SAFE_INTEGER;
     return all.sort((a, b) => worldRank(a) - worldRank(b) || axisRank(a) - axisRank(b));
   }, [worlds, systemItems, layout]);
+  // The sequence of worlds as the rail presents them, which is what an edit must build the stored order
+  // from — otherwise the first hide or move would re-sort the rail into registry order under the user.
+  const railWorldOrder = useMemo(() => [...worlds]
+    .sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href))
+    .flatMap((world) => (world.id ? [world.id] : [])), [worlds]);
+  const customization = useNavCustomization(allWorlds, layout, railWorldOrder);
+  // Hold the entrance animation until the arrangement is known: the rail animates every position change,
+  // so a layout arriving one frame late would play out as the whole menu sliding into place.
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (!layoutReady || animate) return;
+    const frame = requestAnimationFrame(() => setAnimate(true));
+    return () => cancelAnimationFrame(frame);
+  }, [layoutReady, animate]);
   const activeIndex = Math.max(0, routeEntries.findIndex((entry) => entryIsActive(entry, pathname)));
   const stageRef = useRef<HTMLDivElement>(null);
   const stageHeight = useElementHeight(stageRef);
@@ -165,7 +178,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse }:
               onContextMenu={entry.worldId
                 ? (event) => customization.onEntryContextMenu(event, { ...entry, id: entry.worldId })
                 : customization.onSurfaceContextMenu}
-              className="absolute left-0 top-[49%] z-10 transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]"
+              className={`absolute left-0 top-[49%] z-10 ${animate ? 'transition-[transform,opacity,filter] duration-[620ms] ease-[cubic-bezier(.16,1,.3,1)]' : ''}`}
               style={{
                 transform: `translate(0, calc(-50% + ${positions[index]}px)) scale(${scale})`,
                 opacity,

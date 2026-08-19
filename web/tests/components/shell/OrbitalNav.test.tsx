@@ -1,10 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../../msw';
 const pushSpy = vi.hoisted(() => vi.fn());
 const currentPath = vi.hoisted(() => ({ value: '/p/work/stats' }));
 vi.mock('next/navigation', () => ({ usePathname: () => currentPath.value, useRouter: () => ({ push: pushSpy }) }));
 import { getStableOffsets, OrbitalNav, railSpacing } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
+
+const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok: true })));
+beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
+beforeEach(() => localStorage.clear());
 
 function mount(compact = false, props: { side?: 'left' | 'right'; onToggleCollapse?: () => void } = {}) {
   const { wrapper: Wrapper, client } = createWrapper();
@@ -257,5 +264,28 @@ describe('OrbitalNav menu customization', () => {
 
     expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
+  });
+});
+
+describe('OrbitalNav order stability', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  const railLabels = () => [...document.querySelector('[data-testid="future-navigation"]')!
+    .querySelectorAll('[role="listitem"] a')].map((link) => (link.getAttribute('title') ?? link.textContent ?? '').trim());
+
+  // The stored order starts empty, so the first edit seeds it — and if it seeds from the registry
+  // instead of from what the rail is showing, hiding one space silently re-sorts every other one.
+  // That is exactly what the rail looked like in use: touch it once and the whole menu jumps.
+  it('hiding one space leaves every other one exactly where it was', async () => {
+    server.use(http.patch('*/api/auth/me/nav-settings', async ({ request }) => HttpResponse.json(await request.json())));
+    mount();
+    const before = railLabels();
+    expect(before).toContain('Memory');
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Memory' }));
+    fireEvent.click(screen.getByText('Hide'));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument());
+    expect(railLabels()).toEqual(before.filter((label) => label !== 'Memory'));
   });
 });

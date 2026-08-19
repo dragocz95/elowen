@@ -2,6 +2,7 @@ export const cs = {
   nav: {
     worlds: 'Prostory',
     customize: 'Upravit menu…',
+    reorderEntry: 'Změnit pořadí',
     customizeTitle: 'Upravit menu',
     customizeHint: 'Vyberte, které prostory se zobrazí v menu a v jakém pořadí. Skryté prostory zůstávají dostupné z příkazové palety a přes přímý odkaz.',
     hideEntry: 'Skrýt',

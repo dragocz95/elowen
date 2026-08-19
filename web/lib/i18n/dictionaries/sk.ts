@@ -2,6 +2,7 @@ export const sk = {
   nav: {
     worlds: 'Priestory',
     customize: 'Upraviť menu…',
+    reorderEntry: 'Zmeniť poradie',
     customizeTitle: 'Upraviť menu',
     customizeHint: 'Vyberte, ktoré priestory sa zobrazia v menu a v akom poradí. Skryté priestory zostávajú dostupné z príkazovej palety a cez priamy odkaz.',
     hideEntry: 'Skryť',

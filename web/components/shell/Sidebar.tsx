@@ -40,7 +40,8 @@ export function Sidebar({
   const { t } = useTranslation();
   const brand = useBrand();
   const { worlds, systemItems, allWorlds, layout } = useShellNavigation();
-  const customization = useNavCustomization(allWorlds, layout);
+  // The drawer lists worlds in exactly the order it shows them, so its own sequence is the seed.
+  const customization = useNavCustomization(allWorlds, layout, worlds.flatMap((world) => (world.id ? [world.id] : [])));
   const dragging = useRef(false);
 
   const up = data?.ok === true;

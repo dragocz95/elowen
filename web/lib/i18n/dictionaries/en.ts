@@ -2,6 +2,7 @@ export const en = {
   nav: {
     worlds: 'Spaces',
     customize: 'Customize menu…',
+    reorderEntry: 'Reorder',
     customizeTitle: 'Customize menu',
     customizeHint: 'Choose which spaces appear in the menu and in what order. Hidden spaces stay available from the command palette and by direct link.',
     hideEntry: 'Hide',

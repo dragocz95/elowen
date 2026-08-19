@@ -1,12 +1,16 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CircleUserRound, Settings2 } from 'lucide-react';
 import { NAVIGATION_WORLDS, SYSTEM_MODULES } from '../../modules/registry';
 import { useMe, useMyNavSettings, usePluginUi } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { pluginNavEntries } from '../../lib/pluginNav';
-import { EMPTY_NAV_LAYOUT, applyNavLayout } from '../../lib/navLayout';
+import { EMPTY_NAV_LAYOUT, applyNavLayout, parseNavLayout } from '../../lib/navLayout';
+
+/** Where this browser remembers the last layout the server confirmed, so the menu never paints in the
+ *  wrong order first. It is a cache, never the source of truth. */
+const NAV_LAYOUT_CACHE_KEY = 'elowen.nav.layout';
 import type { NavLayout } from '../../lib/types';
 import type { NavEntry } from './NavItem';
 
@@ -15,7 +19,7 @@ import type { NavEntry } from './NavItem';
  *  `worlds` is what the menu shows: the registry order with the user's own arrangement applied.
  *  `allWorlds` is the unfiltered set, which the customization modal needs to offer entries back.
  *  The system section is deliberately not customizable — hiding the way into settings would be a trap. */
-export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout } {
+export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout; layoutReady: boolean } {
   const me = useMe();
   const { t, locale } = useTranslation();
   const isAdmin = me.data?.user?.is_admin ?? false;
@@ -23,9 +27,27 @@ export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntr
   // invalidates the listing and the sidebar updates without a reload.
   const pluginUi = usePluginUi(locale);
   const navSettings = useMyNavSettings();
+  // The arrangement is the user's and the server owns it, but waiting a whole round trip for it means
+  // the menu paints in registry order and visibly rearranges itself once the answer lands — on every
+  // single page load. So the last known layout is mirrored into this browser and used for that first
+  // paint; the server's answer overrides it the moment it arrives.
+  const [cachedLayout, setCachedLayout] = useState<NavLayout | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NAV_LAYOUT_CACHE_KEY);
+      if (raw !== null) setCachedLayout(parseNavLayout(JSON.parse(raw) as unknown));
+    } catch { /* private mode or malformed cache — registry order is a fine fallback */ }
+  }, []);
+  useEffect(() => {
+    if (!navSettings.data) return;
+    try { localStorage.setItem(NAV_LAYOUT_CACHE_KEY, JSON.stringify(navSettings.data)); } catch { /* quota */ }
+  }, [navSettings.data]);
   // Until the layout has loaded the menu renders in registry order rather than empty, so a slow or
   // failed read costs the arrangement, never the navigation itself.
-  const layout = navSettings.data ?? EMPTY_NAV_LAYOUT;
+  const layout = navSettings.data ?? cachedLayout ?? EMPTY_NAV_LAYOUT;
+  // Whether the menu is showing an arrangement it can trust. The shells use it to hold their entrance
+  // animation until the order is final, so a late correction never plays out as sliding entries.
+  const layoutReady = navSettings.data !== undefined || cachedLayout !== null || navSettings.isError;
 
   const allWorlds = useMemo<NavEntry[]>(() => [
     ...NAVIGATION_WORLDS.map<NavEntry>((world) => ({
@@ -67,5 +89,5 @@ export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntr
     }];
   }, [isAdmin, t]);
 
-  return { worlds, systemItems, allWorlds, layout };
+  return { worlds, systemItems, allWorlds, layout, layoutReady };
 }
