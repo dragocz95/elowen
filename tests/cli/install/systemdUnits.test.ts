@@ -25,6 +25,12 @@ describe('install/systemdUnits.daemonUnit', () => {
     expect(u).toMatch(/^Restart=on-failure$/m);
     expect(u).toMatch(/^WantedBy=multi-user\.target$/m);
   });
+  it('treats the reserved restart status as a restart, not a crash', () => {
+    // The daemon asks for its own restart by draining and exiting 75 instead of running `systemctl
+    // restart` on itself. Without this the contract rests entirely on Restart=on-failure happening to
+    // cover non-zero statuses, and narrowing that policy would silently leave a restart stopped.
+    expect(u).toMatch(/^RestartForceExitStatus=75$/m);
+  });
   it('skips the unit instead of crash-looping when the daemon entry is missing', () => {
     // ConditionPathExists guards the exact ExecStart entry: gone file → skipped start, no process
     // to restart, so a missing install is one log line instead of a 1200/h restart loop.

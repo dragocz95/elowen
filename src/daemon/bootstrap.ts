@@ -26,7 +26,6 @@ import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
-import { systemctl } from '../cli/systemd.js';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
 import { deniedToolsForUser } from '../brain/brainDeps.js';
 import { buildBrainCore } from './brainCore.js';
@@ -110,6 +109,25 @@ const BOOT_ANNOUNCE_DEBOUNCE_MS = 60_000;
 const SHUTDOWN_DRAIN_MS = 600_000;
 const SHUTDOWN_POLL_MS = 500;
 
+/** Exit status that means "I stopped on purpose, start me again".
+ *
+ *  A restart used to run `systemctl restart` from inside the daemon, which asks systemd to SIGTERM the very
+ *  process waiting for that command to return — the daemon could be killed part-way through issuing its own
+ *  restart, so the call had to be detached and timed to dodge itself. Exiting with a reserved status instead
+ *  removes the race entirely: the supervisor already owns starting us, and it can tell a deliberate restart
+ *  (75) from a clean stop (0) and from a crash (anything else). It also needs no sudo.
+ *
+ *  75 is EX_TEMPFAIL from sysexits.h, the conventional "try again" status, and the same code Nous Research's
+ *  Hermes agent reserves for this. The units pin it with `RestartForceExitStatus`; the currently installed
+ *  units already restart on any non-zero status, so this works there too. */
+export const RESTART_EXIT_CODE = 75;
+
+/** Handle returned by {@link installGracefulShutdown} for asking the daemon to restart itself. */
+export interface ShutdownControl {
+  /** Drain exactly like a stop, then exit {@link RESTART_EXIT_CODE} so the supervisor starts us again. */
+  requestRestart(reason: string): void;
+}
+
 /** Once the platforms are back up, announce that the daemon is running — for EVERY boot, not just a
  *  user-triggered `/restart`. A deploy, a crash and a host reboot all bring the daemon back without anyone
  *  being told, and the unattended restart is precisely the one worth hearing about.
@@ -142,18 +160,23 @@ export function installGracefulShutdown(
   brain: BrainService | undefined,
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void },
   opts?: { drainMs?: number; pollMs?: number; exit?: (code: number) => never; notify?: boolean },
-): void {
+): ShutdownControl {
   const drainMs = opts?.drainMs ?? SHUTDOWN_DRAIN_MS;
   const pollMs = opts?.pollMs ?? SHUTDOWN_POLL_MS;
   const exit = opts?.exit ?? ((code: number) => process.exit(code));
   let draining = false;
-  const onSignal = (signal: NodeJS.Signals): void => {
+  // The code the drain will exit with, fixed when the drain starts: a second signal has to reproduce the
+  // decision already taken, or asking to restart and then losing patience would exit 0 and leave the
+  // daemon down.
+  let exitCode = 0;
+  const drain = (cause: string, code: number): void => {
     if (draining) {
-      log.info(`${signal} again — exiting now, without waiting for the remaining work`);
-      exit(0);
+      log.info(`${cause} while already draining — exiting now, without waiting for the remaining work`);
+      exit(exitCode);
       return;
     }
     draining = true;
+    exitCode = code;
     // Stop admitting new turns at once, so fresh input arriving through the drain window cannot keep
     // busy() above zero for the whole budget. Existing turns, delegation and result delivery are
     // unaffected — they reach the brain through seams other than the two gated send() entries.
@@ -161,10 +184,11 @@ export function installGracefulShutdown(
     void (async () => {
       const at = brain?.busy() ?? { turns: 0, children: 0, undelivered: 0 };
       const busy = at.turns > 0 || at.children > 0 || at.undelivered > 0;
-      log.info(`${signal} — draining (${at.turns} turn(s), ${at.children} sub-agent(s), ${at.undelivered} undelivered result(s))`);
-      if (opts?.notify !== false) {
+      log.info(`${cause} — draining (${at.turns} turn(s), ${at.children} sub-agent(s), ${at.undelivered} undelivered result(s))`);
+      if (opts?.notify !== false && code !== RESTART_EXIT_CODE) {
         // Only worth a message when something is actually being waited for; an idle restart already
-        // announces itself on the way back up, and saying it twice is noise.
+        // announces itself on the way back up, and saying it twice is noise. A restart has already said
+        // its own piece through restartHandler, so it never adds a second stop notice here.
         const { text, notice } = busy
           ? lifecycleNotice('stopping', at.turns, at.children, at.undelivered)
           : lifecycleNotice('stoppingIdle');
@@ -180,12 +204,13 @@ export function installGracefulShutdown(
         }
         await new Promise((r) => setTimeout(r, pollMs));
       }
-      log.info('drained — exiting');
-      exit(0);
+      log.info(`drained — exiting ${exitCode}${exitCode === RESTART_EXIT_CODE ? ' (supervisor restarts us)' : ''}`);
+      exit(exitCode);
     })();
   };
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', (s) => drain(s, 0));
+  process.on('SIGINT', (s) => drain(s, 0));
+  return { requestRestart: (reason: string) => drain(`restart requested (${reason})`, RESTART_EXIT_CODE) };
 }
 
 export async function announceBoot(
@@ -488,9 +513,11 @@ export async function buildApp(opts: BuildOpts) {
     return [];
   });
   // The admin-only `/restart` slash command: announce it on the platforms (Discord main channel), drop a
-  // marker so the NEXT boot announces "back online", then hand off to systemd. Runs in prod only (a
-  // :memory: test DB has no config dir + no units). `setTimeout` lets the HTTP response flush before the
-  // process is torn down. systemctl() self-elevates via sudo when not root (www-data has passwordless).
+  // marker so the NEXT boot announces "back online", then drain and exit for the supervisor to restart.
+  // Runs in prod only (a :memory: test DB has no config dir + no units).
+  // Late-bound: the handle exists only once startLoops installs the shutdown handler, which happens after
+  // this closure is built but long before a user can invoke it.
+  let shutdown: ShutdownControl | undefined;
   const restartMarker = opts.dbPath !== ':memory:' ? join(dirname(opts.dbPath), '.restart-marker') : undefined;
   // Timestamp of the last boot announcement — the crash-loop debounce in announceBoot. Same state dir,
   // and likewise absent under the in-memory test DB so the suite never announces.
@@ -500,22 +527,18 @@ export async function buildApp(opts: BuildOpts) {
         log.info(`/restart requested by user ${byUserId}`);
         const restartingNotice = lifecycleNotice('restarting');
         await brain?.notify(restartingNotice.text, undefined, restartingNotice.notice).catch(() => { /* best-effort */ });
-        // Drop the marker (timestamped) so the NEXT boot echoes "back online" — but ONLY for a restart that
-        // actually takes. systemctl() resolves an exit code (never throws); on failure the daemon keeps
-        // running, so we must undo the marker + tell the operator, or a future unrelated boot would falsely
-        // announce recovery.
+        // Drop the marker (timestamped) so the NEXT boot echoes "back online".
         try { writeFileSync(restartMarker, String(Date.now())); } catch { /* marker is a nicety, not required */ }
-        setTimeout(() => {
-          void systemctl('restart', 'elowen-daemon').then((r) => {
-            if (r.code !== 0) {
-              log.error(`/restart failed (systemctl exit ${r.code}): ${r.stdout.trim()}`);
-              try { unlinkSync(restartMarker); } catch { /* nothing to undo */ }
-              const failed = lifecycleNotice('restartFailed');
-              void brain?.notify(failed.text, undefined, failed.notice).catch(() => { /* best-effort */ });
-            }
-            // On success this process is torn down before the promise settles — nothing more to do.
-          });
-        }, 800);
+        // Drain and exit RESTART_EXIT_CODE rather than shelling out to `systemctl restart`, which asked
+        // systemd to kill the very process issuing the command. The drain is the same one a stop performs,
+        // so a running turn or sub-agent finishes first instead of being cut off mid-stream.
+        if (shutdown) { shutdown.requestRestart(`user ${byUserId}`); return; }
+        // No shutdown handle means the loops never started (a partially built test daemon). Undo the marker
+        // rather than leaving a future unrelated boot to announce a recovery that never happened.
+        log.error('/restart requested before the shutdown handler was installed — ignoring');
+        try { unlinkSync(restartMarker); } catch { /* nothing to undo */ }
+        const failed = lifecycleNotice('restartFailed');
+        await brain?.notify(failed.text, undefined, failed.notice).catch(() => { /* best-effort */ });
       }
     : undefined;
   // Late-bind the restart handler onto the brain so a platform `/restart` slash (Discord) reaches the
@@ -567,7 +590,7 @@ export async function buildApp(opts: BuildOpts) {
       .catch((e) => log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.
-    if (opts.dbPath !== ':memory:') installGracefulShutdown(brain, log);
+    if (opts.dbPath !== ':memory:') shutdown = installGracefulShutdown(brain, log);
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
     purgeTokens();

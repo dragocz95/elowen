@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { installGracefulShutdown } from '../../src/daemon/bootstrap.js';
+import { installGracefulShutdown, RESTART_EXIT_CODE } from '../../src/daemon/bootstrap.js';
 import type { BrainService } from '../../src/brain/brainService.js';
 
 /** A brain whose in-flight work follows a scripted sequence, one entry consumed per busy() call. The last
@@ -19,6 +19,59 @@ const brainBusy = (sequence: Busy[], sent?: string[], notices?: unknown[]) => {
 };
 
 const silentLog = { info: () => { /* quiet */ }, error: () => { /* quiet */ } };
+
+describe('a requested restart drains like a stop but exits for the supervisor to start again', () => {
+  afterEach(() => { process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT'); });
+
+  /** Install, ask for a restart, and resolve once the handler has called exit. */
+  const runRestart = async (brain: BrainService, after?: () => void) => {
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      const control = installGracefulShutdown(brain, silentLog, {
+        pollMs: 1, drainMs: 200, notify: false,
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      control.requestRestart('test');
+      after?.();
+    });
+    return exited;
+  };
+
+  it('exits with the reserved restart status rather than a clean stop', async () => {
+    const { brain } = brainBusy([{ turns: 0, children: 0 }]);
+    // 75 is what the unit pins with RestartForceExitStatus. Exiting 0 here would drain correctly and then
+    // leave the daemon stopped, which is the one outcome a restart must never produce.
+    expect(await runRestart(brain)).toEqual([RESTART_EXIT_CODE]);
+  });
+
+  it('waits for a running turn before exiting, exactly like a stop', async () => {
+    const { brain, state } = brainBusy([
+      { turns: 1, children: 0 }, { turns: 1, children: 0 }, { turns: 0, children: 0 },
+    ]);
+    expect(await runRestart(brain)).toEqual([RESTART_EXIT_CODE]);
+    expect(state.reads).toBeGreaterThan(2); // it polled rather than exiting on the first look
+  });
+
+  it('keeps the restart status when someone signals again mid-drain', async () => {
+    // Losing patience must not turn a restart into a stop: the impatient path has to reproduce the
+    // decision already taken, or the daemon would drain and then stay down.
+    const { brain } = brainBusy([{ turns: 1, children: 0 }]);
+    const codes = await runRestart(brain, () => { process.emit('SIGTERM'); });
+    expect(codes[0]).toBe(RESTART_EXIT_CODE);
+  });
+
+  it('still exits 0 for an ordinary stop, so a deliberate stop stays stopped', async () => {
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brainBusy([{ turns: 0, children: 0 }]).brain, silentLog, {
+        pollMs: 1, drainMs: 200, notify: false,
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(exited).toEqual([0]);
+  });
+});
 
 describe('installGracefulShutdown — a stop waits for running work instead of cutting it off', () => {
   afterEach(() => { process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT'); });

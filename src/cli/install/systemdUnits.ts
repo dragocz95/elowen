@@ -67,6 +67,12 @@ Environment=PATH=${p.npmGlobalBin}:${BASE_PATH}
 Environment=LANG=${UTF8_LOCALE}
 ExecStart=${p.nodePath} ${p.daemonEntry}
 Restart=on-failure
+# A requested restart (the /restart command, the web button) drains and exits 75 (EX_TEMPFAIL,
+# RESTART_EXIT_CODE in bootstrap.ts) instead of running systemctl restart from inside the daemon, which
+# would ask systemd to kill the very process issuing the command. Restart=on-failure already covers a
+# non-zero status, so this line is the explicit statement that 75 means "restart me", and it keeps holding
+# if that policy is ever narrowed. A clean stop still exits 0 and stays stopped.
+RestartForceExitStatus=75
 RestartSec=3
 # Signal the daemon ALONE on stop, not the whole control group. The daemon forks sub-agent runners as
 # child processes; the default KillMode=control-group delivers SIGTERM to them at the SAME instant as the
