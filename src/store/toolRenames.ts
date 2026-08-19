@@ -189,3 +189,23 @@ const IMAGE_TOOL_REPAIR: Readonly<Record<string, string>> = {
 
 /** Remap one stored image tool name off the short-lived 0.27.5 spelling. Anything else → unchanged. */
 export const repairImageTool = (name: string): string => IMAGE_TOOL_REPAIR[name] ?? name;
+
+/**
+ * The docs tool lost its brand: the manual it searches ships with every deployment, but the product name
+ * is configurable, so `ElowenDocs` became `DocsSearch` (mirroring `CodebaseSearch`, the tool it most needs
+ * to be told apart from).
+ *
+ * Renaming a tool is never only a source change. The stored name is an exact-match key in a user's
+ * deny-list, their saved permission rules, a platform role's allow-list, and — the one that actually bit
+ * here — `brain_sessions.delegated_access`, the frozen execution boundary every delegated sub-agent
+ * inherits. Those boundaries are allow-lists: 754 of them name the old tool, so without this migration a
+ * read-only sub-agent that was granted the manual silently loses it. The deny direction is worse in kind
+ * (a stale deny switches its tool back ON), which is why this runs even though this instance happens to
+ * have no deny rule naming it.
+ */
+const DOCS_TOOL_RENAMES: Readonly<Record<string, string>> = {
+  'ElowenDocs': 'DocsSearch',
+};
+
+/** Remap the stored docs tool name onto its unbranded spelling. Anything else → unchanged. */
+export const renameDocsTool = (name: string): string => DOCS_TOOL_RENAMES[name] ?? name;

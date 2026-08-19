@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
+import { renameDocsTool, renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
 import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -88,6 +88,7 @@ function migrate(db: Db): void {
   keyToolResultSpillsByOccurrence(db);
   migrateExecIdentity(db);
   migrateExecIdentityDropPrefix(db);
+  migrateDocsToolName(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -771,6 +772,16 @@ function migrateRegistryToolNames(db: Db): void {
  *  done and will not re-read its map. */
 function repairImageToolNames(db: Db): void {
   runOnce(db, 4, () => renameStoredToolNames(db, repairImageTool));
+}
+
+/** v14 — `ElowenDocs` → `DocsSearch` (see DOCS_TOOL_RENAMES).
+ *
+ *  Runs last among the tool renames because it is the newest, not because it depends on them: the name it
+ *  rewrites was minted long after the snake_case era, so no earlier map can have touched it. The stored
+ *  boundaries this reaches — deny-lists, permission rules, role allow-lists and every delegated
+ *  sub-agent's frozen `toolPolicy` — are exact-string matches that stop matching rather than raise. */
+function migrateDocsToolName(db: Db): void {
+  runOnce(db, 14, () => renameStoredToolNames(db, renameDocsTool));
 }
 
 /** Apply `mutate` to a parsed JSON object and re-serialize. A blob that is corrupt or not an object is
