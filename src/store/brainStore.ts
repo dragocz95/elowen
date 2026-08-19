@@ -348,6 +348,14 @@ export class BrainStore {
     return this.db.transaction(() => {
       const exists = this.db.prepare('SELECT 1 FROM brain_messages WHERE session_id = ? LIMIT 1').get(sessionId);
       if (exists) return 0;
+      for (const message of messages) {
+        const content = message.content as { role?: unknown; content?: unknown } | null;
+        const validRole = message.role === 'user' || message.role === 'assistant';
+        const validContent = content !== null && typeof content === 'object' && !Array.isArray(content)
+          && content.role === message.role
+          && (message.role === 'user' ? typeof content.content === 'string' : Array.isArray(content.content));
+        if (!message.id || !validRole || !validContent) throw new TypeError('invalid seeded platform message');
+      }
       const insert = this.db.prepare(
         `INSERT INTO brain_messages (id, session_id, parent_id, role, content)
          VALUES (@id, @session_id, NULL, @role, @content)`,

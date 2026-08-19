@@ -60,7 +60,7 @@ const PLATFORM_PROMPT_MAX_TOTAL_CHARS = 32_000;
 function loadPlatformPrompts(pluginDir: string, manifest: PluginManifest, logger: PluginLogger): { platform: string; file: string; text: string }[] {
   const dir = join(pluginDir, 'prompt');
   if (!existsSync(dir)) return [];
-  const platforms = manifest.provides?.platforms ?? [];
+  const platforms = [...new Set(manifest.provides?.platforms ?? [])];
   if (!platforms.length) {
     logger.warn(`[plugin:${manifest.name}] prompt/*.md ignored — manifest provides no platforms`);
     return [];

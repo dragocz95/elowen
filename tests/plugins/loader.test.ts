@@ -57,7 +57,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'alpha', `export function register(ctx){ ctx.registerTool({name:'alpha_tool'}); }`);
     makePlugin(root, 'mike', `export function register(ctx){ ctx.registerTool({name:'mike_tool'}); }`);
     makePlugin(root, 'zeta', `export function register(ctx){ ctx.registerTool({name:'zeta_tool'}); }`);
-    const surface = makePlugin(root, 'surface', `export function register(ctx){ ctx.registerPlatform({name:'msteams',listen(){},connect(){}}); }`, '1', { provides: { platforms: ['msteams'] } });
+    const surface = makePlugin(root, 'surface', `export function register(ctx){ ctx.registerPlatform({name:'msteams',listen(){},connect(){}}); }`, '1', { provides: { platforms: ['msteams', 'msteams'] } });
     mkdirSync(join(surface, 'prompt'));
     writeFileSync(join(surface, 'prompt', '20-tools.md'), 'Use TeamsSendFile for generated files.');
     writeFileSync(join(surface, 'prompt', '10-surface.md'), 'You are replying through Microsoft Teams.');
@@ -76,6 +76,21 @@ describe('loadPlugins', () => {
     ]);
     expect(reg.platformPromptsFor('discord')).toEqual([]);
     expect(reg.platformPromptFragments.get('msteams')?.map((fragment) => fragment.file)).toEqual(['10-surface.md', '20-tools.md']);
+  });
+
+  it('reloads platform prompt files into a fresh registry without retaining the old generation', async () => {
+    const file = join(root, 'surface', 'prompt', '10-surface.md');
+    const original = 'You are replying through Microsoft Teams.';
+    try {
+      expect((await loadPlugins({ dirs: [root], enabled: ['surface'], logger: log })).platformPromptsFor('msteams')[0]).toBe(original);
+      writeFileSync(file, 'Updated Teams surface instructions.');
+      expect((await loadPlugins({ dirs: [root], enabled: ['surface'], logger: log })).platformPromptsFor('msteams')).toEqual([
+        'Updated Teams surface instructions.',
+        'Use TeamsSendFile for generated files.',
+      ]);
+    } finally {
+      writeFileSync(file, original);
+    }
   });
 
   it('wires a plugin manifest showOutput into the registry tool-output policy set', async () => {

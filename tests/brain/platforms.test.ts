@@ -234,7 +234,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     };
     const resolver = linkedResolver(false);
     const orch = new PlatformOrchestrator({
-      plugins: async () => ({ platforms: [adapter] }) as never,
+      plugins: async () => ({ platforms: [adapter], platformPromptsFor: () => ['must not reach subagents'] }) as never,
       platformOwner: () => 1,
       policyForProjects: () => rolePolicy,
       identity: resolver,

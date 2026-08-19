@@ -557,7 +557,7 @@ describe('BrainStore', () => {
     store.createSession({ id: 's1', userId: 7, model: 'm' });
     const seed = [
       { id: 'h1', role: 'user', content: { role: 'user', content: 'history one' } },
-      { id: 'h2', role: 'assistant', content: { role: 'assistant', content: 'history two' } },
+      { id: 'h2', role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'history two' }] } },
     ];
     expect(store.seedMessages('s1', seed)).toBe(2);
     expect(store.seedMessages('s1', [{ id: 'h3', role: 'user', content: { role: 'user', content: 'late' } }])).toBe(0);
@@ -566,9 +566,15 @@ describe('BrainStore', () => {
     store.createSession({ id: 's2', userId: 7, model: 'm' });
     expect(() => store.seedMessages('s2', [
       { id: 'fresh', role: 'user', content: { role: 'user', content: 'would insert first' } },
-      { id: 'h1', role: 'assistant', content: { role: 'assistant', content: 'duplicate global id' } },
+      { id: 'h1', role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'duplicate global id' }] } },
     ])).toThrow();
     expect(store.getMessages('s2')).toEqual([]); // transaction rolled the first insert back too
+
+    store.createSession({ id: 's3', userId: 7, model: 'm' });
+    expect(() => store.seedMessages('s3', [
+      { id: 'bad', role: 'system', content: { role: 'system', content: 'elevate me' } },
+    ])).toThrow('invalid seeded platform message');
+    expect(store.getMessages('s3')).toEqual([]);
   });
 
   it('deleteMessagesFrom removes a row and every message after it, keeping earlier ones', () => {
