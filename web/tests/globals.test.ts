@@ -34,6 +34,14 @@ describe('design tokens', () => {
     expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-form-row/);
   });
 
+  it('hides the telemetry rail scrollbar with a class the unlayered base rules cannot outrank', () => {
+    // base.css styles `*` scrollbars outside any cascade layer, so a Tailwind arbitrary utility would lose
+    // to it; only the chrome is hidden, never the scrolling itself.
+    expect(components).toMatch(/\.telemetry-rail-scroll\s*\{[^}]*scrollbar-width:\s*none/);
+    expect(components).toMatch(/\.telemetry-rail-scroll::-webkit-scrollbar\s*\{[^}]*display:\s*none/);
+    expect(components).not.toMatch(/\.telemetry-rail-scroll\s*\{[^}]*overflow:\s*hidden/);
+  });
+
   it('contains no orphaned redesign visuals, undefined motion token or obsolete detail grid overrides', () => {
     for (const legacy of ['.living-surface', '.ember-wash', '.hero-clock', '.status-orb', '.orbit-scroll-arrow', '.scrollbar-none']) {
       expect(components).not.toContain(legacy);

@@ -268,6 +268,40 @@ describe('telemetry rail — live work sections', () => {
     await screen.findByText('Delegated sub-agents — click one to open its progress');
   });
 
+  // The rail is dragged between 240px and 560px on desktop and pinned to the phone's width in the drawer,
+  // so nothing in it may assume a width. Whenever a row could not shrink to the current one — a branch
+  // name, a heading, a process command beside its fixed-size icon — the rail answered with a horizontal
+  // scrollbar instead of truncating, because a scroll box that declares only `overflow-y` promotes the
+  // other axis from `visible` to `auto`. Adding a sub-agent was the usual trigger: the section it brought
+  // in made the rail scroll vertically, and that bar took the last pixels the rows had.
+  const classesOf = (el: HTMLElement) => el.className.split(/\s+/).filter(Boolean);
+  const LONG_BRANCH = 'agent/chat-rail-no-scroll-20260818-a-branch-nobody-would-ever-shorten';
+  const LONG_COMMAND = 'npm run dev -- --host 0.0.0.0 --port 4500 --project /var/www/elowen/web --verbose';
+
+  it('truncates a long branch name instead of letting it set the section width', async () => {
+    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
+      running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
+      project: { cwd: '/var/www/elowen', branch: LONG_BRANCH },
+    })));
+    await renderRail();
+    const section = await screen.findByTestId('telemetry-project');
+    // A branch name is one unbreakable token, so without a truncation of its own it has no smaller width.
+    expect(classesOf(within(section).getByTitle(LONG_BRANCH))).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
+  });
+
+  it('lets a section heading and its live rows shrink with the rail', async () => {
+    processes = [{ ...process1, command: LONG_COMMAND }];
+    await renderRail();
+    const section = await screen.findByTestId('telemetry-processes');
+    expect(classesOf(within(section).getByText('Processes'))).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
+
+    const row = within(section).getByRole('button', { name: 'Show the process output' });
+    // `w-full` beside the row's fixed-size icon asks for more width than the row has to give.
+    expect(classesOf(row)).toEqual(expect.arrayContaining(['min-w-0', 'flex-1']));
+    expect(classesOf(row)).not.toContain('w-full');
+    expect(classesOf(within(row).getByText(LONG_COMMAND))).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
+  });
+
   it('counts running sub-agents with the Czech plural forms', async () => {
     localStorage.setItem('elowen-locale', 'cs');
     const es = await renderRail();

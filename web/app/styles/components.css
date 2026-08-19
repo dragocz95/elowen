@@ -165,6 +165,17 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .spatial-mascot-fallback--success::before { background: radial-gradient(circle, rgb(50 201 134 / 0.2), rgb(var(--accent-rgb) / 0.04) 48%, transparent 72%); }
 .spatial-mascot-fallback--error::before { background: radial-gradient(circle, rgb(233 77 66 / 0.15), transparent 70%); }
 
+/* Chat telemetry rail ------------------------------------------------------ */
+/* The rail scrolls a long panel vertically but never draws the bar: an 8px rule down a 240px companion
+   column is louder than the numbers it measures, and the same body is a phone drawer. Only the chrome is
+   hidden — wheel, touch, keyboard and scroll-into-view are untouched, and the overflow rules themselves
+   stay on the element as utilities.
+   It has to be a real class rather than a Tailwind arbitrary utility: base.css styles `*` scrollbars
+   OUTSIDE any cascade layer, and unlayered declarations beat anything in @layer utilities no matter how
+   specific. Same shape as `.spatial-section-rail` above. */
+.telemetry-rail-scroll { scrollbar-width: none; }
+.telemetry-rail-scroll::-webkit-scrollbar { display: none; }
+
 /* Full-page workspaces ---------------------------------------------------- */
 .workspace-page {
   container-type: inline-size;

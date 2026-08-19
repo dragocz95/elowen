@@ -67,11 +67,30 @@ function TelemetryMascot({ busy }: { busy: boolean }) {
   );
 }
 
+/** The scroll box both variants put around the shared body.
+ *
+ *  BOTH axes are declared on purpose. `overflow-y: auto` alone is not "scrolls vertically": CSS computes
+ *  the other axis from `visible` to `auto` as soon as one axis is not visible, so the rail answered every
+ *  child that could not shrink to the current width with a horizontal scrollbar across the whole column —
+ *  and the vertical bar a new section brought in narrowed the content box further, which is why adding a
+ *  sub-agent was the usual trigger. The horizontal axis is clipped instead: every row below truncates, so
+ *  there is nothing to reach sideways, while the vertical axis stays a real scroller for a long rail.
+ *
+ *  `.telemetry-rail-scroll` (components.css) then hides the bar VISUALLY only — the box still scrolls by
+ *  wheel, touch, keyboard and scroll-into-view, and an 8px bar drawn permanently down a 240px companion
+ *  column is exactly the noise this rail exists not to add. It is a design-system class rather than a
+ *  Tailwind arbitrary utility because base.css styles `*` scrollbars outside any cascade layer, which
+ *  beats @layer utilities regardless of specificity. */
+const RAIL_SCROLL = 'telemetry-rail-scroll overflow-y-auto overflow-x-hidden';
+
 /** A section heading: a quiet label with an optional right-aligned meta value, mirroring the CLI rail. */
 function SectionHead({ label, meta }: { label: string; meta?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-2 text-tiny uppercase tracking-wide text-text-subtle">
-      <span>{label}</span>
+      {/* The label truncates like the meta does: it is a translated string, and at the narrow end of the
+          rail an uppercase heading like "OTHER PROCESSES" is otherwise a width floor the row cannot go
+          under, pushing the whole section past the column. */}
+      <span className="min-w-0 truncate">{label}</span>
       {meta ? <span className="truncate font-mono normal-case tracking-normal">{meta}</span> : null}
     </div>
   );
@@ -109,7 +128,10 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel }: {
       disabled={!onClick}
       aria-label={ariaLabel}
       title={title ?? label}
-      className="flex w-full items-center gap-1.5 text-left text-tiny transition-colors hover:text-text disabled:cursor-default"
+      // `min-w-0 flex-1` rather than `w-full`: the row also carries a fixed-size icon (and, in the other-
+      // processes section, a badge and a kill button), so a child asking for the row's FULL width starts
+      // every layout pass over budget and only truncation inside it saves the row.
+      className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-tiny transition-colors hover:text-text disabled:cursor-default"
     >
       <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-text-subtle'}`} aria-hidden>●</span>
       <span className="min-w-0 flex-1 truncate text-text">{label}</span>
@@ -351,8 +373,12 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
             <p className="truncate font-mono text-tiny text-text" title={project.cwd}>{project.cwd}</p>
           ) : null}
           {project?.branch ? (
-            <p className="font-mono text-tiny text-text-muted">
-              {t.telemetry.branch} <span className="text-accent">{project.branch}</span>
+            // A branch name is one unbreakable token (`agent/chat-rail-no-scroll-20260818`), so without a
+            // truncation of its own it sets the section's minimum width — the same rule the cwd above
+            // already follows.
+            <p className="flex items-baseline gap-1 font-mono text-tiny text-text-muted">
+              <span className="shrink-0">{t.telemetry.branch}</span>
+              <span className="min-w-0 truncate text-accent" title={project.branch}>{project.branch}</span>
             </p>
           ) : null}
         </section>
@@ -424,7 +450,7 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
           aria-modal="true"
           aria-label={t.telemetry.title}
           data-testid="telemetry-drawer"
-          className="animate-drawer-in absolute inset-y-0 right-0 flex w-72 max-w-[85%] flex-col overflow-y-auto border-l border-border bg-surface shadow-xl"
+          className={`animate-drawer-in absolute inset-y-0 right-0 flex w-72 max-w-[85%] flex-col border-l border-border bg-surface shadow-xl ${RAIL_SCROLL}`}
         >
           <div className="flex items-center gap-1 border-b border-border px-3 py-1.5">
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.telemetry.title}</span>
@@ -465,7 +491,7 @@ export function TelemetryPanel({ variant, open = false, onClose, onOpenWorkflow 
       />
       {/* The border runs the full column height while the content itself follows the reader, so the rail
           stays legible through a long transcript instead of scrolling away with the first turns. */}
-      <div className="sticky top-0 max-h-[100dvh] overflow-y-auto">
+      <div data-testid="telemetry-scroll" className={`sticky top-0 max-h-[100dvh] ${RAIL_SCROLL}`}>
         <TelemetryBody onOpenWorkflow={onOpenWorkflow} />
       </div>
     </aside>

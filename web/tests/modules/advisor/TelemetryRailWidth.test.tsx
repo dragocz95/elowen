@@ -118,3 +118,36 @@ describe('telemetry rail width', () => {
     expect(screen.queryByRole('separator')).toBeNull();
   });
 });
+
+// The rail is dragged between 240px and 560px on desktop and pinned to a phone's width in the drawer, so
+// its content has no width to assume. Whenever a row could not shrink to the current one — a long branch
+// name, a wide heading, a process command beside a fixed-size icon — the panel answered with a horizontal
+// scrollbar rather than truncating, because `overflow-y-auto` alone promotes the OTHER axis from `visible`
+// to `auto`. Adding a sub-agent was the usual trigger: the section it brought in made the box scroll
+// vertically, and the vertical bar took the last pixels the rows had left.
+
+const classesOf = (el: HTMLElement) => el.className.split(/\s+/).filter(Boolean);
+
+describe('telemetry rail overflow contract', () => {
+  /** The column wraps the shared body in a scroll box; in the drawer the panel itself is that box. */
+  async function scrollBox(variant: 'column' | 'drawer'): Promise<HTMLElement> {
+    renderRail(variant);
+    return screen.findByTestId(variant === 'column' ? 'telemetry-scroll' : 'telemetry-drawer');
+  }
+
+  it.each(['column', 'drawer'] as const)('scrolls %s content vertically and clips the other axis', async (variant) => {
+    const classes = classesOf(await scrollBox(variant));
+    expect(classes).toContain('overflow-y-auto');
+    expect(classes).toContain('overflow-x-hidden');
+    // A blanket `overflow-hidden` would take the horizontal scrollbar away by making the rail unscrollable
+    // altogether — the long transcript-side rail has to keep reaching its bottom sections.
+    expect(classes).not.toContain('overflow-hidden');
+    expect(classes).not.toContain('overflow-auto');
+  });
+
+  it.each(['column', 'drawer'] as const)('hides the %s scrollbar visually without disabling it', async (variant) => {
+    // The chrome is hidden by the design-system class (see globals.test.ts for the rules it carries), not
+    // by an overflow that would take the scrolling away with it.
+    expect(classesOf(await scrollBox(variant))).toContain('telemetry-rail-scroll');
+  });
+});
