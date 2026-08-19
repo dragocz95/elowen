@@ -9,7 +9,7 @@ import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILT
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
-import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
+import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { personalityText } from '../personality.js';
@@ -190,8 +190,9 @@ export class LiveSessionSpawner {
     const toolDeferralOverrides = runtime?.toolDeferralOverrides;
     const planSafeToolNames = new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]);
     let toolSearchHandle: ToolSearchHandle | undefined;
+    const sessionKind = opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat';
     const allTools = composeSessionTools({
-      kind: opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat',
+      kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
         ? () => buildMemoryTools({ store: memStore, service: memService, categories: memCats, categorizer: memCategorizer, projects: memProjects })
         : undefined,
@@ -257,7 +258,16 @@ export class LiveSessionSpawner {
     // Deferred-tools awareness: names (+ short descriptions) of the withheld MCP tools so the model knows
     // what it can fetch via ToolSearch. Stable for the session (the MCP set is fixed at spawn) → sits in the
     // cache-friendly append region, not the per-turn context. Empty string when nothing is deferred.
-    const deferredBlock = toolSearchHandle ? formatDeferredToolsBlock(allTools, toolSearchHandle.deferred) : '';
+    // Hosted search installs no local handle, so there is no deferred block — but Anthropic's BM25 variant
+    // also withholds the tool LIST, leaving the model to guess which words might match something. Both
+    // vendors recommend naming the available categories in the system prompt; names only, so deferral still
+    // pays for itself. Withheld from a foreign channel, where the senders are strangers and the tool names
+    // describe private infrastructure. Execute-time policy is unchanged in every case.
+    const deferredBlock = toolSearchHandle
+      ? formatDeferredToolsBlock(allTools, toolSearchHandle.deferred)
+      : providerHostedToolSearch && sessionKind !== 'foreign-channel'
+        ? formatHostedToolCatalogBlock(allTools, plugins?.toolOwner ?? new Map<string, string>())
+        : '';
     const append = [skillsBlock, deferredBlock, ...fragments, ...(opts.extraAppend ?? []), userInstructionsAppend ?? ''].filter((s) => s.length > 0);
 
     // Elowen identity: the editable `elowen` prompt (per-user override aware) becomes the system prompt,

@@ -3,6 +3,7 @@ import {
   resolveToolSearch,
   requestedExactNames,
   formatDeferredToolsBlock,
+  formatHostedToolCatalogBlock,
   createToolSearchHandle,
   seedActivatedFromHistory,
   toolSearchTool,
@@ -127,6 +128,35 @@ describe('requestedExactNames', () => {
   it('returns nothing for a multi-word keyword query (that is a search, not a name)', () => {
     expect(requestedExactNames('github create issue')).toEqual([]);
     expect(requestedExactNames('   ')).toEqual([]);
+  });
+});
+
+describe('formatHostedToolCatalogBlock', () => {
+  const OWNERS = new Map([
+    ['DiscordCreateChannel', 'discord'],
+    ['ScanCode', 'security-scan'],
+  ]);
+
+  it('groups tool names by owning plugin and falls back to builtin', () => {
+    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS);
+    expect(block).toContain('<available_tool_catalog>');
+    expect(block).toContain('- discord (1): DiscordCreateChannel');
+    expect(block).toContain('- security-scan (1): ScanCode');
+    // MIXED_CANDIDATES' remaining entry has no owner → the builtin group.
+    expect(block).toMatch(/- builtin \(\d+\):/);
+  });
+
+  it('carries names only, never the descriptions the provider search will supply', () => {
+    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS);
+    expect(block).not.toContain('Create a Discord channel');
+    expect(block).not.toContain('Scan source code for dangerous patterns');
+  });
+
+  it('is empty without tools, and reports the remainder past the cap', () => {
+    expect(formatHostedToolCatalogBlock([], OWNERS)).toBe('');
+    const many = Array.from({ length: 250 }, (_, i) => ({ name: `Op${i}` }));
+    const block = formatHostedToolCatalogBlock(many, new Map());
+    expect(block).toMatch(/…and 30 more tool\(s\)/); // 250 − MAX_CATALOG_NAMES (220)
   });
 });
 

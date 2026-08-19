@@ -243,6 +243,52 @@ export function formatDeferredToolsBlock(
   ].join('\n');
 }
 
+/** Hard cap on the hosted catalog block. Names are cheap (~3 tokens each), but an unbounded list on a huge
+ *  MCP surface would defeat deferral; past this the block says how many are missing and the provider's own
+ *  search still reaches them. */
+const MAX_CATALOG_NAMES = 220;
+
+/** The `<available_tool_catalog>` block for a PROVIDER-SIDE tool search session.
+ *
+ *  Hosted search withholds parameter schemas and — on Anthropic's BM25 variant — the tool list itself: the
+ *  model starts the turn seeing only the search tool, so without this block it has to guess which words might
+ *  match something. Both vendors call that guess out explicitly and recommend naming the available tool
+ *  categories in the system prompt (Anthropic "Tool search tool" → Optimization tips; OpenAI "Function
+ *  calling" → use the system prompt to say when each function applies).
+ *
+ *  Names only, grouped by the plugin that owns them: the group IS the namespace a single search matches, and
+ *  a bare name costs ~3 tokens where a description costs fifty. The set is fixed at spawn, so this sits in the
+ *  cache-friendly append region exactly like the deferred block. Withholding remains a PROMPT decision only —
+ *  the execute-time permission and plan gates are unchanged, so listing a name grants nothing. */
+export function formatHostedToolCatalogBlock(
+  all: readonly { name: string }[],
+  toolOwner: ReadonlyMap<string, string>,
+): string {
+  if (all.length === 0) return '';
+  const groups = new Map<string, string[]>();
+  for (const tool of all.slice(0, MAX_CATALOG_NAMES)) {
+    const owner = toolOwner.get(tool.name) ?? 'builtin';
+    const names = groups.get(owner);
+    if (names) names.push(tool.name);
+    else groups.set(owner, [tool.name]);
+  }
+  const lines = [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([owner, names]) => `- ${owner} (${names.length}): ${[...names].sort((a, b) => a.localeCompare(b)).join(', ')}`);
+  const overflow = all.length - Math.min(all.length, MAX_CATALOG_NAMES);
+  if (overflow > 0) lines.push(`- …and ${overflow} more tool(s) reachable only through a search query.`);
+  return [
+    '<available_tool_catalog>',
+    'Every tool listed here is available to you in this session, but this prompt carries only its NAME — the',
+    'parameter schema is loaded on demand when you search for it. Search before you conclude that a capability',
+    'is missing: the search matches tool names, descriptions and parameter names, so a plain-language query',
+    'such as "create a channel" or "schedule a recurring report" finds the right one. The groups below are the',
+    'namespaces a single query can match.',
+    ...lines,
+    '</available_tool_catalog>',
+  ].join('\n');
+}
+
 /** The exact tool names a query TARGETS by name (not by fuzzy search): the `select:` list, or a bare
  *  single-token query. Empty for a multi-word keyword query (that is a search, not a name request). Used to
  *  detect a re-selection of an already-active tool. Lowercased. */
