@@ -710,6 +710,11 @@ export class BrainStore {
     return this.delegation.countPendingDeliveries();
   }
 
+  /** @see BrainDelegationStore.discardOrphanedDeliveries */
+  discardOrphanedDeliveries(): number {
+    return this.delegation.discardOrphanedDeliveries();
+  }
+
   acknowledgeSubagentResult(parentSessionId: string, resultId: string): boolean {
     return this.delegation.acknowledgeSubagentResult(parentSessionId, resultId);
   }

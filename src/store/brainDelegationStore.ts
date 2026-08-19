@@ -675,6 +675,40 @@ export class BrainDelegationStore {
     return row?.n ?? 0;
   }
 
+  /** Retire pending results whose parent can never take them, and report how many. Boot-time sweep.
+   *
+   *  A delegated result is delivered by steering it into the parent, but the row only flips to
+   *  `acknowledged` once that message reaches the parent's transcript — which needs another TURN. An owner
+   *  conversation always gets one eventually, because the user comes back. A SUB-AGENT does not: once its
+   *  own run is terminal it is never prompted again, so a result addressed to it waits forever.
+   *
+   *  That is not theoretical. One such row from 18 Aug — a synthetic restart result for a sub-agent that
+   *  had already finished — was counted by {@link countPendingDeliveries}, which the shutdown drain waits
+   *  on globally, so EVERY restart afterwards burned the full ten-minute budget on a single dead row.
+   *
+   *  Only terminal parents qualify. `recovering` and `recovery_required` are left alone: those runs are
+   *  claimed for respawn and will get a turn. Owner conversations have no run row at all and are never
+   *  touched. The row is marked, not deleted, so the answer stays readable in the delegation history.
+   *
+   *  Retired as `acknowledged` because that is the only non-pending state the column allows, and the column
+   *  drives the QUEUE rather than an audit trail: it answers "is anyone still waiting for this", and after
+   *  this sweep nobody is. Widening the CHECK to carry a third state would mean rebuilding the table for a
+   *  distinction only this comment needs. */
+  discardOrphanedDeliveries(): number {
+    return withWriteLock(this.db, () => {
+      const info = this.db.prepare(
+        `UPDATE brain_subagent_results SET delivery_state = 'acknowledged'
+          WHERE delivery_state = 'pending'
+            AND (
+              SELECT json_extract(r.state, '$.status') FROM brain_subagent_runs r
+               WHERE r.child_session_id = brain_subagent_results.parent_session_id
+               ORDER BY r.updated_at DESC LIMIT 1
+            ) IN ('done', 'error', 'cancelled')`
+      ).run();
+      return info.changes;
+    });
+  }
+
   pendingSubagentResults(parentSessionId: string): BrainSubagentResult[] {
     const rows = this.db.prepare(
       `SELECT * FROM brain_subagent_results WHERE delivery_state = 'pending'

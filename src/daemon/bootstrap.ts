@@ -109,6 +109,20 @@ const BOOT_ANNOUNCE_DEBOUNCE_MS = 60_000;
 const SHUTDOWN_DRAIN_MS = 600_000;
 const SHUTDOWN_POLL_MS = 500;
 
+/** How long a shutdown waits for an already-finished delegation to hand its result to the parent.
+ *
+ *  Deliberately tiny next to the drain budget, because unlike a running turn this is work the drain cannot
+ *  finish. Delivery steers the result into the parent, but the row is only marked `acknowledged` once that
+ *  message reaches the parent's transcript, which needs another TURN — and a draining daemon refuses new
+ *  turns on purpose. An orphan makes it permanent: a result whose parent is itself a sub-agent that has
+ *  already finished has nobody left to receive it, and it is counted globally, so every restart waits for
+ *  it. Exactly that happened — one orphan from 18 Aug cost three restarts ten minutes each.
+ *
+ *  Losing the result is not the alternative: it is durable in `brain_subagent_results` and the outbox
+ *  redelivers it after the restart. This window exists only so a child that finished moments ago can still
+ *  hand its answer over on the way out. */
+const UNDELIVERED_GRACE_MS = 10_000;
+
 /** Exit status that means "I stopped on purpose, start me again".
  *
  *  A restart used to run `systemctl restart` from inside the daemon, which asks systemd to SIGTERM the very
@@ -194,10 +208,25 @@ export function installGracefulShutdown(
           : lifecycleNotice('stoppingIdle');
         await brain?.notify(text, undefined, notice).catch(() => { /* best-effort: never block the exit on a chat API */ });
       }
-      const deadline = Date.now() + drainMs;
+      const started = Date.now();
+      const deadline = started + drainMs;
       for (;;) {
         const now = brain?.busy() ?? { turns: 0, children: 0, undelivered: 0 };
-        if (now.turns === 0 && now.children === 0 && now.undelivered === 0) break;
+        // An undelivered result gets its OWN, much shorter budget. Delivery hands the result to the parent
+        // as a steer, but the row only flips to `acknowledged` once that message appears in the parent's
+        // transcript — which takes another TURN, and this drain refuses new turns by design. So the count
+        // cannot reach zero from inside the drain, and worse, a result whose parent is a sub-agent that has
+        // already finished has nobody left to deliver it to: one such orphan from 18 Aug made every restart
+        // since burn the full ten minutes. The results are durable and the outbox redelivers them after the
+        // restart, so the short window is only there to let a just-finished child hand its answer over.
+        const stillWaiting = now.turns > 0 || now.children > 0
+          || (now.undelivered > 0 && Date.now() - started < UNDELIVERED_GRACE_MS);
+        if (!stillWaiting) {
+          if (now.undelivered > 0) {
+            log.info(`drained, leaving ${now.undelivered} undelivered result(s) to the durable outbox — they redeliver on the next boot`);
+          }
+          break;
+        }
         if (Date.now() >= deadline) {
           log.error(`drain budget expired with ${now.turns} turn(s), ${now.children} sub-agent(s) and ${now.undelivered} undelivered result(s) — exiting anyway`);
           break;

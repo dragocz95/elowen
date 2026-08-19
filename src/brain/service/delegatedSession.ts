@@ -110,6 +110,15 @@ export class DelegatedSessionService {
    *  to stop claiming the DAG runs. Nothing is respawned here: the actual recovery turns need the platforms
    *  up and must not run before any client can attach, so they are deferred to runDelegationRecovery. */
   reconcileDelegationsOnBoot(): void {
+    // Retire results addressed to a sub-agent that has already finished. Delivery needs a parent TURN to
+    // acknowledge it, and a terminal sub-agent is never prompted again, so such a row stays pending for
+    // good — and the shutdown drain waits on that count globally, which is how one dead row from 18 Aug
+    // made every restart afterwards burn the full ten-minute budget. Swept BEFORE the claim below, so a
+    // run about to be respawned still counts as live and keeps its results.
+    const orphaned = this.d.store.discardOrphanedDeliveries();
+    if (orphaned > 0) {
+      logger('brain').info(`boot: retired ${orphaned} delegated result(s) whose parent sub-agent had already finished`);
+    }
     this.pendingRecovery = this.d.store.claimRecoverableRuns(RECOVERY_LEASE_MS);
     if (this.pendingRecovery.length > 0) {
       logger('brain').info(`boot recovery claimed ${this.pendingRecovery.length} interrupted delegation(s) for respawn`);

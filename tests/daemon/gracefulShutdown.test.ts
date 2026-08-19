@@ -60,6 +60,27 @@ describe('a requested restart drains like a stop but exits for the supervisor to
     expect(codes[0]).toBe(RESTART_EXIT_CODE);
   });
 
+  it('does not burn the whole budget on a result nobody can receive', async () => {
+    // The regression this fixes: delivery marks a result `acknowledged` only once it reaches the parent's
+    // transcript, which needs another turn — and the drain refuses new turns. An orphan (parent is a
+    // sub-agent that already finished) therefore never clears, and it is counted globally, so EVERY
+    // restart waited the full ten minutes. Here the count never drops and the drain must still exit.
+    const { brain, state } = brainBusy([{ turns: 0, children: 0, undelivered: 1 }]);
+    const exited: number[] = [];
+    const startedAt = Date.now();
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 1, drainMs: 60_000, notify: false,
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(exited).toEqual([0]);
+    // Well inside the 10 s grace, and nowhere near the 60 s budget it used to consume.
+    expect(Date.now() - startedAt).toBeLessThan(30_000);
+    expect(state.reads).toBeGreaterThan(1); // it did look more than once before giving up
+  }, 40_000);
+
   it('still exits 0 for an ordinary stop, so a deliberate stop stays stopped', async () => {
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
