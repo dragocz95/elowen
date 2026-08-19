@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginUserConfig, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessage, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, TokenUsage, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, ElowenConfig, ConfigPatch, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginUserConfig, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, PluginSubagent, BrainModelOption, BrainSessionInfo, BrainWorkMode, ManagedSession, BrainSearchHit, BrainMessage, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, TokenUsage, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SystemReadiness, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -305,6 +305,30 @@ export const elowenClient = {
     }).catch(() => undefined);
   },
   brainSessions: () => req<BrainSessionInfo[]>('/brain/sessions'),
+  brainDebugSessions: (filters: Record<string, string | number | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') q.set(key, String(value));
+    return req<BrainDebugPage<BrainDebugSessionItem>>(`/brain/debug/sessions${q.size ? `?${q}` : ''}`);
+  },
+  brainDebugRequests: (sessionId: string, filters: Record<string, string | number | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') q.set(key, String(value));
+    return req<BrainDebugPage<BrainDebugRequestItem>>(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/requests${q.size ? `?${q}` : ''}`);
+  },
+  brainDebugRequest: (sessionId: string, requestId: string) =>
+    req<BrainDebugRequestDetail>(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(requestId)}`),
+  brainDebugSegments: (sessionId: string, requestId: string, cursor?: string) => {
+    const q = new URLSearchParams({ limit: '100', maxBytes: String(4 * 1024 * 1024) });
+    if (cursor) q.set('cursor', cursor);
+    return req<BrainDebugPayloadPage>(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(requestId)}/segments?${q}`);
+  },
+  brainDebugRaw: (sessionId: string, requestId: string) =>
+    req<BrainDebugRawPayload>(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(requestId)}/raw?maxBytes=${4 * 1024 * 1024}`),
+  brainDebugLegacy: (sessionId: string, cursor?: string) => {
+    const q = new URLSearchParams({ limit: '100', maxBytes: String(4 * 1024 * 1024) });
+    if (cursor) q.set('cursor', cursor);
+    return req<BrainDebugLegacyTranscriptPage>(`/brain/debug/sessions/${encodeURIComponent(sessionId)}/legacy-transcript?${q}`);
+  },
   brainSearch: (q: string) => req<BrainSearchHit[]>(`/brain/search?q=${encodeURIComponent(q)}`),
   brainDeleteSession: (id: string) => req<{ ok: boolean }>(`/brain/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** Branch a conversation into a new one seeded with a copy of its history. The source is left exactly

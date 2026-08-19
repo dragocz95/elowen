@@ -44,6 +44,19 @@ describe('Modal', () => {
     expect(screen.getByRole('dialog', { name: 'Code diff' })).toHaveClass('max-w-[90rem]');
   });
 
+  it('reuses the accessible dialog shell for fullscreen content and header actions', () => {
+    render(
+      <Modal title="Diagnostics" presentation="fullscreen" headerActions={<button type="button">Refresh data</button>} onClose={vi.fn()}>
+        <span>workspace</span>
+      </Modal>,
+      { wrapper: W },
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Diagnostics' });
+    expect(dialog).toHaveClass('w-full', 'relative');
+    expect(screen.getByRole('button', { name: 'Refresh data' })).toBeInTheDocument();
+  });
+
   it('renders above workspace detail drawers and keeps the drawer open when the nested modal handles Escape', () => {
     function Harness() {
       const [drawerOpen, setDrawerOpen] = useState(true);

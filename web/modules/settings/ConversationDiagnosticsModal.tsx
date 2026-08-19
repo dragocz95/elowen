@@ -1,0 +1,362 @@
+'use client';
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  AlertTriangle, Braces, ChevronDown, ChevronRight, Copy, Database, Filter,
+  ListFilter, Menu, MessageSquareText, PanelRightOpen, Server, Wrench,
+} from 'lucide-react';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Badge } from '../../components/ui/Badge';
+import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states';
+import { formatCost, formatDuration, formatTokens, localDateTime } from '../../lib/format';
+import {
+  useBrainDebugLegacy, useBrainDebugRaw, useBrainDebugRequest, useBrainDebugRequests,
+  useBrainDebugSegments, useBrainDebugSessions,
+} from '../../lib/queries';
+import { useTranslation } from '../../lib/i18n';
+import { useMobile } from '../../lib/useMobile';
+import type {
+  BrainDebugRequestItem, BrainDebugSegmentPayload, BrainDebugSessionItem,
+} from '../../lib/types';
+
+const ROLE_CLASS: Record<string, string> = {
+  system: 'bg-accent', user: 'bg-success', assistant: 'bg-warning', tool: 'bg-[#a78bfa]',
+  reasoning: 'bg-[#f472b6]', error: 'bg-danger', options: 'bg-text-muted', response: 'bg-warning',
+};
+
+type Filters = {
+  search: string; from: string; to: string; userId: string; surface: string;
+  provider: string; model: string; status: string;
+};
+
+const EMPTY_FILTERS: Filters = { search: '', from: '', to: '', userId: '', surface: '', provider: '', model: '', status: '' };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function segmentRole(segment: BrainDebugSegmentPayload): string {
+  if (segment.section === 'system') return 'system';
+  if (segment.section === 'tool') return 'tool';
+  if (segment.section === 'options') return 'options';
+  if (segment.section === 'response') return 'response';
+  const item = asRecord(segment.payload);
+  const role = typeof item?.role === 'string' ? item.role : typeof item?.type === 'string' ? item.type : segment.kind;
+  if (/reason/i.test(role)) return 'reasoning';
+  if (/tool.*result|function.*result/i.test(role)) return 'tool';
+  if (/error/i.test(role)) return 'error';
+  return role;
+}
+
+function segmentLabel(segment: BrainDebugSegmentPayload): string {
+  const item = asRecord(segment.payload);
+  const name = typeof item?.name === 'string' ? item.name : typeof item?.type === 'string' ? item.type : null;
+  return name ?? segment.kind;
+}
+
+function searchable(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+function pretty(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function toolName(payload: unknown): string {
+  const item = asRecord(payload);
+  const fn = asRecord(item?.function);
+  return String(item?.name ?? fn?.name ?? item?.type ?? 'tool');
+}
+
+function toolSchema(payload: unknown): unknown {
+  const item = asRecord(payload);
+  const fn = asRecord(item?.function);
+  return item?.input_schema ?? item?.parameters ?? fn?.parameters ?? item?.schema ?? payload;
+}
+
+function toolLoadingBadge(payload: unknown): 'immediate' | 'deferred' | 'server' {
+  const item = asRecord(payload);
+  const type = String(item?.type ?? '').toLowerCase();
+  if (type && type !== 'function' && type !== 'custom') return 'server';
+  if (item?.deferred === true || item?.defer_loading === true || item?.deferLoading === true) return 'deferred';
+  return 'immediate';
+}
+
+function statusTone(status: string): 'success' | 'danger' | 'warning' | 'muted' {
+  if (status === 'succeeded' || status === 'captured') return 'success';
+  if (status === 'error') return 'danger';
+  if (status === 'pending' || status === 'interrupted') return 'warning';
+  return 'muted';
+}
+
+function Select({ value, onChange, label, children }: { value: string; onChange: (value: string) => void; label: string; children: ReactNode }) {
+  return (
+    <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} className="h-9 rounded-md border border-border bg-surface px-2 text-xs text-text">
+      {children}
+    </select>
+  );
+}
+
+function Kpi({ label, value, exact }: { label: string; value: string; exact?: boolean }) {
+  return (
+    <div className="min-w-[7rem] rounded-md border border-border bg-elevated/50 px-3 py-2">
+      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">{label}{exact ? <span title="Exact provider aggregate">•</span> : null}</div>
+      <div className="mt-1 truncate font-mono text-sm text-text">{value}</div>
+    </div>
+  );
+}
+
+function RequestGraph({ request, segments, cachedEstimateLabel }: { request: BrainDebugRequestItem; segments: BrainDebugSegmentPayload[]; cachedEstimateLabel: string }) {
+  const graph = segments.filter((segment) => segment.section !== 'response' && segment.section !== 'options');
+  const prompt = graph.reduce((sum, segment) => sum + segment.estimatedTokens, 0);
+  const cached = Math.max(0, request.cacheReadTokens ?? 0);
+  const cachedPercent = prompt > 0 ? Math.min(100, cached / prompt * 100) : 0;
+  return (
+    <div className="overflow-x-auto" aria-label="Prompt token segments">
+      <div className="min-w-[36rem]">
+        <div className="relative flex h-12 overflow-hidden rounded-md border border-border bg-bg">
+          {graph.map((segment) => {
+            const role = segmentRole(segment);
+            const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
+            return <div key={`${segment.index}-${segment.digest}`} title={`${role}: ~${segment.estimatedTokens} tokens`} className={`${ROLE_CLASS[role] ?? 'bg-text-muted'} border-r border-bg/40 opacity-80`} style={{ width: `${width}%` }} />;
+          })}
+          {cachedPercent > 0 ? <div className="pointer-events-none absolute inset-y-0 left-0 border-r-2 border-dashed border-text bg-text/10" style={{ width: `${cachedPercent}%` }} /> : null}
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
+          <span>~{formatTokens(prompt)} prompt tokens</span>
+          <span>{cachedEstimateLabel}: ~{Math.round(cachedPercent)}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionRail({ sessions, selectedId, onSelect, filters, setFilters, hasMore, loadingMore, loadMore }: {
+  sessions: BrainDebugSessionItem[]; selectedId: string | null; onSelect: (id: string) => void;
+  filters: Filters; setFilters: (next: Filters) => void; hasMore: boolean; loadingMore: boolean; loadMore: () => void;
+}) {
+  const { t, locale } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
+  const set = (key: keyof Filters, value: string) => setFilters({ ...filters, [key]: value });
+  return (
+    <div className="flex h-full min-h-0 flex-col border-r border-border bg-bg/40" data-testid="diagnostics-session-rail">
+      <div className="space-y-2 border-b border-border p-3">
+        <Input aria-label={d.searchSessions} placeholder={d.searchSessions} value={filters.search} onChange={(event) => set('search', event.target.value)} />
+        <details className="text-xs text-text-muted">
+          <summary className="flex cursor-pointer items-center gap-2 py-1"><Filter size={13} />{d.filters}</summary>
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <Input aria-label={d.from} type="date" value={filters.from} onChange={(event) => set('from', event.target.value)} />
+            <Input aria-label={d.to} type="date" value={filters.to} onChange={(event) => set('to', event.target.value)} />
+            <Input aria-label={d.userId} inputMode="numeric" placeholder={d.userId} value={filters.userId} onChange={(event) => set('userId', event.target.value)} />
+            <Select label={d.surface} value={filters.surface} onChange={(value) => set('surface', value)}><option value="">{d.all}</option><option value="conversation">{d.conversation}</option><option value="channel">{d.channel}</option><option value="task">{d.task}</option><option value="subagent">{d.subagent}</option></Select>
+            <Input aria-label={d.provider} placeholder={d.provider} value={filters.provider} onChange={(event) => set('provider', event.target.value)} />
+            <Input aria-label={d.model} placeholder={d.model} value={filters.model} onChange={(event) => set('model', event.target.value)} />
+            <Select label={d.status} value={filters.status} onChange={(value) => set('status', value)}><option value="">{d.all}</option><option value="captured">{d.captured}</option><option value="legacy">{d.legacy}</option><option value="error">{d.error}</option><option value="interrupted">{d.interrupted}</option></Select>
+          </div>
+        </details>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {sessions.map((session) => (
+          <button key={session.id} type="button" aria-current={selectedId === session.id} onClick={() => onSelect(session.id)} className={`w-full border-b border-border px-3 py-3 text-left hover:bg-elevated ${selectedId === session.id ? 'bg-elevated' : ''}`}>
+            <div className="flex items-start justify-between gap-2"><strong className="line-clamp-2 text-xs text-text">{session.title || session.id}</strong><Badge tone={statusTone(session.latestRequestStatus ?? (session.requestCount ? 'captured' : 'legacy'))}>{session.requestCount ? session.requestCount : d.legacy}</Badge></div>
+            <div className="mt-1 truncate text-[11px] text-text-muted">{session.userName || session.username} · {session.surface}</div>
+            <div className="mt-1 truncate font-mono text-[10px] text-text-muted">{session.provider}/{session.model}</div>
+            <div className="mt-2 flex justify-between font-mono text-[10px] text-text-muted"><span>{formatTokens(session.totalTokens)} tok · {session.costedRequestCount ? formatCost(session.costUsd) : '—'}</span><span>{localDateTime(session.updatedAt, locale, false)}</span></div>
+          </button>
+        ))}
+        {hasMore ? <div className="p-3"><Button className="w-full" variant="ghost" disabled={loadingMore} onClick={loadMore}>{d.loadMore}</Button></div> : null}
+      </div>
+    </div>
+  );
+}
+
+function RequestSelector({ requests, selectedId, onSelect, hasMore, loadMore }: { requests: BrainDebugRequestItem[]; selectedId: string | null; onSelect: (id: string) => void; hasMore: boolean; loadMore: () => void }) {
+  const { t } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
+  return (
+    <div className="flex items-center gap-2 overflow-x-auto border-b border-border px-3 py-2" aria-label={d.requests}>
+      {requests.map((request) => (
+        <button key={request.requestId} type="button" aria-pressed={selectedId === request.requestId} onClick={() => onSelect(request.requestId)} className={`shrink-0 rounded-md border px-3 py-2 text-left ${selectedId === request.requestId ? 'border-accent bg-accent/10' : 'border-border bg-elevated/40'}`}>
+          <div className="flex items-center gap-2"><span className="font-mono text-xs text-text">#{request.seq}</span><Badge tone={statusTone(request.status)}>{request.kind}</Badge>{request.retryOf ? <Badge tone="warning">{d.retry}</Badge> : null}</div>
+          <div className="mt-1 max-w-44 truncate text-[10px] text-text-muted">{request.model}</div>
+        </button>
+      ))}
+      {hasMore ? <Button variant="ghost" onClick={loadMore}>{d.loadMore}</Button> : null}
+    </div>
+  );
+}
+
+function ToolsPanel({ tools, query, setQuery }: { tools: BrainDebugSegmentPayload[]; query: string; setQuery: (value: string) => void }) {
+  const { t } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
+  const filtered = tools.filter((tool) => searchable(tool.payload).toLowerCase().includes(query.toLowerCase()));
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-bg/40" data-testid="diagnostics-tools-panel">
+      <div className="border-b border-border p-3"><Input aria-label={d.searchTools} placeholder={d.searchTools} value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {filtered.length === 0 ? <EmptyState title={d.noTools} icon={Wrench} /> : filtered.map((tool) => {
+          const schema = toolSchema(tool.payload);
+          const badge = toolLoadingBadge(tool.payload);
+          return (
+            <details key={`${tool.index}-${tool.digest}`} className="mb-2 rounded-md border border-border bg-surface">
+              <summary className="cursor-pointer list-none p-3">
+                <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{toolName(tool.payload)}</strong><Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge></div>
+                <div className="mt-2 flex gap-2 font-mono text-[10px] text-text-muted"><span>{tool.byteLength} B</span><span title={tool.digest}>{tool.digest.slice(0, 10)}</span></div>
+              </summary>
+              <pre className="max-h-80 overflow-auto border-t border-border p-3 text-[11px] text-text-muted">{pretty(schema)}</pre>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { captureEnabled: boolean; onClose: () => void }) {
+  const { t, locale } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
+  const mobile = useMobile();
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const deferredFilters = useDeferredValue(filters);
+  const queryFilters = useMemo(() => ({
+    search: deferredFilters.search || undefined, from: deferredFilters.from || undefined, to: deferredFilters.to || undefined,
+    userId: deferredFilters.userId ? Number(deferredFilters.userId) : undefined, surface: deferredFilters.surface || undefined,
+    provider: deferredFilters.provider || undefined, model: deferredFilters.model || undefined, status: deferredFilters.status || undefined,
+  }), [deferredFilters]);
+  const sessionsQuery = useBrainDebugSessions(queryFilters);
+  const sessions = useMemo(() => sessionsQuery.data?.pages.flatMap((page) => page.items) ?? [], [sessionsQuery.data]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const selectedSession = sessions.find((session) => session.id === sessionId) ?? null;
+  const requestsQuery = useBrainDebugRequests(sessionId);
+  const requests = useMemo(() => requestsQuery.data?.pages.flatMap((page) => page.items) ?? [], [requestsQuery.data]);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const detail = useBrainDebugRequest(sessionId, requestId);
+  const segmentsQuery = useBrainDebugSegments(sessionId, requestId);
+  const segments = segmentsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const [rawOpen, setRawOpen] = useState(false);
+  const raw = useBrainDebugRaw(sessionId, requestId, rawOpen);
+  const legacy = useBrainDebugLegacy(sessionId, !!selectedSession && selectedSession.requestCount === 0);
+  const [messageQuery, setMessageQuery] = useState('');
+  const [role, setRole] = useState('all');
+  const [selectedSegment, setSelectedSegment] = useState<BrainDebugSegmentPayload | null>(null);
+  const [inspectorRaw, setInspectorRaw] = useState(false);
+  const [toolQuery, setToolQuery] = useState('');
+  const [mobilePanel, setMobilePanel] = useState<'sessions' | 'tools' | null>(null);
+
+  useEffect(() => { setSessionId(null); setRequestId(null); }, [queryFilters]);
+  useEffect(() => {
+    if (!sessionId && sessions[0]) setSessionId(sessions[0].id);
+  }, [sessionId, sessions]);
+  useEffect(() => {
+    setRequestId((current) => current && requests.some((request) => request.requestId === current) ? current : requests[0]?.requestId ?? null);
+  }, [sessionId, requests]);
+  useEffect(() => {
+    setRawOpen(false); setSelectedSegment(null); setToolQuery('');
+  }, [requestId]);
+  const { hasNextPage: hasMoreSegments, isFetchingNextPage: fetchingMoreSegments, fetchNextPage: fetchMoreSegments } = segmentsQuery;
+  useEffect(() => {
+    if (hasMoreSegments && !fetchingMoreSegments) void fetchMoreSegments();
+  }, [hasMoreSegments, fetchingMoreSegments, fetchMoreSegments]);
+
+  const messages = segments.filter((segment) => segment.section !== 'tool' && segment.section !== 'options');
+  const filteredMessages = messages.filter((segment) => {
+    const itemRole = segmentRole(segment);
+    return (role === 'all' || role === itemRole) && searchable(segment.payload).toLowerCase().includes(messageQuery.toLowerCase());
+  });
+  const roles = [...new Set(messages.map(segmentRole))];
+  const tools = segments.filter((segment) => segment.section === 'tool');
+  const selectedRequest = detail.data;
+  const legacyItems = legacy.data?.pages.flatMap((page) => page.items) ?? [];
+
+  const copy = (value: unknown) => { void navigator.clipboard?.writeText(pretty(value)); };
+  const sessionRail = <SessionRail sessions={sessions} selectedId={sessionId} onSelect={(id) => { setSessionId(id); setMobilePanel(null); }} filters={filters} setFilters={setFilters} hasMore={sessionsQuery.hasNextPage} loadingMore={sessionsQuery.isFetchingNextPage} loadMore={() => void sessionsQuery.fetchNextPage()} />;
+  const toolsPanel = <ToolsPanel tools={tools} query={toolQuery} setQuery={setToolQuery} />;
+
+  return (
+    <Modal
+      title={d.title}
+      description={selectedSession ? `${selectedSession.title || selectedSession.id} · ${selectedSession.userName || selectedSession.username}` : d.description}
+      icon={Database}
+      presentation="fullscreen"
+      onClose={onClose}
+      headerActions={<div className="flex md:hidden"><button type="button" aria-label={d.sessions} className="p-2 text-text-muted" onClick={() => setMobilePanel('sessions')}><Menu size={18} /></button><button type="button" aria-label={d.tools} className="p-2 text-text-muted" onClick={() => setMobilePanel('tools')}><PanelRightOpen size={18} /></button></div>}
+    >
+      {!captureEnabled ? <div className="flex items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-warning"><AlertTriangle size={14} />{d.captureDisabled}</div> : null}
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)_20rem]">
+        <aside className="hidden min-h-0 md:block">{sessionRail}</aside>
+        <main className="flex min-h-0 min-w-0 flex-col">
+          {sessionsQuery.isLoading ? <LoadingState /> : sessionsQuery.isError ? <ErrorState message={d.loadError} onRetry={() => sessionsQuery.refetch()} /> : sessions.length === 0 ? <EmptyState title={d.noSessions} icon={MessageSquareText} /> : selectedSession?.requestCount === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="border-b border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning">{d.legacyWarning}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {legacy.isLoading ? <LoadingState /> : legacy.isError ? <ErrorState message={d.loadError} onRetry={() => legacy.refetch()} /> : legacyItems.length === 0 ? <EmptyState title={d.noLegacyData} icon={MessageSquareText} /> : legacyItems.map((item) => (
+                  <article key={item.id} className="mb-3 rounded-md border border-border bg-elevated/30 p-3"><div className="mb-2 flex items-center justify-between"><Badge>{item.role}</Badge><span className="text-[10px] text-text-muted">{localDateTime(item.createdAt, locale)}</span></div><pre className="whitespace-pre-wrap text-xs text-text-muted">{pretty(item.content)}</pre></article>
+                ))}
+                {legacy.hasNextPage ? <Button onClick={() => void legacy.fetchNextPage()}>{d.loadMore}</Button> : null}
+              </div>
+            </div>
+          ) : requestsQuery.isLoading ? <LoadingState /> : requestsQuery.isError ? <ErrorState message={d.loadError} onRetry={() => requestsQuery.refetch()} /> : requests.length === 0 ? <EmptyState title={d.noRequests} icon={Server} /> : (
+            <>
+              <RequestSelector requests={requests} selectedId={requestId} onSelect={setRequestId} hasMore={requestsQuery.hasNextPage} loadMore={() => void requestsQuery.fetchNextPage()} />
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+                {detail.isLoading || segmentsQuery.isLoading ? <LoadingState /> : detail.isError || segmentsQuery.isError ? <ErrorState message={d.loadError} onRetry={() => { void detail.refetch(); void segmentsQuery.refetch(); }} /> : selectedRequest ? (
+                  <div className="space-y-4">
+                    <section className="rounded-lg border border-border bg-elevated/30 p-3">
+                      <RequestGraph request={selectedRequest} segments={segments} cachedEstimateLabel={d.cachedPrefixEstimate} />
+                      <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                        <Kpi label={d.prompt} value={`~${formatTokens(segments.filter((s) => s.section !== 'response' && s.section !== 'options').reduce((sum, s) => sum + s.estimatedTokens, 0))}`} />
+                        <Kpi label={d.cacheRead} value={selectedRequest.cacheReadTokens == null ? '—' : formatTokens(selectedRequest.cacheReadTokens)} exact />
+                        <Kpi label={d.cacheWrite} value={selectedRequest.cacheWriteTokens == null ? '—' : formatTokens(selectedRequest.cacheWriteTokens)} exact />
+                        <Kpi label={d.input} value={selectedRequest.inputTokens == null ? '—' : formatTokens(selectedRequest.inputTokens)} exact />
+                        <Kpi label={d.output} value={selectedRequest.outputTokens == null ? '—' : formatTokens(selectedRequest.outputTokens)} exact />
+                        <Kpi label={d.reasoning} value={selectedRequest.reasoningTokens == null ? '—' : formatTokens(selectedRequest.reasoningTokens)} exact />
+                        <Kpi label={d.cost} value={selectedRequest.costUsd == null ? d.notAvailable : formatCost(selectedRequest.costUsd)} exact />
+                        <Kpi label={d.duration} value={selectedRequest.durationMs == null ? '—' : formatDuration(selectedRequest.durationMs)} exact />
+                        <Kpi label={d.model} value={selectedRequest.model} /><Kpi label={d.provider} value={selectedRequest.wireProvider} />
+                      </div>
+                      {selectedRequest.errorMessage ? <div className="mt-3 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger">{selectedRequest.errorCode ? `${selectedRequest.errorCode}: ` : ''}{selectedRequest.errorMessage}</div> : null}
+                    </section>
+
+                    <section className="grid min-h-[24rem] grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
+                      <div className="flex min-h-0 flex-col rounded-lg border border-border">
+                        <div className="flex flex-wrap gap-2 border-b border-border p-3">
+                          <Input className="min-w-48 flex-1" aria-label={d.searchMessages} placeholder={d.searchMessages} value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} />
+                          <Select label={d.role} value={role} onChange={setRole}><option value="all">{d.allRoles}</option>{roles.map((item) => <option key={item} value={item}>{item}</option>)}</Select>
+                        </div>
+                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-y-auto">
+                          {filteredMessages.map((segment) => {
+                            const itemRole = segmentRole(segment);
+                            return <button key={`${segment.index}-${segment.digest}`} type="button" aria-pressed={selectedSegment?.index === segment.index} onClick={() => setSelectedSegment(segment)} className={`flex w-full items-start gap-3 border-b border-border p-3 text-left hover:bg-elevated ${selectedSegment?.index === segment.index ? 'bg-elevated' : ''}`}><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${ROLE_CLASS[itemRole] ?? 'bg-text-muted'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-xs text-text">{itemRole}</strong><Badge>{segmentLabel(segment)}</Badge><span className="ml-auto font-mono text-[10px] text-text-muted">~{segment.estimatedTokens}</span></span><span className="mt-1 line-clamp-2 text-[11px] text-text-muted">{searchable(segment.payload)}</span></span></button>;
+                          })}
+                          {segmentsQuery.hasNextPage ? <div className="p-3"><Button onClick={() => void segmentsQuery.fetchNextPage()}>{d.loadMore}</Button></div> : null}
+                        </div>
+                      </div>
+                      <div className="flex min-h-0 flex-col rounded-lg border border-border">
+                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex gap-1"><Button variant="ghost" onClick={() => setInspectorRaw((value) => !value)}>{inspectorRaw ? d.pretty : d.raw}</Button>{selectedSegment ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedSegment.payload)}>{d.copy}</Button> : null}</div></div>
+                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{inspectorRaw ? searchable(selectedSegment.payload) : pretty(selectedSegment.payload)}</pre> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
+                      </div>
+                    </section>
+
+                    <section className="rounded-lg border border-border">
+                      <button type="button" aria-expanded={rawOpen} onClick={() => setRawOpen((value) => !value)} className="flex w-full items-center gap-2 p-3 text-left text-xs font-semibold text-text">{rawOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<Braces size={14} className="text-accent" />{d.rawRequest}<span className="ml-auto font-mono text-[10px] text-text-muted">{selectedRequest.segmentBytes} B</span></button>
+                      {rawOpen ? <div className="border-t border-border p-3">{raw.isLoading ? <LoadingState /> : raw.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => raw.refetch()} /> : <pre className="max-h-[36rem] overflow-auto whitespace-pre-wrap text-[11px] text-text-muted">{pretty(raw.data?.payload)}</pre>}</div> : null}
+                    </section>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </main>
+        <aside className="hidden min-h-0 border-l border-border md:block">{toolsPanel}</aside>
+      </div>
+      {mobile && mobilePanel ? (
+        <Modal title={mobilePanel === 'sessions' ? d.sessions : d.tools} presentation="drawer" onClose={() => setMobilePanel(null)}>
+          {mobilePanel === 'sessions' ? sessionRail : toolsPanel}
+        </Modal>
+      ) : null}
+    </Modal>
+  );
+}

@@ -14,9 +14,10 @@ interface ModalProps {
   icon?: LucideIcon;
   /** Optional one-line subtitle under the title (e.g. the target id). */
   description?: string;
-  /** 'drawer' renders the dialog as a full-height right-side sheet (the constellation pattern)
-   *  instead of a centered window. Same overlay, focus and close behavior. */
-  presentation?: 'center' | 'drawer';
+  /** Actions rendered in the shared header before the close button. */
+  headerActions?: ReactNode;
+  /** Fullscreen keeps the same portal/overlay/focus contract while using the available viewport. */
+  presentation?: 'center' | 'drawer' | 'fullscreen';
 }
 
 const SIZES = {
@@ -26,8 +27,9 @@ const SIZES = {
   sm: 'max-h-[80vh] w-full max-w-md',
 };
 
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, presentation = 'center' }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'center' }: ModalProps) {
   const drawer = presentation === 'drawer';
+  const fullscreen = presentation === 'fullscreen';
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
@@ -45,7 +47,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
   return createPortal(
     <div
       ref={overlayRef}
-      className={`overlay-layer-modal fixed inset-0 flex bg-black/70 ${drawer ? 'justify-end' : 'items-center justify-center p-4'}`}
+      className={`overlay-layer-modal fixed inset-0 flex bg-black/70 ${drawer ? 'justify-end' : fullscreen ? 'items-stretch justify-stretch p-0 sm:p-2' : 'items-center justify-center p-4'}`}
       onClick={(event) => {
         if (event.target !== event.currentTarget) return;
         // Portal events still bubble through their React tree. Stop at this backdrop so clicking a
@@ -64,12 +66,16 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         data-elowen-modal
         className={drawer
           ? 'animate-drawer-in flex h-full w-[min(38rem,calc(100vw-3rem))] flex-col rounded-l-lg border-l border-border'
-          : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border ${SIZES[size]}`}
+          : fullscreen
+            ? 'animate-pop-in relative flex min-h-0 w-full flex-col border border-border bg-surface sm:rounded-lg'
+            : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border ${SIZES[size]}`}
         // Drawers share the workspace detail rail's near-black document tone, not the lighter
         // surface tone of centered windows.
         style={drawer
           ? { background: 'var(--color-document)', boxShadow: '-2rem 0 5rem rgb(0 0 0 / 0.72)' }
-          : { boxShadow: 'var(--shadow-raised)' }}
+          : fullscreen
+            ? { height: 'calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom))', boxShadow: 'var(--shadow-raised)' }
+            : { boxShadow: 'var(--shadow-raised)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-5 py-3">
@@ -82,6 +88,7 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
             <h2 id={titleId} className="truncate text-sm font-semibold text-text">{title}</h2>
             {description ? <p id={descriptionId} className="truncate text-xs text-text-muted">{description}</p> : null}
           </div>
+          {headerActions ? <div className="flex shrink-0 items-center gap-2">{headerActions}</div> : null}
           <button
             type="button"
             aria-label={t.common.close}

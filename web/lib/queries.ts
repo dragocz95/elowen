@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQuery, useQueries, useInfiniteQuery } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
 import { pendingEscalations, type Escalation } from './escalations';
@@ -38,6 +38,9 @@ export const QUERY_KEYS = {
   brainCommands: ['brain-commands'] as const,
   brainRateLimits: ['brain-rate-limits'] as const,
   brainContextUsage: ['brain-context-usage'] as const,
+  brainDebugSessions: ['brain-debug-sessions'] as const,
+  brainDebugRequests: ['brain-debug-requests'] as const,
+  brainDebugRequest: ['brain-debug-request'] as const,
   pluginUi: ['plugin-ui'] as const,
 };
 
@@ -465,6 +468,57 @@ export const usePluginSubagents = () =>
  *  The daemon caches upstream for 60 s; match that so the pills don't refetch per keystroke. */
 export const useDiscordChannels = () =>
   useQuery({ queryKey: ['discord-channels'], queryFn: elowenClient.discordChannels, staleTime: 60_000 });
+
+/** Admin request diagnostics. List queries carry metadata only; segment and raw payloads are separate lazy reads. */
+export const useBrainDebugSessions = (filters: Record<string, string | number | undefined>, enabled = true) =>
+  useInfiniteQuery({
+    queryKey: [...QUERY_KEYS.brainDebugSessions, filters],
+    queryFn: ({ pageParam }) => elowenClient.brainDebugSessions({ ...filters, cursor: pageParam, limit: 30 }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled,
+  });
+
+export const useBrainDebugRequests = (sessionId: string | null) =>
+  useInfiniteQuery({
+    queryKey: [...QUERY_KEYS.brainDebugRequests, sessionId],
+    queryFn: ({ pageParam }) => elowenClient.brainDebugRequests(sessionId as string, { cursor: pageParam, limit: 50 }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: !!sessionId,
+  });
+
+export const useBrainDebugRequest = (sessionId: string | null, requestId: string | null) =>
+  useQuery({
+    queryKey: [...QUERY_KEYS.brainDebugRequest, sessionId, requestId],
+    queryFn: () => elowenClient.brainDebugRequest(sessionId as string, requestId as string),
+    enabled: !!sessionId && !!requestId,
+  });
+
+export const useBrainDebugSegments = (sessionId: string | null, requestId: string | null) =>
+  useInfiniteQuery({
+    queryKey: ['brain-debug-segments', sessionId, requestId],
+    queryFn: ({ pageParam }) => elowenClient.brainDebugSegments(sessionId as string, requestId as string, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: !!sessionId && !!requestId,
+  });
+
+export const useBrainDebugRaw = (sessionId: string | null, requestId: string | null, enabled: boolean) =>
+  useQuery({
+    queryKey: ['brain-debug-raw', sessionId, requestId],
+    queryFn: () => elowenClient.brainDebugRaw(sessionId as string, requestId as string),
+    enabled: enabled && !!sessionId && !!requestId,
+  });
+
+export const useBrainDebugLegacy = (sessionId: string | null, enabled: boolean) =>
+  useInfiniteQuery({
+    queryKey: ['brain-debug-legacy', sessionId],
+    queryFn: ({ pageParam }) => elowenClient.brainDebugLegacy(sessionId as string, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: enabled && !!sessionId,
+  });
 
 /** The caller's brain conversations (web chat session picker). */
 export const useBrainSessions = () =>

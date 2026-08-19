@@ -55,6 +55,19 @@ describe('SettingsPage', () => {
     expect(screen.getByText('System diagnostics').closest('[data-settings-group]')).toHaveClass('settings-diagnostics');
   });
 
+  it('shows conversation diagnostics and saves the detailed capture toggle in Data', async () => {
+    localStorage.setItem('elowen.settings.category', 'data');
+    putBody = null;
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+
+    expect(await screen.findByText('Conversation diagnostics')).toBeInTheDocument();
+    const toggle = screen.getByRole('switch', { name: 'Capture detailed model requests' });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(putBody).toEqual(expect.objectContaining({ runtime: { providerRequestCaptureEnabled: false } })));
+  });
+
   it('renders every settings section inside the same document contract', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
