@@ -13,6 +13,8 @@ class FakeES { onmessage = null; addEventListener() {} close() {} constructor(pu
 const server = setupServer(
   http.get('*/api/health', () => HttpResponse.json({ ok: true })),
   // A valid session: LoginGate's me() probe resolves → the shell chrome renders.
+  // The rail stays inert until it knows the arrangement, so an unanswered read leaves it empty.
+  http.get('*/api/auth/me/nav-settings', () => HttpResponse.json({ hidden: [], order: [] })),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })),
   // /chat mounts the chat provider, which reaches for these on open.
   http.get('*/api/brain/sessions', () => HttpResponse.json([])),

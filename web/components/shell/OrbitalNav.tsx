@@ -435,10 +435,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         ref={stageRef}
         role="list"
         data-layout-ready={layoutReady || undefined}
-        // Invisible is not absent: without these, an unfinished order is still tabbable and still read
-        // out, and the entry the user lands on may move once the real layout arrives.
-        aria-hidden={layoutReady ? undefined : true}
-        inert={layoutReady ? undefined : true}
+        // Deliberately visual only. Marking the stage inert until the layout lands would also take the
+        // menu away from the keyboard and from a screen reader for a whole round trip on a first visit
+        // — a menu in registry order beats no menu at all, and the gate exists to avoid showing a
+        // re-sort, not to withhold navigation. `tests/app/navPrefetch.test.tsx` pins that first paint.
         className={`absolute inset-x-0 bottom-24 top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >

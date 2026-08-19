@@ -40,6 +40,10 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
   // Every edit is computed from the layout the LAST edit produced, not from the one this render was
   // built with. Two quick edits — hide something, then immediately move something else — would
   // otherwise both start from the same base and the second would undo the first.
+  //
+  // The optimistic write is what makes that true: it is what lets the next edit see this one before
+  // the round trip lands. Reading the cache back is the belt to that pair of braces, for the case
+  // where the edit is fired again before React has re-rendered with the new value.
   const apply = (compute: (current: NavLayout) => NavLayout) => {
     const next = compute(qc.getQueryData<NavLayout>(['my-nav-settings']) ?? layout);
     qc.setQueryData(['my-nav-settings'], next);

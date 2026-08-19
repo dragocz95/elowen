@@ -32,6 +32,8 @@ const hangingPluginUi = http.get('*/api/plugins/ui', () => {
 });
 
 const server = setupServer(
+  // The rail stays inert until it knows the arrangement, so an unanswered read leaves it empty.
+  http.get('*/api/auth/me/nav-settings', () => HttpResponse.json({ hidden: [], order: [] })),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })),
   // Ambient shell fan-out the assertions don't read — handled only to keep the output quiet.
   http.get('*/api/health', () => HttpResponse.json({ ok: true })),
