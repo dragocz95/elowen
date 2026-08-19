@@ -86,11 +86,6 @@ export const en = {
   },
   common: {
     daemon: 'daemon',
-    daemonUp: 'daemon up',
-    daemonDown: 'daemon down',
-    daemonReady: 'Ready',
-    daemonBusy: 'Busy',
-    daemonOffline: 'Offline',
     daemonUnreachable: 'elowen daemon unreachable',
     toggleSidebar: 'Toggle menu',
     cancel: 'Cancel',

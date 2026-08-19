@@ -86,11 +86,6 @@ export const cs = {
   },
   common: {
     daemon: 'daemon',
-    daemonUp: 'daemon běží',
-    daemonDown: 'daemon offline',
-    daemonReady: 'Připraven',
-    daemonBusy: 'Pracuje',
-    daemonOffline: 'Offline',
     daemonUnreachable: 'daemon elowen není dostupný',
     toggleSidebar: 'Přepnout menu',
     cancel: 'Zrušit',
