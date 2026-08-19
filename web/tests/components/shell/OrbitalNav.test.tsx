@@ -588,3 +588,47 @@ describe('OrbitalNav layout cache', () => {
     await waitFor(() => expect(screen.getByRole('link', { name: 'Memory' })).toBeInTheDocument());
   });
 });
+
+/** Hide every destination and the rail is blank. A right-click still works, but there is nothing to
+ *  right-click ON — and a phone has no right-click at all. Both remaining ways in have to work. */
+describe('OrbitalNav with every entry hidden', () => {
+  const ALL_HIDDEN = ['home', 'chat', 'projects', 'memory', 'account', 'settings', 'users'];
+
+  function mountAllHidden() {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['plugin-ui', 'en'], []);
+    client.setQueryData(['my-nav-settings'], { hidden: ALL_HIDDEN, order: [] });
+    return render(<Wrapper><OrbitalNav /></Wrapper>);
+  }
+
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  it('leaves no destination on the rail', () => {
+    mountAllHidden();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+  });
+
+  it('opens the menu from the keyboard-reachable control', () => {
+    mountAllHidden();
+    fireEvent.click(screen.getByRole('button', { name: 'Show hidden' }));
+    expect(screen.getByText(`Hidden (${ALL_HIDDEN.length})`)).toBeInTheDocument();
+  });
+
+  // Touch has no right-click, so this is a phone's only way back.
+  it('opens the menu from a long press on the empty rail', () => {
+    vi.useFakeTimers();
+    try {
+      mountAllHidden();
+      const rail = screen.getByRole('navigation');
+      const down = createEvent.pointerDown(rail, { clientX: 30, clientY: 300 });
+      Object.defineProperty(down, 'pointerType', { value: 'touch' });
+      fireEvent(rail, down);
+      act(() => { vi.advanceTimersByTime(600); });
+      expect(screen.getByText(`Hidden (${ALL_HIDDEN.length})`)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

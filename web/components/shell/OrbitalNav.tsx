@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, MoreHorizontal } from 'lucide-react';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useShellNavigation } from './useShellNavigation';
@@ -70,6 +70,8 @@ type RailPress = {
 
 /** How far the pointer must travel before it counts as carrying the entry rather than clicking it. */
 const DRAG_THRESHOLD = 6;
+/** How long a finger has to rest before a press becomes a menu rather than a tap or a scroll. */
+const LONG_PRESS_MS = 500;
 
 /** The public site's rail spacing — the look this rail matches. */
 const SPACING = 66;
@@ -219,6 +221,25 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     pressRef.current = null;
   };
 
+  // A long press on empty rail opens the surface menu. Touch has no right-click, so without it a
+  // phone whose every entry is hidden has no way back — the rail would be blank and inert.
+  const surfacePressRef = useRef<number | undefined>(undefined);
+  const endSurfacePress = () => {
+    if (surfacePressRef.current !== undefined) window.clearTimeout(surfacePressRef.current);
+    surfacePressRef.current = undefined;
+  };
+  const onSurfacePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    endSurfacePress();
+    if (event.pointerType !== 'touch') return;
+    // A press that landed ON a destination is that entry's gesture, not the surface's.
+    if ((event.target as HTMLElement).closest('[role="listitem"]') !== null) return;
+    const { clientX, clientY } = event;
+    surfacePressRef.current = window.setTimeout(() => {
+      surfacePressRef.current = undefined;
+      customization.openSurfaceMenu(clientX, clientY);
+    }, LONG_PRESS_MS);
+  };
+
   const onEntryPointerDown = (event: React.PointerEvent<HTMLElement>, entry: RailEntry) => {
     if (!entry.worldId || (event.pointerType === 'mouse' && event.button !== 0)) return;
     const slot = worldSlots.findIndex((candidate) => candidate.worldId === entry.worldId);
@@ -244,7 +265,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         ? window.setTimeout(() => {
             clearPress();
             customization.openEntryMenu(event.clientX, event.clientY, { ...entry, id: entry.worldId });
-          }, 500)
+          }, LONG_PRESS_MS)
         : undefined,
     };
   };
@@ -351,6 +372,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       // Anywhere on the rail that is not a destination opens the editor — that is how a hidden space
       // is found again.
       onContextMenu={customization.onSurfaceContextMenu}
+      onPointerDown={onSurfacePointerDown}
+      onPointerMove={endSurfacePress}
+      onPointerUp={endSurfacePress}
+      onPointerCancel={endSurfacePress}
       className={`overflow-hidden border-border/45 bg-black ${drawer
         ? `fixed inset-y-0 z-50 w-[min(20rem,85vw)] shadow-2xl transition-transform duration-200 ${side === 'right'
           ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
@@ -439,6 +464,20 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
           <div className="flex justify-center font-mono text-[9px] tracking-[.14em] text-text-muted/35"><span>&lt;</span><span className="mx-3">{health.data?.version ? `v${health.data.version}` : '—'}</span><span>&gt;</span></div>
         </div>
       ) : null}
+      {/* The keyboard's way into the menu that the right-click and the long press open. It has to exist
+          independently of the entries: hide them all and there is nothing left to open a menu ON. */}
+      <button
+        type="button"
+        aria-label={t.nav.showHidden}
+        title={t.nav.showHidden}
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          customization.openSurfaceMenu(box.left + box.width / 2, box.top);
+        }}
+        className="absolute bottom-1 left-1/2 z-30 -translate-x-1/2 rounded-full p-1.5 text-text-muted/40 transition-colors hover:text-text focus-visible:text-text"
+      >
+        <MoreHorizontal size={13} />
+      </button>
       {onToggleCollapse ? (
         <CollapseHandle side={side} label={compact ? t.common.expandNav : t.common.collapseNav} onToggle={onToggleCollapse} />
       ) : null}

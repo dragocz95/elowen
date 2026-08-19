@@ -92,6 +92,9 @@ export function useNavCustomization(allWorlds: NavEntry[], layout: NavLayout, di
     /** Opens the same menu without a right-click, for a long press. Touch has no right-click, and
      *  without this the hidden spaces would be unreachable on a phone. */
     openEntryMenu: (x: number, y: number, entry: NavEntry) => openMenu(x, y, entryItems(entry)),
+    /** The surface menu without a right-click — for a long press and for the keyboard. Hiding every
+     *  entry leaves nothing to right-click ON, so this is the way back. */
+    openSurfaceMenu: (x: number, y: number) => openMenu(x, y, surfaceItems()),
     /** Commits a drag: put `id` at `toIndex` among the entries currently on show. */
     reorderTo: (id: string, toIndex: number) => apply(reorderNavEntry(layout, entryIds, id, toIndex)),
     /** Rendered by the surface that owns the navigation. */
