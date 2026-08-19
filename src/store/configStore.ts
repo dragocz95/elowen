@@ -3,7 +3,8 @@ import { stripControlChars } from '../shared/text.js';
 import { defaultPromptTemplate } from '../prompts/plannerDefault.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, execRefSpec, isAllowedExec, parseExecRef } from '../shared/execs.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
-import { HOSTED_TOOL_SEARCH_PROTOCOL, type BrainLimits, type HostedToolSearchCapabilities, type HostedToolSearchCapability, type RuntimeConfig, type RuntimeLimits, type ToolDeferralOverrides } from '../shared/wireContract.js';
+import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../shared/hostedToolSearchProtocol.js';
+import { type BrainLimits, type HostedToolSearchCapabilities, type HostedToolSearchCapability, type RuntimeConfig, type RuntimeLimits, type ToolDeferralOverrides } from '../shared/wireContract.js';
 import { DEFAULT_MEMORY_RETENTION, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 
 // The brain-limits shape is the daemon↔web wire contract (Settings → Elowen AI → Limits) — defined

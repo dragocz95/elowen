@@ -8,7 +8,7 @@ import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js'
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { probeAzureHostedToolSearch } from '../../brain/hostedToolSearchProbe.js';
 import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider } from '../../brain/session/hostedToolSearch.js';
-import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/wireContract.js';
+import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { brainProviderIds } from '../../store/configStore.js';
 import type { BrainEvent } from '../../brain/events.js';

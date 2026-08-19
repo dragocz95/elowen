@@ -289,13 +289,18 @@ export interface ToolDeferralOverrides {
   tools: Record<string, Record<string, ToolLoadingMode>>;
 }
 
-export const HOSTED_TOOL_SEARCH_PROTOCOL = 'hosted-tool-search-v1' as const;
+/** Wire version of the probe handshake a persisted capability was recorded under, so a stored verdict from
+ *  an older protocol is ignored rather than trusted. The literal lives here as a TYPE only — this file must
+ *  stay free of runtime values so the web bundle never executes it — and the value the daemon compares
+ *  against is `HOSTED_TOOL_SEARCH_PROTOCOL` in `hostedToolSearchProtocol.ts`, which is typed against this
+ *  and therefore cannot drift from it. */
+export type HostedToolSearchProtocol = 'hosted-tool-search-v1';
 export type HostedToolSearchCapabilityStatus = 'supported' | 'unsupported';
 export interface HostedToolSearchCapability {
   status: HostedToolSearchCapabilityStatus;
   fingerprint: string;
   checkedAt: number;
-  protocol: typeof HOSTED_TOOL_SEARCH_PROTOCOL;
+  protocol: HostedToolSearchProtocol;
 }
 /** Nested rather than slash-delimited: provider/model ids may themselves contain `/`. Missing = unknown. */
 export type HostedToolSearchCapabilities = Record<string, Record<string, HostedToolSearchCapability>>;
