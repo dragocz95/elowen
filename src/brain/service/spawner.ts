@@ -261,12 +261,18 @@ export class LiveSessionSpawner {
     // Hosted search installs no local handle, so there is no deferred block — but Anthropic's BM25 variant
     // also withholds the tool LIST, leaving the model to guess which words might match something. Both
     // vendors recommend naming the available categories in the system prompt; names only, so deferral still
-    // pays for itself. Withheld from a foreign channel, where the senders are strangers and the tool names
-    // describe private infrastructure. Execute-time policy is unchanged in every case.
+    // pays for itself.
+    //
+    // OWNER CHAT ONLY, deliberately. The block is built once at spawn from the session-wide tool set, but
+    // real visibility is per-SENDER: `applyToolVisibility` narrows the active tools to the acting sender's
+    // ToolPolicy on every turn. A shared channel has many senders with different roles, so a static list
+    // would name tools the current sender may not use — and the block's own wording promises the opposite.
+    // Owner chat has exactly one sender, who owns everything in it. Execute-time policy is unchanged
+    // either way; this is about what the prompt ADVERTISES.
     const deferredBlock = toolSearchHandle
       ? formatDeferredToolsBlock(allTools, toolSearchHandle.deferred)
-      : providerHostedToolSearch && sessionKind !== 'foreign-channel'
-        ? formatHostedToolCatalogBlock(allTools, plugins?.toolOwner ?? new Map<string, string>())
+      : providerHostedToolSearch
+        ? formatHostedToolCatalogBlock(allTools, plugins?.toolOwner ?? new Map<string, string>(), sessionKind)
         : '';
     const append = [skillsBlock, deferredBlock, ...fragments, ...(opts.extraAppend ?? []), userInstructionsAppend ?? ''].filter((s) => s.length > 0);
 

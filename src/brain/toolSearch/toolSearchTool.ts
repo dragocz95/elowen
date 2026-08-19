@@ -259,12 +259,19 @@ const MAX_CATALOG_NAMES = 220;
  *  Names only, grouped by the plugin that owns them: the group IS the namespace a single search matches, and
  *  a bare name costs ~3 tokens where a description costs fifty. The set is fixed at spawn, so this sits in the
  *  cache-friendly append region exactly like the deferred block. Withholding remains a PROMPT decision only —
- *  the execute-time permission and plan gates are unchanged, so listing a name grants nothing. */
+ *  the execute-time permission and plan gates are unchanged, so listing a name grants nothing.
+ *
+ *  OWNER CHAT ONLY. This block is built once, from the session-wide tool set, but real visibility is
+ *  per-SENDER: `applyToolVisibility` narrows the active tools to the acting sender's ToolPolicy each turn.
+ *  A shared channel carries many senders with different roles, so a static list would name tools the
+ *  current sender may not use, while the text promises the opposite. Owner chat has exactly one sender,
+ *  who owns everything in it. Any other session kind returns ''. */
 export function formatHostedToolCatalogBlock(
   all: readonly { name: string }[],
   toolOwner: ReadonlyMap<string, string>,
+  sessionKind: 'owner-chat' | 'trusted-channel' | 'foreign-channel',
 ): string {
-  if (all.length === 0) return '';
+  if (sessionKind !== 'owner-chat' || all.length === 0) return '';
   const groups = new Map<string, string[]>();
   for (const tool of all.slice(0, MAX_CATALOG_NAMES)) {
     const owner = toolOwner.get(tool.name) ?? 'builtin';

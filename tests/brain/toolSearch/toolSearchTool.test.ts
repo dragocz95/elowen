@@ -137,8 +137,16 @@ describe('formatHostedToolCatalogBlock', () => {
     ['ScanCode', 'security-scan'],
   ]);
 
+  it('is withheld from shared channels, where visibility is per-sender', () => {
+    // The block is built once from the session-wide tool set, but applyToolVisibility narrows the active
+    // tools to the ACTING sender each turn. In a room with several roles a static list would advertise
+    // tools this sender may not use, while its own wording claims everything listed is available.
+    expect(formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS, 'trusted-channel')).toBe('');
+    expect(formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS, 'foreign-channel')).toBe('');
+  });
+
   it('groups tool names by owning plugin and falls back to builtin', () => {
-    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS);
+    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS, 'owner-chat');
     expect(block).toContain('<available_tool_catalog>');
     expect(block).toContain('- discord (1): DiscordCreateChannel');
     expect(block).toContain('- security-scan (1): ScanCode');
@@ -147,15 +155,15 @@ describe('formatHostedToolCatalogBlock', () => {
   });
 
   it('carries names only, never the descriptions the provider search will supply', () => {
-    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS);
+    const block = formatHostedToolCatalogBlock(MIXED_CANDIDATES, OWNERS, 'owner-chat');
     expect(block).not.toContain('Create a Discord channel');
     expect(block).not.toContain('Scan source code for dangerous patterns');
   });
 
   it('is empty without tools, and reports the remainder past the cap', () => {
-    expect(formatHostedToolCatalogBlock([], OWNERS)).toBe('');
+    expect(formatHostedToolCatalogBlock([], OWNERS, 'owner-chat')).toBe('');
     const many = Array.from({ length: 250 }, (_, i) => ({ name: `Op${i}` }));
-    const block = formatHostedToolCatalogBlock(many, new Map());
+    const block = formatHostedToolCatalogBlock(many, new Map(), 'owner-chat');
     expect(block).toMatch(/…and 30 more tool\(s\)/); // 250 − MAX_CATALOG_NAMES (220)
   });
 });
