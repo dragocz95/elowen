@@ -187,6 +187,16 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     } catch (error) { return debugError(c, error); }
   });
 
+  app.get('/brain/debug/sessions/:id/requests/:requestId/segments/:index', c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    try {
+      const item = d.brain.debugRequestSegment(
+        c.req.param('id'), c.req.param('requestId'), Number(c.req.param('index')), debugNumber(c.req.query('maxBytes')),
+      );
+      return item ? c.json(item) : c.json({ error: 'not found' }, 404);
+    } catch (error) { return debugError(c, error); }
+  });
+
   app.get('/brain/debug/sessions/:id/requests/:requestId/raw', c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     try {

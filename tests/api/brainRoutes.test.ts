@@ -260,8 +260,12 @@ function fakeBrain() {
     debugSessions: (opts: { cursor?: string; limit?: number; search?: string } = {}) => ({
       items: [{ id: opts.cursor ? 'debug-2' : 'debug-1', title: opts.search ?? '', userId: 1 }],
       nextCursor: opts.limit === 1 && !opts.cursor ? 'next' : null,
+      captureStartedAt: 1_755_630_000_000,
     }),
-    debugSession: (id: string) => id === 'missing' ? undefined : { id, title: 'Debug session' },
+    debugSession: (id: string) => {
+      if (id === 'throws') throw new Error('debug store failed');
+      return id === 'missing' ? undefined : { id, title: 'Debug session' };
+    },
     debugRequests: (sessionId: string, opts: { cursor?: string; limit?: number } = {}) => sessionId === 'missing' ? undefined : ({
       items: [{ requestId: opts.cursor ? 'r2' : 'r1', sessionId, seq: opts.cursor ? 2 : 1 }],
       nextCursor: opts.limit === 1 && !opts.cursor ? 'next-request' : null,
@@ -271,6 +275,11 @@ function fakeBrain() {
       if (requestId === 'missing') return undefined;
       if (opts.maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
       return { items: [{ sessionId, requestId }], nextCursor: null, loadedBytes: 12 };
+    },
+    debugRequestSegment: (sessionId: string, requestId: string, index: number, maxBytes?: number) => {
+      if (requestId === 'missing' || index !== 0) return undefined;
+      if (maxBytes === 1) throw new Error('debug payload exceeds byte limit:42');
+      return { index, section: 'input', key: 'messages', kind: 'message', digest: 'abc', canonicalizationVersion: 1, byteLength: 12, estimatedTokens: 3, payload: { sessionId, requestId } };
     },
     debugRawRequest: (sessionId: string, requestId: string, maxBytes?: number) => {
       if (requestId === 'missing') return undefined;
@@ -387,13 +396,17 @@ describe('brain routes', () => {
     const allowed = await app.request('/brain/debug/sessions?limit=1&search=needle', auth(adminTok));
     expect(allowed.status).toBe(200);
     expect(allowed.headers.get('cache-control')).toBe('private, no-store');
-    expect(await allowed.json()).toEqual({ items: [{ id: 'debug-1', title: 'needle', userId: 1 }], nextCursor: 'next' });
+    expect(await allowed.json()).toEqual({ items: [{ id: 'debug-1', title: 'needle', userId: 1 }], nextCursor: 'next', captureStartedAt: 1_755_630_000_000 });
+
+    const failed = await app.request('/brain/debug/sessions/throws', auth(adminTok));
+    expect(failed.status).toBe(500);
+    expect(failed.headers.get('cache-control')).toBe('private, no-store');
   });
 
   it('serves debug cursors, 404s, lazy payloads, and explicit byte-limit failures', async () => {
     const { app, adminTok } = setup();
     const next = await app.request('/brain/debug/sessions?limit=1&cursor=next', auth(adminTok));
-    expect(await next.json()).toEqual({ items: [{ id: 'debug-2', title: '', userId: 1 }], nextCursor: null });
+    expect(await next.json()).toEqual({ items: [{ id: 'debug-2', title: '', userId: 1 }], nextCursor: null, captureStartedAt: 1_755_630_000_000 });
     expect((await app.request('/brain/debug/sessions?from=not-a-date', auth(adminTok))).status).toBe(400);
 
     const missing = await app.request('/brain/debug/sessions/missing/requests', auth(adminTok));
@@ -403,6 +416,10 @@ describe('brain routes', () => {
     const detail = await app.request('/brain/debug/sessions/debug-1/requests/r1', auth(adminTok));
     expect(detail.status).toBe(200);
     expect(await detail.json()).toMatchObject({ sessionId: 'debug-1', requestId: 'r1' });
+
+    const segment = await app.request('/brain/debug/sessions/debug-1/requests/r1/segments/0', auth(adminTok));
+    expect(segment.status).toBe(200);
+    expect(await segment.json()).toMatchObject({ index: 0, payload: { sessionId: 'debug-1', requestId: 'r1' } });
 
     const limited = await app.request('/brain/debug/sessions/debug-1/requests/r1/raw?maxBytes=1', auth(adminTok));
     expect(limited.status).toBe(413);

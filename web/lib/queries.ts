@@ -504,6 +504,13 @@ export const useBrainDebugSegments = (sessionId: string | null, requestId: strin
     enabled: !!sessionId && !!requestId,
   });
 
+export const useBrainDebugSegment = (sessionId: string | null, requestId: string | null, index: number | null) =>
+  useQuery({
+    queryKey: ['brain-debug-segment', sessionId, requestId, index],
+    queryFn: () => elowenClient.brainDebugSegment(sessionId as string, requestId as string, index as number),
+    enabled: !!sessionId && !!requestId && index !== null,
+  });
+
 export const useBrainDebugRaw = (sessionId: string | null, requestId: string | null, enabled: boolean) =>
   useQuery({
     queryKey: ['brain-debug-raw', sessionId, requestId],

@@ -606,7 +606,7 @@ export const cs = {
       captureLabel: 'Zachytávat podrobné modelové requesty',
       captureHint: 'Nové requesty poskytovatele se ukládají pro přesnou diagnostiku. Po vypnutí zůstanou existující záznamy dostupné.',
       sensitiveWarning: 'Zachycené requesty mohou obsahovat citlivé prompty, zprávy a data nástrojů. Přístup mají jen administrátoři.',
-      captureSince: 'Přesné záznamy jsou v uvedených relacích dostupné od {date}',
+      captureSince: 'Přesné záznamy jsou dostupné od {date}',
       captureDisabled: 'Podrobné zachytávání requestů je vypnuté. Existující záznamy a starší přepisy zůstávají čitelné.',
       sessions: 'Relace', tools: 'Nástroje', requests: 'Requesty',
       searchSessions: 'Hledat relace…', searchMessages: 'Hledat v promptu a zprávách…', searchTools: 'Hledat nástroje…',

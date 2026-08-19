@@ -602,7 +602,7 @@ export const sk = {
       title: 'Diagnostika konverzácií', description: 'Prezerajte presné modelové požiadavky zachytené touto inštanciou.',
       entryDescription: 'Kontrolujte prompty, správy, nástroje, využitie a metadáta požiadaviek poskytovateľa.', open: 'Otvoriť diagnostiku',
       captureLabel: 'Zachytávať podrobné modelové požiadavky', captureHint: 'Nové požiadavky poskytovateľa sa ukladajú pre presnú diagnostiku. Po vypnutí zostanú existujúce záznamy dostupné.',
-      sensitiveWarning: 'Zachytené požiadavky môžu obsahovať citlivé prompty, správy a dáta nástrojov. Prístup majú iba administrátori.', captureSince: 'Presné záznamy sú v uvedených reláciách dostupné od {date}',
+      sensitiveWarning: 'Zachytené požiadavky môžu obsahovať citlivé prompty, správy a dáta nástrojov. Prístup majú iba administrátori.', captureSince: 'Presné záznamy sú dostupné od {date}',
       captureDisabled: 'Podrobné zachytávanie požiadaviek je vypnuté. Existujúce záznamy a staršie prepisy zostávajú čitateľné.',
       sessions: 'Relácie', tools: 'Nástroje', requests: 'Požiadavky', searchSessions: 'Hľadať relácie…', searchMessages: 'Hľadať v prompte a správach…', searchTools: 'Hľadať nástroje…',
       filters: 'Filtre', from: 'Od', to: 'Do', userId: 'ID používateľa', surface: 'Povrch', provider: 'Poskytovateľ', model: 'Model', status: 'Stav', role: 'Rola',

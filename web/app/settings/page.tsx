@@ -723,9 +723,9 @@ export default function SettingsPage() {
                 <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
                 <span>{t.settings.conversationDiagnostics.sensitiveWarning}</span>
               </div>
-              {debugSummary.data?.pages[0]?.items.some((session) => session.captureStartedAt != null) ? (
+              {debugSummary.data?.pages[0]?.captureStartedAt != null ? (
                 <div className="mt-2 font-mono text-[11px] text-text-muted">
-                  {t.settings.conversationDiagnostics.captureSince.replace('{date}', new Date(Math.min(...debugSummary.data.pages[0].items.flatMap((session) => session.captureStartedAt == null ? [] : [session.captureStartedAt]))).toLocaleString(locale))}
+                  {t.settings.conversationDiagnostics.captureSince.replace('{date}', new Date(debugSummary.data.pages[0].captureStartedAt).toLocaleString(locale))}
                 </div>
               ) : null}
             </SettingsState>

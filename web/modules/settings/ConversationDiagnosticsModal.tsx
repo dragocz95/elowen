@@ -12,12 +12,12 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/ui/states
 import { formatCost, formatDuration, formatTokens, localDateTime } from '../../lib/format';
 import {
   useBrainDebugLegacy, useBrainDebugRaw, useBrainDebugRequest, useBrainDebugRequests,
-  useBrainDebugSegments, useBrainDebugSessions,
+  useBrainDebugSegment, useBrainDebugSessions,
 } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { useMobile } from '../../lib/useMobile';
 import type {
-  BrainDebugRequestItem, BrainDebugSegmentPayload, BrainDebugSessionItem,
+  BrainDebugRequestItem, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload, BrainDebugSessionItem,
 } from '../../lib/types';
 
 const ROLE_CLASS: Record<string, string> = {
@@ -36,12 +36,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function segmentRole(segment: BrainDebugSegmentPayload): string {
+type SegmentLike = BrainDebugSegmentManifestItem | BrainDebugSegmentPayload;
+
+function segmentPayload(segment: SegmentLike): unknown {
+  return 'payload' in segment ? segment.payload : undefined;
+}
+
+function segmentRole(segment: SegmentLike): string {
   if (segment.section === 'system') return 'system';
   if (segment.section === 'tool') return 'tool';
   if (segment.section === 'options') return 'options';
   if (segment.section === 'response') return 'response';
-  const item = asRecord(segment.payload);
+  const item = asRecord(segmentPayload(segment));
   const role = typeof item?.role === 'string' ? item.role : typeof item?.type === 'string' ? item.type : segment.kind;
   if (/reason/i.test(role)) return 'reasoning';
   if (/tool.*result|function.*result/i.test(role)) return 'tool';
@@ -49,10 +55,10 @@ function segmentRole(segment: BrainDebugSegmentPayload): string {
   return role;
 }
 
-function segmentLabel(segment: BrainDebugSegmentPayload): string {
-  const item = asRecord(segment.payload);
+function segmentLabel(segment: SegmentLike): string {
+  const item = asRecord(segmentPayload(segment));
   const name = typeof item?.name === 'string' ? item.name : typeof item?.type === 'string' ? item.type : null;
-  return name ?? segment.kind;
+  return name ?? segment.key ?? segment.kind;
 }
 
 function searchable(value: unknown): string {
@@ -109,7 +115,7 @@ function Kpi({ label, value, exact }: { label: string; value: string; exact?: bo
   );
 }
 
-function RequestGraph({ request, segments, cachedEstimateLabel }: { request: BrainDebugRequestItem; segments: BrainDebugSegmentPayload[]; cachedEstimateLabel: string }) {
+function RequestGraph({ request, segments, cachedEstimateLabel }: { request: BrainDebugRequestItem; segments: BrainDebugSegmentManifestItem[]; cachedEstimateLabel: string }) {
   const graph = segments.filter((segment) => segment.section !== 'response' && segment.section !== 'options');
   const prompt = graph.reduce((sum, segment) => sum + segment.estimatedTokens, 0);
   const cached = Math.max(0, request.cacheReadTokens ?? 0);
@@ -180,7 +186,7 @@ function RequestSelector({ requests, selectedId, onSelect, hasMore, loadMore }: 
     <div className="flex items-center gap-2 overflow-x-auto border-b border-border px-3 py-2" aria-label={d.requests}>
       {requests.map((request) => (
         <button key={request.requestId} type="button" aria-pressed={selectedId === request.requestId} onClick={() => onSelect(request.requestId)} className={`shrink-0 rounded-md border px-3 py-2 text-left ${selectedId === request.requestId ? 'border-accent bg-accent/10' : 'border-border bg-elevated/40'}`}>
-          <div className="flex items-center gap-2"><span className="font-mono text-xs text-text">#{request.seq}</span><Badge tone={statusTone(request.status)}>{request.kind}</Badge>{request.retryOf ? <Badge tone="warning">{d.retry}</Badge> : null}</div>
+          <div className="flex items-center gap-2"><span className="font-mono text-xs text-text">#{request.seq}</span><Badge>{request.kind}</Badge><Badge tone={statusTone(request.status)}>{request.status}</Badge>{request.retryOf ? <Badge tone="warning">{d.retry}</Badge> : null}</div>
           <div className="mt-1 max-w-44 truncate text-[10px] text-text-muted">{request.model}</div>
         </button>
       ))}
@@ -189,27 +195,32 @@ function RequestSelector({ requests, selectedId, onSelect, hasMore, loadMore }: 
   );
 }
 
-function ToolsPanel({ tools, query, setQuery }: { tools: BrainDebugSegmentPayload[]; query: string; setQuery: (value: string) => void }) {
+function ToolEntry({ sessionId, requestId, tool }: { sessionId: string | null; requestId: string | null; tool: BrainDebugSegmentManifestItem }) {
   const { t } = useTranslation();
   const d = t.settings.conversationDiagnostics;
-  const filtered = tools.filter((tool) => searchable(tool.payload).toLowerCase().includes(query.toLowerCase()));
+  const [open, setOpen] = useState(false);
+  const payload = useBrainDebugSegment(sessionId, requestId, open ? tool.index : null);
+  const badge = payload.data ? toolLoadingBadge(payload.data.payload) : null;
+  return (
+    <details className="mb-2 rounded-md border border-border bg-surface" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer list-none p-3">
+        <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{payload.data ? toolName(payload.data.payload) : segmentLabel(tool)}</strong>{badge ? <Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge> : null}</div>
+        <div className="mt-2 flex gap-2 font-mono text-[10px] text-text-muted"><span>{tool.byteLength} B</span><span title={tool.digest}>{tool.digest.slice(0, 10)}</span></div>
+      </summary>
+      {open ? <div className="border-t border-border">{payload.isLoading ? <LoadingState /> : payload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => payload.refetch()} /> : <pre className="max-h-80 overflow-auto p-3 text-[11px] text-text-muted">{pretty(toolSchema(payload.data?.payload))}</pre>}</div> : null}
+    </details>
+  );
+}
+
+function ToolsPanel({ sessionId, requestId, tools, query, setQuery }: { sessionId: string | null; requestId: string | null; tools: BrainDebugSegmentManifestItem[]; query: string; setQuery: (value: string) => void }) {
+  const { t } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
+  const filtered = tools.filter((tool) => `${tool.key ?? ''} ${tool.kind} ${tool.digest}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg/40" data-testid="diagnostics-tools-panel">
       <div className="border-b border-border p-3"><Input aria-label={d.searchTools} placeholder={d.searchTools} value={query} onChange={(event) => setQuery(event.target.value)} /></div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {filtered.length === 0 ? <EmptyState title={d.noTools} icon={Wrench} /> : filtered.map((tool) => {
-          const schema = toolSchema(tool.payload);
-          const badge = toolLoadingBadge(tool.payload);
-          return (
-            <details key={`${tool.index}-${tool.digest}`} className="mb-2 rounded-md border border-border bg-surface">
-              <summary className="cursor-pointer list-none p-3">
-                <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{toolName(tool.payload)}</strong><Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge></div>
-                <div className="mt-2 flex gap-2 font-mono text-[10px] text-text-muted"><span>{tool.byteLength} B</span><span title={tool.digest}>{tool.digest.slice(0, 10)}</span></div>
-              </summary>
-              <pre className="max-h-80 overflow-auto border-t border-border p-3 text-[11px] text-text-muted">{pretty(schema)}</pre>
-            </details>
-          );
-        })}
+        {filtered.length === 0 ? <EmptyState title={d.noTools} icon={Wrench} /> : filtered.map((tool) => <ToolEntry key={`${tool.index}-${tool.digest}`} sessionId={sessionId} requestId={requestId} tool={tool} />)}
       </div>
     </div>
   );
@@ -234,14 +245,15 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
   const requests = useMemo(() => requestsQuery.data?.pages.flatMap((page) => page.items) ?? [], [requestsQuery.data]);
   const [requestId, setRequestId] = useState<string | null>(null);
   const detail = useBrainDebugRequest(sessionId, requestId);
-  const segmentsQuery = useBrainDebugSegments(sessionId, requestId);
-  const segments = segmentsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const segments = detail.data?.segments ?? [];
   const [rawOpen, setRawOpen] = useState(false);
   const raw = useBrainDebugRaw(sessionId, requestId, rawOpen);
   const legacy = useBrainDebugLegacy(sessionId, !!selectedSession && selectedSession.requestCount === 0);
   const [messageQuery, setMessageQuery] = useState('');
   const [role, setRole] = useState('all');
-  const [selectedSegment, setSelectedSegment] = useState<BrainDebugSegmentPayload | null>(null);
+  const [selectedSegment, setSelectedSegment] = useState<BrainDebugSegmentManifestItem | null>(null);
+  const selectedPayload = useBrainDebugSegment(sessionId, requestId, selectedSegment?.index ?? null);
+  const [visibleMessages, setVisibleMessages] = useState(100);
   const [inspectorRaw, setInspectorRaw] = useState(false);
   const [toolQuery, setToolQuery] = useState('');
   const [mobilePanel, setMobilePanel] = useState<'sessions' | 'tools' | null>(null);
@@ -254,18 +266,16 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
     setRequestId((current) => current && requests.some((request) => request.requestId === current) ? current : requests[0]?.requestId ?? null);
   }, [sessionId, requests]);
   useEffect(() => {
-    setRawOpen(false); setSelectedSegment(null); setToolQuery('');
+    setRawOpen(false); setSelectedSegment(null); setToolQuery(''); setVisibleMessages(100);
   }, [requestId]);
-  const { hasNextPage: hasMoreSegments, isFetchingNextPage: fetchingMoreSegments, fetchNextPage: fetchMoreSegments } = segmentsQuery;
-  useEffect(() => {
-    if (hasMoreSegments && !fetchingMoreSegments) void fetchMoreSegments();
-  }, [hasMoreSegments, fetchingMoreSegments, fetchMoreSegments]);
 
   const messages = segments.filter((segment) => segment.section !== 'tool' && segment.section !== 'options');
   const filteredMessages = messages.filter((segment) => {
     const itemRole = segmentRole(segment);
-    return (role === 'all' || role === itemRole) && searchable(segment.payload).toLowerCase().includes(messageQuery.toLowerCase());
+    const haystack = `${segment.key ?? ''} ${segment.kind} ${segment.digest}`.toLowerCase();
+    return (role === 'all' || role === itemRole) && haystack.includes(messageQuery.toLowerCase());
   });
+  const visibleMessageItems = filteredMessages.slice(0, visibleMessages);
   const roles = [...new Set(messages.map(segmentRole))];
   const tools = segments.filter((segment) => segment.section === 'tool');
   const selectedRequest = detail.data;
@@ -273,7 +283,7 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
 
   const copy = (value: unknown) => { void navigator.clipboard?.writeText(pretty(value)); };
   const sessionRail = <SessionRail sessions={sessions} selectedId={sessionId} onSelect={(id) => { setSessionId(id); setMobilePanel(null); }} filters={filters} setFilters={setFilters} hasMore={sessionsQuery.hasNextPage} loadingMore={sessionsQuery.isFetchingNextPage} loadMore={() => void sessionsQuery.fetchNextPage()} />;
-  const toolsPanel = <ToolsPanel tools={tools} query={toolQuery} setQuery={setToolQuery} />;
+  const toolsPanel = <ToolsPanel sessionId={sessionId} requestId={requestId} tools={tools} query={toolQuery} setQuery={setToolQuery} />;
 
   return (
     <Modal
@@ -302,7 +312,7 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
             <>
               <RequestSelector requests={requests} selectedId={requestId} onSelect={setRequestId} hasMore={requestsQuery.hasNextPage} loadMore={() => void requestsQuery.fetchNextPage()} />
               <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-                {detail.isLoading || segmentsQuery.isLoading ? <LoadingState /> : detail.isError || segmentsQuery.isError ? <ErrorState message={d.loadError} onRetry={() => { void detail.refetch(); void segmentsQuery.refetch(); }} /> : selectedRequest ? (
+                {detail.isLoading ? <LoadingState /> : detail.isError ? <ErrorState message={d.loadError} onRetry={() => void detail.refetch()} /> : selectedRequest ? (
                   <div className="space-y-4">
                     <section className="rounded-lg border border-border bg-elevated/30 p-3">
                       <RequestGraph request={selectedRequest} segments={segments} cachedEstimateLabel={d.cachedPrefixEstimate} />
@@ -327,16 +337,16 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
                           <Select label={d.role} value={role} onChange={setRole}><option value="all">{d.allRoles}</option>{roles.map((item) => <option key={item} value={item}>{item}</option>)}</Select>
                         </div>
                         <div className="max-h-[32rem] min-h-0 flex-1 overflow-y-auto">
-                          {filteredMessages.map((segment) => {
+                          {visibleMessageItems.map((segment) => {
                             const itemRole = segmentRole(segment);
-                            return <button key={`${segment.index}-${segment.digest}`} type="button" aria-pressed={selectedSegment?.index === segment.index} onClick={() => setSelectedSegment(segment)} className={`flex w-full items-start gap-3 border-b border-border p-3 text-left hover:bg-elevated ${selectedSegment?.index === segment.index ? 'bg-elevated' : ''}`}><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${ROLE_CLASS[itemRole] ?? 'bg-text-muted'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-xs text-text">{itemRole}</strong><Badge>{segmentLabel(segment)}</Badge><span className="ml-auto font-mono text-[10px] text-text-muted">~{segment.estimatedTokens}</span></span><span className="mt-1 line-clamp-2 text-[11px] text-text-muted">{searchable(segment.payload)}</span></span></button>;
+                            return <button key={`${segment.index}-${segment.digest}`} type="button" aria-pressed={selectedSegment?.index === segment.index} onClick={() => setSelectedSegment(segment)} className={`flex w-full items-start gap-3 border-b border-border p-3 text-left hover:bg-elevated ${selectedSegment?.index === segment.index ? 'bg-elevated' : ''}`}><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${ROLE_CLASS[itemRole] ?? 'bg-text-muted'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-xs text-text">{itemRole}</strong><Badge>{segmentLabel(segment)}</Badge><span className="ml-auto font-mono text-[10px] text-text-muted">~{segment.estimatedTokens}</span></span><span className="mt-1 line-clamp-2 font-mono text-[10px] text-text-muted">{segment.digest}</span></span></button>;
                           })}
-                          {segmentsQuery.hasNextPage ? <div className="p-3"><Button onClick={() => void segmentsQuery.fetchNextPage()}>{d.loadMore}</Button></div> : null}
+                          {visibleMessages < filteredMessages.length ? <div className="p-3"><Button onClick={() => setVisibleMessages((value) => value + 100)}>{d.loadMore}</Button></div> : null}
                         </div>
                       </div>
                       <div className="flex min-h-0 flex-col rounded-lg border border-border">
-                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex gap-1"><Button variant="ghost" onClick={() => setInspectorRaw((value) => !value)}>{inspectorRaw ? d.pretty : d.raw}</Button>{selectedSegment ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedSegment.payload)}>{d.copy}</Button> : null}</div></div>
-                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{inspectorRaw ? searchable(selectedSegment.payload) : pretty(selectedSegment.payload)}</pre> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
+                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex gap-1"><Button variant="ghost" onClick={() => setInspectorRaw((value) => !value)}>{inspectorRaw ? d.pretty : d.raw}</Button>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
+                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? selectedPayload.isLoading ? <LoadingState /> : selectedPayload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => selectedPayload.refetch()} /> : <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{inspectorRaw ? searchable(selectedPayload.data?.payload) : pretty(selectedPayload.data?.payload)}</pre> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
                       </div>
                     </section>
 

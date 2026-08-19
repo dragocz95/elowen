@@ -40,8 +40,8 @@ import { BrainStatusService } from './service/statusService.js';
 import type { SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
 import type {
   BrainContextBreakdown, BrainDebugLegacyTranscriptPage, BrainDebugPage, BrainDebugPayloadPage,
-  BrainDebugRawPayload, BrainDebugRequestDetail, BrainDebugRequestItem, BrainDebugSessionItem,
-  BrainForkedSession,
+  BrainDebugRawPayload, BrainDebugRequestDetail, BrainDebugRequestItem, BrainDebugSegmentPayload,
+  BrainDebugSessionItem, BrainDebugSessionPage, BrainForkedSession,
 } from '../shared/wireContract.js';
 import type { ProviderRequestDebugRequestFilters, ProviderRequestDebugSessionFilters } from '../store/providerRequestStore.js';
 import { SessionTeardownService } from './service/sessionTeardown.js';
@@ -879,7 +879,7 @@ export class BrainService {
 
   /** Admin-only request diagnostics. Authorization lives at the HTTP boundary; these methods intentionally
    *  span every managed user/channel/task session instead of applying caller ownership. */
-  debugSessions(filters?: ProviderRequestDebugSessionFilters): BrainDebugPage<BrainDebugSessionItem> {
+  debugSessions(filters?: ProviderRequestDebugSessionFilters): BrainDebugSessionPage {
     return this.d.store.providerRequests.debugSessions(filters);
   }
 
@@ -897,6 +897,10 @@ export class BrainService {
 
   debugRequestSegments(sessionId: string, requestId: string, opts?: { cursor?: string; limit?: number; maxBytes?: number }): BrainDebugPayloadPage | undefined {
     return this.d.store.providerRequests.debugSegmentPayloads(sessionId, requestId, opts);
+  }
+
+  debugRequestSegment(sessionId: string, requestId: string, index: number, maxBytes?: number): BrainDebugSegmentPayload | undefined {
+    return this.d.store.providerRequests.debugSegmentPayload(sessionId, requestId, index, maxBytes);
   }
 
   debugRawRequest(sessionId: string, requestId: string, maxBytes?: number): BrainDebugRawPayload | undefined {

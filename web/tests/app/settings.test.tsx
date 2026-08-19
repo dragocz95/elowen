@@ -17,6 +17,7 @@ const server = setupServer(
     diagnostics: { cpuPercent: 12, memoryUsedBytes: 3_200_000_000, memoryTotalBytes: 16_000_000_000, uptimeSeconds: 1_098_000 },
   })),
   http.get('*/api/system/skills', () => HttpResponse.json({ skills: [] })),
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', name: 'Admin', is_admin: true } })),
   // The agents plugin is present by default: the Models section shows the CLI provider groups only
   // when it is (its spawner is what runs those execs). No `settings` entries — the plugin's own
   // settings decks are exercised in tests/pluginUi, not here.
@@ -24,6 +25,7 @@ const server = setupServer(
   // Plugin detail: the core Settings page reads it for the plugin cards, never for a plugin's own
   // section — the GitHub section moved to the agents settings deck (tests/pluginUi).
   http.get('*/api/plugins/agents', () => HttpResponse.json({ name: 'agents', config: {}, configSchema: [], secretsSet: [] })),
+  http.get('*/api/brain/debug/sessions', () => HttpResponse.json({ items: [], nextCursor: null, captureStartedAt: Date.UTC(2026, 7, 1, 10, 0, 0) })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
 beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
@@ -62,6 +64,7 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
 
     expect(await screen.findByText('Conversation diagnostics')).toBeInTheDocument();
+    expect(await screen.findByText(/Exact capture is available since/)).toBeInTheDocument();
     const toggle = screen.getByRole('switch', { name: 'Capture detailed model requests' });
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);

@@ -3,8 +3,8 @@ import type { Db } from './db.js';
 import { CHANNEL_PREFIX, SUBAGENT_PLATFORM, TASK_PREFIX } from '../brain/sessionId.js';
 import type {
   BrainDebugPage, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugRequestDetail,
-  BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem,
-  BrainDebugSessionItem, BrainDebugSurface,
+  BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
+  BrainDebugSessionItem, BrainDebugSessionPage, BrainDebugSurface,
 } from '../shared/wireContract.js';
 
 export const PROVIDER_REQUEST_CANONICALIZATION_VERSION = 1;
@@ -368,7 +368,7 @@ export class ProviderRequestStore {
     };
   }
 
-  debugSessions(filters: ProviderRequestDebugSessionFilters = {}): BrainDebugPage<BrainDebugSessionItem> {
+  debugSessions(filters: ProviderRequestDebugSessionFilters = {}): BrainDebugSessionPage {
     const limit = boundedLimit(filters.limit, 50, 100);
     const where: string[] = [];
     const params: unknown[] = [];
@@ -430,7 +430,13 @@ export class ProviderRequestStore {
     const page = rows.slice(0, limit);
     const items = page.map((row) => this.sessionItem(row));
     const last = items.at(-1);
-    return { items, nextCursor: hasMore && last ? encodeCursor({ updatedAt: last.updatedAt, id: last.id }) : null };
+    const capture = this.db.prepare('SELECT MIN(capture_started_at) value FROM brain_request_session_summary')
+      .get() as { value: number | null };
+    return {
+      items,
+      nextCursor: hasMore && last ? encodeCursor({ updatedAt: last.updatedAt, id: last.id }) : null,
+      captureStartedAt: capture.value === null ? null : Number(capture.value),
+    };
   }
 
   debugSession(sessionId: string): BrainDebugSessionItem | undefined {
@@ -577,6 +583,22 @@ export class ProviderRequestStore {
       index = entry.index + 1;
     }
     return { items, nextCursor: index < refs.length ? encodeCursor({ index }) : null, loadedBytes };
+  }
+
+  debugSegmentPayload(sessionId: string, requestId: string, index: number, maxBytes?: number): BrainDebugSegmentPayload | undefined {
+    if (!Number.isInteger(index) || index < 0) throw new Error('invalid debug cursor');
+    const row = this.db.prepare('SELECT session_id, manifest, response_segment FROM brain_provider_requests WHERE session_id = ? AND request_id = ?')
+      .get(sessionId, requestId) as { session_id: string; manifest: string; response_segment: string | null } | undefined;
+    if (!row) return undefined;
+    const refs = this.segmentRefs(row);
+    if (index >= refs.length) return undefined;
+    const [entry] = this.segmentEntries(sessionId, refs, index, 1);
+    if (!entry) return undefined;
+    const cap = boundedLimit(maxBytes, 256 * 1024, 4 * 1024 * 1024);
+    if (entry.byteLength > cap) throw new Error(`debug payload exceeds byte limit:${entry.byteLength}`);
+    const payload = this.segmentPayload(sessionId, entry.ref);
+    const { ref: _ref, ...manifestItem } = entry;
+    return { ...manifestItem, payload };
   }
 
   debugRawPayload(sessionId: string, requestId: string, maxBytes?: number): BrainDebugRawPayload | undefined {

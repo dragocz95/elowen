@@ -102,7 +102,7 @@ import type {
   User, BrainLimits, RuntimeConfig as WireRuntimeConfig, RuntimeLimits, ToolDeferralOverrides, BrainUsage, MemoryRow, MemoryCategoryRow, MemoryEventRow, BrainGoalState,
   MemoryVitalityHistory, MemoryVitalityPoint,
   BrainContextBreakdown, BrainForkedSession,
-  BrainDebugPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload,
+  BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
   BrainDebugSurface, BrainDebugRequestStatus, BrainDebugRequestKind,
   CommitFileChange, CommitLogEntry,
@@ -111,7 +111,7 @@ import type {
 export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type {
   BrainContextBreakdown, BrainForkedSession,
-  BrainDebugPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload,
+  BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
   BrainDebugSurface, BrainDebugRequestStatus, BrainDebugRequestKind,
 };

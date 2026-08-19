@@ -133,6 +133,7 @@ describe('ProviderRequestStore', () => {
 
     const sessions = requests.debugSessions({ limit: 1 });
     expect(sessions.items[0]).toMatchObject({ id: 's1', username: 'seven', requestCount: 2, errorCount: 1, latestRequestStatus: 'error' });
+    expect(sessions.captureStartedAt).toBe(1_000);
     expect(sessions.nextCursor).toBeTruthy();
     expect(requests.debugSessions({ cursor: sessions.nextCursor!, limit: 1 }).items[0]?.id).toBe('s2');
     expect(requests.debugSessions({ status: 'legacy' }).items.map((item) => item.id)).toEqual(['s2']);
@@ -168,6 +169,8 @@ describe('ProviderRequestStore', () => {
     expect(metadataReads).toBe(1);
     expect(firstPage.nextCursor).toBeTruthy();
     expect(requests.debugSegmentPayloads('s1', attempt.requestId, { cursor: firstPage.nextCursor!, maxBytes: 1_000_000 })!.items.length).toBeGreaterThan(0);
+    expect(requests.debugSegmentPayload('s1', attempt.requestId, 1, 1_000_000)).toMatchObject({ index: 1, payload: { role: 'user', content: 'hello' } });
+    expect(() => requests.debugSegmentPayload('s1', attempt.requestId, 1, 1)).toThrow(/byte limit/);
     expect(() => requests.debugSegmentPayloads('s1', attempt.requestId, { maxBytes: 1 })).toThrow(/byte limit/);
     const raw = requests.debugRawPayload('s1', attempt.requestId, 1_000_000)!;
     expect(raw.payload).toEqual(body());

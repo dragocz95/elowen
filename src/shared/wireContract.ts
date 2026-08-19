@@ -291,6 +291,11 @@ export interface BrainDebugPage<T> {
   nextCursor: string | null;
 }
 
+export interface BrainDebugSessionPage extends BrainDebugPage<BrainDebugSessionItem> {
+  /** Earliest exact provider request retained anywhere in the debug store, independent of page filters. */
+  captureStartedAt: number | null;
+}
+
 export interface BrainDebugSessionItem {
   id: string;
   userId: number;

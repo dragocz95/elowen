@@ -45,11 +45,16 @@ export function createServer(d: ServerDeps): ElowenApp {
   // without a per-route catch, and Hono throws a SyntaxError on invalid JSON. Convert that to a clean
   // 400 instead of leaking a default 500 with no useful body.
   app.onError((err, c) => {
-    if (err instanceof SyntaxError) return c.json({ error: 'invalid JSON body' }, 400);
+    const respond = (body: { error: string }, status: 400 | 500) => {
+      const response = c.json(body, status);
+      if (c.req.path.startsWith('/brain/debug/')) response.headers.set('Cache-Control', 'private, no-store');
+      return response;
+    };
+    if (err instanceof SyntaxError) return respond({ error: 'invalid JSON body' }, 400);
     // A failed `parseBody` schema validation — the single source of truth for malformed request bodies.
-    if (err instanceof ZodError) return c.json({ error: formatZodError(err) }, 400);
+    if (err instanceof ZodError) return respond({ error: formatZodError(err) }, 400);
     log.error('unhandled route error', err);
-    return c.json({ error: 'internal error' }, 500);
+    return respond({ error: 'internal error' }, 500);
   });
   // Event loop percentiles ride along on the probe that already exists, because the question "is the
   // daemon keeping up" has no other answer from outside: a starved loop and a slow provider look

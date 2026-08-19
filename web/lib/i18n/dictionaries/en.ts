@@ -606,7 +606,7 @@ export const en = {
       captureLabel: 'Capture detailed model requests',
       captureHint: 'New provider requests are stored for exact diagnostics. Existing captures remain available when disabled.',
       sensitiveWarning: 'Captured requests may contain sensitive prompts, messages and tool data. Access is restricted to administrators.',
-      captureSince: 'Exact capture available in listed sessions since {date}',
+      captureSince: 'Exact capture is available since {date}',
       captureDisabled: 'Detailed request capture is disabled. Existing captures and legacy transcripts remain readable.',
       sessions: 'Sessions', tools: 'Tools', requests: 'Requests',
       searchSessions: 'Search sessions…', searchMessages: 'Search prompt and messages…', searchTools: 'Search tools…',

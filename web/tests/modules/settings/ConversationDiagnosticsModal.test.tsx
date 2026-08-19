@@ -54,15 +54,19 @@ function segments(requestId: string) {
 }
 
 let rawReads = 0;
+let segmentReads = 0;
 let lastSessionQuery = '';
 const server = setupServer(
   http.get('*/api/brain/debug/sessions', ({ request }) => {
     lastSessionQuery = new URL(request.url).search;
-    return HttpResponse.json({ items: [session], nextCursor: null });
+    return HttpResponse.json({ items: [session], nextCursor: null, captureStartedAt: session.captureStartedAt });
   }),
   http.get('*/api/brain/debug/sessions/session-1/requests', () => HttpResponse.json({ items: requests, nextCursor: null })),
   http.get('*/api/brain/debug/sessions/session-1/requests/:requestId', ({ params }) => HttpResponse.json(manifest(String(params.requestId)))),
-  http.get('*/api/brain/debug/sessions/session-1/requests/:requestId/segments', ({ params }) => HttpResponse.json(segments(String(params.requestId)))),
+  http.get('*/api/brain/debug/sessions/session-1/requests/:requestId/segments/:index', ({ params }) => {
+    segmentReads += 1;
+    return HttpResponse.json(segments(String(params.requestId)).items[Number(params.index)]);
+  }),
   http.get('*/api/brain/debug/sessions/session-1/requests/:requestId/raw', ({ params }) => {
     rawReads += 1;
     return HttpResponse.json({ payload: { model: 'claude-sonnet', request: params.requestId }, byteLength: 80 });
@@ -70,7 +74,7 @@ const server = setupServer(
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => { server.resetHandlers(); rawReads = 0; lastSessionQuery = ''; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); rawReads = 0; segmentReads = 0; lastSessionQuery = ''; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 
 function renderModal(captureEnabled = true) {
@@ -80,26 +84,35 @@ function renderModal(captureEnabled = true) {
 }
 
 describe('ConversationDiagnosticsModal', () => {
-  it('loads segment payloads after request selection but keeps the raw provider body lazy', async () => {
+  it('loads only an explicitly opened segment and keeps the raw provider body lazy', async () => {
     renderModal();
-    expect(await screen.findByText('alpha_tool')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Prompt token segments')).toBeInTheDocument();
+    expect(segmentReads).toBe(0);
     expect(rawReads).toBe(0);
+
+    fireEvent.click(screen.getByText('tools'));
+    expect(await screen.findByText('alpha_tool')).toBeInTheDocument();
+    expect(segmentReads).toBe(1);
 
     fireEvent.click(screen.getByRole('button', { name: /Raw provider request/ }));
     await waitFor(() => expect(rawReads).toBe(1));
     expect(await screen.findByText(/"request": "request-1"/)).toBeInTheDocument();
   });
 
-  it('updates the exact tool set per request and renders graph/cache metrics with null cost honestly', async () => {
+  it('updates the exact tool set per request and renders graph/cache metrics with textual status', async () => {
     renderModal();
+    expect(await screen.findByLabelText('Prompt token segments')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('tools'));
     expect(await screen.findByText('alpha_tool')).toBeInTheDocument();
-    expect(screen.getByLabelText('Prompt token segments')).toBeInTheDocument();
     expect(screen.getByText(/Estimated cached prefix/)).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
+    expect(screen.getAllByText('succeeded').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: /#2/ }));
-    expect(await screen.findByText('beta_search')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('alpha_tool')).not.toBeInTheDocument());
+    await screen.findByText('Not available');
+    fireEvent.click(screen.getByText('tools'));
+    expect(await screen.findByText('beta_search')).toBeInTheDocument();
     expect(screen.getByText('Server')).toBeInTheDocument();
     expect(screen.getByText('Not available')).toBeInTheDocument();
   });
@@ -108,7 +121,7 @@ describe('ConversationDiagnosticsModal', () => {
     server.use(
       http.get('*/api/brain/debug/sessions', ({ request }) => {
         lastSessionQuery = new URL(request.url).search;
-        return HttpResponse.json({ items: [{ ...session, title: 'Old conversation', requestCount: 0, captureStartedAt: null }], nextCursor: null });
+        return HttpResponse.json({ items: [{ ...session, title: 'Old conversation', requestCount: 0, captureStartedAt: null }], nextCursor: null, captureStartedAt: null });
       }),
       http.get('*/api/brain/debug/sessions/session-1/requests', () => HttpResponse.json({ items: [], nextCursor: null })),
       http.get('*/api/brain/debug/sessions/session-1/legacy-transcript', () => HttpResponse.json({ items: [{ cursor: 1, id: 'm1', role: 'user', content: 'Legacy hello', createdAt: '2026-08-18T10:00:00.000Z', byteLength: 12 }], nextCursor: null, loadedBytes: 12, exact: false })),
@@ -122,11 +135,29 @@ describe('ConversationDiagnosticsModal', () => {
     await waitFor(() => expect(lastSessionQuery).toContain('search=needle'));
   });
 
+  it('renders a bounded message window without downloading every payload', async () => {
+    const manySegments = Array.from({ length: 250 }, (_, index) => ({
+      index, section: 'input', key: 'messages', kind: 'message', digest: `digest-${index}`,
+      canonicalizationVersion: 1, byteLength: 10, estimatedTokens: 3,
+    }));
+    server.use(http.get('*/api/brain/debug/sessions/session-1/requests/:requestId', ({ params }) => HttpResponse.json({
+      ...manifest(String(params.requestId)), segments: manySegments, segmentBytes: 2500,
+    })));
+    renderModal();
+
+    expect(await screen.findByText('digest-99')).toBeInTheDocument();
+    expect(screen.queryByText('digest-100')).not.toBeInTheDocument();
+    expect(segmentReads).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('digest-100')).toBeInTheDocument();
+    expect(segmentReads).toBe(0);
+  });
+
   it('opens mobile session and tools drawers as nested accessible dialogs', async () => {
     setViewport(true);
     const { wrapper: Wrapper } = createWrapper();
     render(<ConversationDiagnosticsModal captureEnabled onClose={vi.fn()} />, { wrapper: Wrapper });
-    await screen.findByText('alpha_tool');
+    await screen.findByLabelText('Prompt token segments');
 
     fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
     const sessionsDrawer = await screen.findByRole('dialog', { name: 'Sessions' });
@@ -137,6 +168,7 @@ describe('ConversationDiagnosticsModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
     const toolsDrawer = await screen.findByRole('dialog', { name: 'Tools' });
-    expect(within(toolsDrawer).getByText('alpha_tool')).toBeInTheDocument();
+    fireEvent.click(within(toolsDrawer).getByText('tools'));
+    expect(await within(toolsDrawer).findByText('alpha_tool')).toBeInTheDocument();
   });
 });
