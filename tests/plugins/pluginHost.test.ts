@@ -56,7 +56,15 @@ describe('ctx.userConfig()', () => {
 describe('ctx.host capability gates', () => {
   const externalUsers = {
     resolve: () => ({ id: 2, username: 'external', isAdmin: false }),
+    describe: () => ({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1',
+      user: { id: 2, username: 'external', isAdmin: false }, linkedAt: '2026-08-19 05:00:00',
+    }),
     linkOrProvision: () => ({ user: { id: 2, username: 'external', isAdmin: false }, created: true }),
+    linkExisting: () => ({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1',
+      user: { id: 2, username: 'external', isAdmin: false }, linkedAt: '2026-08-19 05:00:00',
+    }),
   };
   const fullHost: PluginHostWiring = {
     tmux: fakeTmux,

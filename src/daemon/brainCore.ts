@@ -559,11 +559,31 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             const user = users.externalIdentity(provider, tenantId, subjectId);
             return user ? { id: user.id, username: user.username, isAdmin: user.is_admin } : null;
           },
+          describe: (provider, tenantId, subjectId) => {
+            const binding = users.describeExternalIdentity(provider, tenantId, subjectId);
+            return binding ? {
+              provider: binding.provider,
+              tenantId: binding.tenantId,
+              subjectId: binding.subjectId,
+              user: { id: binding.user.id, username: binding.user.username, isAdmin: binding.user.is_admin },
+              linkedAt: binding.linkedAt,
+            } : null;
+          },
           linkOrProvision: (input) => {
             const result = users.linkExternalIdentity(input);
             return {
               created: result.created,
               user: { id: result.user.id, username: result.user.username, isAdmin: result.user.is_admin },
+            };
+          },
+          linkExisting: (input) => {
+            const binding = users.linkExistingExternalIdentity(input);
+            return {
+              provider: binding.provider,
+              tenantId: binding.tenantId,
+              subjectId: binding.subjectId,
+              user: { id: binding.user.id, username: binding.user.username, isAdmin: binding.user.is_admin },
+              linkedAt: binding.linkedAt,
             };
           },
         },

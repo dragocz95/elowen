@@ -441,10 +441,26 @@ export interface PluginExternalUserInput {
   email?: string;
 }
 export interface PluginExternalUserResult { user: PluginUserView; created: boolean }
+export interface PluginExternalUserBinding {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  user: PluginUserView;
+  linkedAt: string;
+}
+export interface PluginExternalUserBindingInput {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  userId: number;
+  replace?: boolean;
+}
 /** Narrow account-write seam. External access/refresh tokens are deliberately absent from this contract. */
 export interface PluginHostExternalUsers {
   resolve(provider: string, tenantId: string, subjectId: string): PluginUserView | null;
+  describe(provider: string, tenantId: string, subjectId: string): PluginExternalUserBinding | null;
   linkOrProvision(input: PluginExternalUserInput): PluginExternalUserResult;
+  linkExisting(input: PluginExternalUserBindingInput): PluginExternalUserBinding;
 }
 
 /** Typed store seams for a plugin that extracts a CORE subsystem. Deliberately interfaces over the
@@ -559,7 +575,7 @@ export interface PluginHost {
   elowenCli(): PluginElowenCli;
   /** Typed seams over the core stores. Gated by `reads:['stores']`. */
   stores(): PluginHostStores;
-  /** External identity account provisioning. Gated by `mutates:['users']` and operator consent. */
+  /** External identity account linking and provisioning. Gated by `mutates:['users']` and operator consent. */
   externalUsers(): PluginHostExternalUsers;
   /** User-override-aware prompt rendering. Gated by `reads:['prompts']`. */
   prompts(): PluginHostPrompts;

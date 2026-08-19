@@ -62,6 +62,65 @@ describe('external user identities', () => {
     expect(users.externalIdentity('msteams', 'tenant-1', 'subject-1')?.id).toBe(operator.id);
   });
 
+  it('describes and idempotently binds an existing user without exposing secrets', () => {
+    const users = new UserStore(openPluginTablesDb(':memory:'));
+    const operator = users.create('operator', 'secret');
+
+    const linked = users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: operator.id,
+    });
+    const repeated = users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: operator.id,
+    });
+
+    expect(repeated).toEqual(linked);
+    expect(users.describeExternalIdentity('msteams', 'tenant-1', 'subject-1')).toEqual(linked);
+    expect(linked).toMatchObject({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1',
+      user: { id: operator.id, username: 'operator', is_admin: true },
+      linkedAt: expect.any(String),
+    });
+    expect(linked.linkedAt).not.toBe('');
+    expect(JSON.stringify(linked)).not.toMatch(/password|token|secret/i);
+  });
+
+  it('requires explicit replace and preserves the provider-tenant user uniqueness invariant', () => {
+    const users = new UserStore(openPluginTablesDb(':memory:'));
+    const operator = users.create('operator', 'secret');
+    const firstTarget = users.create('first-target', 'secret');
+    const secondTarget = users.create('second-target', 'secret');
+    users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: firstTarget.id,
+    });
+
+    expect(() => users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: secondTarget.id,
+    })).toThrow(ExternalIdentityConflictError);
+
+    const replaced = users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: secondTarget.id, replace: true,
+    });
+    expect(replaced.user.id).toBe(secondTarget.id);
+
+    users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-2', userId: operator.id,
+    });
+    expect(() => users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: operator.id, replace: true,
+    })).toThrow(ExternalIdentityConflictError);
+    expect(users.describeExternalIdentity('msteams', 'tenant-1', 'subject-1')?.user.id).toBe(secondTarget.id);
+  });
+
+  it('refuses to bind an external identity to an unknown user', () => {
+    const users = new UserStore(openPluginTablesDb(':memory:'));
+    users.create('operator', 'secret');
+
+    expect(() => users.linkExistingExternalIdentity({
+      provider: 'msteams', tenantId: 'tenant-1', subjectId: 'subject-1', userId: 999,
+    })).toThrow(ExternalIdentityConflictError);
+    expect(users.describeExternalIdentity('msteams', 'tenant-1', 'subject-1')).toBeNull();
+  });
+
   it('uses deterministic collision suffixes and removes links with the account', () => {
     const users = new UserStore(openPluginTablesDb(':memory:'));
     users.create('operator', 'secret');

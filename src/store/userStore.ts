@@ -34,10 +34,25 @@ export interface ExternalIdentityInput {
   email?: string;
 }
 export interface ExternalIdentityResult { user: User; created: boolean }
+export interface ExternalIdentityBindingInput {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  userId: number;
+  replace?: boolean;
+}
+export interface ExternalIdentityView {
+  provider: string;
+  tenantId: string;
+  subjectId: string;
+  user: User;
+  linkedAt: string;
+}
 export class ExternalIdentityConflictError extends Error {
   constructor(message: string) { super(message); this.name = 'ExternalIdentityConflictError'; }
 }
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
+type ExternalIdentityRow = Row & { external_provider: string; external_tenant_id: string; external_subject_id: string; external_created_at: string };
 const canonicalExec = (value: unknown): string => {
   if (typeof value !== 'string' || !value) return '';
   const ref = parseExecRef(value);
@@ -99,23 +114,85 @@ export class UserStore {
     return this.get(Number(info.lastInsertRowid))!;
   }
 
-  /** Resolve one immutable external subject to its local account. External tokens never enter this store. */
-  externalIdentity(provider: string, tenantId: string, subjectId: string): User | null {
+  /** Describe one external subject binding without exposing password hashes, tokens, or provider secrets. */
+  describeExternalIdentity(provider: string, tenantId: string, subjectId: string): ExternalIdentityView | null {
     const key = {
       provider: externalKey(provider, 'provider', /^[a-z][a-z0-9._-]{0,63}$/),
       tenantId: externalKey(tenantId, 'tenant'),
       subjectId: externalKey(subjectId, 'subject'),
     };
-    const row = this.db.prepare(`SELECT u.* FROM user_external_identities e
+    const row = this.db.prepare(`SELECT
+        e.provider AS external_provider,
+        e.tenant_id AS external_tenant_id,
+        e.subject_id AS external_subject_id,
+        e.created_at AS external_created_at,
+        u.*
+      FROM user_external_identities e
       JOIN users u ON u.id = e.user_id
       WHERE e.provider = @provider AND e.tenant_id = @tenantId AND e.subject_id = @subjectId`)
-      .get(key) as Row | undefined;
-    return row ? mask(row) : null;
+      .get(key) as ExternalIdentityRow | undefined;
+    return row ? {
+      provider: row.external_provider,
+      tenantId: row.external_tenant_id,
+      subjectId: row.external_subject_id,
+      user: mask(row),
+      linkedAt: row.external_created_at,
+    } : null;
+  }
+
+  /** Resolve one immutable external subject to its local account. External tokens never enter this store. */
+  externalIdentity(provider: string, tenantId: string, subjectId: string): User | null {
+    return this.describeExternalIdentity(provider, tenantId, subjectId)?.user ?? null;
+  }
+
+  /** Atomically bind an external subject to an existing account, or explicitly reassign it with replace. */
+  linkExistingExternalIdentity(input: ExternalIdentityBindingInput): ExternalIdentityView {
+    const provider = externalKey(input.provider, 'provider', /^[a-z][a-z0-9._-]{0,63}$/);
+    const tenantId = externalKey(input.tenantId, 'tenant');
+    const subjectId = externalKey(input.subjectId, 'subject');
+    if (!Number.isSafeInteger(input.userId) || input.userId < 1) throw new TypeError('invalid external identity user id');
+
+    return this.db.transaction(() => {
+      if (!this.get(input.userId)) throw new ExternalIdentityConflictError('external identity target user does not exist');
+
+      const existing = this.describeExternalIdentity(provider, tenantId, subjectId);
+      if (existing?.user.id === input.userId) return existing;
+      if (existing && input.replace !== true) {
+        throw new ExternalIdentityConflictError('external identity is already linked to another user');
+      }
+
+      const userCollision = this.db.prepare(`SELECT subject_id FROM user_external_identities
+        WHERE provider = ? AND tenant_id = ? AND user_id = ?`)
+        .get(provider, tenantId, input.userId) as { subject_id: string } | undefined;
+      if (userCollision && userCollision.subject_id !== subjectId) {
+        throw new ExternalIdentityConflictError('target user already has an external identity for this provider tenant');
+      }
+
+      try {
+        if (existing) {
+          this.db.prepare(`UPDATE user_external_identities
+            SET user_id = ?, created_at = datetime('now')
+            WHERE provider = ? AND tenant_id = ? AND subject_id = ?`)
+            .run(input.userId, provider, tenantId, subjectId);
+        } else {
+          this.db.prepare(`INSERT INTO user_external_identities
+            (provider, tenant_id, subject_id, user_id) VALUES (?, ?, ?, ?)`)
+            .run(provider, tenantId, subjectId, input.userId);
+        }
+      } catch (error) {
+        if ((error as { code?: string }).code?.startsWith('SQLITE_CONSTRAINT')) {
+          throw new ExternalIdentityConflictError('external identity binding conflicts with an existing link');
+        }
+        throw error;
+      }
+      return this.describeExternalIdentity(provider, tenantId, subjectId)!;
+    }).immediate();
   }
 
   /**
-   * Resolve a proven external subject or atomically provision a passwordless, non-admin account. Existing
-   * account bindings are intentionally outside this plugin-facing seam and require an administrative path.
+   * Resolve a proven external subject or atomically provision a passwordless, non-admin account. Binding
+   * an existing account is intentionally outside this provisioning method and requires the explicit
+   * administrative linkExisting path.
    * A random 256-bit password is hashed and discarded:
    * the account can be reached only through the external identity until an authenticated reset flow is
    * deliberately added. The first-ever account is never provisioned here, so an external login cannot
