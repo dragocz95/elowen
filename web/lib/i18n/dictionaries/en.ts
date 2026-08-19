@@ -1,6 +1,17 @@
 export const en = {
   nav: {
     worlds: 'Spaces',
+    customize: 'Customize menu…',
+    customizeTitle: 'Customize menu',
+    customizeHint: 'Choose which spaces appear in the menu and in what order. Hidden spaces stay available from the command palette and by direct link.',
+    hideEntry: 'Hide',
+    showEntry: 'Show',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    showHidden: 'Show hidden',
+    hiddenCount: 'Hidden ({count})',
+    restoreDefaults: 'Restore default order',
+    allHidden: 'Every space is hidden. Use Show to bring one back.',
     home: 'Home',
     chat: 'Chat',
     system: 'System',

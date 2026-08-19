@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { QUERY_KEYS } from './queries';
-import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill } from './types';
+import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill } from './types';
 
 type TaskCacheSnapshot = Array<[QueryKey, Task[] | undefined]>;
 
@@ -231,6 +231,16 @@ export function useSaveMyTerminalSettings() {
 export function useSaveMyPermissions() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: Partial<PermissionSettings>) => elowenClient.saveMyPermissions(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-permissions'] }) });
+}
+/** Save the navigation layout. The route answers with the whole sanitized layout, so the cache is written
+ *  from the response instead of invalidated — the menu must not flicker back to its old arrangement while
+ *  a refetch is in flight. */
+export function useSaveMyNavSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<NavLayout>) => elowenClient.saveMyNavSettings(patch),
+    onSuccess: (layout) => { qc.setQueryData(['my-nav-settings'], layout); },
+  });
 }
 /** Delete one log file. Both the list and any cached read of that file are dropped — the viewer must not
  *  keep showing the contents of a file that is gone. */

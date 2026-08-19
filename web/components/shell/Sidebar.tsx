@@ -8,6 +8,7 @@ import { useBrand } from '../../lib/brand';
 import { NavGroup } from './NavGroup';
 import { CollapseHandle } from './CollapseHandle';
 import { useShellNavigation } from './useShellNavigation';
+import { useNavCustomization } from './NavCustomization';
 
 const RAIL = 68;
 const DAEMON_STATUS = {
@@ -38,7 +39,8 @@ export function Sidebar({
   const work = useWorkPlugin();
   const { t } = useTranslation();
   const brand = useBrand();
-  const { worlds, systemItems } = useShellNavigation();
+  const { worlds, systemItems, allWorlds, layout } = useShellNavigation();
+  const customization = useNavCustomization(allWorlds, layout);
   const dragging = useRef(false);
 
   const up = data?.ok === true;
@@ -84,6 +86,9 @@ export function Sidebar({
 
       <nav
         data-shell="sidebar"
+        // Anywhere in the nav that is not an entry of its own opens the editor — that is how a hidden
+        // space is found again, so it must not depend on hitting one particular strip of padding.
+        onContextMenu={customization.onSurfaceContextMenu}
         aria-label={t.common.primaryNav}
         aria-hidden={drawer && !drawerOpen ? true : undefined}
         inert={drawer && !drawerOpen ? true : undefined}
@@ -118,6 +123,7 @@ export function Sidebar({
             side={side}
             expandLabel={t.common.expand}
             collapseLabel={t.common.collapse}
+            onEntryContextMenu={customization.onEntryContextMenu}
           />
           <div className="mt-3 border-t border-border/60 pt-2">
             <NavGroup
@@ -155,6 +161,7 @@ export function Sidebar({
           />
         ) : null}
       </nav>
+      {customization.overlays}
     </>
   );
 }

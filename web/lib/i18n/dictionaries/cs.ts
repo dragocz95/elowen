@@ -1,6 +1,17 @@
 export const cs = {
   nav: {
     worlds: 'Prostory',
+    customize: 'Upravit menu…',
+    customizeTitle: 'Upravit menu',
+    customizeHint: 'Vyberte, které prostory se zobrazí v menu a v jakém pořadí. Skryté prostory zůstávají dostupné z příkazové palety a přes přímý odkaz.',
+    hideEntry: 'Skrýt',
+    showEntry: 'Zobrazit',
+    moveUp: 'Posunout nahoru',
+    moveDown: 'Posunout dolů',
+    showHidden: 'Zobrazit skryté',
+    hiddenCount: 'Skryté ({count})',
+    restoreDefaults: 'Obnovit výchozí pořadí',
+    allHidden: 'Všechny prostory jsou skryté. Tlačítkem Zobrazit některý vrátíte zpět.',
     home: 'Domů',
     chat: 'Chat',
     system: 'Systém',

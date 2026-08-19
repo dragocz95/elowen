@@ -110,6 +110,33 @@ describe('Sidebar (registry-driven)', () => {
     expect(within(workFlyout).getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/p/work/kanban');
   });
 
+  it('hides a space from its right-click menu and offers the hidden ones from the empty area', async () => {
+    const patches: unknown[] = [];
+    server.use(http.patch('*/api/auth/me/nav-settings', async ({ request }) => {
+      const body = await request.json() as { hidden?: string[]; order?: string[] };
+      patches.push(body);
+      return HttpResponse.json({ hidden: body.hidden ?? [], order: body.order ?? [] });
+    }));
+
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
+    client.setQueryData(['tasks'], []);
+    client.setQueryData(['my-nav-settings'], { hidden: [], order: [] });
+    render(<Wrapper><Sidebar /></Wrapper>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Memory' }));
+    expect(screen.getByText('Move up')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Hide'));
+
+    // The saved layout names the hidden entry, and the menu drops it without a refetch.
+    await vi.waitFor(() => expect(patches).toEqual([{ hidden: ['memory'], order: ['home', 'chat', 'projects', 'memory'] }]));
+    await vi.waitFor(() => expect(screen.queryByRole('link', { name: 'Memory' })).not.toBeInTheDocument());
+
+    // Right-clicking the empty part of the nav is how a hidden space is found again.
+    fireEvent.contextMenu(screen.getByRole('navigation'));
+    expect(screen.getByText('Hidden (1)')).toBeInTheDocument();
+  });
+
   it('keeps the footer quiet with only the Elowen version', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['tasks'], [{ id: 'tx', title: 'Refactor', status: 'closed', outcome: 'ok', result_summary: 'passed', closed_at: '2026-06-18 10:00:00' }]);

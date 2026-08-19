@@ -33,6 +33,7 @@ export function NavItem({
   side = 'left',
   expandLabel = 'Expand',
   collapseLabel = 'Collapse',
+  onEntryContextMenu,
 }: {
   entry: NavEntry;
   active: boolean;
@@ -42,6 +43,9 @@ export function NavItem({
   side?: 'left' | 'right';
   expandLabel?: string;
   collapseLabel?: string;
+  /** Right-click on this entry. Only the customizable sections pass it; without it the browser's own
+   *  context menu is left alone. */
+  onEntryContextMenu?: (event: React.MouseEvent, entry: NavEntry) => void;
 }) {
   const Icon = entry.icon;
   const badge = entry.badge && entry.badge > 0 ? entry.badge : 0;
@@ -76,7 +80,10 @@ export function NavItem({
   );
 
   return (
-    <div className="group relative px-2 py-0.5">
+    <div
+      className="group relative px-2 py-0.5"
+      onContextMenu={onEntryContextMenu ? (event) => onEntryContextMenu(event, entry) : undefined}
+    >
       <div className="relative flex items-center gap-1">
         {entry.href ? (
           <Link

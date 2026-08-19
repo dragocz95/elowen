@@ -19,6 +19,7 @@ export function NavGroup({
   side = 'left',
   expandLabel,
   collapseLabel,
+  onEntryContextMenu,
 }: {
   group: NavGroupData;
   pathname: string;
@@ -27,6 +28,8 @@ export function NavGroup({
   side?: 'left' | 'right';
   expandLabel?: string;
   collapseLabel?: string;
+  /** Right-click on one of this group's entries; only the customizable group passes it. */
+  onEntryContextMenu?: (event: React.MouseEvent, entry: NavEntry) => void;
 }) {
   return (
     <div className="flex flex-col py-1">
@@ -42,6 +45,7 @@ export function NavGroup({
           side={side}
           expandLabel={expandLabel}
           collapseLabel={collapseLabel}
+          onEntryContextMenu={onEntryContextMenu}
         />
       ))}
     </div>

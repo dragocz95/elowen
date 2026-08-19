@@ -3,21 +3,31 @@
 import { useMemo } from 'react';
 import { CircleUserRound, Settings2 } from 'lucide-react';
 import { NAVIGATION_WORLDS, SYSTEM_MODULES } from '../../modules/registry';
-import { useMe, usePluginUi } from '../../lib/queries';
+import { useMe, useMyNavSettings, usePluginUi } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { pluginNavEntries } from '../../lib/pluginNav';
+import { EMPTY_NAV_LAYOUT, applyNavLayout } from '../../lib/navLayout';
+import type { NavLayout } from '../../lib/types';
 import type { NavEntry } from './NavItem';
 
-/** One registry-driven navigation model shared by the orbital desktop shell and mobile drawer. */
-export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntry[] } {
+/** One registry-driven navigation model shared by the orbital desktop shell and mobile drawer.
+ *
+ *  `worlds` is what the menu shows: the registry order with the user's own arrangement applied.
+ *  `allWorlds` is the unfiltered set, which the customization modal needs to offer entries back.
+ *  The system section is deliberately not customizable — hiding the way into settings would be a trap. */
+export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout } {
   const me = useMe();
   const { t, locale } = useTranslation();
   const isAdmin = me.data?.user?.is_admin ?? false;
   // Plugin worlds ride the same live query cache as the rest of the chrome: a plugin toggle
   // invalidates the listing and the sidebar updates without a reload.
   const pluginUi = usePluginUi(locale);
+  const navSettings = useMyNavSettings();
+  // Until the layout has loaded the menu renders in registry order rather than empty, so a slow or
+  // failed read costs the arrangement, never the navigation itself.
+  const layout = navSettings.data ?? EMPTY_NAV_LAYOUT;
 
-  const worlds = useMemo<NavEntry[]>(() => [
+  const allWorlds = useMemo<NavEntry[]>(() => [
     ...NAVIGATION_WORLDS.map<NavEntry>((world) => ({
       id: world.id,
       href: world.route,
@@ -35,6 +45,8 @@ export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntr
     })),
     ...pluginNavEntries(pluginUi.data ?? []),
   ], [t, pluginUi.data]);
+
+  const worlds = useMemo<NavEntry[]>(() => applyNavLayout(allWorlds, layout), [allWorlds, layout]);
 
   const systemItems = useMemo<NavEntry[]>(() => {
     const visibleModules = isAdmin ? SYSTEM_MODULES : [];
@@ -55,5 +67,5 @@ export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntr
     }];
   }, [isAdmin, t]);
 
-  return { worlds, systemItems };
+  return { worlds, systemItems, allWorlds, layout };
 }

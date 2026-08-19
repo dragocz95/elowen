@@ -15,6 +15,7 @@ import { rawTemplate } from '../../prompts/index.js';
 import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError } from '../../store/userSettingStore.js';
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
+import { sanitizeNavSettings } from '../../store/navSettings.js';
 import type { User } from '../../store/userStore.js';
 import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -255,6 +256,20 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const u = c.get('user');
     const body = (await c.req.json().catch(() => ({}))) as unknown;
     return c.json(d.userSettings.setPermissionSettings(u.id, body));
+  });
+  // Per-user layout of the primary navigation (hidden entries + preferred order) — self-service, each
+  // caller edits only their own. Ids are opaque to the daemon: the store bounds and deduplicates them,
+  // the web resolves them against the entries it can actually see. Kept out of cli-settings so a menu
+  // tweak neither touches the model allow-list nor restarts the brain.
+  app.get('/auth/me/nav-settings', (c) => {
+    const u = c.get('user');
+    return c.json(d.userSettings ? d.userSettings.navSettings(u.id) : sanitizeNavSettings({}));
+  });
+  app.patch('/auth/me/nav-settings', async (c) => {
+    if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
+    const u = c.get('user');
+    const body = (await c.req.json().catch(() => ({}))) as unknown;
+    return c.json(d.userSettings.setNavSettings(u.id, body));
   });
   // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
   const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };

@@ -387,6 +387,11 @@ export const useMyTerminalSettings = () =>
 export const useMyPermissions = () =>
   useQuery({ queryKey: ['my-permissions'], queryFn: elowenClient.myPermissions });
 
+/** The current user's navigation layout (hidden worlds + their order). Read by the shell on every render,
+ *  so it is cached like the rest of the chrome and refreshed only when the user edits the menu. */
+export const useMyNavSettings = () =>
+  useQuery({ queryKey: ['my-nav-settings'], queryFn: elowenClient.myNavSettings, staleTime: 5 * 60 * 1000 });
+
 /** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
 export const usePlugins = () =>
   useQuery({ queryKey: ['plugins'], queryFn: elowenClient.plugins });

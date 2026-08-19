@@ -2,6 +2,7 @@ import type { Db } from './db.js';
 import { DEFAULT_ADVISOR_STYLE, isAdvisorStyle } from '../brain/personality.js';
 import { sanitizeTerminalSettings, mergeTerminalSettings, type TerminalSettings } from './terminalSettings.js';
 import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAction, type PermissionScope, type PermissionSettings } from '../brain/toolPermissions.js';
+import { sanitizeNavSettings, mergeNavSettings, type NavSettings } from './navSettings.js';
 import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
@@ -296,6 +297,28 @@ export class UserSettingStore {
       map[pattern] = 'allow';
       const next: PermissionSettings = { ...cur, [scope]: map };
       this.set(userId, 'permissions', JSON.stringify(next));
+      return next;
+    })();
+  }
+
+  /** The user's primary-navigation layout (hidden entries + preferred order), defaults filled in. The
+   *  stored value is an untrusted JSON blob (key `nav`), so a corrupt/partial/absent row degrades to the
+   *  registry's own navigation. */
+  navSettings(userId: number): NavSettings {
+    const raw = this.get(userId, 'nav');
+    if (!raw) return sanitizeNavSettings({});
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); }
+    catch { return sanitizeNavSettings({}); }
+    return sanitizeNavSettings(parsed);
+  }
+
+  /** Apply a navigation-layout patch (each present list replaces the stored one wholesale — position is
+   *  the meaning), re-validate, persist the whole blob. Transactional read-modify-write. */
+  setNavSettings(userId: number, patch: unknown): NavSettings {
+    return this.db.transaction(() => {
+      const next = mergeNavSettings(this.navSettings(userId), patch);
+      this.set(userId, 'nav', JSON.stringify(next));
       return next;
     })();
   }

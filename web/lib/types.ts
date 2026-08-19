@@ -259,6 +259,16 @@ export interface TerminalPalette {
   black: string; red: string; green: string; yellow: string; blue: string; magenta: string; cyan: string; white: string;
   brightBlack: string; brightRed: string; brightGreen: string; brightYellow: string; brightBlue: string; brightMagenta: string; brightCyan: string; brightWhite: string;
 }
+/** Per-user layout of the primary (left) navigation, persisted server-side. Both lists address entries
+ *  by navigation id and cover only the "worlds" section; resolving them against the entries that exist
+ *  right now is `lib/navLayout.ts`. */
+export interface NavLayout {
+  /** Ids the user hid. Hidden worlds stay reachable by URL and through the command palette. */
+  hidden: string[];
+  /** Preferred order, by id. Entries it does not mention keep their registry order, behind the rest. */
+  order: string[];
+}
+
 export type TerminalFontFamily = 'system' | 'menlo' | 'ibm' | 'courier';
 export type TerminalCursorStyle = 'block' | 'bar' | 'underline';
 export type TerminalThemeMode = 'auto' | 'custom';
