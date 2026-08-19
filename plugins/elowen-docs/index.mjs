@@ -1,4 +1,4 @@
-// ElowenDocs — semantic search over Elowen's OWN shipped user manual (docs/site/*.md).
+// DocsSearch — semantic search over Elowen's OWN shipped user manual (docs/site/*.md).
 //
 // Deliberately NOT a second `codebase` plugin, and the difference is the corpus, not the taste. The
 // codebase plugin indexes the CALLER's repositories: arbitrary, mutable, per-user, path-gated — which is
@@ -20,7 +20,7 @@ import Database from 'better-sqlite3';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
-const TOOL = 'ElowenDocs';
+const TOOL = 'DocsSearch';
 const DEFAULT_K = 6;
 const MAX_K = 20;
 const EMBED_BATCH = 64;        // bounded against the embedding service's 30s HTTP timeout
@@ -272,10 +272,16 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: TOOL,
-    label: 'Elowen docs',
-    description: 'Search Elowen\'s own user manual by meaning and return the most relevant sections, each with the page and heading it came from. Ask it what Elowen can do, where a feature lives, or how a setting works — before guessing, and before changing configuration. For the user\'s OWN code use CodebaseSearch instead.',
+    label: 'Search documentation',
+    description: [
+      'Search this agent\'s own shipped user manual by meaning and return the most relevant sections, each labelled with the page and heading it came from.',
+      'Use it to answer what the product can do, where a feature lives, what a setting means, or how something is configured — before guessing, and before changing configuration on a hunch.',
+      'The manual covers getting started, installation, tasks and missions, agents and autonomy, the web interface, the CLI, chat, plugins, projects, configuration, account security and architecture.',
+      'query is a natural-language question rather than a keyword, and k caps how many sections come back.',
+      'This searches PRODUCT documentation only — for the user\'s own repositories and source code use CodebaseSearch instead. Ranking is semantic when an embedding model is configured and keyword-based otherwise, which the result states explicitly.',
+    ].join(' '),
     parameters: Type.Object({
-      query: Type.String({ description: 'Natural-language question about Elowen, e.g. "how do I limit what an agent may do on its own?"' }),
+      query: Type.String({ description: 'Natural-language question about the product, e.g. "how do I limit what an agent may do on its own?"' }),
       k: Type.Optional(Type.Number({ description: `Max sections to return (default ${DEFAULT_K}, capped at ${MAX_K})` })),
     }),
     execute: async (_id, p) => {

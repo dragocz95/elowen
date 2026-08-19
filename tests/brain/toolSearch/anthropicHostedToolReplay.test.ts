@@ -18,9 +18,9 @@ const rawContent = () => [
   { type: 'text', text: 'Searching.' },
   { type: 'thinking', thinking: 'first', signature: SIGNATURE_A },
   { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'Elowen docs' } },
-  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'ElowenDocs' }] } },
+  { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'DocsSearch' }] } },
   { type: 'thinking', thinking: 'second', signature: SIGNATURE_B },
-  { type: 'tool_use', id: 'toolu_docs', name: 'ElowenDocs', input: { query: 'slash commands' } },
+  { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } },
 ];
 
 const event = (type: string, data: Record<string, unknown>) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -38,7 +38,7 @@ const sse = [
   ]),
   block(3, rawContent()[3]!),
   block(4, { type: 'thinking', thinking: 'second', signature: SIGNATURE_B }),
-  block(5, { type: 'tool_use', id: 'toolu_docs', name: 'ElowenDocs', input: { query: 'slash commands' } }),
+  block(5, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
   event('message_stop', { type: 'message_stop' }),
 ].join('');
 
@@ -50,7 +50,7 @@ const assistant = (meta: AnthropicHostedReplayMetadata | null = metadata()) => (
     { type: 'text', text: 'Searching.' },
     { type: 'thinking', thinking: 'first', thinkingSignature: SIGNATURE_A },
     { type: 'thinking', thinking: 'second', thinkingSignature: SIGNATURE_B },
-    { type: 'toolCall', id: 'toolu_docs', name: 'ElowenDocs', arguments: { query: 'slash commands' } },
+    { type: 'toolCall', id: 'toolu_docs', name: 'DocsSearch', arguments: { query: 'slash commands' } },
   ],
   api: 'anthropic-messages', provider: 'anthropic', model: 'claude-opus-5',
   usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -64,7 +64,7 @@ const wireAssistant = () => ({
     { type: 'text', text: 'Searching.' },
     { type: 'thinking', thinking: 'first', signature: SIGNATURE_A },
     { type: 'thinking', thinking: 'second', signature: SIGNATURE_B },
-    { type: 'tool_use', id: 'toolu_docs', name: 'mcp__ElowenDocs', input: { query: 'slash commands' } },
+    { type: 'tool_use', id: 'toolu_docs', name: 'mcp__DocsSearch', input: { query: 'slash commands' } },
   ],
 });
 

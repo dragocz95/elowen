@@ -20,7 +20,7 @@ Bundled capabilities include file and terminal tools, MCP, skills, sub-agent del
 
 A **new install enables only the assistant's own toolkit**: files, terminal, ask-user, runtime context, sub-agents, the Elowen manual, statusline, and MCP. Anything that brings its own pages and its own data — tasks and Kanban (`work`), missions and autopilot (`agents`), the code editor (`editor`) — is installed deliberately from **Settings → Plugins**, as are the chat platforms, which each need a credential.
 
-**ElowenDocs** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
+**DocsSearch** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
 
 ## Plugin anatomy
 

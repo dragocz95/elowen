@@ -27,7 +27,7 @@ export const READ_ONLY_AGENT_TOOLS: readonly string[] = [
   'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover',
   'LspDocumentSymbol', 'LspWorkspaceSymbol',
   // Outside world and documentation.
-  'WebSearch', 'WebFetch', 'ElowenDocs', 'ScanCode',
+  'WebSearch', 'WebFetch', 'DocsSearch', 'ScanCode',
   // Control-plane and memory reads. Listed one by one rather than by prefix: the write halves of both
   // families (ElowenCreateTask/UpdateTask/StopTask, MemoryAdd/Update/Delete/Merge) must stay out.
   'ElowenListTasks', 'ElowenGetTask', 'ElowenTaskOutput', 'ElowenListMissions', 'ElowenListSessions',

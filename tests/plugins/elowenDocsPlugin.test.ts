@@ -181,7 +181,7 @@ describe('elowen-docs — search', () => {
 
   it('ranks real manual sections for a natural-language question', async () => {
     const reg = await loadReg();
-    const res = await runTool(reg, 'ElowenDocs', { query: 'how do I limit what an agent may do on its own?' });
+    const res = await runTool(reg, 'DocsSearch', { query: 'how do I limit what an agent may do on its own?' });
 
     expect(res.details.ok).toBe(true);
     expect(res.details.mode).toBe('semantic');
@@ -195,9 +195,9 @@ describe('elowen-docs — search', () => {
   it('embeds the corpus once and reuses the index on later calls', async () => {
     const reg = await loadReg();
     embedBatchCalls = 0;
-    await runTool(reg, 'ElowenDocs', { query: 'install' });
+    await runTool(reg, 'DocsSearch', { query: 'install' });
     const afterFirst = embedBatchCalls;
-    await runTool(reg, 'ElowenDocs', { query: 'plugin' });
+    await runTool(reg, 'DocsSearch', { query: 'plugin' });
     // The corpus is immutable between releases; re-embedding it per search would spend the provider for
     // nothing. Only the QUERY is embedded after the first build (embed, not embedBatch).
     expect(embedBatchCalls).toBe(afterFirst);
@@ -207,11 +207,11 @@ describe('elowen-docs — search', () => {
     const fresh = mkdtempSync(join(tmpdir(), 'elowen-docs-switch-'));
     try {
       liveCfg = { providerId: 'p', model: 'fake-1', dimensions: VOCAB.length };
-      await runTool(await loadReg(fresh), 'ElowenDocs', { query: 'autonomy' });
+      await runTool(await loadReg(fresh), 'DocsSearch', { query: 'autonomy' });
       embedBatchCalls = 0;
 
       liveCfg = { providerId: 'p', model: 'fake-2', dimensions: VOCAB.length };
-      const res = await runTool(await loadReg(fresh), 'ElowenDocs', { query: 'autonomy' });
+      const res = await runTool(await loadReg(fresh), 'DocsSearch', { query: 'autonomy' });
       expect(embedBatchCalls).toBeGreaterThan(0);       // the model moved → the index is rebuilt
       expect(res.details.model).toBe('fake-2');
     } finally {
@@ -224,7 +224,7 @@ describe('elowen-docs — search', () => {
     const off = mkdtempSync(join(tmpdir(), 'elowen-docs-off-'));
     try {
       liveCfg = null;   // a fresh install: nothing configured yet
-      const res = await runTool(await loadReg(off), 'ElowenDocs', { query: 'plugin install' });
+      const res = await runTool(await loadReg(off), 'DocsSearch', { query: 'plugin install' });
 
       // Degraded, never dead: "how do I set this up?" is exactly the question asked before a model exists.
       expect(res.details.ok).toBe(true);
@@ -243,7 +243,7 @@ describe('elowen-docs — search', () => {
     // the number would differ per model. The ORDER is what holds, so rank and cap. Do not add a floor
     // back without measuring first.
     const reg = await loadReg();
-    const weak = await runTool(reg, 'ElowenDocs', { query: 'agent', k: 4 });
+    const weak = await runTool(reg, 'DocsSearch', { query: 'agent', k: 4 });
     expect(weak.details.matches).toBe(4);
 
     const text = weak.content[0]!.text;
@@ -254,7 +254,7 @@ describe('elowen-docs — search', () => {
   });
 
   it('rejects an empty query instead of ranking the whole manual', async () => {
-    const res = await runTool(await loadReg(), 'ElowenDocs', { query: '   ' });
+    const res = await runTool(await loadReg(), 'DocsSearch', { query: '   ' });
     expect(res.details.ok).toBe(false);
     expect(res.content[0]!.text).toMatch(/query is required/);
   });
