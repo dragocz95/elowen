@@ -93,6 +93,9 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // screen you are on, not to the user record.
   const [pin, setPin] = usePersistentState<NavPin>('elowen.nav.pin', 'full', NAV_PINS);
   const { mode, pinnable } = resolveNav(regionW, pin);
+  // Widening past the drawer breakpoint replaces the drawer with a column, but the open flag would
+  // survive — so narrowing again, without ever touching the menu, would slide it back out on its own.
+  useEffect(() => { if (mode !== 'drawer') setDrawerOpen(false); }, [mode]);
 
   // One menu at every width. A phone gets the same rail, in its full labelled form, slid in over the
   // content; wider windows give it a column of its own. Collapsing is offered only where the pin is

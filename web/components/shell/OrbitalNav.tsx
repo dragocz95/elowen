@@ -182,6 +182,25 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
 
   // How far the axis has been moved from its centred rest position. It only ever leaves zero when the
   // destinations genuinely outgrow the stage.
+  const navRef = useRef<HTMLElement | null>(null);
+  // An overlay that the keyboard cannot close, and that focus never enters, is a layer only the mouse
+  // knows about. Focus goes in on open and returns to whatever opened it on close.
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!drawer) return;
+    if (drawerOpen) {
+      returnFocusTo.current = document.activeElement as HTMLElement | null;
+      navRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
+      const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onDrawerClose?.(); };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }
+    // Only take focus back if it is still inside the drawer; the user may have clicked elsewhere.
+    if (navRef.current?.contains(document.activeElement)) returnFocusTo.current?.focus();
+    returnFocusTo.current = null;
+    return undefined;
+  }, [drawer, drawerOpen, onDrawerClose]);
+
   const [axisOffset, setAxisOffset] = useState(0);
   const scrollRange = railScrollRange(routeEntries.length, spacing, stageHeight);
   const clampAxis = (value: number) => Math.max(-scrollRange, Math.min(scrollRange, value));
@@ -388,6 +407,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         />
       ) : null}
     <nav
+      ref={navRef}
       data-side={side}
       data-testid="future-navigation"
       aria-label={t.common.primaryNav}
@@ -415,6 +435,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
         ref={stageRef}
         role="list"
         data-layout-ready={layoutReady || undefined}
+        // Invisible is not absent: without these, an unfinished order is still tabbable and still read
+        // out, and the entry the user lands on may move once the real layout arrives.
+        aria-hidden={layoutReady ? undefined : true}
+        inert={layoutReady ? undefined : true}
         className={`absolute inset-x-0 bottom-24 top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >

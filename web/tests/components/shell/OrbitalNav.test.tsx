@@ -661,3 +661,33 @@ describe('OrbitalNav with every entry hidden', () => {
     }
   });
 });
+
+/** The drawer is a layer over the page, so it has to behave like one for the keyboard too. */
+describe('OrbitalNav drawer as a layer', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  it('moves focus into the drawer when it opens', () => {
+    mount(false, { drawer: true, drawerOpen: true });
+    expect(screen.getByRole('navigation').contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes on Escape', () => {
+    const onDrawerClose = vi.fn();
+    mount(false, { drawer: true, drawerOpen: true, onDrawerClose });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onDrawerClose).toHaveBeenCalled();
+  });
+
+  // A closed drawer must not be a set of links the keyboard can still tab through.
+  it('is inert while closed', () => {
+    mount(false, { drawer: true, drawerOpen: false });
+    const nav = screen.getByRole('navigation', { hidden: true });
+    expect(nav).toHaveAttribute('aria-hidden', 'true');
+    expect(nav.hasAttribute('inert')).toBe(true);
+  });
+
+  it('does not steal focus when it is not a drawer at all', () => {
+    mount();
+    expect(document.activeElement).toBe(document.body);
+  });
+});
