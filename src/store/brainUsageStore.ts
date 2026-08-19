@@ -446,6 +446,16 @@ export class BrainUsageStore {
       input: number; output: number; cache_read: number; cache_write: number;
       total: number; reasoning: number; cost: number;
     }
+    // `usage_rows` materializes the whole normalized view before the join can discard it, so this query
+    // costs a full `brain_messages` scan with per-row json_extract — measured at 0.7-1.8 s on the live
+    // database — no matter how small the tree is. It runs SYNCHRONOUSLY on the daemon event loop from
+    // every idle/status emit, including the reconnect handshake a phone waits through. Only 3.3% of
+    // sessions have a child at all, and this indexed existence check costs 4 microseconds, so the
+    // overwhelming majority now pay that instead of a second of stalled event loop for a row of zeros.
+    const hasChild = this.db.prepare(
+      'SELECT 1 AS present FROM brain_sessions WHERE parent_session_id = ? LIMIT 1',
+    ).get(sessionId) as { present: number } | undefined;
+    if (!hasChild) return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0, cost: 0 };
     const row = this.db.prepare(
       `WITH RECURSIVE descendants(id, user_id) AS (
          SELECT child.id, child.user_id
