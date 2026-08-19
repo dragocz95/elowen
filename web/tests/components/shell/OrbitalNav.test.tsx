@@ -587,6 +587,13 @@ describe('OrbitalNav layout cache', () => {
     mountAs(2);
     await waitFor(() => expect(screen.getByRole('link', { name: 'Memory' })).toBeInTheDocument());
   });
+
+  // Left alone it would sit in the browser forever holding whichever account wrote it last.
+  it('clears the key from before layouts were per account', async () => {
+    localStorage.setItem('elowen.nav.layout', JSON.stringify({ hidden: ['chat'], order: [] }));
+    mountAs(1);
+    await waitFor(() => expect(localStorage.getItem('elowen.nav.layout')).toBeNull());
+  });
 });
 
 /** Hide every destination and the rail is blank. A right-click still works, but there is nothing to

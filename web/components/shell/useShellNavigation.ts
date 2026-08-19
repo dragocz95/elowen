@@ -46,6 +46,9 @@ export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[
   useEffect(() => {
     if (userId === null) { setCache(null); return; }
     try {
+      // The pre-per-account key. Left alone it would sit in the browser forever holding whichever
+      // account happened to write it last, which is the whole problem this key change exists to fix.
+      localStorage.removeItem('elowen.nav.layout');
       const raw = localStorage.getItem(navLayoutCacheKey(userId));
       const parsed = raw === null ? null : parseNavLayout(JSON.parse(raw) as unknown);
       setCache(parsed === null ? null : { userId, layout: parsed });
