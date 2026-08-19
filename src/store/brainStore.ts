@@ -350,11 +350,19 @@ export class BrainStore {
       if (exists) return 0;
       for (const message of messages) {
         const content = message.content as { role?: unknown; content?: unknown } | null;
+        const validId = typeof message.id === 'string' && message.id.trim().length > 0 && message.id.length <= 256;
         const validRole = message.role === 'user' || message.role === 'assistant';
+        const assistantBlocks = content?.content;
+        const validAssistant = Array.isArray(assistantBlocks) && assistantBlocks.length > 0 && assistantBlocks.length <= 16
+          && assistantBlocks.every((block) => block !== null && typeof block === 'object' && !Array.isArray(block)
+            && (block as { type?: unknown }).type === 'text'
+            && typeof (block as { text?: unknown }).text === 'string');
         const validContent = content !== null && typeof content === 'object' && !Array.isArray(content)
           && content.role === message.role
-          && (message.role === 'user' ? typeof content.content === 'string' : Array.isArray(content.content));
-        if (!message.id || !validRole || !validContent) throw new TypeError('invalid seeded platform message');
+          && (message.role === 'user'
+            ? typeof content.content === 'string' && content.content.length <= 64_000
+            : validAssistant);
+        if (!validId || !validRole || !validContent) throw new TypeError('invalid seeded platform message');
       }
       const insert = this.db.prepare(
         `INSERT INTO brain_messages (id, session_id, parent_id, role, content)

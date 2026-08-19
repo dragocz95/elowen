@@ -575,6 +575,18 @@ describe('BrainStore', () => {
       { id: 'bad', role: 'system', content: { role: 'system', content: 'elevate me' } },
     ])).toThrow('invalid seeded platform message');
     expect(store.getMessages('s3')).toEqual([]);
+
+    store.createSession({ id: 's4', userId: 7, model: 'm' });
+    expect(() => store.seedMessages('s4', [
+      { id: '', role: 'user', content: { role: 'user', content: 'missing id' } },
+    ])).toThrow('invalid seeded platform message');
+    expect(store.getMessages('s4')).toEqual([]);
+
+    store.createSession({ id: 's5', userId: 7, model: 'm' });
+    expect(() => store.seedMessages('s5', [
+      { id: 'bad-block', role: 'assistant', content: { role: 'assistant', content: [{}] } },
+    ])).toThrow('invalid seeded platform message');
+    expect(store.getMessages('s5')).toEqual([]);
   });
 
   it('deleteMessagesFrom removes a row and every message after it, keeping earlier ones', () => {
