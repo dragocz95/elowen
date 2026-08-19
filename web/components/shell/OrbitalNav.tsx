@@ -14,12 +14,18 @@ import { useElementHeight } from '../../lib/useElementWidth';
 import { entryIsActive, type NavEntry } from './navEntry';
 
 /** Top to bottom: where you land, then the work, then the context behind it, then administration.
- *  Home first and the admin surfaces last, so the axis reads in the order you actually use it. */
+ *  Home first and the admin surfaces last, so the axis reads in the order you actually use it.
+ *
+ *  This is the DEFAULT arrangement only — the order a menu nobody has touched appears in. A user's own
+ *  arrangement overrides it entirely. Routes that no enabled plugin serves simply never appear, which
+ *  is why the work pages can sit here without showing up on an instance that has the plugin off. */
 const SPATIAL_ROUTE_ORDER = [
   '/dash', '/chat',                                                    // home, then chat
-  '/p/work/tasks', '/p/work/kanban', '/p/agents', '/p/work/timeline',  // the work
-  '/projects', '/p/editor', '/memory', '/p/work/stats',                // what the work runs on
-  '/account', '/settings', '/users',                                   // administration
+  '/p/work/tasks', '/p/work/kanban', '/p/work/timeline',               // the work, when that plugin is on
+  '/projects', '/p/editor',                                            // what you work on
+  '/p/agents', '/p/subagent', '/p/cronjob', '/p/skills',               // what runs it
+  '/memory', '/p/stats', '/p/work/stats',                              // what it leaves behind
+  '/account', '/users', '/settings',                                   // administration
 ];
 /** Where an entry parks on the axis. Prefix-matched, not exact: a plugin world links to its first
  *  page (e.g. /p/agents/sessions), which must claim its plugin's slot ('/p/agents') — an unmatched
@@ -50,7 +56,7 @@ type RailEntry = NavEntry & { worldId?: string; worldIndex?: number };
 type RailDrag = { worldId: string; from: number; to: number; dy: number };
 
 /** A pointer resting on a destination, before it is known whether this is a click, a drag or a hold. */
-type RailPress = { worldId: string; slot: number; startY: number; longPress?: number };
+type RailPress = { worldId: string; slot: number; startY: number; pointerId: number; element: HTMLElement; longPress?: number };
 
 /** How far the pointer must travel before it counts as carrying the entry rather than clicking it. */
 const DRAG_THRESHOLD = 6;
@@ -105,7 +111,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { worlds, systemItems, allWorlds, layout, layoutReady } = useShellNavigation();
+  const { worlds, allWorlds, layout, layoutReady } = useShellNavigation();
   const health = useHealth();
   const tasks = useTasks();
   const sessions = useSessionInfos();
@@ -124,30 +130,28 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
   // hiding or moving any of them means hiding or moving the world they belong to. System destinations
   // carry none, which is exactly what keeps them out of reach of the menu.
   const routeEntries = useMemo<RailEntry[]>(() => {
-    const fromWorlds = worlds.flatMap((world, worldIndex) => {
+    const all = worlds.flatMap((world, worldIndex) => {
       const pages = (world.subItems ?? []).filter((item) => isAxisPage(item.href));
       const entries: NavEntry[] = pages.length > 0
         ? pages.map((item) => ({ ...item, icon: item.icon ?? world.icon }))
         : [world];
       return entries.map((entry) => ({ ...entry, worldId: world.id, worldIndex }));
     });
-    const fromSystem: RailEntry[] = systemItems.flatMap((group) => group.subItems?.length
-      ? group.subItems.map((item) => ({ ...item, icon: item.icon ?? group.icon }))
-      : [group]);
-    const all = [...fromWorlds, ...fromSystem];
     const axisRank = (entry: RailEntry) => spatialOrderIndex(entry.href);
-    // Untouched menu keeps the spatial axis, which carries meaning of its own (the work, what it runs
-    // on, administration). Once the user has arranged the menu, their order wins — but only over the
-    // worlds; system destinations have no worldIndex and stay at the end where the axis put them.
+    // An untouched menu keeps the spatial axis, which carries meaning of its own (where you land, the
+    // work, what it runs on, administration). Once the user has arranged the menu, their order wins.
     if (layout.order.length === 0) return all.sort((a, b) => axisRank(a) - axisRank(b));
     const worldRank = (entry: RailEntry) => entry.worldIndex ?? Number.MAX_SAFE_INTEGER;
     return all.sort((a, b) => worldRank(a) - worldRank(b) || axisRank(a) - axisRank(b));
-  }, [worlds, systemItems, layout]);
+  }, [worlds, layout]);
   // The sequence of worlds as the rail presents them, which is what an edit must build the stored order
   // from — otherwise the first hide or move would re-sort the rail into registry order under the user.
   const railWorldOrder = useMemo(() => [...worlds]
     .sort((a, b) => spatialOrderIndex(a.href) - spatialOrderIndex(b.href))
     .flatMap((world) => (world.id ? [world.id] : [])), [worlds]);
+  // Until the arrangement is known the rail would paint in registry order and then visibly re-sort
+  // itself, on every single page load. Showing nothing for that one frame is the honest option: the
+  // menu appears once, already in the right order.
   const customization = useNavCustomization(allWorlds, layout, railWorldOrder);
   // Hold the entrance animation until the arrangement is known: the rail animates every position change,
   // so a layout arriving one frame late would play out as the whole menu sliding into place.
@@ -199,12 +203,15 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     // otherwise leave this armed and swallow the NEXT click — navigation silently stops working.
     // Every fresh press starts from a clean slate.
     suppressClick.current = false;
-    const element = event.currentTarget;
-    element.setPointerCapture(event.pointerId);
     pressRef.current = {
       worldId: entry.worldId,
       slot,
       startY: event.clientY,
+      pointerId: event.pointerId,
+      // Capturing the pointer is what lets a drag follow it outside the row, but it also stops the
+      // browser synthesising the click on the link inside. So it is taken only once this is KNOWN to
+      // be a drag, never on a press that may still turn out to be a plain click.
+      element: event.currentTarget,
       // Touch has no right-click, so a press held still opens the same menu a mouse gets. It is armed
       // only for touch: a mouse user holding still is not asking for anything.
       longPress: event.pointerType === 'touch'
@@ -223,6 +230,9 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     // A drag only starts once the pointer has actually travelled, so a plain click still navigates.
     if (!dragRef.current && Math.abs(dy) < DRAG_THRESHOLD) return;
     if (press.longPress) { window.clearTimeout(press.longPress); press.longPress = undefined; }
+    if (!dragRef.current) {
+      try { press.element.setPointerCapture(press.pointerId); } catch { /* pointer already gone */ }
+    }
     const originY = positions[worldSlots[press.slot].index] ?? 0;
     const carriedY = originY + dy;
     let to = press.slot;
@@ -238,6 +248,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
 
   const onEntryPointerUp = () => {
     const dragged = dragRef.current;
+    const press = pressRef.current;
+    if (dragged && press) {
+      try { press.element.releasePointerCapture(press.pointerId); } catch { /* already released */ }
+    }
     clearPress();
     dragRef.current = null;
     if (!dragged) return;
@@ -311,7 +325,8 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       <div
         ref={stageRef}
         role="list"
-        className="absolute inset-x-0 bottom-24 top-0 before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10"
+        data-layout-ready={layoutReady || undefined}
+        className={`absolute inset-x-0 bottom-24 top-0 ${layoutReady ? 'opacity-100' : 'opacity-0'} before:absolute before:bottom-0 before:left-[var(--rail-axis)] before:top-5 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/45 before:to-accent/10`}
         style={{ ['--rail-axis' as string]: axis }}
       >
         {routeEntries.map((entry, index) => {

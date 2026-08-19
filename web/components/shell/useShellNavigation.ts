@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CircleUserRound, Settings2 } from 'lucide-react';
+import { CircleUserRound } from 'lucide-react';
 import { NAVIGATION_WORLDS, SYSTEM_MODULES } from '../../modules/registry';
 import { useMe, useMyNavSettings, usePluginUi } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -17,9 +17,12 @@ import type { NavEntry } from './navEntry';
 /** One registry-driven navigation model shared by the orbital desktop shell and mobile drawer.
  *
  *  `worlds` is what the menu shows: the registry order with the user's own arrangement applied.
- *  `allWorlds` is the unfiltered set, which the customization modal needs to offer entries back.
- *  The system section is deliberately not customizable — hiding the way into settings would be a trap. */
-export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout; layoutReady: boolean } {
+ *  `allWorlds` is the unfiltered set, which the menu needs in order to offer hidden entries back.
+ *
+ *  Account, Settings and Users are ordinary entries in that same set. They used to be a fixed section
+ *  the layout could not touch, which meant half the menu could be arranged and half could not — and the
+ *  half you could not move sat in the middle of the other half. */
+export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout; layoutReady: boolean } {
   const me = useMe();
   const { t, locale } = useTranslation();
   const isAdmin = me.data?.user?.is_admin ?? false;
@@ -66,28 +69,16 @@ export function useShellNavigation(): { worlds: NavEntry[]; systemItems: NavEntr
         : undefined,
     })),
     ...pluginNavEntries(pluginUi.data ?? []),
-  ], [t, pluginUi.data]);
+    { id: 'account', href: '/account', label: t.nav.account, icon: CircleUserRound },
+    ...(isAdmin ? SYSTEM_MODULES.map<NavEntry>((module) => ({
+      id: module.id,
+      href: module.route,
+      label: t.nav[module.id as keyof typeof t.nav] ?? module.label,
+      icon: module.icon,
+    })) : []),
+  ], [t, pluginUi.data, isAdmin]);
 
   const worlds = useMemo<NavEntry[]>(() => applyNavLayout(allWorlds, layout), [allWorlds, layout]);
 
-  const systemItems = useMemo<NavEntry[]>(() => {
-    const visibleModules = isAdmin ? SYSTEM_MODULES : [];
-    return [{
-      id: 'system',
-      label: t.nav.system,
-      icon: Settings2,
-      activeRoutes: ['/account', ...visibleModules.map((module) => module.route)],
-      subItems: [
-        { id: 'account', href: '/account', label: t.nav.account, icon: CircleUserRound },
-        ...visibleModules.map((module) => ({
-          id: module.id,
-          href: module.route,
-          label: t.nav[module.id as keyof typeof t.nav] ?? module.label,
-          icon: module.icon,
-        })),
-      ],
-    }];
-  }, [isAdmin, t]);
-
-  return { worlds, systemItems, allWorlds, layout, layoutReady };
+  return { worlds, allWorlds, layout, layoutReady };
 }

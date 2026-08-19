@@ -91,7 +91,7 @@ describe('OrbitalNav rail stability', () => {
   });
 
   it('does not wrap the wheel around the ends of the rail', () => {
-    currentPath.value = '/users'; // last route on the axis
+    currentPath.value = '/settings'; // last route on the axis
     mount();
     pushSpy.mockClear();
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
@@ -110,9 +110,10 @@ describe('OrbitalNav rail stability', () => {
     // the work pages into a plugin changed all four of their addresses — this is what catches it.
     expect(order).toEqual([
       'Home', 'Chat',
-      'Tasks', 'Kanban', 'Sessions', 'Timeline',
-      'Projects', 'Editor', 'Memory', 'Stats',
-      'Account', 'Settings', 'Users',
+      'Tasks', 'Kanban', 'Timeline',
+      'Projects', 'Editor', 'Sessions',
+      'Memory', 'Stats',
+      'Account', 'Users', 'Settings',
     ]);
   });
 });
@@ -256,13 +257,15 @@ describe('OrbitalNav menu customization', () => {
     expect(screen.getByText('Restore default order')).toBeInTheDocument();
   });
 
-  it('offers no hiding on a system destination, which the layout must not be able to remove', () => {
+  // Settings, Account and Users are ordinary destinations now. Half a menu you can arrange, with the
+  // other half pinned in the middle of it, was the worse answer.
+  it('offers the same arranging on a system destination', () => {
     mount();
     fireEvent.contextMenu(screen.getByRole('link', { name: 'Settings' }));
 
+    expect(screen.getByText('Hide')).toBeInTheDocument();
+    expect(screen.getByText('Move up')).toBeInTheDocument();
     expect(screen.getByText('Restore default order')).toBeInTheDocument();
-    expect(screen.queryByText('Hide')).not.toBeInTheDocument();
-    expect(screen.queryByText('Move up')).not.toBeInTheDocument();
   });
 
   // Hiding is one click; getting a space back must not be harder. The hidden ones hang off the same
@@ -479,5 +482,38 @@ describe('OrbitalNav dragging a space', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/** The pointer capture regression, which killed clicking outright and which the first round of tests
+ *  could not see because they replaced `setPointerCapture` with a stub. These watch the real call. */
+describe('OrbitalNav pointer capture', () => {
+  beforeEach(() => { currentPath.value = '/dash'; });
+
+  function press(label: string, moves: number[]) {
+    const row = screen.getByRole('link', { name: label }).closest('[role="listitem"]') as HTMLElement;
+    const captured: number[] = [];
+    const released: number[] = [];
+    row.setPointerCapture = (id: number) => { captured.push(id); };
+    row.releasePointerCapture = (id: number) => { released.push(id); };
+    const at = (y: number) => ({ bubbles: true, cancelable: true, pointerId: 4, button: 0, clientX: 20, clientY: y });
+    fireEvent.pointerDown(row, at(400));
+    moves.forEach((dy) => fireEvent.pointerMove(row, at(400 + dy)));
+    fireEvent.pointerUp(row, at(400 + (moves[moves.length - 1] ?? 0)));
+    return { captured, released };
+  }
+
+  // Capturing the pointer on a row stops the browser synthesising the click on the link inside it, so
+  // taking it on every press makes the whole menu unclickable.
+  it('never captures the pointer on a press that stays a click', () => {
+    mount();
+    expect(press('Home', [2]).captured).toEqual([]);
+  });
+
+  it('captures once the press has become a drag, and gives it back on release', () => {
+    mount();
+    const { captured, released } = press('Home', [40, 200]);
+    expect(captured).toEqual([4]);
+    expect(released).toEqual([4]);
   });
 });
