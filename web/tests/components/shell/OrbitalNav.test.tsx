@@ -559,3 +559,32 @@ describe('OrbitalNav scrolling the axis', () => {
     expect(offsetOfLabel('Home')).toBe(before);
   });
 });
+
+/** The layout is per account; the browser it is cached in is not. */
+describe('OrbitalNav layout cache', () => {
+  /** Mount as `userId` with the server read failing, so the only layout available is the cached one. */
+  function mountAs(userId: number) {
+    server.use(http.get('*/api/auth/me/nav-settings', () => HttpResponse.json({ error: 'nope' }, { status: 500 })));
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: userId, username: `u${userId}`, is_admin: true } });
+    client.setQueryData(['health'], { ok: true, version: '0.26.0' });
+    client.setQueryData(['plugin-ui', 'en'], []);
+    return render(<Wrapper><OrbitalNav /></Wrapper>);
+  }
+
+  beforeEach(() => {
+    currentPath.value = '/dash';
+    localStorage.setItem('elowen.nav.layout.1', JSON.stringify({ hidden: ['memory'], order: [] }));
+  });
+
+  it('applies the cache to the account it was stored for', async () => {
+    mountAs(1);
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Memory' })).toBeNull());
+  });
+
+  // The whole point: signing in as somebody else on a shared machine must not paint their menu.
+  it('ignores another account cache', async () => {
+    mountAs(2);
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Memory' })).toBeInTheDocument());
+  });
+});

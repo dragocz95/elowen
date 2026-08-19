@@ -9,8 +9,12 @@ import { pluginNavEntries } from '../../lib/pluginNav';
 import { EMPTY_NAV_LAYOUT, applyNavLayout, parseNavLayout } from '../../lib/navLayout';
 
 /** Where this browser remembers the last layout the server confirmed, so the menu never paints in the
- *  wrong order first. It is a cache, never the source of truth. */
-const NAV_LAYOUT_CACHE_KEY = 'elowen.nav.layout';
+ *  wrong order first. It is a cache, never the source of truth.
+ *
+ *  Keyed per account, because the arrangement is per account and a browser is not. On a shared machine a
+ *  single key means the next person to sign in paints with the previous one's order and hidden entries —
+ *  and if their own read then fails, keeps them. */
+const navLayoutCacheKey = (userId: number) => `elowen.nav.layout.${userId}`;
 import type { NavLayout } from '../../lib/types';
 import type { NavEntry } from './navEntry';
 
@@ -34,17 +38,24 @@ export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[
   // the menu paints in registry order and visibly rearranges itself once the answer lands — on every
   // single page load. So the last known layout is mirrored into this browser and used for that first
   // paint; the server's answer overrides it the moment it arrives.
-  const [cachedLayout, setCachedLayout] = useState<NavLayout | null>(null);
+  //  The cached layout carries the account it was read for. Until that matches the account currently
+  //  signed in, there is no trusted cache and the menu falls back to registry order — one render in the
+  //  wrong order beats one render of somebody else's menu.
+  const userId = me.data?.user?.id ?? null;
+  const [cache, setCache] = useState<{ userId: number; layout: NavLayout } | null>(null);
   useEffect(() => {
+    if (userId === null) { setCache(null); return; }
     try {
-      const raw = localStorage.getItem(NAV_LAYOUT_CACHE_KEY);
-      if (raw !== null) setCachedLayout(parseNavLayout(JSON.parse(raw) as unknown));
-    } catch { /* private mode or malformed cache — registry order is a fine fallback */ }
-  }, []);
+      const raw = localStorage.getItem(navLayoutCacheKey(userId));
+      const parsed = raw === null ? null : parseNavLayout(JSON.parse(raw) as unknown);
+      setCache(parsed === null ? null : { userId, layout: parsed });
+    } catch { setCache(null); /* private mode or malformed cache — registry order is a fine fallback */ }
+  }, [userId]);
+  const cachedLayout = cache !== null && cache.userId === userId ? cache.layout : null;
   useEffect(() => {
-    if (!navSettings.data) return;
-    try { localStorage.setItem(NAV_LAYOUT_CACHE_KEY, JSON.stringify(navSettings.data)); } catch { /* quota */ }
-  }, [navSettings.data]);
+    if (userId === null || !navSettings.data) return;
+    try { localStorage.setItem(navLayoutCacheKey(userId), JSON.stringify(navSettings.data)); } catch { /* quota */ }
+  }, [userId, navSettings.data]);
   // Until the layout has loaded the menu renders in registry order rather than empty, so a slow or
   // failed read costs the arrangement, never the navigation itself.
   const layout = navSettings.data ?? cachedLayout ?? EMPTY_NAV_LAYOUT;
