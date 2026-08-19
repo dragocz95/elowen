@@ -264,6 +264,10 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
       longPress: event.pointerType === 'touch'
         ? window.setTimeout(() => {
             clearPress();
+            // The finger is still down. Lifting it makes the browser synthesise a click on the link
+            // underneath, which would navigate away from the menu that just opened — and on a phone
+            // that also closes the drawer the menu is in.
+            suppressClick.current = true;
             customization.openEntryMenu(event.clientX, event.clientY, { ...entry, id: entry.worldId });
           }, LONG_PRESS_MS)
         : undefined,
@@ -298,6 +302,27 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
     dragRef.current = next;
     setDrag(next);
   };
+
+  /** Release everything a gesture holds. A pointer can end in more ways than `pointerup`: the browser
+   *  can cancel it, or take the capture away, and a rail left thinking it is still being dragged
+   *  misreads the next press entirely. */
+  const releaseGesture = () => {
+    const press = pressRef.current;
+    if (press && dragRef.current) {
+      try { press.element.releasePointerCapture(press.pointerId); } catch { /* already released */ }
+    }
+    clearPress();
+    dragRef.current = null;
+    setDrag(null);
+  };
+
+  // Losing the capture mid-drag ends the drag: continuing to track a pointer the element no longer
+  // receives would leave the rail stuck in its dragging state until the next press.
+  const onEntryLostPointerCapture = () => { if (dragRef.current) releaseGesture(); };
+
+  // Nothing may outlive the component: a pending long press would fire into a menu that no longer
+  // exists, and an unreleased capture would hold a pointer the rail can no longer see.
+  useEffect(() => () => { releaseGesture(); endSurfacePress(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onEntryPointerUp = () => {
     const dragged = dragRef.current;
@@ -413,6 +438,7 @@ export function OrbitalNav({ compact = false, side = 'left', onToggleCollapse, d
               onPointerMove={onEntryPointerMove}
               onPointerUp={onEntryPointerUp}
               onPointerCancel={onEntryPointerUp}
+              onLostPointerCapture={onEntryLostPointerCapture}
               onClickCapture={(event) => {
                 if (!suppressClick.current) return;
                 suppressClick.current = false;

@@ -479,6 +479,28 @@ describe('OrbitalNav dragging a space', () => {
       vi.useRealTimers();
     }
   });
+
+  // The finger is still down when the menu opens. Lifting it makes the browser synthesise a click on
+  // the link underneath, which would navigate away from the menu that just opened.
+  it('does not navigate on the click that follows the long press', async () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      const row = rowOf('Home');
+      row.setPointerCapture = () => {};
+      const press = createEvent.pointerDown(row, { bubbles: true, clientX: 20, clientY: 400 });
+      Object.defineProperty(press, 'pointerType', { get: () => 'touch' });
+      fireEvent(row, press);
+      act(() => { vi.advanceTimersByTime(600); });
+      fireEvent.pointerUp(row);
+      const link = screen.getByRole('link', { name: 'Home' });
+      const click = createEvent.click(link, { bubbles: true });
+      fireEvent(link, click);
+      expect(click.defaultPrevented).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /** The pointer capture regression, which killed clicking outright and which the first round of tests
