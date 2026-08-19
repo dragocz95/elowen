@@ -18,6 +18,9 @@ import {
 } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { createAnthropicHostedToolReplay } from '../../src/brain/session/anthropicHostedToolReplay.js';
+import { installAnthropicHostedToolSearch } from '../../src/brain/session/anthropicHostedToolSearch.js';
+import { installOpenAIHostedToolSearch } from '../../src/brain/session/openAiHostedToolSearch.js';
 import { ProviderRequestRecorder } from '../../src/brain/session/providerRequestRecorder.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
@@ -47,6 +50,11 @@ function stream(model: Model<Api>, answer: AssistantMessage) {
 async function fixture(options: {
   enabled?: () => boolean;
   firstStatus?: number;
+  provider?: string;
+  api?: Api;
+  modelId?: string;
+  extensionFactories?: ((pi: ExtensionAPI) => void)[];
+  payload?: (model: Model<Api>, context: Context, call: number) => Record<string, unknown>;
   repeatPayload?: (request: SimpleStreamOptions, model: Model<Api>, payload: Record<string, unknown>) => Promise<void>;
   run: (model: Model<Api>, context: Context, request: SimpleStreamOptions, call: number) => ReturnType<typeof stream> | Promise<ReturnType<typeof stream>>;
 }) {
@@ -55,13 +63,15 @@ async function fixture(options: {
   brain.createSession({ id: 's1', userId: 7, model: 'chat-model', provider: 'configured' });
   const runtime = await inMemoryModelRuntime();
   const registry = new ModelRegistry(runtime);
-  const api = `request-recorder-${Math.random()}` as Api;
+  const api = options.api ?? `request-recorder-${Math.random()}` as Api;
+  const provider = options.provider ?? 'wire';
+  const modelId = options.modelId ?? 'chat-model';
   let call = 0;
-  registry.registerProvider('wire', {
+  registry.registerProvider(provider, {
     name: 'Recorder provider', api, baseUrl: 'https://provider.invalid', apiKey: 'key',
     streamSimple: async (model, context, request = {}) => {
       call += 1;
-      const initial = {
+      const initial = options.payload?.(model, context, call) ?? {
         model: model.id,
         instructions: context.systemPrompt,
         input: context.messages,
@@ -75,11 +85,11 @@ async function fixture(options: {
       return options.run(model, context, request, call);
     },
     models: [{
-      id: 'chat-model', name: 'chat-model', reasoning: false, input: ['text'],
+      id: modelId, name: modelId, reasoning: false, input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 2_000, maxTokens: 512,
     }],
   });
-  const model = registry.find('wire', 'chat-model');
+  const model = registry.find(provider, modelId);
   if (!model) throw new Error('model missing');
   const recorder = new ProviderRequestRecorder({
     store: brain.providerRequests, sessionId: 's1', configuredProvider: 'configured', enabled: options.enabled ?? (() => true),
@@ -96,7 +106,7 @@ async function fixture(options: {
   const loader = new DefaultResourceLoader({
     cwd, agentDir: cwd, settingsManager: settings, systemPrompt: 'recorder system',
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    extensionFactories: [transform],
+    extensionFactories: [...(options.extensionFactories ?? []), transform],
   });
   await loader.reload();
   const { session } = await createAgentSession({
@@ -137,6 +147,95 @@ describe('ProviderRequestRecorder', () => {
     expect(first.tools[0]?.name).toBe('initial');
     expect(second.tools[0]?.name).toBe('dynamic');
     expect(rows[1]).toMatchObject({ input_tokens: 10, output_tokens: 2, reasoning_tokens: 1, cache_read_tokens: 3, cache_write_tokens: 4, total_tokens: 20, cost_usd: 0.25 });
+  });
+
+  it('captures the final OpenAI hosted Tool Search payload with the per-attempt tool schema', async () => {
+    const f = await fixture({
+      provider: 'openai-codex', api: 'openai-codex-responses' as Api, modelId: 'gpt-5.6-luna',
+      extensionFactories: [(pi) => installOpenAIHostedToolSearch(pi, 'gpt-5.6-luna')],
+      payload: (model, context, call) => ({
+        model: model.id, instructions: context.systemPrompt, input: context.messages,
+        tools: [{
+          type: 'function', name: call === 1 ? 'probe' : 'dynamic_probe',
+          parameters: { type: 'object', properties: { [`attempt_${call}`]: { type: 'string' } } },
+        }],
+      }),
+      run: async (model, _context, _request, call) => call === 1
+        ? stream(model, message(model, [{ type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} }], 'toolUse'))
+        : stream(model, message(model, [{ type: 'text', text: 'done' }])),
+    });
+
+    await f.session.prompt('hosted search');
+
+    const rows = f.brain.providerRequests.rows('s1');
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => ({ status: row.status, turn: row.turn_id, retry: row.retry_of }))).toEqual([
+      { status: 'succeeded', turn: 'turn:1', retry: null },
+      { status: 'succeeded', turn: 'turn:1', retry: null },
+    ]);
+    const first = f.brain.providerRequests.reconstruct(rows[0]!.request_id) as { transformed: boolean; tools: Record<string, unknown>[] };
+    const second = f.brain.providerRequests.reconstruct(rows[1]!.request_id) as { transformed: boolean; tools: Record<string, unknown>[] };
+    expect(first).toMatchObject({ transformed: true, tools: [
+      { type: 'function', name: 'probe', defer_loading: true, parameters: { properties: { attempt_1: { type: 'string' } } } },
+      { type: 'tool_search' },
+    ] });
+    expect(second).toMatchObject({ transformed: true, tools: [
+      { type: 'function', name: 'dynamic_probe', defer_loading: true, parameters: { properties: { attempt_2: { type: 'string' } } } },
+      { type: 'tool_search' },
+    ] });
+  });
+
+  it('captures Anthropic deferred schemas after hosted replay restores the prior server-owned turn', async () => {
+    const model = { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' } as Model<Api>;
+    const replay = createAnthropicHostedToolReplay(model);
+    const rawHostedContent = [
+      { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'probe' } },
+      { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1', content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'probe' }] } },
+      { type: 'tool_use', id: 'probe-1', name: 'probe', input: {} },
+    ];
+    const f = await fixture({
+      provider: model.provider, api: model.api, modelId: model.id,
+      extensionFactories: [
+        (pi) => installAnthropicHostedToolSearch(pi, model.id),
+        replay.extension,
+      ],
+      payload: (requestModel, context, call) => ({
+        model: requestModel.id, system: context.systemPrompt, messages: context.messages,
+        tools: [
+          { name: 'ToolSearch', input_schema: { type: 'object' } },
+          { name: call === 1 ? 'probe' : 'dynamic_probe', input_schema: { type: 'object', properties: { [`attempt_${call}`]: { type: 'integer' } } }, cache_control: { type: 'ephemeral' } },
+        ],
+      }),
+      run: async (requestModel, _context, _request, call) => call === 1
+        ? stream(requestModel, {
+          ...message(requestModel, [{ type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} }], 'toolUse'),
+          anthropicHostedToolReplay: { v: 1, content: rawHostedContent },
+        } as AssistantMessage)
+        : stream(requestModel, message(requestModel, [{ type: 'text', text: 'done' }])),
+    });
+
+    replay.install(f.session);
+    await f.session.prompt('anthropic hosted search');
+
+    const rows = f.brain.providerRequests.rows('s1');
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => ({ status: row.status, turn: row.turn_id }))).toEqual([
+      { status: 'succeeded', turn: 'turn:1' },
+      { status: 'succeeded', turn: 'turn:1' },
+    ]);
+    const first = f.brain.providerRequests.reconstruct(rows[0]!.request_id) as { transformed: boolean; messages: unknown[]; tools: Record<string, unknown>[] };
+    const second = f.brain.providerRequests.reconstruct(rows[1]!.request_id) as { transformed: boolean; messages: { role?: string; content?: unknown[] }[]; tools: Record<string, unknown>[] };
+    expect(first.tools).toEqual([
+      { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
+      { name: 'probe', input_schema: { type: 'object', properties: { attempt_1: { type: 'integer' } } }, defer_loading: true },
+    ]);
+    expect(second.tools).toEqual([
+      { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
+      { name: 'dynamic_probe', input_schema: { type: 'object', properties: { attempt_2: { type: 'integer' } } }, defer_loading: true },
+    ]);
+    expect(second.messages.find((entry) => entry.role === 'assistant')?.content).toEqual(rawHostedContent);
+    expect(first.transformed).toBe(true);
+    expect(second.transformed).toBe(true);
   });
 
   it('links PI auto-retry to the verified failed request', async () => {
@@ -220,6 +319,69 @@ describe('ProviderRequestRecorder', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ status: 'error', http_status: 500, error_code: 'http_500' });
     expect(rows[1]).toMatchObject({ status: 'succeeded', retry_of: null });
+  });
+
+  it('associates an abort terminal with the exact captured attempt', async () => {
+    const f = await fixture({
+      run: async (model, _context, request) => {
+        const out = createAssistantMessageEventStream();
+        queueMicrotask(() => out.push({ type: 'start', partial: message(model, []) }));
+        request.signal?.addEventListener('abort', () => {
+          out.push({ type: 'error', reason: 'aborted', error: message(model, [], 'aborted', 'Request aborted') });
+          out.end();
+        }, { once: true });
+        return out;
+      },
+    });
+
+    const prompt = f.session.prompt('abort capture');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await f.session.abort();
+    await prompt;
+
+    const rows = f.brain.providerRequests.rows('s1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: 'error', turn_id: 'turn:1', retry_of: null, http_status: 200,
+      error_code: 'aborted', error_message: 'Request aborted', total_tokens: 20,
+    });
+    expect(f.brain.providerRequests.reconstruct(rows[0]!.request_id)).toMatchObject({ transformed: true, model: 'chat-model' });
+  });
+
+  it('keeps overflow, recovery compaction, and replacement capture on their real attempts', async () => {
+    let ordinary = 0;
+    const f = await fixture({
+      payload: (model, context, call) => ({
+        model: model.id, instructions: context.systemPrompt, input: context.messages, attempt_marker: call,
+        tools: [{ type: 'function', name: `attempt_${call}`, parameters: { type: 'object', properties: { call: { const: call } } } }],
+      }),
+      run: async (model, context) => {
+        if (context.systemPrompt?.includes('context summarization assistant')) {
+          return stream(model, message(model, [{ type: 'text', text: 'summary' }]));
+        }
+        ordinary += 1;
+        if (ordinary === 1) return stream(model, message(model, [{ type: 'text', text: 'seed' }], 'stop', undefined));
+        return ordinary === 2
+          ? stream(model, message(model, [], 'error', 'prompt is too long: 213462 tokens > 2000 maximum'))
+          : stream(model, message(model, [{ type: 'text', text: 'recovered' }]));
+      },
+    });
+    await f.session.prompt(`seed ${'history '.repeat(400)}`);
+
+    await f.session.prompt(`overflow ${'history '.repeat(800)}`);
+
+    const rows = f.brain.providerRequests.rows('s1');
+    expect(rows.map((row) => ({ kind: row.kind, status: row.status, turn: row.turn_id, retry: row.retry_of }))).toEqual([
+      { kind: 'chat', status: 'succeeded', turn: 'turn:1', retry: null },
+      { kind: 'chat', status: 'error', turn: 'turn:2', retry: null },
+      { kind: 'compaction', status: 'succeeded', turn: 'compaction:1', retry: null },
+      { kind: 'chat', status: 'succeeded', turn: 'turn:3', retry: null },
+    ]);
+    expect(rows[1]).toMatchObject({ error_code: 'error', http_status: 200 });
+    const payloads = rows.map((row) => f.brain.providerRequests.reconstruct(row.request_id) as { attempt_marker: number; transformed: boolean; tools: { name: string; parameters: unknown }[] });
+    expect(payloads.map((payload) => payload.attempt_marker)).toEqual([1, 2, 3, 4]);
+    expect(payloads.map((payload) => payload.tools[0]?.name)).toEqual(['attempt_1', 'attempt_2', 'attempt_3', 'attempt_4']);
+    expect(payloads.map((payload) => payload.transformed)).toEqual([true, true, undefined, true]);
   });
 
   it('turns a thrown provider call into a terminal error attempt instead of leaving it pending', async () => {
