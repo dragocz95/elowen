@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { splitFrontmatter } from '../../shared/frontmatter.js';
+import { NAME_RE } from '../../shared/nameGrammar.js';
 import type { PluginLogger } from '../../plugins/api.js';
 
 /**
@@ -56,10 +57,6 @@ export interface AgentDef {
   source: 'builtin' | 'user';
   filePath: string;
 }
-
-/** A valid agent/type name: kebab-case, 2–64 chars. Shared with the plugin routes so the create/delete
- *  API and the loader agree on exactly what a legal name is. */
-export const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 /** Parse one agent `.md` file into an AgentDef, or null when it is not a valid agent definition (no
  *  frontmatter, bad name, missing description, malformed tools). Never throws on a bad file — the caller

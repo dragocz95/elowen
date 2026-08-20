@@ -7,6 +7,7 @@ import { Check, Errors } from 'typebox/value';
 import { parseManifest } from './manifest.js';
 import type { DiscoveredPlugin } from './loader.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
+import { NAME_RE } from '../shared/nameGrammar.js';
 import { isNewer } from '../cli/version.js';
 import { readPkgVersion } from '../shared/pkgVersion.js';
 import { logger } from '../shared/logger.js';
@@ -19,10 +20,6 @@ const log = logger('marketplace');
  *  ELOWEN_PLUGIN_REGISTRY (used by tests to point at a local bare repo). */
 const DEFAULT_REGISTRY_URL = 'https://github.com/dragocz95/elowen-plugins.git';
 const DEFAULT_REGISTRY_BRANCH = 'main';
-
-/** Canonical plugin-name shape, reused verbatim as a single path segment. Mirrors the skills plugin's
- *  SKILL_NAME_RE — kills separators, `..`, empties and absolute paths at the source. */
-const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 /** Guard rails on a copied plugin tree — a decompression/space-bomb backstop, not a size policy. Most
  *  plugins are a handful of small text files (manifest + one or more .mjs + i18n JSON), but a TypeScript

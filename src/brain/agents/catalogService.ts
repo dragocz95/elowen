@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
-import { loadAgentRegistry, parseAgentFile, NAME_RE } from './agentRegistry.js';
+import { loadAgentRegistry, parseAgentFile } from './agentRegistry.js';
+import { NAME_RE } from '../../shared/nameGrammar.js';
 import { builtinToolMetas } from '../tools/index.js';
 import type { PluginAgentCatalog, AgentCatalogEntry, AgentCatalogResult } from '../../plugins/api.js';
 
