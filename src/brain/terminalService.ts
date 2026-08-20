@@ -3,6 +3,7 @@ import type { UserStore } from '../store/userStore.js';
 import type { BrainStore, BrainTerminalRow } from '../store/brainStore.js';
 import { brainTerminalName, isOwnedUserSession } from './sessionId.js';
 import { logger } from '../shared/logger.js';
+import { Singleflight } from '../shared/singleflight.js';
 
 const log = logger('brain-terminal');
 
@@ -31,7 +32,7 @@ export class BrainTerminalService {
 
   /** In-flight launches keyed by terminal name: a concurrent open() of the same terminal coalesces onto the
    *  running one, and the janitor sweep skips any terminal still between its binding upsert and spawn. */
-  private inFlight = new Map<string, Promise<{ terminal: string; created: boolean }>>();
+  private inFlight = new Singleflight<{ terminal: string; created: boolean }>();
 
   /** Open (or re-attach to) the admin's terminal for one of their continuable conversations. Idempotent:
    *  a live binding returns `{ created: false }` without minting a new token or spawning a second tmux. */
@@ -40,11 +41,7 @@ export class BrainTerminalService {
     // caller awaits the first launch instead of interleaving across the tmux.list()/spawnArgv awaits and
     // revoking the first call's still-minting token.
     const terminalName = brainTerminalName(userId, brainSessionId);
-    const inFlight = this.inFlight.get(terminalName);
-    if (inFlight) return inFlight;
-    const launch = this.openInner(userId, brainSessionId, terminalName).finally(() => this.inFlight.delete(terminalName));
-    this.inFlight.set(terminalName, launch);
-    return launch;
+    return this.inFlight.run(terminalName, () => this.openInner(userId, brainSessionId, terminalName));
   }
 
   private async openInner(userId: number, brainSessionId: string, terminalName: string): Promise<{ terminal: string; created: boolean }> {
@@ -115,7 +112,7 @@ export class BrainTerminalService {
     const bound = new Set<string>();
     for (const row of this.d.store.listBrainTerminals()) {
       bound.add(row.terminal_name);
-      if (this.inFlight.has(row.terminal_name)) continue; // an open() is mid-launch — never reap it as dead
+      if (this.inFlight.isRunning(row.terminal_name)) continue; // an open() is mid-launch — never reap it as dead
       const dead = !live.has(row.terminal_name);
       const conversationGone = !this.d.store.getSession(row.brain_session_id);
       if (dead || conversationGone) {

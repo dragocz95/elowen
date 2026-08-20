@@ -1,4 +1,5 @@
 import type { Credential } from '@earendil-works/pi-ai';
+import { Singleflight } from '../shared/singleflight.js';
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -112,7 +113,7 @@ export class UsageService {
   private readonly timeoutMs: number;
   private readonly now: () => number;
   private readonly cache = new Map<string, CacheEntry>();
-  private readonly inFlight = new Map<string, Promise<ProviderUsage | null>>();
+  private readonly inFlight = new Singleflight<ProviderUsage | null>();
 
   constructor(private readonly source: UsageSource, private readonly auth: UsageAuth, deps: UsageServiceDeps = {}) {
     this.fetchImpl = deps.fetchImpl ?? fetch;
@@ -127,13 +128,7 @@ export class UsageService {
     if (!key) return null;
     const cached = this.cache.get(key);
     if (cached && this.now() - cached.at < this.ttlMs) return copySnapshot(cached.value);
-    const active = this.inFlight.get(key);
-    if (active) return active;
-    const request = this.request(key).finally(() => {
-      if (this.inFlight.get(key) === request) this.inFlight.delete(key);
-    });
-    this.inFlight.set(key, request);
-    return request;
+    return this.inFlight.run(key, () => this.request(key));
   }
 
   private stale(key: string): ProviderUsage | null {
