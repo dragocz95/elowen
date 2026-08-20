@@ -183,6 +183,7 @@ describe('shared LiveMessage tool activity cleanup', () => {
     mode: 'finalize' | 'fail' = 'finalize',
     editFails = false,
     collapseStillOrdered?: () => boolean,
+    askMidTurn = false,
   ) {
     const { createLiveMessage } = await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs')) as {
       createLiveMessage: (deps: Record<string, unknown>) => new (
@@ -219,7 +220,10 @@ describe('shared LiveMessage tool activity cleanup', () => {
       footerLine: () => '',
     });
     const lm = new LiveMessage(
-      { cfg: { runtimeFooter: false, ...cfg } },
+      {
+        cfg: { runtimeFooter: false, ...cfg },
+        postAsk: async () => { events.push('ask-card'); },
+      },
       'channel',
       'trigger',
       undefined,
@@ -229,6 +233,10 @@ describe('shared LiveMessage tool activity cleanup', () => {
     lm.onEvent({ type: 'tool', id: 'one', name: 'Read' });
     await new Promise((resolve) => setTimeout(resolve, 0)); // let the live progress create land before finalize
     lm.onEvent({ type: 'tool', id: 'two', name: 'Bash' });
+    if (askMidTurn) {
+      lm.onEvent({ type: 'ask', id: 'q1', questions: [{ question: 'Which one?' }] });
+      await new Promise((resolve) => setTimeout(resolve, 0)); // postAsk is fire-and-forget
+    }
     if (mode === 'fail') events.push(`handled:${await lm.fail('boom')}`);
     else await lm.finalize('Done.');
     return events;
@@ -256,6 +264,29 @@ describe('shared LiveMessage tool activity cleanup', () => {
   it('posts a new anchored error when a newer user message made the progress bubble stale', async () => {
     expect(await run({ deleteToolActivityAfterTurn: true }, 'fail', false, () => false)).toEqual([
       'create:progress-1:trigger',
+      'edit:🔧 `Read` — boom\n🔧 `Bash` — boom',
+      'handled:false',
+    ]);
+  });
+
+  // The turn's OWN AskUserQuestion card is posted as a new message below the progress bubble, so by the
+  // time the answer is ready the bubble is no longer the last thing in the chat. Overwriting it would put
+  // the reply above the question the user just answered — the same wrong order a newer user message causes,
+  // except no inbound message ever arrives to move the order marker (a card answer is a component
+  // interaction, not a chat message).
+  it('keeps the progress bubble when its own question card landed below it', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true }, 'finalize', false, () => true, true)).toEqual([
+      'create:progress-1:trigger',
+      'ask-card',
+      'edit:🔧 `Read`\n🔧 `Bash`',
+      'answer:trigger',
+    ]);
+  });
+
+  it('posts a new anchored error under its own question card too', async () => {
+    expect(await run({ deleteToolActivityAfterTurn: true }, 'fail', false, () => true, true)).toEqual([
+      'create:progress-1:trigger',
+      'ask-card',
       'edit:🔧 `Read` — boom\n🔧 `Bash` — boom',
       'handled:false',
     ]);

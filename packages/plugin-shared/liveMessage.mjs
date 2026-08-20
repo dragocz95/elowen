@@ -236,6 +236,10 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       this.collapseStillOrdered = typeof options.collapseStillOrdered === 'function'
         ? options.collapseStillOrdered
         : null;
+      // Set once this turn posts a message of its own BELOW the progress bubble (today: an
+      // AskUserQuestion card). The order marker cannot see it — that marker only moves on an inbound
+      // user message, and answering a card is a component interaction, not a chat message.
+      this.postedBelowProgress = false;
       const resolvedDisplay = display ?? resolveDisplaySettings(adapter.cfg);
       // Collapsing progress into the final reply requires one reusable bubble and a non-streamed answer.
       // Normalize conflicting presentation knobs here so no earlier per-tool/live-answer messages survive.
@@ -426,6 +430,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       } else if (e.type === 'ask' && Array.isArray(e.questions)) {
         // The turn parked on AskUserQuestion — post the interactive choice message (fire-and-forget; the
         // turn stays blocked in the tool until the user answers via a component/button/text interaction).
+        this.postedBelowProgress = true;
         void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions).catch(() => {});
       } else if (e.type === 'idle') {
         this.idle = e;
@@ -435,15 +440,18 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
      *  the first chunk of a StreamingAnswer, so long replies can still add ordered continuation messages. */
     async collapseToolActivity(content) {
       if (!this.display.deleteToolActivityAfterTurn || !this.progress || !content) return false;
-      if (this.collapseStillOrdered) {
-        let ordered = false;
+      // Two ways the bubble can stop being the last thing in the chat: someone else spoke (the order
+      // marker moved), or this turn posted its own card under it. Either way the bubble is frozen with
+      // its tool trace and the answer goes out as a new message, still anchored to the original request.
+      let ordered = !this.postedBelowProgress;
+      if (ordered && this.collapseStillOrdered) {
         try { ordered = this.collapseStillOrdered() === true; } catch { /* fail closed */ }
-        if (!ordered) {
-          const progress = this.progress;
-          this.progress = null;
-          await progress.settle(progress.content);
-          return false;
-        }
+      }
+      if (!ordered) {
+        const progress = this.progress;
+        this.progress = null;
+        await progress.settle(progress.content);
+        return false;
       }
       const answer = new StreamingAnswer(this.a, this.channelId, this.replyToId, this.progress);
       const delivery = await answer.finalize(content);
