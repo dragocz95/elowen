@@ -104,7 +104,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   // answers. Admin-only (it exercises stored provider credentials, like providers/probe). Always 200 with
   // a structured result — a provider failure is reported as { ok:false, error }, never a 500.
   app.post('/brain/test', async c => {
-    const u = d.users ? c.get('user') : undefined;
+    const u = d.users ? c.get('user') : undefined; // setup/open mode: no user store or zero users → skip the admin gate (matches providers/probe)
     if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
     if (!d.brain) return c.json({ ok: false, error: 'brain unavailable' });
     const b = (await c.req.json().catch(() => ({}))) as { providerId?: unknown; model?: unknown };
