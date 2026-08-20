@@ -6,6 +6,7 @@ import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Users, Chevron
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
+import { useDismiss } from '../../lib/useDismiss';
 import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
@@ -527,14 +528,7 @@ function BarOverflowMenu({ workMode, showThoughts, onToggleThoughts, hasTodos, o
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => { if (!rootRef.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onPointer); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  useDismiss(rootRef, open, () => setOpen(false));
   const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text transition-colors hover:bg-bg';
   return (
     <div ref={rootRef} className="relative shrink-0">

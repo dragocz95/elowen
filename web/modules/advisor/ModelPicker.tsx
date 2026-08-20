@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
 import type { BrainModelOption } from '../../lib/types';
 import { brainModelQualifiedLabel, SOURCE_BADGE } from '../../lib/modelProvider';
@@ -29,14 +30,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Dismiss on an outside pointer or Escape — the popover is a transient overlay, never a persistent panel.
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => { if (!rootRef.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onPointer); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  useDismiss(rootRef, open, () => setOpen(false));
 
   const toggle = (): void => {
     setOpen((v) => {

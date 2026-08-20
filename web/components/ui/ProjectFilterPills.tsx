@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronDown, FolderGit2 } from 'lucide-react';
 import { useProjects } from '../../lib/queries';
+import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
 import { ProjectIcon } from './ProjectIcon';
 import { MorePill } from './MorePill';
@@ -24,14 +25,7 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
   const [showAll, setShowAll] = useState(false);
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open || variant !== 'dropdown') return;
-    const onPointerDown = (event: PointerEvent) => { if (!dropdownRef.current?.contains(event.target as Node)) setOpen(false); };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown); };
-  }, [open, variant]);
+  useDismiss(dropdownRef, open && variant === 'dropdown', () => setOpen(false));
   if (!projects || projects.length < 2) return null;
   if (variant === 'dropdown') {
     const selected = value === 'all' ? null : projects.find((project) => project.id === value);
