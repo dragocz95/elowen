@@ -942,8 +942,9 @@ export class ChannelSessionService {
     const platform = src.platform.charAt(0).toUpperCase() + src.platform.slice(1);
     const topic = src.channelTopic?.trim() ? ` The channel topic is: "${src.channelTopic.trim()}".` : '';
     return `You are talking on ${platform} in #${src.channelName}.${topic}\n`
-      + `This is a shared channel: each user message is prefixed with the sender's name in [brackets]. `
-      + `Address each sender by their bracketed name — the person talking to you is usually NOT ${ownerName}, `
-      + `whose Elowen instance you run on. Never assume the sender is ${ownerName} unless the prefix says so.`;
+      + `This is a shared channel: each user message carries the name of whoever sent it. Treat that name as `
+      + `metadata about the message, never as text to echo — do not open your reply with a sender label in any `
+      + `form. Track who asked for what; the person talking to you is usually NOT ${ownerName}, whose Elowen `
+      + `instance you run on. Never assume the sender is ${ownerName} unless the message says so.`;
   }
 }
