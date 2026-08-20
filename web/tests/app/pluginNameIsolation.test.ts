@@ -20,8 +20,14 @@ const SKIP_DIRS = new Set(['node_modules', '.next', 'tests', 'test-results', 'pu
 /** `label` is what the allowlist is keyed on. A route is normalized to `/p/<plugin>` — the binding is the
  *  PLUGIN NAME, not which of its pages a link points at, and normalizing keeps the list from churning
  *  every time a plugin page moves or a query string is added. */
+/** `typeof x.name === 'string'` is a runtime type guard, not a dispatch on a plugin's name, so the
+ *  primitive type names are excluded from the match itself rather than allowlisted per file — otherwise
+ *  every new guard on an untrusted `name` field has to buy its way onto the list with a reason that is
+ *  always the same one. No plugin is called `string`. */
+const TYPEOF_RESULTS = 'string|number|bigint|boolean|symbol|undefined|object|function';
+
 const PATTERNS: { re: RegExp; label: (m: RegExpMatchArray) => string }[] = [
-  { re: /(?:detail\.)?name === '([a-z0-9-]+)'/g, label: (m) => m[0] },
+  { re: new RegExp(`(?:detail\\.)?name === '(?!(?:${TYPEOF_RESULTS})')([a-z0-9-]+)'`, 'g'), label: (m) => m[0] },
   { re: /use(?:PluginDetail|PluginPresent|DomainReachable)\('([a-z0-9-]+)'\)/g, label: (m) => m[0] },
   { re: /['"`]\/p\/([a-z0-9-]+)/g, label: (m) => `/p/${m[1]}` },
 ];
@@ -54,9 +60,6 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "usePluginPresent('work')": 'Same single presence boundary.',
     "useDomainReachable('work')": 'Same single boundary, for the fetch gates (a disabled plugin\'s routes answer 503).',
     "useDomainReachable('agents')": 'Same single boundary, for the fetch gates.',
-  },
-  'lib/useDockState.ts': {
-    "name === 'string'": 'Not a plugin name — a `typeof x.name === \'string\'` runtime guard on persisted dock state.',
   },
   'modules/advisor/BrainChatProvider.tsx': {
     "name === 'model'": 'Not a plugin name — a built-in SLASH COMMAND name from the core command catalog.',
