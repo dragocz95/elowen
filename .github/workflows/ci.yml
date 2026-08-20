@@ -103,6 +103,28 @@ jobs:
       # and was simply never wired up here, so nothing guarded that path.
       - run: node scripts/tests/brain-e2e/stop-kill.mjs
 
+  msteams-e2e:
+    name: Teams E2E (real daemon + fake Bot Framework)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Drive a signed activity through the real daemon and Teams adapter against a fake Bot Framework.
+      - run: npm ci
+      - run: npm ci --prefix web
+      - run: npm run build
+      - run: node scripts/tests/msteams-e2e/msteams-roundtrip.mjs
+
   api-e2e:
     name: API E2E (REST/SSE/WS contract)
     runs-on: ubuntu-latest
