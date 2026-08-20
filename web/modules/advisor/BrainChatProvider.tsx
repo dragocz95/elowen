@@ -928,10 +928,12 @@ function useBrainChatController(): BrainChatValue {
   // close. The daemon's named heartbeat makes that state observable: silence past the limit means dead.
   // Unlike the wake-up path this one is re-armed when the operator changes the limit, since the interval
   // reads it once at start; the watchdog holds no state worth preserving across that restart.
+  // Stream methods only read refs; re-running for the hook object's render-time identity would reset the timer.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => stream.watch(() => attachedRef.current, silence.limitMs), [silence.limitMs]);
 
   // Tear the stream down when the whole provider unmounts (app teardown), matching today's cleanup.
+  // Stream stop only reads refs; this cleanup intentionally belongs to the provider lifetime, not each render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => () => stream.stop(), []);
 
