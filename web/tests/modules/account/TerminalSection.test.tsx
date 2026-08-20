@@ -52,7 +52,10 @@ describe('TerminalSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Colors' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
     expect(colorInputs(document.body).length).toBe(21);
-    expect(screen.getByText('Dracula')).toBeTruthy();           // a preset option
+    // The preset picker is a SelectMenu, not a native select: its options only exist in the DOM while
+    // the listbox is open, so the menu has to be opened before one can be asserted.
+    fireEvent.click(screen.getByRole('combobox', { name: 'Load preset' }));
+    expect(screen.getByRole('option', { name: 'Dracula' })).toBeTruthy();
   });
 
   it('keeps the preview and palette shrinkable inside the drawer', () => {
