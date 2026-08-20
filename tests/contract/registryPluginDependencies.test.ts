@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
  *  a tidy-up. They are also listed in knip.json's ignoreDependencies for the same reason. */
 const REGISTRY_PLUGIN_DEPENDENCIES: Record<string, string> = {
   jose: 'msteams — verifies Microsoft\'s inbound webhook JWT (plugins/msteams/lib/auth.mjs in the registry)',
+  'botframework-connector': 'msteams — MicrosoftAppCredentials plus the UserTokenClientImpl deep import that drives OAuth account linking (plugins/msteams/lib/accountLinking.mjs in the registry)',
   grammy: 'telegram — the Bot API client the adapter is built on (plugins/telegram/lib/adapter.mjs in the registry)',
   baileys: 'whatsapp — the WhatsApp Web protocol client behind the paired session (plugins/whatsapp/lib/adapter.mjs in the registry)',
   qrcode: 'whatsapp — renders the pairing QR the Settings screen shows (plugins/whatsapp/lib/adapter.mjs in the registry)',
