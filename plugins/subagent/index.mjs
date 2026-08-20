@@ -8,6 +8,7 @@ import { Type } from 'typebox';
 import { registerWorkflow } from './lib/workflow.mjs';
 import { clipTail } from './lib/results.mjs';
 import { errorText } from './lib/errors.mjs';
+import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import {
@@ -616,15 +617,10 @@ export function register(ctx) {
           return ok(`Error: too many delegations (${MAX_BACKGROUND_JOBS}) are still running; wait for one to finish.`);
         }
         jobs.set(jobId, state);
-        const detached = new Promise((resolve) => { state.resolveDetached = resolve; });
-        const child = runChild();
-        const winner = await Promise.race([
-          child.then((result) => ({ kind: 'result', result })),
-          detached.then(() => ({ kind: 'detached' })),
-        ]);
-        if (winner.kind === 'result') {
+        const outcome = await raceDetach((resolve) => { state.resolveDetached = resolve; }, () => runChild());
+        if (!outcome.detached) {
           jobs.delete(jobId);
-          return ok(winner.result);
+          return ok(outcome.value);
         }
         return ok(
           `The user moved this sub-agent to the background. It is still running as ${jobId}; `
@@ -951,15 +947,10 @@ export function register(ctx) {
       // Outside an authenticated conversation there is no safe Ctrl+B target; preserve blocking behavior.
       if (!trackable) return runContinuation();
       jobs.set(state.id, state);
-      const detached = new Promise((resolve) => { state.resolveDetached = resolve; });
-      const child = runContinuation();
-      const winner = await Promise.race([
-        child.then((result) => ({ kind: 'result', result })),
-        detached.then(() => ({ kind: 'detached' })),
-      ]);
-      if (winner.kind === 'result') {
+      const outcome = await raceDetach((resolve) => { state.resolveDetached = resolve; }, () => runContinuation());
+      if (!outcome.detached) {
         jobs.delete(state.id);
-        return winner.result;
+        return outcome.value;
       }
       return ok(
         'The user moved this sub-agent continuation to the background. It is still running in '

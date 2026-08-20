@@ -20,6 +20,7 @@ import {
 } from './limits.mjs';
 import { clipTail } from './results.mjs';
 import { errorText } from './errors.mjs';
+import { raceDetach } from './detach.mjs';
 import { resolveResultRetentionMs } from './retention.mjs';
 
 const MAX_WORKFLOWS = 16;
@@ -540,12 +541,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         { workflowId: wf.id, status: 'running' },
       );
     }
-    const detached = new Promise((resolve) => { wf.resolveDetached = resolve; });
-    const winner = await Promise.race([
-      completion.then((summary) => ({ kind: 'done', summary })),
-      detached.then(() => ({ kind: 'detached' })),
-    ]);
-    if (winner.kind === 'done') return ok(winner.summary);
+    const outcome = await raceDetach((resolve) => { wf.resolveDetached = resolve; }, () => completion);
+    if (!outcome.detached) return ok(outcome.value);
     void completion.then((summary) => deliverCompletion(wf, summary));
     return ok(
       `The user moved this workflow to the background. It is still running as ${wf.id}; continue helping the `
