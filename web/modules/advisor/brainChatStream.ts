@@ -185,12 +185,16 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     onFrame('ask', (e) => handlers.ask(JSON.parse((e as MessageEvent).data) as AskFrame));
     onFrame('ask_resolved', (e) => handlers.askResolved((JSON.parse((e as MessageEvent).data) as { id: string }).id));
     onFrame('step', (e) => {
-      try { handlers.step((JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage); }
-      catch { handlers.step(); }
+      let usage: BrainUsage | undefined;
+      try { usage = (JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage; }
+      catch { /* step without payload */ }
+      handlers.step(usage);
     });
     onFrame('idle', (e) => {
-      try { handlers.idle((JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage); }
-      catch { handlers.idle(); }
+      let usage: BrainUsage | undefined;
+      try { usage = (JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage; }
+      catch { /* idle without payload */ }
+      handlers.idle(usage);
     });
     esRef.current = es;
     handlers.ready();
