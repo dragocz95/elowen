@@ -371,6 +371,14 @@ export function paintRow(bgCode: string, text: string, width: number): string {
   return `${open}${body}\x1b[0m`;
 }
 
+/** One row of a modal/overlay surface. Each modal chrome in the chat UI declared its own local alias for
+ *  this exact call — `bgFill`, `blockFill`, `modalRow`, `ROW` — so it lives here once under one name. The
+ *  theme is read per call, so a theme switch repaints rather than needing a restart. */
+export const modalRow = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
+
+/** One row of an input/dock surface — the composer, the approval dock, the ask-choice dock. */
+export const inputRow = (text: string, width: number): string => paintRow(chatTheme().inputBg, text, width);
+
 export const color = {
   accent: (s: string): string => sgr(activeTheme.accent, s),
   accentDim: (s: string): string => sgr(activeTheme.accentDim, s),

@@ -2,12 +2,9 @@ import { CURSOR_MARKER, SelectList, Editor, truncateToWidth, visibleWidth } from
 import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color, modalRow } from './theme.js';
 import { padAnsi } from '../ui/text.js';
 import { printableInput } from '../ui/prompts.js';
-
-/** One row of a modal, painted edge to edge on the modal background. */
-const modalRow = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
 /** The Editor with an Esc hook: Esc aborts the streaming turn (unless the autocomplete popup is open —
  *  then Esc closes it, handled by the base class). */

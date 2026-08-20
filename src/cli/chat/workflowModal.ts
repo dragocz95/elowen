@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isLeftKey, isRightKey, isTabKey, isUpKey } from './keys.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color, modalRow } from './theme.js';
 import { FRAME_COLS, framed } from './modalFrame.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText } from '../ui/text.js';
 import { spinnerFrame, workflowTitle } from './components.js';
@@ -13,7 +13,6 @@ import type { WorkflowState, WorkflowNode } from '../../brain/transcript.js';
 // it live) instead of owning a fixed palette: it is Elowen's surface and should read as part of the same
 // design language as the pickers behind it, not a detached black plane. Backgrounds come from
 // `chatTheme().modalBg` and are painted per ROW (see paintRow).
-const ROW = (t: string, width: number): string => paintRow(chatTheme().modalBg, t, width);
 
 /** Fit text to exactly `width` columns. The explicit '…' is load-bearing: padAnsi's own overflow branch
  *  calls truncateToWidth WITHOUT an ellipsis argument, so it would render ASCII "..." here while every
@@ -295,11 +294,11 @@ class WorkflowModal implements Component, Focusable {
   private messageFrame(width: number, message: string): string[] {
     const inner = Math.max(1, width - FRAME_COLS);
     return framed([
-      ROW(`  ${color.bold(color.accent('⚙ WORKFLOW'))}`, inner),
-      ROW('', inner),
-      ROW(`  ${color.faint(message)}`, inner),
-      ROW('', inner),
-      ROW(`  ${color.faint('esc close')}`, inner),
+      modalRow(`  ${color.bold(color.accent('⚙ WORKFLOW'))}`, inner),
+      modalRow('', inner),
+      modalRow(`  ${color.faint(message)}`, inner),
+      modalRow('', inner),
+      modalRow(`  ${color.faint('esc close')}`, inner),
     ], width);
   }
 
@@ -355,24 +354,24 @@ class WorkflowModal implements Component, Focusable {
     const left = `  ${color.accent('⚙ WORKFLOW')} ${color.faint('·')} `
       + color.text(truncateToWidth(title, Math.max(8, bodyWidth - 34), '…'));
     const titleGap = Math.max(2, inner - visibleWidth(left) - visibleWidth(right));
-    out.push(ROW(`${left}${' '.repeat(titleGap)}${right}`, inner));
-    out.push(ROW(this.summaryLine(wf, now, clipped), inner));
-    out.push(ROW('', inner));
-    for (const row of body) out.push(ROW(`  ${fit(row, bodyWidth)}  `, inner));
+    out.push(modalRow(`${left}${' '.repeat(titleGap)}${right}`, inner));
+    out.push(modalRow(this.summaryLine(wf, now, clipped), inner));
+    out.push(modalRow('', inner));
+    for (const row of body) out.push(modalRow(`  ${fit(row, bodyWidth)}  `, inner));
 
     // Dock: a titled rule, then the selected node's detail or the run's activity feed.
     const dockTitle = this.dock === 'detail' ? ` ${terminalInlineText(selected.node.id)} ` : ' activity ';
     const rule = `─${color.accentSoft(dockTitle)}`;
-    out.push(ROW(`  ${color.faint('─')}${color.accentSoft(dockTitle)}${color.faint('─'.repeat(Math.max(0, bodyWidth - visibleWidth(rule))))}  `, inner));
+    out.push(modalRow(`  ${color.faint('─')}${color.accentSoft(dockTitle)}${color.faint('─'.repeat(Math.max(0, bodyWidth - visibleWidth(rule))))}  `, inner));
     const dockRows = this.dock === 'detail'
       ? this.detailDock(selected.node, bodyWidth, spinner, now)
       : this.activityDock(wf.nodes, bodyWidth, spinner);
-    for (const row of dockRows) out.push(ROW(`  ${row}  `, inner));
+    for (const row of dockRows) out.push(modalRow(`  ${row}  `, inner));
 
     const hint = selected.node.sessionId
       ? `enter open node transcript · ←→↑↓ move · tab ${this.dock === 'detail' ? 'activity' : 'detail'} · esc close`
       : '←→↑↓ move · esc close (node not started)';
-    out.push(ROW(`  ${this.notice ? color.warning(terminalInlineText(this.notice)) : color.faint(hint)}`, inner));
+    out.push(modalRow(`  ${this.notice ? color.warning(terminalInlineText(this.notice)) : color.faint(hint)}`, inner));
     return framed(out, width);
   }
 }

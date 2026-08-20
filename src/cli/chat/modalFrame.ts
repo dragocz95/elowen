@@ -1,5 +1,5 @@
 import { padAnsi } from '../ui/text.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color, modalRow } from './theme.js';
 
 /** Shared "etched" modal chrome: every modal floats on the OLED-black modal surface inside a faint
  *  rounded hairline frame, with inline section rules and a dim footer hint. Content rows are built at
@@ -11,15 +11,15 @@ export const FRAME_COLS = 2;
 
 /** One framed content row: `│` + body padded to width−2 + `│`, painted on the modal surface. */
 function frameRow(body: string, width: number): string {
-  return paintRow(chatTheme().modalBg, `${color.faint('│')}${padAnsi(body, Math.max(0, width - FRAME_COLS))}${color.faint('│')}`, width);
+  return modalRow(`${color.faint('│')}${padAnsi(body, Math.max(0, width - FRAME_COLS))}${color.faint('│')}`, width);
 }
 
 function frameTop(width: number): string {
-  return paintRow(chatTheme().modalBg, color.faint(`╭${'─'.repeat(Math.max(0, width - FRAME_COLS))}╮`), width);
+  return modalRow(color.faint(`╭${'─'.repeat(Math.max(0, width - FRAME_COLS))}╮`), width);
 }
 
 function frameBottom(width: number): string {
-  return paintRow(chatTheme().modalBg, color.faint(`╰${'─'.repeat(Math.max(0, width - FRAME_COLS))}╯`), width);
+  return modalRow(color.faint(`╰${'─'.repeat(Math.max(0, width - FRAME_COLS))}╯`), width);
 }
 
 /** Wrap body rows (built at width−2) with the top and bottom frame border. */

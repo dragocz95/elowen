@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { padAnsi } from '../ui/text.js';
-import { ansi, chatTheme, color, paintRow } from './theme.js';
+import { ansi, chatTheme, color, modalRow } from './theme.js';
 import { fuzzyScore } from './fuzzy.js';
 
 export interface SuggestionItem {
@@ -11,8 +11,6 @@ export interface SuggestionItem {
 }
 
 export type SuggestionKind = 'commands' | 'files' | 'args';
-
-const bgFill = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
 /** Shared non-capturing suggestion viewport used by both slash commands and file mentions. Filtering and
  * row formatting vary by kind; selection, clipping, scroll window and chrome have one implementation. */
@@ -64,7 +62,7 @@ export class SuggestionOverlay implements Component {
     // selected row, so the menu reads as a calm dark panel that is only lightly outlined.
     const top = `${color.faint('╭')}${color.faint('─'.repeat(innerWidth))}${color.faint('╮')}`;
     const bottom = `${color.faint('╰')}${color.faint('─'.repeat(innerWidth))}${color.faint('╯')}`;
-    const row = (content: string): string => `${color.faint('│')}${bgFill(content, innerWidth)}${color.faint('│')}`;
+    const row = (content: string): string => `${color.faint('│')}${modalRow(content, innerWidth)}${color.faint('│')}`;
     const items = this.visibleItems();
     if (this.selectedIndex >= items.length) this.selectedIndex = Math.max(0, items.length - 1);
 

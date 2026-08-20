@@ -4,7 +4,7 @@ import type { Component, Container, Editor, Focusable, TUI } from '@earendil-wor
 import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
 import type { WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
-import { ansi, chatTheme, color, paintRow } from './theme.js';
+import { ansi, chatTheme, color, inputRow, paintRow } from './theme.js';
 import { highlightLine, wrapTokens } from './codeHighlight.js';
 import type { CodeToken } from './codeHighlight.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
@@ -89,7 +89,7 @@ export class UserBlock implements Component {
   invalidate(): void { /* stateless — rebuilt fresh each render */ }
   render(width: number): string[] {
     const railed = (body: string): string =>
-      `${color.accent('▌')}${paintRow(chatTheme().inputBg, body, Math.max(0, width - 1))}`;
+      `${color.accent('▌')}${inputRow(body, Math.max(0, width - 1))}`;
     const wrapped = wrapTextWithAnsi(terminalPlainText(this.text), Math.max(1, width - 3));
     const rows = wrapped.map((l) => railed(` ${l}`));
     return [railed(''), ...rows, railed('')];
@@ -497,7 +497,7 @@ export class ApprovalDock implements Component, Focusable {
     const innerWidth = Math.max(1, w - 2);
     const theme = chatTheme();
     const border = color.warning;
-    const fill = (text: string): string => paintRow(theme.inputBg, text, innerWidth);
+    const fill = (text: string): string => inputRow(text, innerWidth);
     const row = (content: string): string => `${border('│')}${fill(content)}${border('│')}`;
     const rows = this.options().map((op, i) => {
       const key = `${i + 1}.`;

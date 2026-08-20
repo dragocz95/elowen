@@ -4,7 +4,7 @@ import type { Component, Focusable, TUI, Container, Editor } from '@earendil-wor
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
 import { ChatEditor } from './picker.js';
-import { ansi, chatTheme, color, paintRow } from './theme.js';
+import { ansi, chatTheme, color, inputRow } from './theme.js';
 import { padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 const OTHER = '\u0000other';
@@ -17,7 +17,6 @@ const MIN_PREVIEW_WIDTH = 20;
 const SPLIT_GUTTER = 3;   // ' │ ' — the divider between the columns
 const MAX_PREVIEW_LINES = 40;
 
-const fillInputBg = (text: string, width: number): string => paintRow(chatTheme().inputBg, text, width);
 const open = (code: string, text: string): string => ansi.open(code, text);
 const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
 const inlineText = terminalInlineText;
@@ -147,7 +146,7 @@ export class AskChoiceDock implements Component, Focusable {
     const item = this.rows()[optionIndex];
     if (optionIndex === this.selectedIndex) return color.selected(padAnsi(line.text, width));
     const picked = item ? this.selected.has(item.value) : false;
-    return fillInputBg(open(line.muted ? theme.muted : (picked ? theme.accentSoft : theme.text), line.text), width);
+    return inputRow(open(line.muted ? theme.muted : (picked ? theme.accentSoft : theme.text), line.text), width);
   }
 
   /** The focused option's preview, sanitized and clipped to `width`. Empty when the focused row has none
@@ -186,7 +185,7 @@ export class AskChoiceDock implements Component, Focusable {
     const border = color.accent;
     const top = `${border('╭')}${color.faint('─'.repeat(innerWidth))}${border('╮')}`;
     const bottom = `${border('╰')}${color.faint('─'.repeat(innerWidth))}${border('╯')}`;
-    const row = (content: string): string => `${border('│')}${fillInputBg(content, innerWidth)}${border('│')}`;
+    const row = (content: string): string => `${border('│')}${inputRow(content, innerWidth)}${border('│')}`;
     const plainSelected = [...this.selected];
     const selectedText = plainSelected.length
       ? plainSelected.map((item) => `✓ ${inlineText(item)}`).join('  ')
@@ -244,7 +243,7 @@ export class AskChoiceDock implements Component, Focusable {
         const height = Math.max(listLines.length, preview.length);
         // Filled with the dock's own background so the row reads as one continuous strip, not two panes
         // floating on the terminal's default colour.
-        const divider = fillInputBg(open(theme.faint, ' │ '), SPLIT_GUTTER);
+        const divider = inputRow(open(theme.faint, ' │ '), SPLIT_GUTTER);
         const splitRows: string[] = [];
         for (let i = 0; i < height; i += 1) {
           // Either column can run out first: pad the short one so both keep their exact width and the
@@ -252,8 +251,8 @@ export class AskChoiceDock implements Component, Focusable {
           const entry = listLines[i];
           const left = entry
             ? this.choiceCell(entry.line, entry.option, split.list)
-            : fillInputBg('', split.list);
-          const right = fillInputBg(open(theme.muted, preview[i] ?? ''), split.preview);
+            : inputRow('', split.list);
+          const right = inputRow(open(theme.muted, preview[i] ?? ''), split.preview);
           splitRows.push(`${border('│')}${left}${divider}${right}${border('│')}`);
         }
         const splitFull = frame(splitRows);
@@ -347,8 +346,8 @@ export function runAskFlow(o: AskFlowOpts): { close(): void } {
       invalidate: () => { input.invalidate?.(); },
       handleInput: (data: string) => { input.handleInput?.(data); },
       render: (width: number) => [
-        fillInputBg(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width),
-        fillInputBg(`  ${color.faint('type your own answer · enter send · esc back')}`, width),
+        inputRow(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width),
+        inputRow(`  ${color.faint('type your own answer · enter send · esc back')}`, width),
         ...input.render(width),
       ],
     }, input);

@@ -6,7 +6,7 @@ import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText
 import { toolGlyph } from '../../shared/toolGlyph.js';
 import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts, workflowTitle } from './components.js';
 import { ensureLang, langForPath } from './codeHighlight.js';
-import { chatTheme, color, paintRow } from './theme.js';
+import { color, modalRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
 import { activeKeymap } from './keys.js';
 import { composingLabel, type ComposeLocale } from './composeLabels.js';
@@ -63,8 +63,6 @@ export function toolRowSpec(name: string, detail?: string): { glyph: string; tit
   // a result block — leads with the shared ← connector like every other shown-output tool.
   return { glyph: toolGlyph(safeName), title };
 }
-
-const blockFill = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
 /** A sub-agent finish marker's detail is small JSON (see recordSubagentFinishMarker). Parse defensively:
  *  a malformed row falls back to the raw string rather than throwing on a render path. */
@@ -373,7 +371,7 @@ export class TurnRenderer {
     const rule = Math.max(0, inner - visibleWidth(title));
     const row = (content: string): string => {
       const clipped = truncateToWidth(content, inner, '…');
-      return `  ${border('│')}${blockFill(padAnsi(clipped, inner), inner)}${border('│')}`;
+      return `  ${border('│')}${modalRow(padAnsi(clipped, inner), inner)}${border('│')}`;
     };
     const body = new Markdown(markdown.trim(), 0, 0, this.mdTheme).render(inner);
     return [
