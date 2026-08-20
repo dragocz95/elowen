@@ -279,7 +279,7 @@ function ToolEntry({ sessionId, requestId, tool }: { sessionId: string | null; r
     <details className="mb-2 rounded-md border border-border bg-surface" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer list-none p-3">
         <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{payload.data ? toolName(payload.data.payload) : segmentLabel(tool)}</strong>{badge ? <Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge> : null}</div>
-        {tool.preview ? <div className="mt-1 line-clamp-2 text-[11px] text-text-muted">{tool.preview}</div> : null}
+        {tool.preview && tool.preview !== segmentLabel(tool) ? <div className="mt-1 line-clamp-2 text-[11px] text-text-muted">{tool.preview}</div> : null}
       </summary>
       {open ? <div className="border-t border-border">{payload.isLoading ? <LoadingState /> : payload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => payload.refetch()} /> : <pre className="max-h-80 overflow-auto p-3 text-[11px] text-text-muted">{pretty(toolSchema(payload.data?.payload))}</pre>}</div> : null}
     </details>

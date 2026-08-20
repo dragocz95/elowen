@@ -77,6 +77,22 @@ describe('ProviderRequestStore', () => {
     expect((requests.reconstruct(second.requestId) as { tools: unknown[] }).tools).toEqual([dynamic]);
   });
 
+  it('previews the visible answer of a message rather than its reasoning block or raw JSON', () => {
+    const { brain, requests } = fixture();
+    const attempt = start(brain, 's1', {
+      ...body(),
+      messages: [
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'Weighing two options.' }, { type: 'text', text: 'Stálo to 4,12 USD.' }] },
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'Reasoning only, no answer yet.' }] },
+      ],
+    });
+    const segments = requests.debugRequest('s1', attempt.requestId)!.segments.filter((s) => s.section === 'input');
+
+    expect(segments[0]).toMatchObject({ role: 'assistant', preview: 'Stálo to 4,12 USD.' });
+    // A reasoning-only message still previews its text instead of serializing the block.
+    expect(segments[1]).toMatchObject({ role: 'assistant', preview: 'Reasoning only, no answer yet.' });
+  });
+
   it('fails loudly rather than opening overlapping attempts or accepting an orphan response', () => {
     const { brain, requests } = fixture();
     const first = start(brain);

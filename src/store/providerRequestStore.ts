@@ -162,15 +162,31 @@ function displayRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Whether a content block is model reasoning. The viewer keeps reasoning collapsed, so it must not become
+ *  the preview of a message that also carries a visible answer — but it is still readable text, so a
+ *  message consisting of nothing else falls back to it rather than to raw JSON. */
+function isReasoningBlock(value: unknown): boolean {
+  const record = displayRecord(value);
+  if (!record) return false;
+  return typeof record.thinking === 'string' || /reason|thinking/i.test(String(record.type ?? ''));
+}
+
 function displayText(value: unknown, depth = 0): string {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return '';
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (depth > 3) return '';
-  if (Array.isArray(value)) return value.map((item) => displayText(item, depth + 1)).filter(Boolean).join(' ');
+  if (Array.isArray(value)) {
+    const rendered = value
+      .map((item) => [displayText(item, depth + 1), isReasoningBlock(item)] as const)
+      .filter(([text]) => text);
+    const visible = rendered.filter(([, reasoning]) => !reasoning);
+    return (visible.length ? visible : rendered).map(([text]) => text).join(' ');
+  }
   const record = displayRecord(value);
   if (!record) return '';
-  for (const key of ['text', 'output_text', 'input_text', 'description']) {
+  // `thinking` is Anthropic's reasoning field; without it the block serializes to JSON in the preview.
+  for (const key of ['text', 'output_text', 'input_text', 'thinking', 'description']) {
     if (typeof record[key] === 'string') return record[key] as string;
   }
   if (record.content !== undefined) {
