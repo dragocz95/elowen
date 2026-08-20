@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, Plus, X, Pencil, Gauge, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, AlertTriangle } from 'lucide-react';
+import { SlidersHorizontal, Plus, X, Pencil, Gauge, Lock, Trash2, RefreshCw, RotateCcw, Sparkles, KeyRound, Search, Server, CalendarClock, ScrollText, BellRing, MessageSquareText } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -12,7 +12,7 @@ import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
-import { useAgentsPlugin, useBrainDebugSessions, useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
+import { useAgentsPlugin, useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
 import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { ConversationDiagnosticsModal } from '../../modules/settings/ConversationDiagnosticsModal';
@@ -117,7 +117,6 @@ export default function SettingsPage() {
   // until someone actually asks to read the logs.
   const [logsOpen, setLogsOpen] = useState(false);
   const [conversationDiagnosticsOpen, setConversationDiagnosticsOpen] = useState(false);
-  const debugSummary = useBrainDebugSessions({}, me.data?.user?.is_admin === true);
   // Which service the "restart?" confirm dialog is asking about (null = closed).
   const [restartTarget, setRestartTarget] = useState<'daemon' | 'web' | null>(null);
 
@@ -702,34 +701,13 @@ export default function SettingsPage() {
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
 
         <SettingsPanel id="data" active={category} visited={visitedCategories}>
+          {/* Header only, like the log viewer below it: the capture switch and the sensitivity notice
+              belong to the viewer itself, where they have context, not to a settings row nobody reads. */}
           <SettingsGroup
             title={t.settings.conversationDiagnostics.title}
-            description={t.settings.conversationDiagnostics.entryDescription}
             icon={MessageSquareText}
             actions={<Button icon={MessageSquareText} onClick={() => setConversationDiagnosticsOpen(true)}>{t.settings.conversationDiagnostics.open}</Button>}
-          >
-            <SettingsRow
-              label={t.settings.conversationDiagnostics.captureLabel}
-              description={t.settings.conversationDiagnostics.captureHint}
-            >
-              <Toggle
-                checked={config.data?.runtime?.providerRequestCaptureEnabled !== false}
-                onChange={(providerRequestCaptureEnabled) => update.mutate({ runtime: { providerRequestCaptureEnabled } })}
-                label={t.settings.conversationDiagnostics.captureLabel}
-              />
-            </SettingsRow>
-            <SettingsState>
-              <div className="flex items-start gap-2 text-xs text-text-muted">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-                <span>{t.settings.conversationDiagnostics.sensitiveWarning}</span>
-              </div>
-              {debugSummary.data?.pages[0]?.captureStartedAt != null ? (
-                <div className="mt-2 font-mono text-[11px] text-text-muted">
-                  {t.settings.conversationDiagnostics.captureSince.replace('{date}', new Date(debugSummary.data.pages[0].captureStartedAt).toLocaleString(locale))}
-                </div>
-              ) : null}
-            </SettingsState>
-          </SettingsGroup>
+          />
           {/* Header only. The directory and the per-file breakdown are one click away in the viewer, so
               repeating them here bought a row between two sections and nothing else. */}
           <SettingsGroup
@@ -759,6 +737,7 @@ export default function SettingsPage() {
       {conversationDiagnosticsOpen ? (
         <ConversationDiagnosticsModal
           captureEnabled={config.data?.runtime?.providerRequestCaptureEnabled !== false}
+          onEnableCapture={() => update.mutate({ runtime: { providerRequestCaptureEnabled: true } })}
           onClose={() => setConversationDiagnosticsOpen(false)}
         />
       ) : null}

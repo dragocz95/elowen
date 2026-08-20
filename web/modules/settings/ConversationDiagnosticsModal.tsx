@@ -69,6 +69,8 @@ function pretty(value: unknown): string {
 }
 
 function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  const { t } = useTranslation();
+  const d = t.settings.conversationDiagnostics;
   if (value === null || value === undefined) return <span className="text-text-muted">—</span>;
   if (typeof value === 'string') return <div className="whitespace-pre-wrap text-sm leading-6 text-text">{value}</div>;
   if (typeof value === 'number' || typeof value === 'boolean') return <span className="font-mono text-sm text-text">{String(value)}</span>;
@@ -80,12 +82,14 @@ function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number })
   const role = typeof item.role === 'string' ? item.role : '';
   const fn = asRecord(item.function);
   const name = String(item.name ?? fn?.name ?? (type || 'Item'));
-  const text = item.text ?? item.output_text ?? item.input_text;
+  // `thinking` is Anthropic's field name for a reasoning block; without it the block falls through to the
+  // generic key/value table and reads like raw JSON, which is exactly what the Pretty view exists to avoid.
+  const text = item.text ?? item.output_text ?? item.input_text ?? item.thinking;
   if (typeof text === 'string') {
-    const reasoning = /reason|thinking/i.test(type);
+    const reasoning = /reason|thinking/i.test(type) || typeof item.thinking === 'string';
     return reasoning ? (
       <details className="rounded-md border border-border bg-elevated/30">
-        <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-text-muted">Reasoning</summary>
+        <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-text-muted">{d.reasoning}</summary>
         <div className="border-t border-border p-3"><PrettyPayload value={text} depth={depth + 1} /></div>
       </details>
     ) : <PrettyPayload value={text} depth={depth + 1} />;
@@ -102,7 +106,7 @@ function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number })
     const args = item.input ?? item.arguments ?? fn?.arguments;
     return (
       <article className="rounded-md border border-accent/30 bg-accent/5 p-3">
-        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong><Badge tone="accent">Tool call</Badge></div>
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong><Badge tone="accent">{d.toolCall}</Badge></div>
         {args === undefined ? null : <pre className="max-h-80 overflow-auto rounded bg-bg/60 p-3 text-xs text-text-muted">{pretty(args)}</pre>}
       </article>
     );
@@ -110,13 +114,13 @@ function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number })
   if (/tool_result|function_call_output|tool_search_tool_result/i.test(type) || item.output !== undefined) {
     return (
       <article className="rounded-md border border-success/30 bg-success/5 p-3">
-        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-success" /><strong className="text-sm text-text">{name}</strong><Badge tone="success">Tool result</Badge></div>
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-success" /><strong className="text-sm text-text">{name}</strong><Badge tone="success">{d.toolResult}</Badge></div>
         <PrettyPayload value={item.content ?? item.output} depth={depth + 1} />
       </article>
     );
   }
   if (/image|audio|video|file/i.test(type)) {
-    return <div className="flex items-center gap-2 rounded-md border border-border bg-elevated/30 p-3"><Badge>{type}</Badge><span className="text-xs text-text-muted">Binary or media content</span></div>;
+    return <div className="flex items-center gap-2 rounded-md border border-border bg-elevated/30 p-3"><Badge>{type}</Badge><span className="text-xs text-text-muted">{d.mediaContent}</span></div>;
   }
   if (item.content !== undefined) return <PrettyPayload value={item.content} depth={depth + 1} />;
   if (item.input_schema !== undefined || fn?.parameters !== undefined || item.parameters !== undefined) {
@@ -193,7 +197,7 @@ function RequestGraph({ request, segments, cachedEstimateLabel }: { request: Bra
   return (
     <div className="overflow-x-auto" aria-label="Prompt token segments">
       <div className="min-w-[36rem]">
-        <div className="relative flex h-12 overflow-hidden rounded-md border border-border bg-bg">
+        <div className="relative flex h-8 overflow-hidden rounded-md border border-border bg-bg sm:h-12">
           {graph.map((segment) => {
             const role = segmentRole(segment);
             const width = prompt > 0 ? Math.max(2, segment.estimatedTokens / prompt * 100) : 100 / Math.max(1, graph.length);
@@ -275,7 +279,7 @@ function ToolEntry({ sessionId, requestId, tool }: { sessionId: string | null; r
     <details className="mb-2 rounded-md border border-border bg-surface" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer list-none p-3">
         <div className="flex items-center gap-2"><Wrench size={13} className="text-accent" /><strong className="min-w-0 flex-1 truncate text-xs text-text">{payload.data ? toolName(payload.data.payload) : segmentLabel(tool)}</strong>{badge ? <Badge tone={badge === 'server' ? 'accent' : badge === 'deferred' ? 'warning' : 'muted'}>{d[badge]}</Badge> : null}</div>
-        <div className="mt-2 flex gap-2 font-mono text-[10px] text-text-muted"><span>{tool.byteLength} B</span><span title={tool.digest}>{tool.digest.slice(0, 10)}</span></div>
+        {tool.preview ? <div className="mt-1 line-clamp-2 text-[11px] text-text-muted">{tool.preview}</div> : null}
       </summary>
       {open ? <div className="border-t border-border">{payload.isLoading ? <LoadingState /> : payload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => payload.refetch()} /> : <pre className="max-h-80 overflow-auto p-3 text-[11px] text-text-muted">{pretty(toolSchema(payload.data?.payload))}</pre>}</div> : null}
     </details>
@@ -296,7 +300,7 @@ function ToolsPanel({ sessionId, requestId, tools, query, setQuery }: { sessionI
   );
 }
 
-export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { captureEnabled: boolean; onClose: () => void }) {
+export function ConversationDiagnosticsModal({ captureEnabled, onEnableCapture, onClose }: { captureEnabled: boolean; onEnableCapture: () => void; onClose: () => void }) {
   const { t, locale } = useTranslation();
   const d = t.settings.conversationDiagnostics;
   const mobile = useMobile();
@@ -365,7 +369,12 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
       onClose={onClose}
       headerActions={<div className="flex md:hidden"><button type="button" aria-label={d.sessions} className="p-2 text-text-muted" onClick={() => setMobilePanel('sessions')}><Menu size={18} /></button><button type="button" aria-label={d.tools} className="p-2 text-text-muted" onClick={() => setMobilePanel('tools')}><PanelRightOpen size={18} /></button></div>}
     >
-      {!captureEnabled ? <div className="flex items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-warning"><AlertTriangle size={14} />{d.captureDisabled}</div> : null}
+      {!captureEnabled ? (
+        <div className="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-warning">
+          <AlertTriangle size={14} />{d.captureDisabled}
+          <Button className="ml-auto" variant="ghost" onClick={onEnableCapture}>{d.enableCapture}</Button>
+        </div>
+      ) : null}
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)_20rem]">
         <aside className="hidden min-h-0 md:block">{sessionRail}</aside>
         <main className="flex min-h-0 min-w-0 flex-col">
@@ -420,7 +429,8 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
                         </div>
                       </div>
                       <div data-testid="diagnostics-inspector" className={`${mobileContent === 'messages' ? 'hidden xl:flex' : 'flex'} min-h-0 flex-col rounded-lg border border-border`}>
-                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex items-center gap-1"><div className="flex rounded-md border border-border bg-bg p-0.5" role="tablist" aria-label={d.displayMode}><button type="button" role="tab" aria-selected={!inspectorRaw} onClick={() => setInspectorRaw(false)} className={`rounded px-2.5 py-1 text-xs font-semibold ${!inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.pretty}</button><button type="button" role="tab" aria-selected={inspectorRaw} onClick={() => setInspectorRaw(true)} className={`rounded px-2.5 py-1 text-xs font-semibold ${inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.json}</button></div>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
+                        {/* The label is the mobile tab's job; repeating it inside the panel just eats a row. */}
+                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="hidden text-accent xl:block" /><strong className="hidden text-xs text-text xl:inline">{d.inspector}</strong><div className="ml-auto flex items-center gap-1"><div className="flex rounded-md border border-border bg-bg p-0.5" role="tablist" aria-label={d.displayMode}><button type="button" role="tab" aria-selected={!inspectorRaw} onClick={() => setInspectorRaw(false)} className={`rounded px-2.5 py-1 text-xs font-semibold ${!inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.pretty}</button><button type="button" role="tab" aria-selected={inspectorRaw} onClick={() => setInspectorRaw(true)} className={`rounded px-2.5 py-1 text-xs font-semibold ${inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.json}</button></div>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
                         <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? selectedPayload.isLoading ? <LoadingState /> : selectedPayload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => selectedPayload.refetch()} /> : inspectorRaw ? <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{pretty(selectedPayload.data?.payload)}</pre> : <PrettyPayload value={selectedPayload.data?.payload} /> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
                       </div>
                     </section>

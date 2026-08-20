@@ -31,4 +31,9 @@ export function registerCoreRoutes(app: Hono): void {
   app.get('/tasks/ready', (c) => c.json(getResponse('tasks/ready', tasks)));
   app.get('/missions', (c) => c.json(getResponse('missions', missions)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
+  // The shell reads this before it can render its nav at all, and `applyNavLayout` indexes both arrays
+  // unguarded — the catch-all's `[]` crashes the whole layout, so the empty layout is modeled explicitly.
+  app.get('/auth/me/nav-settings', (c) => c.json({ order: [], hidden: [] }));
+  // Settings → Data sums `files` unguarded, so the catch-all's `[]` would crash the section.
+  app.get('/system/logs', (c) => c.json({ dir: '/data/logs', files: [{ name: 'elowen-2026-08-20.log', bytes: 402_311, modified: '2026-08-20 05:00:00' }] }));
 }

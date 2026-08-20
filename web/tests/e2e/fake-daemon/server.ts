@@ -12,6 +12,7 @@ import { needsSetup } from './setup.ts';
 import { registerAuthRoutes } from './handlers/auth.ts';
 import { registerCoreRoutes } from './handlers/core.ts';
 import { registerBrainRoutes } from './handlers/brain.ts';
+import { registerDebugRoutes } from './handlers/debug.ts';
 import { registerControlRoutes } from './handlers/control.ts';
 import { registerPluginRoutes } from './handlers/plugins.ts';
 
@@ -37,6 +38,7 @@ app.use('*', async (c, next) => {
 registerAuthRoutes(app);
 registerCoreRoutes(app);
 registerBrainRoutes(app);
+registerDebugRoutes(app);
 registerControlRoutes(app);
 registerPluginRoutes(app);
 

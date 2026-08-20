@@ -77,10 +77,11 @@ beforeAll(() => server.listen({ onUnhandledRequest }));
 afterEach(() => { server.resetHandlers(); rawReads = 0; segmentReads = 0; lastSessionQuery = ''; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 
-function renderModal(captureEnabled = true) {
+function renderModal(captureEnabled = true, onEnableCapture = vi.fn()) {
   setViewport(false);
   const { wrapper: Wrapper } = createWrapper();
-  return render(<ConversationDiagnosticsModal captureEnabled={captureEnabled} onClose={vi.fn()} />, { wrapper: Wrapper });
+  render(<ConversationDiagnosticsModal captureEnabled={captureEnabled} onEnableCapture={onEnableCapture} onClose={vi.fn()} />, { wrapper: Wrapper });
+  return { onEnableCapture };
 }
 
 describe('ConversationDiagnosticsModal', () => {
@@ -128,6 +129,27 @@ describe('ConversationDiagnosticsModal', () => {
     expect(within(inspector).getByText(/"content": "First prompt"/)).toBeInTheDocument();
   });
 
+  it('renders an Anthropic thinking block as a collapsed reasoning card, not a raw key/value table', async () => {
+    server.use(http.get('*/api/brain/debug/sessions/session-1/requests/:requestId/segments/:index', () => HttpResponse.json({
+      ...manifest('request-1').segments[1],
+      payload: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Weighing the two options before answering.' },
+          { type: 'text', text: 'Krátká odpověď.' },
+        ],
+      },
+    })));
+    renderModal();
+    fireEvent.click(await screen.findByText('First prompt'));
+
+    const inspector = screen.getByTestId('diagnostics-inspector');
+    expect(await within(inspector).findByText('Reasoning')).toBeInTheDocument();
+    expect(within(inspector).getByText('Krátká odpověď.')).toBeInTheDocument();
+    // The thinking text is behind the disclosure, and the field name never leaks as a table row label.
+    expect(within(inspector).queryByText('thinking')).not.toBeInTheDocument();
+  });
+
   it('sends server-side filters and renders capture-disabled and legacy states', async () => {
     server.use(
       http.get('*/api/brain/debug/sessions', ({ request }) => {
@@ -137,8 +159,10 @@ describe('ConversationDiagnosticsModal', () => {
       http.get('*/api/brain/debug/sessions/session-1/requests', () => HttpResponse.json({ items: [], nextCursor: null })),
       http.get('*/api/brain/debug/sessions/session-1/legacy-transcript', () => HttpResponse.json({ items: [{ cursor: 1, id: 'm1', role: 'user', content: 'Legacy hello', createdAt: '2026-08-18T10:00:00.000Z', byteLength: 12 }], nextCursor: null, loadedBytes: 12, exact: false })),
     );
-    renderModal(false);
+    const { onEnableCapture } = renderModal(false);
     expect(await screen.findByText(/Detailed request capture is disabled/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Enable capture' }));
+    expect(onEnableCapture).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('Legacy hello')).toBeInTheDocument();
     expect(screen.getByText(/best-effort/)).toBeInTheDocument();
 
@@ -167,7 +191,7 @@ describe('ConversationDiagnosticsModal', () => {
   it('opens mobile session and tools drawers as nested accessible dialogs', async () => {
     setViewport(true);
     const { wrapper: Wrapper } = createWrapper();
-    render(<ConversationDiagnosticsModal captureEnabled onClose={vi.fn()} />, { wrapper: Wrapper });
+    render(<ConversationDiagnosticsModal captureEnabled onEnableCapture={vi.fn()} onClose={vi.fn()} />, { wrapper: Wrapper });
     await screen.findByLabelText('Prompt token segments');
     expect(screen.getByRole('tab', { name: 'Messages' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByText('First prompt'));

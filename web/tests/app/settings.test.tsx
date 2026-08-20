@@ -57,18 +57,16 @@ describe('SettingsPage', () => {
     expect(screen.getByText('System diagnostics').closest('[data-settings-group]')).toHaveClass('settings-diagnostics');
   });
 
-  it('shows conversation diagnostics and saves the detailed capture toggle in Data', async () => {
+  it('offers conversation diagnostics as a bare entry, with no capture controls or notices in Data', async () => {
     localStorage.setItem('elowen.settings.category', 'data');
-    putBody = null;
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
 
     expect(await screen.findByText('Conversation diagnostics')).toBeInTheDocument();
-    expect(await screen.findByText(/Exact capture is available since/)).toBeInTheDocument();
-    const toggle = screen.getByRole('switch', { name: 'Capture detailed model requests' });
-    expect(toggle).toBeChecked();
-    fireEvent.click(toggle);
-    await waitFor(() => expect(putBody).toEqual(expect.objectContaining({ runtime: { providerRequestCaptureEnabled: false } })));
+    expect(screen.getByRole('button', { name: 'Open diagnostics' })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /capture/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sensitive prompts/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Exact capture/i)).not.toBeInTheDocument();
   });
 
   it('renders every settings section inside the same document contract', async () => {
