@@ -495,15 +495,6 @@ export const useBrainDebugRequest = (sessionId: string | null, requestId: string
     enabled: !!sessionId && !!requestId,
   });
 
-export const useBrainDebugSegments = (sessionId: string | null, requestId: string | null) =>
-  useInfiniteQuery({
-    queryKey: ['brain-debug-segments', sessionId, requestId],
-    queryFn: ({ pageParam }) => elowenClient.brainDebugSegments(sessionId as string, requestId as string, pageParam),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (page) => page.nextCursor ?? undefined,
-    enabled: !!sessionId && !!requestId,
-  });
-
 export const useBrainDebugSegment = (sessionId: string | null, requestId: string | null, index: number | null) =>
   useQuery({
     queryKey: ['brain-debug-segment', sessionId, requestId, index],

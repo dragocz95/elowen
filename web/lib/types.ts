@@ -103,8 +103,7 @@ import type {
   MemoryVitalityHistory, MemoryVitalityPoint,
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
-  BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
-  BrainDebugSurface, BrainDebugRequestStatus, BrainDebugRequestKind,
+  BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
   CommitFileChange, CommitLogEntry,
 } from '../../src/shared/wireContract.js';
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
@@ -112,8 +111,7 @@ export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, SlashCommand
 export type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
-  BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
-  BrainDebugSurface, BrainDebugRequestStatus, BrainDebugRequestKind,
+  BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
 };
 export type BrainMessage = BrainMessageView;
 /** One stored memory as served by `GET /memory` — the daemon's `MemoryRow` plus its server-computed
