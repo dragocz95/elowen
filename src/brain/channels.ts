@@ -99,6 +99,10 @@ function platformHistorySeed(history: PlatformHistory, platform: string, channel
 export interface ChannelSendOpts {
   channelId: string;
   ownerUserId: number;
+  /** This platform conversation is a DIRECT 1:1 chat with one verified account, not a shared room (see
+   *  `direct` in schema.sql). Stamped on the session row on every message, because the flag describes the
+   *  conversation rather than the moment its row was created. */
+  direct?: boolean;
   policy: Policy;
   promptAppend?: string[];
   /** Sender holds the operator's admin role: elevates the channel session to `trusted-channel`
@@ -392,6 +396,7 @@ export class ChannelSessionService {
         ch = await this.d.spawn({
           sessionId,
           ownerUserId: opts.ownerUserId,
+          direct: opts.direct === true,
           parentSessionId: opts.parentSessionId,
           delegatedAccess: delegated?.scope,
           selection: opts.model ?? {},
@@ -424,6 +429,10 @@ export class ChannelSessionService {
         if (opts.fast && !ch.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
         ch.requestProfile.fast = ch.fastAvailable && opts.fast;
       }
+      // Stamp the 1:1-vs-shared flag on EVERY platform message, not only when this turn happened to spawn
+      // the session: a conversation that was already live (or whose row predates the column) would
+      // otherwise never learn what it is, and a private DM would keep behaving like a shared room forever.
+      if (opts.direct !== undefined) this.d.store.setDirect(sessionId, opts.direct);
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
       ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,

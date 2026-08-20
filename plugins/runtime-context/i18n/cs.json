@@ -1,5 +1,5 @@
 {
-  "description": "Vkládá aktuální datum, čas, den v týdnu a časové pásmo do každého tahu, aby Elowen nikdy nehádala, jaké je „teď“. Bezpečné pro cache: jede v uživatelské zprávě, ne v systémovém promptu.",
+  "description": "Vkládá do každého tahu aktuální datum, čas, den v týdnu a časové pásmo a k tomu údaj o tom, kdo píše a zda jde o soukromý chat, nebo sdílený kanál. Elowen tak nehádá, jaké je „teď“, ani za koho jedná. Bezpečné pro cache: obojí jede v uživatelské zprávě, ne v systémovém promptu.",
   "fields": {
     "timezone": {
       "label": "Časové pásmo",

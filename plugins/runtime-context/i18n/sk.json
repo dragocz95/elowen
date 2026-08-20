@@ -1,5 +1,5 @@
 {
-  "description": "Vkladá aktuálny dátum, čas, deň v týždni a časové pásmo do každého ťahu, aby Elowen nikdy nehádala, aké je „teraz“. Bezpečné pre cache: beží v používateľskej správe, nie v systémovom prompte.",
+  "description": "Vkladá do každého ťahu aktuálny dátum, čas, deň v týždni a časové pásmo a k tomu údaj o tom, kto píše a či ide o súkromný chat, alebo zdieľaný kanál. Elowen tak nehádá, aké je „teraz“, ani za koho koná. Bezpečné pre cache: oboje beží v používateľskej správe, nie v systémovom prompte.",
   "fields": {
     "timezone": {
       "label": "Časové pásmo",

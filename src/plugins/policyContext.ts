@@ -51,6 +51,15 @@ export interface TurnIdentity {
    *  their own automation (cron). Owner-only surfaces (private long-term memory, the raw Discord API)
    *  gate on THIS, never on `admin`, so an admin-role stranger can't reach the operator's private state. */
   owner: boolean;
+  /** WHERE this turn is happening, as one value a plugin can branch on without re-deriving it from a
+   *  session id (which cannot distinguish a private DM from a shared room):
+   *    - `own`       the account's own authenticated Elowen chat (web dock / CLI)
+   *    - `direct`    a 1:1 platform chat with one verified account
+   *    - `shared`    a platform room other people can read
+   *    - `delegated` a sub-agent turn, which has no conversation of its own
+   *  A tool that creates something OWNED by a person should require `own` or `direct`; `shared` means the
+   *  sender is one of several and per-account state must not be assumed. */
+  conversation: 'own' | 'direct' | 'shared' | 'delegated';
 }
 
 /** Who this turn belongs to, as one stable string — the ACCOUNT when there is one, else the raw platform

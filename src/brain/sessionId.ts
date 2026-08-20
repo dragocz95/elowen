@@ -82,11 +82,16 @@ export function skillOwnerForSession(
   sessionId: string,
   ownerUserId: number | null | undefined,
   parentSessionId?: string,
+  /** The session is a DIRECT 1:1 platform chat (see `direct` in schema.sql). Only a shared room has the
+   *  turn-to-turn sender change the rule above guards against, so a private DM keeps its owner's skills.
+   *  A sub-agent is intentionally left out: proving its PARENT is direct needs that parent's row, which
+   *  this pure predicate does not have, and guessing here is exactly the leak described above. */
+  direct = false,
 ): number | null {
   if (isSubagentSession(sessionId)) {
     return parentSessionId && !isChannelSession(parentSessionId) ? ownerUserId ?? null : null;
   }
-  if (isChannelSession(sessionId)) return null;
+  if (isChannelSession(sessionId)) return direct ? ownerUserId ?? null : null;
   return ownerUserId ?? null;
 }
 
@@ -101,10 +106,33 @@ export function isNonUserSession(id: string): boolean {
 }
 
 /** The three-clause "this is the caller's own continuable conversation" rule — the row exists, the caller
- *  owns it, and it is a real user conversation (not a channel/task session). The single predicate the
- *  delete / rename / terminal / originSend paths share so the rule can't drift between them. */
+ *  owns it, and it is a real user conversation (not a channel/task session). Shared by delete / rename /
+ *  terminal / listing, so the rule can't drift between them.
+ *
+ *  A direct 1:1 platform chat deliberately does NOT pass: it stays out of the web conversation list and
+ *  cannot be renamed or deleted from there. Delivering INTO it is a different question — see
+ *  {@link mayDeliverToSession}. */
 export function isOwnedUserSession<T extends { user_id: number }>(row: T | undefined, userId: number, sessionId: string): row is T {
   return !!row && row.user_id === userId && !isNonUserSession(sessionId);
+}
+
+/** May a scheduled result be delivered INTO this conversation on the account's behalf?
+ *
+ *  Deliberately WIDER than {@link isOwnedUserSession}, and the difference is the point: posting a message
+ *  into a conversation somebody owns is what they just asked for, while listing/renaming/deleting it is
+ *  managing a transcript. A direct 1:1 platform chat therefore accepts delivery — that is how "remind me
+ *  here in ten minutes" reaches the DM it was promised in — yet stays invisible in the web session list.
+ *
+ *  A SHARED channel is still refused: its row is anchored on the operator, so one member's scheduled job
+ *  would otherwise report in front of everyone else in the room. */
+export function mayDeliverToSession<T extends { user_id: number; direct?: number }>(
+  row: T | undefined,
+  userId: number,
+  sessionId: string,
+): row is T {
+  if (!row || row.user_id !== userId) return false;
+  if (!isNonUserSession(sessionId)) return true;
+  return isChannelSession(sessionId) && row.direct === 1;
 }
 
 /** The deterministic tmux session name for an admin's interactive `elowen chat` terminal bound to one

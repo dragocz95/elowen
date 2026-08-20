@@ -226,6 +226,11 @@ export interface SpawnOpts {
    *  full-scope Elowen* API tools are withheld — only Policy-guarded plugin tools load. ALWAYS true for
    *  a shared channel; such a session is never owner-chat, whatever role the sender holds. */
   channel?: boolean;
+  /** The platform conversation is a DIRECT 1:1 chat with one verified account rather than a shared room
+   *  (see `direct` in schema.sql). It stays a `channel` session in every other respect — no Elowen* tools,
+   *  no owner token — but its sender's PERSONAL skills may load, because the turn-to-turn sender change
+   *  that forces the instance-wide set in a room cannot happen here. */
+  direct?: boolean;
   /** A shared channel whose sender holds the operator's admin role: resolves to `trusted-channel`
    *  (all-project Policy + full plugin toolset) instead of `foreign-channel`, but STILL without Elowen*
    *  tools or the owner API token. Only meaningful when `channel` is true. */

@@ -235,7 +235,7 @@ export class LiveSessionSpawner {
     // factory's skillsOverride below: feeding the model one set and PI another would either advertise a
     // skill `/skill:` cannot expand, or hide one it still can. A sub-agent inherits its owner's grants only
     // when skillOwnerForSession can prove an owner-chat parent; shared/unknown parents resolve to no account.
-    const skillOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId);
+    const skillOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId, opts.direct === true);
     const skillUser = skillOwnerUserId == null ? null : this.d.users.get(skillOwnerUserId);
     const skills = plugins?.skillsFor(skillOwnerUserId, skillUser) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and

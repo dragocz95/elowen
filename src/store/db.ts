@@ -199,6 +199,9 @@ function applyAdditiveMigrations(db: Db): void {
   // When this conversation was last emptied by /clear (see brain_sessions in schema.sql). NULL on every
   // existing row — nothing had been cleared before the command existed.
   addColumn(db, 'brain_sessions', 'cleared_at', 'TEXT');
+  // Direct 1:1 platform chat (see brain_sessions in schema.sql). 0 on every existing row, so nothing
+  // changes until an adapter marks a conversation — a shared room keeps behaving exactly as it does now.
+  addColumn(db, 'brain_sessions', 'direct', 'INTEGER NOT NULL DEFAULT 0');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.

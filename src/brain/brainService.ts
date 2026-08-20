@@ -23,7 +23,7 @@ import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, BrainEvent, CompactResult } from './events.js';
-import { isNonUserSession, isOwnedUserSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
+import { isNonUserSession, isOwnedUserSession, mayDeliverToSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
@@ -374,8 +374,11 @@ export class BrainService {
         // account. Refusing here would push the turn onto the channel fallback, where the transcript ends
         // up in a session owned by the operator: the exact place this person's job must not report.
         // A NAMED session still has to exist and be theirs; only the derived default may be created.
+        // `mayDeliverToSession`, not `isOwnedUserSession`: a direct 1:1 platform chat must be able to
+        // RECEIVE a scheduled result (that is how "remind me here" lands in the DM it was promised in)
+        // while staying out of the web session list. A shared channel is still refused.
         const mayCreate = sessionId === undefined && row === undefined;
-        if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
+        if (!mayCreate && !mayDeliverToSession(row, userId, target)) return null;
         await this.send({ userId, text, mode: 'build', session: target });
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);

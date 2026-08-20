@@ -187,6 +187,15 @@ export interface SessionSource {
   roleIds: string[];
   channelId: string;
   threadId?: string;
+  /** This conversation is a DIRECT 1:1 chat between the bot and this one sender (a Teams personal chat,
+   *  a Discord DM, a private Telegram chat), not a room other people can read. Only the adapter knows
+   *  which it is — both shapes end up with a `brain-ch-*` session id — so it must say so explicitly.
+   *
+   *  Setting it lets the conversation behave as its sender's own: their personal skills load, and a job
+   *  they schedule can report back into it. It therefore MUST be true only when the sender is genuinely
+   *  the sole other participant; leave it unset when unsure, since everything downstream fails closed to
+   *  the shared-room rules that apply today. */
+  direct?: boolean;
   /** Channel metadata (adapter-fetched, cached): lets the brain know WHERE it is talking. Injected
    *  into the channel session's system prompt at spawn time. */
   channelName?: string;

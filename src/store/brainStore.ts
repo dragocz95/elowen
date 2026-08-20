@@ -37,6 +37,9 @@ export interface BrainSessionRow {
   /** When /clear last emptied this conversation (see schema.sql) — the only durable evidence that a
    *  conversation with no messages has in fact been used. NULL = never cleared. */
   cleared_at: string | null;
+  /** 1 = a direct 1:1 platform chat rather than a shared room (see schema.sql). Legacy rows are 0, which
+   *  is the safe reading: everything that widens a permission must require this to be explicitly set. */
+  direct: number;
   created_at: string; updated_at: string;
 }
 export interface BrainMessageRow {
@@ -886,6 +889,16 @@ export class BrainStore {
    *  web session is never stamped, so it keeps working as "matches nowhere" for the CLI resolution. */
   setWorkDir(id: string, workDir: string): void {
     this.db.prepare('UPDATE brain_sessions SET work_dir = ? WHERE id = ?').run(workDir, id);
+  }
+
+  /** Mark (or unmark) a platform conversation as a DIRECT 1:1 chat — see `direct` in schema.sql. Written
+   *  on every inbound platform message rather than only at creation, because the flag is a property of the
+   *  CONVERSATION, not of the moment the row happened to be minted: rows created before this column
+   *  existed would otherwise stay 0 forever and a private DM would keep behaving like a shared room.
+   *  Deliberately does NOT touch `user_id` — re-pointing an existing transcript (with its usage, spills and
+   *  processes) at a different account is not something a routine message should do silently. */
+  setDirect(id: string, direct: boolean): void {
+    this.db.prepare('UPDATE brain_sessions SET direct = ? WHERE id = ?').run(direct ? 1 : 0, id);
   }
 
   /** Set a session's display title (derived from its first user message; set once). */

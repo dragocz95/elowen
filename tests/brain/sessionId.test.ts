@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, channelIdOf, isOwnedUserSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, channelIdOf, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the four id shapes', () => {
@@ -43,6 +43,39 @@ describe('brain session id conventions', () => {
     // No account behind the turn (an unlinked sender, a cron job) → the instance set.
     expect(skillOwnerForSession(defaultUserSessionId(7), null)).toBe(null);
     expect(skillOwnerForSession(defaultUserSessionId(7), undefined)).toBe(null);
+  });
+
+  // A 1:1 platform chat carries a `brain-ch-*` id like a shared room does, but only one person can ever
+  // write in it — so the reason the blanket rule exists (the sender changes from turn to turn) does not
+  // apply, and the owner's personal skills may load.
+  it('skillOwnerForSession: a DIRECT platform chat keeps its owner, a shared room still does not', () => {
+    const dm = channelSessionId('msteams-personal-1');
+    expect(skillOwnerForSession(dm, 7, undefined, true)).toBe(7);
+    expect(skillOwnerForSession(dm, 7, undefined, false)).toBe(null);
+    expect(skillOwnerForSession(dm, 7)).toBe(null); // fail-closed: unmarked reads as shared
+    // Being direct never invents an owner where the turn has no account.
+    expect(skillOwnerForSession(dm, null, undefined, true)).toBe(null);
+    // A sub-agent is deliberately NOT widened: proving its parent is direct needs that parent's row.
+    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, channelSessionId('msteams-personal-1'), true)).toBe(null);
+  });
+
+  // Delivering INTO a conversation and MANAGING it are different rights, so the two predicates differ on
+  // exactly one case: the direct chat. Keeping both assertions together is what stops them drifting back
+  // into one rule — which would either hide a DM from its own scheduled job, or expose it to the web list.
+  it('mayDeliverToSession accepts a direct chat that isOwnedUserSession still refuses', () => {
+    const dm = channelSessionId('msteams-personal-1');
+    const room = channelSessionId('discord-1');
+    const own = defaultUserSessionId(7);
+
+    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, dm)).toBe(true);
+    expect(isOwnedUserSession({ user_id: 7 }, 7, dm)).toBe(false); // …yet stays out of the web list
+
+    expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, room)).toBe(false); // shared room: never
+    expect(mayDeliverToSession({ user_id: 7 }, 7, room)).toBe(false); // fail-closed without the flag
+    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 8, dm)).toBe(false); // someone else's DM
+    expect(mayDeliverToSession(undefined, 7, dm)).toBe(false); // no row
+    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, taskSessionId('t1'))).toBe(false); // task session
+    expect(mayDeliverToSession({ user_id: 7 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
   });
 
   it('isOwnedUserSession: owner AND a real conversation AND the row exists (and narrows the row type)', () => {

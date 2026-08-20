@@ -84,6 +84,9 @@ async function dispatchPluginApi(
     ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
     admin: request.auth.admin,
     owner: request.auth.userId !== null && ownerId !== undefined && request.auth.userId === ownerId,
+    // An authenticated HTTP call acts for exactly one account, like that account's own chat — there is no
+    // room full of other senders here, so per-account state is the right default for a plugin route.
+    conversation: 'own',
   };
 
   try {

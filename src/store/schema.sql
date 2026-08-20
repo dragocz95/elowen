@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- pruneEmptyConversations delete the very row the clear had to preserve, and the next cold respawn drops
   -- the conversation's model pin.
   cleared_at TEXT,
+  -- 1 = this platform conversation is a DIRECT 1:1 chat between the bot and one verified account, not a
+  -- shared room. Both shapes carry a `brain-ch-*` id, so the id alone cannot tell them apart, and the
+  -- blanket "channel = nobody's own conversation" rule made a private DM behave like a group: personal
+  -- skills disappeared and a scheduled job could not report back into it. Only the adapter knows which it
+  -- is, so it says so per message and the flag is stamped here. Fail-closed: 0 on every legacy row and on
+  -- anything the adapter did not explicitly mark, which keeps shared rooms behaving exactly as before.
+  direct INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -40,6 +40,7 @@ export class IdentityResolver {
       elowenUsername: this.d.users.get(userId)?.username,
       admin: policy.allowedProjectIds === 'all',
       owner: this.isOwner(userId), // their own authenticated chat → operator
+      conversation: 'own',
     };
   }
 
@@ -52,6 +53,7 @@ export class IdentityResolver {
       userId: 'subagent',
       admin: scope.admin,
       owner: scope.owner && this.isOwner(ownerUserId),
+      conversation: 'delegated',
     };
   }
 
@@ -97,6 +99,9 @@ export class IdentityResolver {
       elowenUsername: account?.username || account?.name,
       admin: src.access?.admin === true || account?.admin === true,
       owner: (account?.id !== undefined && this.isOwner(account.id)) || automationOwner,
+      // A 1:1 chat counts as `direct` only for a sender we can actually name — an unlinked stranger in a
+      // private chat has no account, so per-account state must not key on them. Everything else is a room.
+      conversation: src.direct === true && account?.id !== undefined ? 'direct' : 'shared',
     };
     // linkedUserId is the Elowen account this platform sender is verified as (their Discord id claimed in
     // Account settings). Memory recall/save keys on it: an unlinked sender has no account, so no memory.

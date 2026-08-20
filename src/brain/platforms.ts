@@ -5,6 +5,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { ToolPolicy, TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
+import { channelSessionId } from './sessionId.js';
 import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
 import {
   normalizeDelegatedExecutionScope,
@@ -241,6 +242,16 @@ export class PlatformOrchestrator {
           const resolved = this.d.identity.forPlatformTurn(src, owner);
           const identity: TurnIdentity = resolved.identity;
           const linkedUserId = resolved.linkedUserId;
+          // A DIRECT 1:1 chat is its sender's own conversation, not a room the operator hosts. It counts
+          // only when the adapter says so AND the sender is verified as an account — an unlinked stranger
+          // in a private chat still has no account to anchor anything on.
+          const directChat = src.platform !== 'subagent' && src.direct === true && linkedUserId != null;
+          // Anchor a BRAND-NEW direct conversation on its own sender. An existing row keeps its owner on
+          // purpose: re-pointing a transcript (with its usage, spills and running processes) at another
+          // account is a migration, not something an incoming message may do behind the user's back.
+          if (directChat && this.d.channels.sessionOwnerUserId(channelSessionId(keyOf(src))) === undefined) {
+            sessionOwner = linkedUserId;
+          }
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
           const turnDenied = src.access.denyTools ?? [];
@@ -273,6 +284,9 @@ export class PlatformOrchestrator {
           return this.d.channels.send({
             channelId: keyOf(src),
             ownerUserId: sessionOwner,
+            // Stamped on the session row so the skill resolver and the scheduled-delivery guard can tell a
+            // private DM from a shared room — the `brain-ch-*` id alone cannot.
+            direct: directChat,
             policy,
             promptAppend: promptAppend.length ? promptAppend : undefined,
             trusted: src.access.admin, // admin role → trusted-channel, never owner-chat
