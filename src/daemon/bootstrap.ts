@@ -1,4 +1,4 @@
-import { eventProjectId, type EventProjectDeps } from '../api/eventProject.js';
+import { installEventRecording } from './eventRecording.js';
 import { createServer } from '../api/server.js';
 import { ELOWEN_VERSION } from '../api/version.js';
 import { createTicketStore } from '../terminal/ticketStore.js';
@@ -171,22 +171,7 @@ export async function buildApp(opts: BuildOpts) {
   // …and the plugin host's late binding, so ctx.host.push() resolves (the agents plugin's dispatcher).
   setPluginHostPush(pushSender);
 
-  // Persist every bus event into the activity log, stamping its owning project (resolved for ALL event
-  // types, not just task/review) so the timeline can be scoped per-tenant. The event store is
-  // core-owned; it keeps recording plugin-published events through the shared bus unchanged.
-  // `signal`/`plan` tenancy (session→task via the agent:<name> label, plan job → its runtime record)
-  // deliberately has NO core lookup here: the agents plugin's registered event resolver is the sole
-  // source — with the plugin disabled those events resolve null and the rows record admin-only,
-  // matching the rest of the disabled-plugin degradation.
-  // Live registry read (not a snapshot): a plugin reload swaps the resolver set with it. Shared by
-  // the recorder below AND the server deps (eventProjectResolvers), so the SSE per-subscriber gate
-  // and the persisted activity rows scope events through the exact same resolvers.
-  const pluginEventResolvers = () => (loadedPlugins()?.eventProjectResolvers ?? []).map((r) => r.fn);
-  const eventDeps: EventProjectDeps = {
-    taskProject: (id) => taskRefs.get(id)?.project_id ?? null,
-    pluginResolvers: pluginEventResolvers,
-  };
-  bus.subscribe((e) => { try { events.record(e, eventProjectId(e, eventDeps)); } catch (err) { log.error('event record failed', err); } });
+  const pluginEventResolvers = installEventRecording({ taskRefs, loadedPlugins, bus, events, log });
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
   // auth (in authMiddleware) re-engages automatically once the first admin is created.
   if (users.count() === 0) {
