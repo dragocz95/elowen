@@ -572,6 +572,29 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       expect(delivered).toEqual(['the report']);
     });
 
+    it('routes an encoded destination only to its owning platform and unwraps the raw id', async () => {
+      const seen: { platform: string; channelId?: string }[] = [];
+      const orch = await orchestratorWith([
+        { name: 'discord', notify: async (_text, channelId) => { seen.push({ platform: 'discord', channelId }); } },
+        { name: 'msteams', notify: async (_text, channelId) => { seen.push({ platform: 'msteams', channelId }); } },
+      ]);
+      await orch.notify('the report', 'destination:msteams:a%3Aconversation');
+      expect(seen).toEqual([{ platform: 'msteams', channelId: 'a:conversation' }]);
+    });
+
+    it('rejects a targeted destination while its platform is unavailable so durable delivery retries', async () => {
+      const orch = await orchestratorWith([{ name: 'msteams' }]);
+      await expect(orch.notify('the report', 'destination:msteams:a%3Aconversation')).rejects.toThrow(/no notification sink/);
+    });
+
+    it('never broadcasts a stale or malformed routed destination through another platform', async () => {
+      const seen: string[] = [];
+      const orch = await orchestratorWith([{ name: 'msteams', notify: async () => { seen.push('msteams'); } }]);
+      await expect(orch.notify('the report', 'destination:discord:100')).rejects.toThrow(/discord.*unavailable/);
+      await expect(orch.notify('the report', 'destination:msteams:%E0%A4%A')).rejects.toThrow(/invalid notification destination/);
+      expect(seen).toEqual([]);
+    });
+
     it('resolves when no platform has a notification channel at all', async () => {
       const orch = await orchestratorWith([{ name: 'cron' }]);
       await expect(orch.notify('the report')).resolves.toBeUndefined();

@@ -464,10 +464,9 @@ export const usePluginSkills = () =>
 export const usePluginSubagents = () =>
   useQuery({ queryKey: ['plugin-subagents'], queryFn: elowenClient.pluginSubagents });
 
-/** Text channels + active threads of the configured Discord guild (the cron destination picker).
- *  The daemon caches upstream for 60 s; match that so the pills don't refetch per keystroke. */
-export const useDiscordChannels = () =>
-  useQuery({ queryKey: ['discord-channels'], queryFn: elowenClient.discordChannels, staleTime: 60_000 });
+/** Admin-selectable proactive-notification targets across every enabled platform plugin. */
+export const useNotificationDestinations = () =>
+  useQuery({ queryKey: ['notification-destinations'], queryFn: elowenClient.notificationDestinations, staleTime: 60_000 });
 
 /** Admin request diagnostics. List queries carry metadata only; segment and raw payloads are separate lazy reads. */
 export const useBrainDebugSessions = (filters: Record<string, string | number | undefined>, enabled = true) =>

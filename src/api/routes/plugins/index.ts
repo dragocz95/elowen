@@ -81,6 +81,15 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   // The plugin config/enable routes must be reachable during first-run onboarding, so they use the
   // setup-tolerant admin gate (the shared `notAdminUnlessSetup`, previously a private copy of it here).
   const { d, notAdminUnlessSetup: notAdmin } = ctx;
+
+  /** One admin-only catalog across every enabled platform plugin. The target `value` is opaque and already
+   *  carries its platform routing, so consumers never concatenate or inspect delivery ids themselves. */
+  app.get('/plugins/destinations', async c => {
+    if (ctx.notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const registry = await d.plugins?.get().catch(() => undefined);
+    return c.json(await registry?.notificationDestinations() ?? []);
+  });
+
   const listing = () => {
     const cfg = d.config.get().plugins;
     const enabled = new Set(cfg.enabled);

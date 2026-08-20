@@ -1,0 +1,62 @@
+{
+  "name": "web",
+  "version": "0.3.0",
+  "apiVersion": "1",
+  "description": "Web research: WebSearch (Tavily or Serper) and WebFetch (fetch a page as readable text).",
+  "entry": "index.mjs",
+  "provides": {
+    "tools": [
+      "WebSearch",
+      "WebFetch"
+    ]
+  },
+  "configSchema": [
+    {
+      "key": "provider",
+      "label": "Search provider",
+      "type": "enum",
+      "default": "auto",
+      "options": [
+        {
+          "value": "auto",
+          "label": "Automatic"
+        },
+        {
+          "value": "tavily",
+          "label": "Tavily"
+        },
+        {
+          "value": "serper",
+          "label": "Serper"
+        }
+      ],
+      "hint": "Which backend answers WebSearch. Automatic uses Tavily when its key is set, otherwise Serper."
+    },
+    {
+      "key": "tavilyApiKey",
+      "label": "Tavily API key",
+      "type": "secret",
+      "hint": "app.tavily.com — powers WebSearch. Without a key here or in Serper only WebFetch works."
+    },
+    {
+      "key": "serperApiKey",
+      "label": "Serper API key",
+      "type": "secret",
+      "hint": "serper.dev — Google results for WebSearch. Without a key here or in Tavily only WebFetch works."
+    },
+    {
+      "key": "maxResults",
+      "label": "Search results",
+      "type": "number",
+      "hint": "How many results WebSearch returns (default 5)."
+    }
+  ],
+  "icons": {
+    "WebSearch": "🔍",
+    "WebFetch": "🌐"
+  },
+  "planSafe": [
+    "WebSearch",
+    "WebFetch"
+  ]
+}

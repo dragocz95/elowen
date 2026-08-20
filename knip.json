@@ -58,11 +58,8 @@
   "ignoreDependencies": [
     "@types/react",
     "lucide-react",
-    "jose",
-    "botframework-connector",
     "grammy",
     "baileys",
-    "qrcode",
-    "elowen-plugin-shared"
+    "qrcode"
   ]
 }

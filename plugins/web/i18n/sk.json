@@ -1,0 +1,26 @@
+{
+  "description": "Webový výskum: WebSearch (Tavily alebo Serper) a WebFetch (načítanie stránky ako čitateľný text).",
+  "fields": {
+    "provider": {
+      "label": "Vyhľadávač",
+      "hint": "Ktorý backend odpovedá na WebSearch. Automaticky použije Tavily, ak je nastavený jeho kľúč, inak Serper.",
+      "options": {
+        "auto": "Automaticky",
+        "tavily": "Tavily",
+        "serper": "Serper"
+      }
+    },
+    "tavilyApiKey": {
+      "label": "Tavily API kľúč",
+      "hint": "app.tavily.com — poháňa WebSearch. Bez kľúča tu alebo pri Serperi funguje len WebFetch."
+    },
+    "serperApiKey": {
+      "label": "Serper API kľúč",
+      "hint": "serper.dev — výsledky z Googlu pre WebSearch. Bez kľúča tu alebo pri Tavily funguje len WebFetch."
+    },
+    "maxResults": {
+      "label": "Počet výsledkov vyhľadávania",
+      "hint": "Koľko výsledkov WebSearch vráti (predvolene 5)."
+    }
+  }
+}

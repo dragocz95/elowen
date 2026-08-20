@@ -16,7 +16,8 @@ const useProjects = vi.hoisted(() => vi.fn());
 const useConfig = vi.hoisted(() => vi.fn());
 const useBrainModels = vi.hoisted(() => vi.fn());
 const useUsers = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers }));
+const useNotificationDestinations = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations }));
 vi.mock('../../../lib/mutations', () => ({
   useSavePluginConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({ ok: true }), isPending: false }),
   useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
@@ -56,6 +57,7 @@ beforeEach(() => {
   usePlugins.mockReturnValue({ data: [] });
   useBrainModels.mockReturnValue({ data: [] });
   useUsers.mockReturnValue({ data: [] });
+  useNotificationDestinations.mockReturnValue({ data: [] });
 });
 
 describe('PluginDetail — error state', () => {
@@ -215,6 +217,27 @@ describe('PluginDetail multiSelect field', () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
     expect(screen.getByRole('button', { name: 'gone' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+describe('PluginDetail destination field', () => {
+  it('groups multiple platforms and preserves the opaque routed value', async () => {
+    useNotificationDestinations.mockReturnValue({ data: [
+      { value: 'destination:discord:100', id: '100', platform: 'discord', kind: 'channel', label: '#general', group: 'Discord' },
+      { value: 'msteams:a%3Afilip', id: 'a:filip', platform: 'msteams', kind: 'person', label: 'Filip', group: 'Microsoft Teams · Direct chats' },
+    ] });
+    usePluginDetail.mockReturnValue({ data: detail(
+      [{ key: 'notifyConversationId', label: 'Notification conversation', type: 'destination' }],
+      { notifyConversationId: 'destination:discord:100' },
+    ), isLoading: false });
+    renderDetail();
+    expect(screen.getAllByText('#general').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    expect(screen.getByRole('heading', { name: 'Discord' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Microsoft Teams · Direct chats' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Filip' }));
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
+    await waitFor(() => expect(screen.getAllByText('Filip').length).toBeGreaterThan(0));
   });
 });
 

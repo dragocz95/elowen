@@ -1191,6 +1191,29 @@ export interface TurnContextContribution {
   placement: TurnContextPlacement;
 }
 
+/** One notification target returned by a platform plugin. `id` is the platform's opaque delivery id;
+ * core adds the encoded `value` used by config and cron storage before serving the row to the web UI. */
+export interface NotificationDestination {
+  id: string;
+  kind: 'channel' | 'thread' | 'chat' | 'person';
+  label: string;
+  group?: string;
+  subtitle?: string;
+}
+
+/** Admin-facing normalized destination row served by `GET /plugins/destinations`. */
+export interface NotificationDestinationOption extends NotificationDestination {
+  value: string;
+  platform: string;
+}
+
+/** A platform plugin's live destination catalog. Listing may call the upstream platform and is therefore
+ * asynchronous; failures are isolated per provider by the registry. */
+export interface NotificationDestinationProvider {
+  platform: string;
+  list(): NotificationDestination[] | Promise<NotificationDestination[]>;
+}
+
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
   registerTool(tool: ToolDefinition): void;
@@ -1240,6 +1263,9 @@ export interface PluginContext {
   registerTurnContext(fn: () => string, options?: TurnContextOptions): void;
   /** STUB: record a platform adapter (not started by the foundation). */
   registerPlatform(adapter: PlatformAdapter): void;
+  /** Contribute admin-selectable proactive-notification targets for this platform. Deny-by-default: the
+   *  platform must be declared in `manifest.provides.destinations`. */
+  registerNotificationDestinationProvider(provider: NotificationDestinationProvider): void;
   /** Expose an inbound webhook on the daemon at `/hooks/<plugin>/<path>`. Deny-by-default: the path must
    *  be declared in the manifest's `provides.httpRoutes`. The mount skips bearer auth — the handler owns
    *  its own authentication (see {@link PluginHttpRoute}). */

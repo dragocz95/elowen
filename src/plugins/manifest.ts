@@ -20,6 +20,7 @@ export const PLUGIN_API_VERSION = '1';
  *  - `prompt` — a prompt/markdown editor body.
  *  - `json` — a JSON blob, validated as text by the form.
  *  - `embeddingModel` — an embedding-model picker (parallels `model`).
+ *  - `destination` — a single proactive-notification target from enabled platform providers.
  *
  *  Optional presentation props:
  *  - `options` — the choices for `enum`/`multiSelect`.
@@ -33,7 +34,7 @@ export interface PluginConfigField {
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination';
   hint?: string;
   required?: boolean;
   /** For `number` fields: the input bounds and step; `placeholder` typically shows the default value. */
@@ -75,7 +76,7 @@ export interface PluginManifest {
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
-  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; httpRoutes?: string[]; apiRoutes?: string[]; mcpTools?: string[] };
+  provides?: { tools?: string[]; skills?: string[]; platforms?: string[]; destinations?: string[]; httpRoutes?: string[]; apiRoutes?: string[]; mcpTools?: string[] };
   /** Per-tool display icons (emoji), keyed by tool name — surfaced in the chat clients' tool-call lines.
    *  Overrides the core default icon map; a tool without an entry falls back to it, then to a generic glyph. */
   icons?: Record<string, string>;
@@ -163,7 +164,7 @@ const ConfigFieldSchema = Type.Object({
     Type.Literal('model'), Type.Literal('provider'),
     Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
     Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
-    Type.Literal('embeddingModel'), Type.Literal('mcpServers'),
+    Type.Literal('embeddingModel'), Type.Literal('mcpServers'), Type.Literal('destination'),
   ]),
   hint: Type.Optional(Type.String()),
   required: Type.Optional(Type.Boolean()),
@@ -200,6 +201,7 @@ const ManifestSchema = Type.Object({
     tools: Type.Optional(Type.Array(Type.String())),
     skills: Type.Optional(Type.Array(Type.String())),
     platforms: Type.Optional(Type.Array(Type.String())),
+    destinations: Type.Optional(Type.Array(Type.String())),
     httpRoutes: Type.Optional(Type.Array(Type.String())),
     apiRoutes: Type.Optional(Type.Array(Type.String())),
     mcpTools: Type.Optional(Type.Array(Type.String())),

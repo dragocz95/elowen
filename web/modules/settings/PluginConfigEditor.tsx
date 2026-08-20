@@ -21,8 +21,8 @@ import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { usePlugins, useProjects, useConfig, useBrainModels, useUsers } from '../../lib/queries';
-import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
+import { usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations } from '../../lib/queries';
+import type { NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
@@ -87,6 +87,44 @@ function RoleToolsField({ tools, selected, onChange }: { tools: { name: string; 
 /** Generic `multiSelect` config field: a compact summary + a multi-select modal over the manifest's
  *  options (one ungrouped list, so no group-filter row). Saved values the manifest no longer offers
  *  stay visible as rows so a save never silently drops them. */
+function DestinationField({ label, hint, value, onChange }: { label: string; hint?: string; value: string; onChange: (v: string) => void }) {
+  const { t } = useTranslation();
+  const { data: destinations = [] } = useNotificationDestinations();
+  const [open, setOpen] = useState(false);
+  const selected = destinations.find((destination) => destination.value === value);
+  const stale: NotificationDestinationOption[] = value && !selected
+    ? [{ value, id: value, platform: '', kind: 'chat', label: value }]
+    : [];
+  const items: ManageSelectionItem[] = [
+    { id: '', label: t.managePicker.none, group: '' },
+    ...stale.map((destination) => ({ id: destination.value, label: destination.label, group: '' })),
+    ...destinations.map((destination) => ({
+      id: destination.value,
+      label: destination.label,
+      group: `${destination.platform}:${destination.group ?? destination.platform}`,
+      groupLabel: destination.group ?? destination.platform,
+      badges: destination.subtitle ? [{ text: destination.subtitle, tone: 'muted' as const }] : undefined,
+    })),
+  ];
+  const current = selected?.label ?? (value || t.managePicker.none);
+  return (
+    <>
+      <SelectionSummary countText={current} samples={selected ? [{ label: selected.label }] : []} moreCount={0} onManage={() => setOpen(true)} manageLabel={t.managePicker.manage} />
+      <ManageSelectionModal
+        title={label}
+        subtitle={hint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set([value])}
+        onSave={(next) => onChange([...next][0] ?? '')}
+        emptySelectionHint={t.managePicker.none}
+        single
+      />
+    </>
+  );
+}
+
 function MultiSelectField({ label, options, value, onChange }: { label: string; options: { value: string; label: string }[]; value: string[]; onChange: (v: string[]) => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -430,6 +468,8 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
       case 'provider':
         // Reuse a configured brain provider's key as this plugin's credentials (voice, image gen).
         return <PluginProviderField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
+      case 'destination':
+        return <DestinationField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'rolePolicies':
         return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
       case 'mcpServers':

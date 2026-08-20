@@ -327,7 +327,7 @@ export interface PluginInfo {
   name: string;
   version: string;
   description: string;
-  provides: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[] };
+  provides: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[]; destinations?: string[] };
   source: 'bundled' | 'user';
   enabled: boolean;
   /** A soft-removed bundled plugin: hidden from the installed list, not loaded, restorable from the
@@ -382,13 +382,14 @@ export interface Marketplace {
  *  - `section` — a labeled group header carrying no value.
  *  - `enum` — a single choice from `options`; `multiSelect` — multiple choices from `options`.
  *  - `code` — a code editor body; `language` hints the syntax mode. `prompt` — a prompt/markdown body.
- *  - `json` — a JSON blob validated as text. `embeddingModel` — an embedding-model picker (parallels `model`). */
+ *  - `json` — a JSON blob validated as text. `embeddingModel` — an embedding-model picker (parallels `model`).
+ *  - `destination` — one proactive-notification target from enabled platform providers. */
 export interface PluginConfigField {
   key: string;
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination';
   hint?: string;
   required?: boolean;
   /** For `number` fields: input bounds and step; `placeholder` typically shows the default value. */
@@ -554,8 +555,17 @@ export interface CronJob {
   lastResult?: string;
 }
 
-/** One text-capable Discord destination (GET /plugins/discord/channels) for the cron channel picker. */
-export interface DiscordChannelOption { id: string; name: string; type: 'channel' | 'thread'; parentName?: string }
+/** One admin-selectable proactive-notification target from an enabled platform plugin. `value` is the
+ * opaque persisted routing token; callers display metadata but never construct or parse it. */
+export interface NotificationDestinationOption {
+  value: string;
+  id: string;
+  platform: string;
+  kind: 'channel' | 'thread' | 'chat' | 'person';
+  label: string;
+  group?: string;
+  subtitle?: string;
+}
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
 

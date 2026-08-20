@@ -1,4 +1,5 @@
 import type { PluginRegistry } from '../plugins/registry.js';
+import { decodeNotificationDestination } from '../plugins/destinations.js';
 import type { ChannelRef, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { ToolPolicy, TurnIdentity } from '../plugins/policyContext.js';
@@ -69,6 +70,7 @@ const keyOf = (ref: ChannelRef): string => `${ref.platform}-${ref.threadId ?? re
  *  block the rest. */
 export class PlatformOrchestrator {
   private started: { name: string; disconnect?(): void; notify?(t: string, channelId?: string, notice?: ServiceNotice): Promise<void> }[] = [];
+  private knownPlatforms = new Set<string>();
 
   constructor(private d: PlatformOrchestratorDeps) {}
 
@@ -76,7 +78,9 @@ export class PlatformOrchestrator {
    *  replies. Called once at daemon startup and re-run by reloadPlugins. */
   async startAll(log?: { info(m: string): void; error(m: string): void }, only?: readonly string[]): Promise<void> {
     const plugins = await this.d.plugins();
-    for (const adapter of plugins?.platforms ?? []) {
+    const adapters = plugins?.platforms ?? [];
+    this.knownPlatforms = new Set(adapters.map((adapter) => adapter.name));
+    for (const adapter of adapters) {
       if (only && !only.includes(adapter.name)) continue;
       try {
         const onMessage: Parameters<typeof adapter.listen>[0] = async (src, text, onEvent) => {
@@ -348,12 +352,17 @@ export class PlatformOrchestrator {
    *  An instance with no notification sink at all is a configuration state, not a delivery failure — it
    *  resolves, exactly as before, so nothing queues results for a channel that does not exist. */
   async notify(text: string, channelId?: string, notice?: ServiceNotice): Promise<void> {
+    const destination = decodeNotificationDestination(channelId, this.knownPlatforms);
+    const targets = destination ? this.started.filter((p) => p.name === destination.platform) : this.started;
+    if (destination && targets.length === 0) {
+      throw new Error(`notification platform "${destination.platform}" is unavailable`);
+    }
     let delivered = false;
     const failures: string[] = [];
-    for (const p of this.started) {
+    for (const p of targets) {
       if (typeof p.notify === 'function') {
         try {
-          await p.notify(text, channelId, notice);
+          await p.notify(text, destination?.id ?? channelId, notice);
           delivered = true;
         } catch (e) {
           failures.push(`${p.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -362,6 +371,9 @@ export class PlatformOrchestrator {
     }
     if (!delivered && failures.length > 0) {
       throw new Error(`notification delivery failed on every platform — ${failures.join('; ')}`);
+    }
+    if (destination && !delivered) {
+      throw new Error(`notification platform "${destination.platform}" has no notification sink`);
     }
   }
 }

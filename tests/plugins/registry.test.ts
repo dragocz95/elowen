@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 import type { EmbeddingConfig } from '../../src/embeddings/embeddingService.js';
@@ -454,6 +454,50 @@ describe('PluginRegistry', () => {
       base.merge(b, (m) => warns.push(m));
       expect(base.controlOwner.get('mcp')).toBe('a');
       expect(warns.some((w) => w.includes('mcp'))).toBe(true);
+    });
+  });
+
+  describe('notification destinations', () => {
+    it('normalizes declared provider rows into opaque routed values', async () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('teams', {}, noopLog, undefined, undefined, undefined, undefined, {}, { destinations: ['msteams'] });
+      ctx.registerNotificationDestinationProvider({
+        platform: 'msteams',
+        list: async () => [{ id: 'a:chat', kind: 'person', label: 'Filip', group: 'Microsoft Teams' }],
+      });
+      expect(await reg.notificationDestinations()).toEqual([{
+        value: 'destination:msteams:a%3Achat', id: 'a:chat', platform: 'msteams', kind: 'person', label: 'Filip', group: 'Microsoft Teams',
+      }]);
+    });
+
+    it('times out one stuck provider without withholding healthy platform rows', async () => {
+      vi.useFakeTimers();
+      try {
+        const reg = new PluginRegistry();
+        const slow = reg.contextFor('slow', {}, noopLog, undefined, undefined, undefined, undefined, {}, { destinations: ['discord'] });
+        slow.registerNotificationDestinationProvider({ platform: 'discord', list: () => new Promise(() => {}) });
+        const fast = reg.contextFor('fast', {}, noopLog, undefined, undefined, undefined, undefined, {}, { destinations: ['msteams'] });
+        fast.registerNotificationDestinationProvider({ platform: 'msteams', list: () => [{ id: 'a:chat', kind: 'chat', label: 'Chat' }] });
+        const pending = reg.notificationDestinations();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(await pending).toEqual([{
+          value: 'destination:msteams:a%3Achat', id: 'a:chat', platform: 'msteams', kind: 'chat', label: 'Chat',
+        }]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('refuses an undeclared provider and drops malformed rows', async () => {
+      const warns: string[] = [];
+      const log = { info() {}, warn: (message: string) => warns.push(message), error() {} };
+      const reg = new PluginRegistry();
+      reg.contextFor('bad', {}, log).registerNotificationDestinationProvider({ platform: 'discord', list: () => [] });
+      const ctx = reg.contextFor('teams', {}, log, undefined, undefined, undefined, undefined, {}, { destinations: ['msteams'] });
+      ctx.registerNotificationDestinationProvider({ platform: 'msteams', list: () => [{ id: '', kind: 'chat', label: '' }] });
+      expect(await reg.notificationDestinations()).toEqual([]);
+      expect(warns.some((warning) => warning.includes('not declared'))).toBe(true);
+      expect(warns.some((warning) => warning.includes('malformed row'))).toBe(true);
     });
   });
 });

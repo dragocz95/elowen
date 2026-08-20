@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginAgentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -19,6 +19,7 @@ import type { AskAnswer } from '../brain/events.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
+import { normalizeNotificationDestination } from './destinations.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -67,6 +68,19 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
 /** A missing account is not plugin-access open mode: shared channels, task workers and unlinked callers
  *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
 const UNGRANTED_PLUGIN_USER: PluginAccessUser = { is_admin: false, granted_plugins: [] };
+const DESTINATION_PROVIDER_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
@@ -110,6 +124,8 @@ export class PluginRegistry {
   readonly hooks: PluginHook[] = [];
   readonly turnContexts: TurnContextContribution[] = [];
   readonly platforms: PlatformAdapter[] = [];
+  /** Admin-selectable proactive-notification targets, keyed by platform. One platform owns one catalog. */
+  readonly notificationDestinationProviders = new Map<string, { plugin: string; provider: NotificationDestinationProvider; logger: PluginLogger }>();
   /** Inbound webhook mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/hooks` router. The
    *  key embeds the owning plugin's name, so two plugins can never contest one mount by construction. */
   readonly httpRoutes = new Map<string, { plugin: string; handler: PluginHttpRoute['handler'] }>();
@@ -221,6 +237,14 @@ export class PluginRegistry {
     this.hooks.push(...other.hooks);
     this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
+    for (const [platform, entry] of other.notificationDestinationProviders) {
+      const prior = this.notificationDestinationProviders.get(platform);
+      if (prior && prior.plugin !== entry.plugin) {
+        warn?.(`notification destinations for "${platform}" from "${entry.plugin}" ignored — already registered by "${prior.plugin}"`);
+        continue;
+      }
+      this.notificationDestinationProviders.set(platform, entry);
+    }
     for (const [k, v] of other.controls) {
       const prior = this.controlOwner.get(k);
       const owner = other.controlOwner.get(k) ?? '?';
@@ -279,6 +303,32 @@ export class PluginRegistry {
     this.platformOwners.push(...other.platformOwners);
     for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
     for (const n of other.userGrantable) this.userGrantable.add(n);
+  }
+
+  /** Resolve every enabled provider independently. A broken upstream catalog must not hide healthy
+   *  destinations from other platforms; malformed plugin rows are dropped at this trust boundary. */
+  async notificationDestinations(): Promise<NotificationDestinationOption[]> {
+    const batches = await Promise.all([...this.notificationDestinationProviders].map(async ([platform, entry]) => {
+      const options: NotificationDestinationOption[] = [];
+      try {
+        const rows = await withTimeout(
+          Promise.resolve(entry.provider.list()),
+          DESTINATION_PROVIDER_TIMEOUT_MS,
+          `listing timed out after ${DESTINATION_PROVIDER_TIMEOUT_MS}ms`,
+        );
+        if (!Array.isArray(rows)) throw new TypeError('provider did not return an array');
+        for (const row of rows) {
+          const normalized = normalizeNotificationDestination(platform, row);
+          if (normalized) options.push(normalized);
+          else entry.logger.warn(`notification destinations: ${platform} returned a malformed row`);
+        }
+      } catch (error) {
+        entry.logger.warn(`notification destinations: ${platform} listing failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return options;
+    }));
+    return batches.flat().sort((a, b) => a.platform.localeCompare(b.platform)
+      || (a.group ?? '').localeCompare(b.group ?? '') || a.label.localeCompare(b.label));
   }
 
   /** Detach every live bus subscription this registry's plugins hold — called on the OLD registry
@@ -632,6 +682,23 @@ export class PluginRegistry {
           return;
         }
         this.platforms.push(p); this.platformOwners.push(name);
+      },
+      registerNotificationDestinationProvider: (provider) => {
+        const platform = provider?.platform?.trim?.() ?? '';
+        if (!/^[a-z][a-z0-9-]*$/.test(platform) || typeof provider?.list !== 'function') {
+          scoped.warn(`registerNotificationDestinationProvider('${platform}') refused: invalid provider`);
+          return;
+        }
+        if (!provides?.destinations?.includes(platform)) {
+          scoped.warn(`registerNotificationDestinationProvider('${platform}') refused: not declared in manifest provides.destinations`);
+          return;
+        }
+        const prior = this.notificationDestinationProviders.get(platform);
+        if (prior && prior.plugin !== name) {
+          scoped.warn(`registerNotificationDestinationProvider('${platform}') refused: already registered by '${prior.plugin}'`);
+          return;
+        }
+        this.notificationDestinationProviders.set(platform, { plugin: name, provider: { ...provider, platform }, logger: scoped });
       },
       // Stricter than platforms — STRICT deny-by-default: a webhook mount is a public HTTP surface, so it
       // must be explicitly declared in `provides.httpRoutes` (no unconstrained legacy fallback).

@@ -18,11 +18,12 @@ const pluginDir = join(repoRoot, 'plugins');
  *  names are minted at runtime from a remote server's own tool list (plugins/mcp), never authored here. */
 const TITLE_CASE = /^[A-Z][A-Za-z0-9]*$/;
 
-/** Discord gates its tools behind configured credentials, so without them it registers nothing and this
- *  guard would silently inspect a short list. Fake credentials register the full toolset without
- *  connecting — the adapter is only recorded (`registerPlatform` is a stub), never started. */
+/** Chat adapters gate their tools behind configured credentials, so without them this guard would
+ *  silently inspect a short list. Fake credentials register each full toolset without connecting — the
+ *  adapters are only recorded (`registerPlatform` is a stub), never started. */
 const CONFIG = {
   discord: { botToken: 'tok', rolePolicies: [] },
+  msteams: { appId: 'app-id', appPassword: 'secret', tenantId: 'tenant-id', rolePolicies: [] },
 };
 
 async function loadEveryBundledPlugin() {

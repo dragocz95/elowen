@@ -97,7 +97,7 @@ import { useFillHeight } from './useFillHeight';
 import {
   useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
   useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills, useUsers, usePlugins,
-  useCronJobs, useDiscordChannels, usePluginSkills, usePluginSubagents, usePluginDetail,
+  useCronJobs, useNotificationDestinations, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
   useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
@@ -333,7 +333,7 @@ export function ensurePluginUiRuntime(): void {
       useUsers, usePlugins, usePluginConfigDraft,
       // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
       // the cronjob plugin's settings editor reaches them here.
-      useCronJobs, useDiscordChannels, useSaveCronJob, useDeleteCronJob,
+      useCronJobs, useNotificationDestinations, useSaveCronJob, useDeleteCronJob,
       // A plugin's own config slice, read and written through the SAME cache entry the Plugins
       // settings detail uses. A bundle that fetched it by hand instead would hold a private copy of a
       // value two surfaces edit: the save invalidates the shared key, so both re-read the server's
