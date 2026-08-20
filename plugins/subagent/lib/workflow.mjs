@@ -19,6 +19,7 @@ import {
   resolveContextTotalChars,
 } from './limits.mjs';
 import { clipTail } from './results.mjs';
+import { errorText } from './errors.mjs';
 import { resolveResultRetentionMs } from './retention.mjs';
 
 const MAX_WORKFLOWS = 16;
@@ -38,7 +39,6 @@ const DEP_MIN_CHARS = 400;
 const DEP_BLOCK_SEPARATOR = '\n\n';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
-const errorText = (e) => (e instanceof Error ? e.message : String(e));
 const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATION_MARKER}`);
 /** A dependency block keeps the END of the result for the same reason the result itself does — the finding is
  *  in the last paragraph — but with the bare marker PREPENDED rather than clipTail's note. It costs exactly

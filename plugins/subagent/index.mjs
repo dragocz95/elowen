@@ -7,6 +7,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { registerWorkflow } from './lib/workflow.mjs';
 import { clipTail } from './lib/results.mjs';
+import { errorText } from './lib/errors.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import {
@@ -32,7 +33,6 @@ const JOB_WAIT_TIMEOUT_MS = 5 * 60_000;
 // resolveStallMs — see lib/stall.mjs for the precedence and why liveness alone drives it.
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
-const errorText = (e) => e instanceof Error ? e.message : String(e);
 
 /** Resolve the child's plugin-tool allow-list from an explicit `tools` list, or undefined when the caller
  *  named none (→ inherit the caller's scope). Returns `{ error }` for a request that cannot be honored.
