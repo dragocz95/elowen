@@ -7,14 +7,13 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
-import { elowenClient, BASE } from '../../lib/elowenClient';
-import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainMessageImage, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, ProcessInfo, SlashCommandDef, StatuslineConfig, ToolOutputView } from '../../lib/types';
+import { elowenClient } from '../../lib/elowenClient';
+import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainUsage, BrainWorkMode, McpServerStatus, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { formatTokens, formatCost } from '../../lib/format';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
-import { subscribeRevive, STALE_HIDE_MS } from '../../lib/useRevive';
-import { createReconnectController, type ReconnectController } from '../../lib/reconnect';
-import { isStreamDataFrame, startStreamWatchdog, resolveStreamSilence } from '../../lib/streamWatchdog';
+import { subscribeRevive } from '../../lib/useRevive';
+import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import {
@@ -26,7 +25,8 @@ import {
   type BrainOpenRequest,
 } from '../../lib/brainDock';
 import { MAX_IMAGES, readAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
-import { HISTORY_PAGE, useBrainChatHistory } from './brainChatHistory';
+import { useBrainChatHistory } from './brainChatHistory';
+import { useBrainChatStream } from './brainChatStream';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
 
@@ -70,9 +70,6 @@ function isPlanDecisionsRecord(raw: string): boolean {
     return typeof parsed === 'object' && parsed !== null && Object.values(parsed).every((v) => typeof v === 'string');
   } catch { return false; }
 }
-
-/** How long a freshly opened stream may go without its guaranteed snapshot frame before it is retried. */
-const SNAPSHOT_TIMEOUT_MS = 15_000;
 
 type Ask = { id: string; questions: AskQuestion[]; kind?: 'approval' };
 type SlashItem = { key: string; label: string; desc?: string; run: () => void };
@@ -342,7 +339,8 @@ function useBrainChatController(): BrainChatValue {
   const boundGenRef = useRef<number | undefined>(undefined);
   /** The conversation this controller is bound to (mirror BrainClient.bound). */
   const boundSessionRef = useRef<string | undefined>(undefined);
-  const esRef = useRef<EventSource | null>(null);
+  // Keep stream recovery pointed at the freshest connect closure without recreating its controller.
+  const connectRef = useRef<() => Promise<void>>(async () => {});
   /** ensureAttached idempotency: once true the stream stays live for the tab's life. */
   const attachedRef = useRef(false);
   /** One stop beacon per unload. Cleared again if the page turns out to come back (see the revive hook). */
@@ -351,32 +349,22 @@ function useBrainChatController(): BrainChatValue {
    *  the bounded buffer. Durable history only becomes authoritative once the turn settles, so the refetch
    *  waits for the terminal event rather than replacing a live turn with a half-written one. */
   const truncatedPendingRef = useRef(false);
-  /** When the stream last delivered anything — an event or the daemon's heartbeat. The silence watchdog and
-   *  the wake-up path both read it off the wall clock, because a frozen page runs no timers. */
-  const lastFrameAtRef = useRef(0);
   /** How long the stream may stay silent before it counts as dead, in either phase — operator-tunable
    *  (`runtime.limits`), floored at the heartbeat interval, and falling back to the built-in defaults until
    *  the config arrives, so a daemon that never answers behaves exactly as before. */
   const silence = useMemo(() => resolveStreamSilence(config?.runtime?.limits), [config?.runtime?.limits]);
   const silenceRef = useRef(silence);
   silenceRef.current = silence;
-  /** Fires when a stream opened but its guaranteed first frame never arrived. */
-  const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** The ONE way back onto a dropped stream. A phone unlock triggers the wake-up, the watchdog and often a
-   *  server error frame at once; without a single controller each would mint its own generation and race. */
-  const reconnectRef = useRef<ReconnectController | null>(null);
+  const stream = useBrainChatStream({
+    connectRef,
+    getGeneration: () => genRef.current,
+    setReady,
+    setReconnecting,
+  });
 
   const nextGeneration = (): number => (genRef.current += 1);
   const binding = (): BrainBinding => buildBinding(boundSessionRef.current, boundGenRef.current, clientId());
   const bumpFocus = (): void => setFocusNonce((n) => n + 1);
-  // Created on first use and kept in a ref, so the whole tab shares ONE controller across re-renders. It
-  // always reconnects through `connectRef`, i.e. the freshest closure, never the one captured when the
-  // recovery path was registered. A failed attempt is rethrown on purpose: that is what makes the
-  // controller back off and try again instead of leaving the chat dead until the user reloads.
-  const reconnect = (): ReconnectController => (reconnectRef.current ??= createReconnectController(async () => {
-    try { await connectRef.current(); }
-    catch (e) { setReady(true); throw e; }
-  }, { onActive: setReconnecting }));
 
   // A snapshot whose run journal had overflowed left the transcript possibly missing part of that turn.
   // At the terminal boundary (idle, or an error frame ending a turn that never settled) the durable
@@ -392,7 +380,7 @@ function useBrainChatController(): BrainChatValue {
   // Re-runs on every session switch / reconnect. `opts` selects which conversation (default: resume the
   // caller's active one). Late responses from a superseded generation are discarded (stale-gen guard).
   const connect = async (opts: { session?: string; fresh?: boolean } = {}): Promise<void> => {
-    esRef.current?.close();
+    stream.close();
     setReadOnly(null); // every explicit reconnect returns to the live parent; native EventSource retries stay in the child
     setReady(false);
     setNotice(''); // a fresh connection (mount / session switch) starts without a stale runtime line
@@ -420,298 +408,109 @@ function useBrainChatController(): BrainChatValue {
     // `if (st.x) setX(st.x)` can only ever set, which leaves a question the daemon already settled on
     // screen (and unanswerable) instead of clearing it.
     if (st) { setUsage(st.usage); setTelemetry(telemetryOf(st)); setLineCfg(st.statusline); setActiveSessionId(st.sessionId); setCurrentModel(st.model); setProvider(st.provider ?? ''); setAsk(st.pendingAsk ?? null); setDaemonMode(st.workMode ?? 'build'); setPendingPlan(st.pendingPlan ?? null); setCards(st.cards ?? []); setQueued(st.queued ?? []); }
-    // The identity rides purely as query params — native EventSource cannot set headers, and the daemon
-    // parses session/client/generation off the URL (tapping the bound conversation, not the active pointer).
-    // `snapshot=1` makes the FIRST frame the hydration: the newest history page plus the running turn's
-    // tail, atomic on one server tick. It is what closes the gap a phone lock opens — a native EventSource
-    // reconnect replays nothing, and pairing a separate history fetch with this frame would double every
-    // steered 'you' bubble, since the server withholds exactly those rows from `history` to replay them as
-    // ordering markers in `events`.
-    // `heartbeat=1` upgrades the daemon's keep-alive comment to a named frame: SSE comment lines never
-    // reach an EventSource, so without it a stream that silently died is indistinguishable from an idle one.
-    const params = new URLSearchParams({
-      session: boundSessionRef.current, client: clientId(), generation: String(boundGenRef.current),
-      snapshot: '1', history: String(HISTORY_PAGE), heartbeat: '1',
+    stream.openLive({
+      generation,
+      session: boundSessionRef.current,
+      client: clientId(),
+      boundGeneration: boundGenRef.current,
+      handlers: {
+        connecting: () => setNotice(t.brainChat.reconnecting),
+        ready: () => setReady(true),
+        snapshotStart: () => setNotice(''),
+        snapshot: (snap) => {
+          if (snap.sessionId && snap.sessionId !== boundSessionRef.current) {
+            boundSessionRef.current = snap.sessionId;
+            setActiveSessionId(snap.sessionId);
+          }
+          replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
+          const folded = fromSnapshot(snap);
+          const control = snap.control;
+          const streaming = control ? control.streaming : folded.thinking;
+          setView({ ...folded, thinking: streaming });
+          if (control) {
+            setAsk(control.pendingAsk);
+            setDaemonMode(control.workMode);
+            setPendingPlan(control.pendingPlan);
+          }
+          if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
+          truncatedPendingRef.current = streaming && snap.truncated === true;
+        },
+        text: (delta) => { setNotice(''); applyEvent({ type: 'text', delta }); },
+        notice: (message, done) => setNotice(done ? '' : message),
+        error: (message) => {
+          setNotice(message);
+          applyEvent({ type: 'error', message });
+          repairTruncatedHistory();
+        },
+        session: (sessionId) => {
+          boundSessionRef.current = sessionId;
+          setActiveSessionId(sessionId);
+          setCards([]);
+          setGoal(null);
+          clearHistoryWindow();
+          applyEvent({ type: 'session', sessionId });
+          setNotice(t.brainChat.freshConversation);
+          void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+        },
+        reasoning: (delta) => applyEvent({ type: 'reasoning', delta }),
+        tool: ({ name, detail, icon, id }) => applyEvent({ type: 'tool', name, detail, icon, id }),
+        toolProgress: ({ id, text }) => applyEvent({ type: 'tool_progress', id, text }),
+        subagent: (subagent) => {
+          applyEvent({ type: 'subagent', ...subagent });
+          if (subagent.status !== 'running') {
+            const stamp = usageStampRef.current;
+            void elowenClient.brainStatus(boundSessionRef.current)
+              .then((status) => { if (generation === genRef.current) setUsageIfFresh(status.usage, stamp); })
+              .catch(() => { /* best-effort */ });
+          }
+        },
+        workflow: (workflow) => applyEvent({ type: 'workflow', ...workflow }),
+        goal: setGoal,
+        process: (processes) => qc.setQueryData(['brain-processes'], processes),
+        card: (card) => {
+          if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
+          setCards((cur) => upsertCard(cur, card));
+        },
+        queue: (items) => { setRemovingQueue(new Set()); setQueued(items); },
+        user: ({ text, durableId, images }) => applyEvent({
+          type: 'user', text, ...(durableId ? { durableId } : {}), ...(images?.length ? { images } : {}),
+        }),
+        discardUser: ({ durableId, text }) => {
+          applyEvent({ type: 'discard_user', durableId, text });
+          setInput((current) => (current.trim() ? current : text));
+          bumpFocus();
+        },
+        compacted: () => { void loadHistory(genRef.current).catch(() => { /* best-effort */ }); },
+        sessionEvent: () => {
+          void loadHistory(genRef.current).catch(() => { /* best-effort */ });
+          const stamp = usageStampRef.current;
+          void elowenClient.brainStatus(boundSessionRef.current)
+            .then((status) => {
+              if (generation !== genRef.current) return;
+              setUsageIfFresh(status.usage, stamp);
+              setTelemetry(telemetryOf(status));
+              setLineCfg(status.statusline);
+              setCurrentModel(status.model);
+              setProvider(status.provider ?? '');
+            })
+            .catch(() => { /* best-effort */ });
+        },
+        diff: (diff) => applyEvent({ type: 'diff', diff }),
+        toolOutput: ({ output, id, plan }) => applyEvent({ type: 'tool_output', output, id, plan }),
+        toolEnd: ({ id, plan }) => applyEvent({ type: 'tool_end', id, plan }),
+        image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
+        ask: ({ id, questions, kind }) => setAsk({ id, questions, kind }),
+        askResolved: (id) => setAsk((cur) => (cur && cur.id === id ? null : cur)),
+        step: (nextUsage) => { if (nextUsage) setUsage(nextUsage); },
+        idle: (nextUsage) => {
+          setNotice('');
+          applyEvent({ type: 'idle' });
+          repairTruncatedHistory();
+          if (nextUsage) setUsage(nextUsage);
+          void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+        },
+      },
     });
-    const es = new EventSource(`${BASE}/brain/stream?${params.toString()}`);
-    // A reconnect mints a fresh stream the daemon assumes is being watched, and the revive path
-    // reconnects while still hidden — so re-report presence here or the phone push goes quiet again.
-    elowenClient.brainVisibility({ client: clientId(), hidden: document.hidden });
-    lastFrameAtRef.current = Date.now();
-    // With `snapshot=1` the first frame is guaranteed, so "the stream opened" finally means "data arrived".
-    // If it does not, the connection is broken in a way EventSource will not report — retry it.
-    if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
-    snapshotTimerRef.current = setTimeout(() => {
-      if (generation !== genRef.current) return; // a newer connect/switch already took over
-      es.close();
-      reconnect().retry();
-    }, SNAPSHOT_TIMEOUT_MS);
-    // The guaranteed first frame normally lands in milliseconds; until it does, the stream looks open but
-    // delivers nothing — say so instead of leaving an enabled composer silently waiting on data. The
-    // snapshot handler (the frame itself) retires the line; a daemon `notice` frame can only arrive after
-    // the snapshot, so it overwrites this safely.
-    setNotice(t.brainChat.reconnecting);
-    // EVERY frame must prove it belongs to the stream that is still live before it touches anything.
-    // `close()` does not unschedule a callback the browser already dispatched, so a frame from a superseded
-    // conversation can still run after the next one is open — and these handlers share refs with it. Left
-    // unguarded, a dead stream folded its text into the new conversation and, through `esRef`, closed the
-    // live stream outright; its snapshot also cleared the NEW stream's watchdog timer and reported the
-    // reconnect as succeeded. Registration is synchronous up to `esRef.current = es` below, so no frame can
-    // arrive before that assignment and the identity check is safe. `esRef` is null while a read-only
-    // session is open, where dropping the frame is exactly right.
-    const onFrame = (type: string, handler: (e: Event) => void): void => {
-      es.addEventListener(type, (e) => {
-        if (generation !== genRef.current || es !== esRef.current) return;
-        handler(e);
-      });
-    };
-    // The heartbeat carries nothing: its only job is to prove the channel is still alive to the watchdog.
-    onFrame('heartbeat', () => { lastFrameAtRef.current = Date.now(); });
-    onFrame('snapshot', (e) => {
-      lastFrameAtRef.current = Date.now();
-      if (snapshotTimerRef.current) { clearTimeout(snapshotTimerRef.current); snapshotTimerRef.current = null; }
-      setNotice(''); // the first frame retires the "connecting" line armed with the stream
-      reconnect().succeeded(); // a delivered first frame is the only proof the reconnect worked
-      const snap = JSON.parse((e as MessageEvent).data) as BrainStreamSnapshotFrame;
-      // An idle rollover this stream never saw retargeted the binding server-side; follow it, or the
-      // lazy-load and every send would keep naming the retired conversation.
-      if (snap.sessionId && snap.sessionId !== boundSessionRef.current) {
-        boundSessionRef.current = snap.sessionId;
-        setActiveSessionId(snap.sessionId);
-      }
-      replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false); // the frame REPLACES the transcript — discard any older page in flight
-      const folded = fromSnapshot(snap);
-      // The daemon's control state wins over anything the tail's shape suggests: the journal is cleared at
-      // settle, bounded, and carries no terminal event across an internal retry, so reading "a turn is
-      // running" out of it drifts in BOTH directions — a stuck Stop button on a non-transcript tail, a
-      // dead one on a retry. Absent `control` means an older daemon; then the fold is all there is.
-      const control = snap.control;
-      const streaming = control ? control.streaming : folded.thinking;
-      setView({ ...folded, thinking: streaming });
-      // Explicit null included — this frame is the one moment the client can learn a question it never
-      // saw is parked, or that one it still shows is long gone. The plan decision rides the same rule:
-      // this frame is what tells a reloaded page, a second tab, or a surface that never entered plan mode
-      // that the conversation is waiting on a plan.
-      if (control) {
-        setAsk(control.pendingAsk);
-        setDaemonMode(control.workMode);
-        setPendingPlan(control.pendingPlan);
-      }
-      // The goal rides beside the journal because it OUTLIVES it: the journal is cleared at settle, so a
-      // client that connects between turns would otherwise show no goal while one is plainly running. The
-      // presence check (not `?? null`) is what distinguishes an older daemon from an explicit "none".
-      if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
-      truncatedPendingRef.current = streaming && snap.truncated === true;
-    });
-    onFrame('text', (e) => {
-      const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
-      setNotice(''); // first answer text clears any transient runtime notice
-      applyEvent({ type: 'text', delta });
-    });
-    // Runtime notices (retry/compaction) — mirror the CLI: show while the phase runs, clear on done.
-    onFrame('notice', (e) => {
-      const { message, done } = JSON.parse((e as MessageEvent).data) as { message: string; done?: boolean };
-      setNotice(done ? '' : message);
-    });
-    onFrame('error', (e) => {
-      // EventSource fires generic 'error' events on connection drops with no payload — those are the
-      // browser's own auto-reconnect, leave them be (a plain SSE blip must let the turn survive). Only the
-      // brain's error frames carry a JSON body.
-      const data = (e as MessageEvent).data;
-      if (typeof data !== 'string') return;
-      let message: string;
-      try { message = (JSON.parse(data) as { message: string }).message; } catch { return; }
-      // The server closes the stream after an error frame (e.g. "brain not started" post-restart); close
-      // our side too so EventSource stops re-firing the same frame, surface it once as a notice, and retry
-      // the full connect (which re-runs brainStart and revives the session) shortly. A superseded
-      // reconnect (a newer switch bumped the generation meanwhile) is discarded so it can't revive a dead
-      // session's view. If the brain is still down, brainStart throws and the retry stops — no tight loop.
-      // Close THIS stream by identity, never `esRef.current`: a frame from a superseded stream would
-      // otherwise tear down whichever stream happens to be live now.
-      es.close();
-      setNotice(message);
-      // Folding the error ENDS the streaming turn — the tool row's spinner stops and, since the indicator
-      // is the fold's own output, so does the thinking indicator. A successful reconnect refetches history
-      // and replaces this line.
-      applyEvent({ type: 'error', message });
-      repairTruncatedHistory(); // a turn that died without settling is still a truncated transcript
-      reconnect().retry();
-    });
-    // Idle rollover: the server continued the just-sent message in a FRESH conversation (the previous one
-    // sat idle past the cutoff). REBIND to the replacement WITHOUT bumping the generation (mirror
-    // BrainClient.rebind) so a reconnect after rollover taps the new conversation. Every client — sender
-    // and passive alike — resets to the empty fresh conversation and rebuilds from the stream, because the
-    // daemon re-emits the triggering message as a `user` event and streams its reply.
-    onFrame('session', (e) => {
-      const ev = JSON.parse((e as MessageEvent).data) as { sessionId: string };
-      boundSessionRef.current = ev.sessionId; // rebind (generation preserved)
-      setActiveSessionId(ev.sessionId); // the conversation rolled over — the panel's local/foreign split moves with it
-      setCards([]); // display cards belonged to the previous conversation
-      setGoal(null); // so did the goal (mirror of the CLI's rollover reset)
-      // The rollover empties the transcript and rebuilds the fresh conversation purely from the stream, so
-      // close the lazy-load window (+ bump the epoch to discard any older page in flight). Otherwise a stale
-      // cursor would page the NEW session's own just-shown turns and double them.
-      clearHistoryWindow();
-      applyEvent({ type: 'session', sessionId: ev.sessionId });
-      setNotice(t.brainChat.freshConversation);
-      void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
-    });
-    onFrame('reasoning', (e) => {
-      const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
-      applyEvent({ type: 'reasoning', delta });
-    });
-    onFrame('tool', (e) => {
-      // Keep `id` (the toolCallId): it keys the live `tool_progress` tail onto its in-progress tool pill.
-      const { name, detail, icon, id } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string; id?: string };
-      applyEvent({ type: 'tool', name, detail, icon, id });
-    });
-    // Live streamed output of a running Bash (bounded rolling tail): fold onto its tool pill by id so a
-    // long build/test shows output as it runs. The stored history's final output supersedes it on reload.
-    onFrame('tool_progress', (e) => {
-      const { id, text } = JSON.parse((e as MessageEvent).data) as { id: string; text: string };
-      applyEvent({ type: 'tool_progress', id, text });
-    });
-    // Live sub-agent progress (delegate): fold onto its tool item so the agents table + drill-in read it.
-    onFrame('subagent', (e) => {
-      const s = JSON.parse((e as MessageEvent).data) as { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string };
-      applyEvent({ type: 'subagent', ...s });
-      // The child usage is persisted before its terminal progress event. Refresh the parent status now
-      // so the session price includes delegated work immediately, not only after the next parent turn.
-      // Fenced against the live stream: this read can settle after a newer step/idle and must not undo it.
-      if (s.status !== 'running') { const stamp = usageStampRef.current; void elowenClient.brainStatus(boundSessionRef.current).then((status) => { if (generation === genRef.current) setUsageIfFresh(status.usage, stamp); }).catch(() => { /* best-effort */ }); }
-    });
-    // Whole-DAG snapshot of a running workflow. Folded onto its WorkflowStart tool row (like `subagent`),
-    // which is also what makes it durable — history carries the same attachment after a reload.
-    onFrame('workflow', (e) => {
-      const w = JSON.parse((e as MessageEvent).data) as { id: string; toolCallId: string; title?: string; status: WorkflowState['status']; nodes: WorkflowState['nodes'] };
-      applyEvent({ type: 'workflow', ...w });
-    });
-    // Authoritative goal snapshot — `null` means the goal was cleared, so it is applied unconditionally.
-    onFrame('goal', (e) => {
-      const { goal: next } = JSON.parse((e as MessageEvent).data) as { goal: BrainGoal | null };
-      setGoal(next);
-    });
-    // Full snapshot of the owner's background processes, pushed out of turn on every spawn/exit/kill. It
-    // seeds the SAME query the process panels read (`GET /brain/processes` is their hydration path after a
-    // reconnect), so the live push and the poll can never disagree about what is running.
-    onFrame('process', (e) => {
-      const { processes } = JSON.parse((e as MessageEvent).data) as { processes: ProcessInfo[] };
-      qc.setQueryData(['brain-processes'], processes);
-    });
-    onFrame('card', (e) => {
-      const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
-      // The terminal plugin's background-process card is rendered by ProcessPanel (API-driven, with kill +
-      // output modal), not as a plain CardBlock — use it only as a signal to refresh the process list.
-      if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
-      setCards((cur) => upsertCard(cur, card));
-    });
-    // Full-snapshot pending mid-turn queue (messages sent while a turn streams). Server-authoritative:
-    // replace wholesale — the optimistic remove must never fight an incoming snapshot.
-    onFrame('queue', (e) => {
-      const { items } = JSON.parse((e as MessageEvent).data) as { items: { id: string; text: string }[] };
-      setRemovingQueue(new Set()); // this snapshot supersedes every optimistic remove still in flight
-      setQueued(items);
-    });
-    // The daemon's authoritative render of the user's turn (every real send — immediate or a queued
-    // delivery). The composer never echoes optimistically, so THIS folds the 'you' bubble — and the fold
-    // marks the turn in flight, which is what raises the thinking indicator.
-    onFrame('user', (e) => {
-      const { text, durableId, images } = JSON.parse((e as MessageEvent).data) as { text: string; durableId?: string; images?: BrainMessageImage[] };
-      applyEvent({ type: 'user', text, ...(durableId ? { durableId } : {}), ...(images?.length ? { images } : {}) });
-    });
-    // The daemon cancelled a just-sent user turn before it produced output (Esc/Stop): pull its 'you'
-    // bubble (the fold, by durableId) and restore the text to the composer for editing/resending — but only
-    // when the composer is empty, so a discard never clobbers a draft the user already started typing.
-    onFrame('discard_user', (e) => {
-      const { durableId, text } = JSON.parse((e as MessageEvent).data) as { durableId: string; text: string };
-      applyEvent({ type: 'discard_user', durableId, text });
-      setInput((current) => (current.trim() ? current : text));
-      bumpFocus();
-    });
-    // A context compaction was persisted server-side (manual /compact or the auto-compact path): the
-    // stored transcript is now a "context compacted" divider + the kept tail. Refetch so the surface
-    // collapses to exactly what the model still holds. The one-line status rides the `notice` event.
-    onFrame('compacted', () => {
-      void loadHistory(genRef.current).catch(() => { /* transcript refetch is best-effort */ });
-    });
-    // An owner-driven in-place session change (model switch, mode, reasoning, rename): the server persisted
-    // a display marker + respawned the session under the SAME id, so the stream stays open. Refetch history
-    // (renders the "model → X" marker + any drained partial turn) and status (model/usage label), WITHOUT
-    // reconnecting — this is exactly what keeps every attached client on one stream through a model switch.
-    onFrame('session-event', () => {
-      void loadHistory(genRef.current).catch(() => { /* transcript refetch is best-effort */ });
-      const stamp = usageStampRef.current; // usage is fenced against the stream; the rest is snapshot-only data
-      void elowenClient.brainStatus(boundSessionRef.current)
-        .then((st) => { if (generation === genRef.current) { setUsageIfFresh(st.usage, stamp); setTelemetry(telemetryOf(st)); setLineCfg(st.statusline); setCurrentModel(st.model); setProvider(st.provider ?? ''); } })
-        .catch(() => { /* status refresh is best-effort */ });
-    });
-    onFrame('diff', (e) => {
-      const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };
-      applyEvent({ type: 'diff', diff });
-    });
-    // The final result block of a completed tool call (Bash output, a Read preview, …): fold it onto its
-    // tool pill by id so a finished tool's stand-alone output renders LIVE, not only after a history reload
-    // (parity with `diff`; the reducer's `tool_output` case supersedes any live `tool_progress` tail).
-    onFrame('tool_output', (e) => {
-      // A submitted plan rides this event too when the result carries a displayable block (a hook-annotated
-      // ExitPlanMode), so it is threaded through exactly as on `tool_end`.
-      const { output, id, plan } = JSON.parse((e as MessageEvent).data) as { output: ToolOutputView; id?: string; plan?: string };
-      applyEvent({ type: 'tool_output', output, id, plan });
-    });
-    // A tool that settled with nothing to display. Folded ONLY for its `plan`: an `ExitPlanMode` result is
-    // addressed to the model and withheld from the transcript, so this is the submitted plan's only live
-    // event — without it the plan panel appears solely after a history reload. A plain `tool_end` is a
-    // no-op in the reducer.
-    onFrame('tool_end', (e) => {
-      const { id, plan } = JSON.parse((e as MessageEvent).data) as { id?: string; plan?: string };
-      applyEvent({ type: 'tool_end', id, plan });
-    });
-    // An image the agent shared on purpose (ShareImage), or one an image tool produced. Folded as its own
-    // segment so the picture appears the moment it lands; the `ref` is normalized by the fold into the
-    // exact shape stored history rebuilds after a reload, so nothing on screen changes when it settles.
-    onFrame('image', (e) => {
-      const { ref, id, caption } = JSON.parse((e as MessageEvent).data) as { ref: string; id?: string; caption?: string };
-      applyEvent({ type: 'image', ref, id, caption });
-    });
-    // AskUserQuestion parked the turn — render the inline choice card until the user answers.
-    onFrame('ask', (e) => {
-      const { id, questions, kind } = JSON.parse((e as MessageEvent).data) as { id: string; questions: AskQuestion[]; kind?: 'approval' };
-      setAsk({ id, questions, kind });
-    });
-    // That question is settled — answered on another surface, timed out, or the turn was aborted. The
-    // `ask` frame fans out to every client of the conversation, so without this the surface that did not
-    // answer keeps showing a card whose POST can no longer match anything. Compared by id so a late
-    // frame cannot clear the NEXT question.
-    onFrame('ask_resolved', (e) => {
-      const { id } = JSON.parse((e as MessageEvent).data) as { id: string };
-      setAsk((cur) => (cur && cur.id === id ? null : cur));
-    });
-    // Every step boundary carries a fresh usage snapshot, so context fill, token totals and cost move
-    // DURING the turn instead of jumping once at the end. The daemon has always sent this (see the
-    // `step` event in brain/events.ts) and the CLI has always read it (chat/streamCoordinator.ts); the
-    // web client simply had no handler, so the frame arrived and was dropped and the statusline showed
-    // the PREVIOUS turn's numbers until idle landed.
-    onFrame('step', (e) => {
-      try {
-        const { usage: u } = JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage };
-        if (u) setUsage(u);
-      } catch { /* step without payload — statusline just stays put */ }
-    });
-    onFrame('idle', (e) => {
-      setNotice(''); // turn settled → drop any transient runtime line
-      // A parked question is NOT cleared here. Only the daemon knows whether one is still waiting, and it
-      // says so on the snapshot frame; guessing it from a turn boundary is what made the picker vanish
-      // before the user could answer it.
-      applyEvent({ type: 'idle' }); // finalize the streaming turn (parity with the CLI fold)
-      repairTruncatedHistory();
-      try {
-        const { usage: u } = JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage };
-        if (u) setUsage(u);
-      } catch { /* idle without payload — statusline just stays put */ }
-      void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
-    });
-    esRef.current = es;
-    setReady(true);
   };
 
   // Route a "open this session" request: a continuable one (own web/CLI conversation) is resumed live;
@@ -759,7 +558,7 @@ function useBrainChatController(): BrainChatValue {
   // View a non-continuable session (a shared Discord channel or a task worker) read-only. Its snapshot is
   // the authoritative child transcript, identity and cards; parent status/cache must never leak into it.
   const openReadOnly = async (sessionId: string): Promise<void> => {
-    esRef.current?.close();
+    stream.close();
     const generation = nextGeneration();
     setAsk(null); setNotice('');
     // The composer is about to be replaced by the read-only banner, so drop the in-flight marker at once.
@@ -771,70 +570,34 @@ function useBrainChatController(): BrainChatValue {
     setProvider('');
     setActiveSessionId(sessionId);
     clearHistoryWindow();
-    // A drill-in is a READ-ONLY tap on an owned child (sub-agent / shared Discord channel / task worker),
-    // NOT this client's parent attachment. Carrying `client`+`generation` sends the request down
-    // resolveStreamSession's generation-bound branch, which validates the target as an OWNED USER session
-    // and so rejects a channel child as `unknown session`. The CLI omits them here for the same reason
-    // (brainClient.stream identifies only the bound parent stream). `generation` still guards THIS
-    // controller's frame handlers locally, below — it is a client-side race fence, not the server param.
-    const params = new URLSearchParams({ session: sessionId, snapshot: '1', heartbeat: '1' });
-    const es = new EventSource(`${BASE}/brain/stream?${params.toString()}`);
-    esRef.current = es;
-    let snapshotSeen = false;
-    // EventSource reuses this object across reconnects. A server error is an open failure unless THIS
-    // connection already delivered its snapshot, even when an earlier connection had done so.
-    es.addEventListener('open', () => {
-      if (generation === genRef.current && es === esRef.current) snapshotSeen = false;
-    });
-    const onFrame = (type: string, handler: (e: Event) => void): void => {
-      es.addEventListener(type, (e) => {
-        if (generation !== genRef.current || es !== esRef.current) return;
-        // Bare native transport errors have no data and prove no liveness. Counting them would let a failed
-        // auto-reconnect refresh the silence watchdog forever while no server frame arrives.
-        if (isStreamDataFrame(e)) lastFrameAtRef.current = Date.now();
-        handler(e);
-      });
-    };
-    onFrame('heartbeat', () => {});
-    onFrame('snapshot', (e) => {
-      const snap = JSON.parse((e as MessageEvent).data) as BrainStreamSnapshotFrame;
-      snapshotSeen = true;
-      replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
-      const folded = fromSnapshot(snap);
-      setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
-      setCards(snap.cards ?? []);
-      if (snap.session) { setCurrentModel(snap.session.model); setProvider(snap.session.provider); }
-      if (snap.sessionId) setActiveSessionId(snap.sessionId);
-      if (snap.control) { setAsk(snap.control.pendingAsk); setDaemonMode(snap.control.workMode); setPendingPlan(snap.control.pendingPlan); }
-      if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
-      setReady(true);
-    });
-    onFrame('card', (e) => {
-      const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
-      setCards((cur) => upsertCard(cur, card));
-    });
-    onFrame('error', (e) => {
-      // EventSource also emits a bare native `error` when the transport drops. It has no payload and the
-      // browser is already reconnecting it; closing here would turn a transient wifi/daemon blip into a
-      // permanent exit from the child view.
-      const data = (e as MessageEvent).data;
-      if (typeof data !== 'string') return;
-      let message: string;
-      try { message = (JSON.parse(data) as { message: string }).message; } catch { return; }
-      // Once the snapshot established the tap, an error frame belongs to the CHILD's own turn. It is
-      // transcript content, not a failure to open the child, so keep the read-only view and fold it normally.
-      if (snapshotSeen) {
-        applyEvent({ type: 'error', message });
-        return;
-      }
-      // Before the first snapshot the route sends exactly this frame when the requested child cannot be
-      // resolved, then closes. Fall back through the freshest connect closure: this listener was created by
-      // an older render whose `readOnly` value may still be null.
-      es.close();
-      toast(t.brainChat.searchOpenError, 'error');
-      setReadOnly(null);
-      setView(emptyView());
-      void connectRef.current();
+    stream.openReadOnly({
+      generation,
+      session: sessionId,
+      handlers: {
+        snapshot: (snap) => {
+          replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
+          const folded = fromSnapshot(snap);
+          setView({ ...folded, thinking: snap.control ? snap.control.streaming : folded.thinking });
+          setCards(snap.cards ?? []);
+          if (snap.session) { setCurrentModel(snap.session.model); setProvider(snap.session.provider); }
+          if (snap.sessionId) setActiveSessionId(snap.sessionId);
+          if (snap.control) {
+            setAsk(snap.control.pendingAsk);
+            setDaemonMode(snap.control.workMode);
+            setPendingPlan(snap.control.pendingPlan);
+          }
+          if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
+          setReady(true);
+        },
+        card: (card) => setCards((cur) => upsertCard(cur, card)),
+        error: (message) => applyEvent({ type: 'error', message }),
+        openError: () => {
+          toast(t.brainChat.searchOpenError, 'error');
+          setReadOnly(null);
+          setView(emptyView());
+          void connectRef.current();
+        },
+      },
     });
   };
 
@@ -1045,7 +808,6 @@ function useBrainChatController(): BrainChatValue {
 
   // Keep the live event handlers pointed at the freshest closures (state like readOnly / t) without
   // re-registering the window listeners on every render.
-  const connectRef = useRef<() => Promise<void>>(async () => {});
   connectRef.current = () => connect();
   const onOpenRef = useRef<(req: BrainOpenRequest | undefined) => void>(() => {});
   onOpenRef.current = (req) => {
@@ -1134,15 +896,9 @@ function useBrainChatController(): BrainChatValue {
   // new generation — the only legitimate way to clear that tombstone — and reloads the transcript.
   useEffect(() => subscribeRevive(({ hiddenMs }) => {
     stopSentRef.current = false; // the page came back, so a LATER real close must still be able to send
-    if (!attachedRef.current) return;
-    // The watchdog cannot have run while the page slept — its timers were frozen — so the staleness is
-    // decided here from the wall clock. A momentary hide over a stream that is still being fed needs
-    // nothing; anything longer, or any silence past the wake limit, may have lost frames.
-    const silentMs = Date.now() - lastFrameAtRef.current;
     // Through a ref, because this subscription is made once: a limit edited mid-session must reach the next
     // wake-up without re-subscribing (which would drop the wake-ups that arrive while React re-runs it).
-    if (hiddenMs <= STALE_HIDE_MS && silentMs <= silenceRef.current.reviveLimitMs && esRef.current?.readyState === EventSource.OPEN) return;
-    reconnect().now();
+    stream.revive(hiddenMs, attachedRef.current, silenceRef.current.reviveLimitMs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
@@ -1150,23 +906,12 @@ function useBrainChatController(): BrainChatValue {
   // close. The daemon's named heartbeat makes that state observable: silence past the limit means dead.
   // Unlike the wake-up path this one is re-armed when the operator changes the limit, since the interval
   // reads it once at start; the watchdog holds no state worth preserving across that restart.
-  useEffect(() => startStreamWatchdog({
-    lastFrameAt: () => lastFrameAtRef.current,
-    limitMs: silence.limitMs,
-    onSilent: () => {
-      if (!attachedRef.current || !esRef.current) return;
-      esRef.current.close();
-      reconnect().now();
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [silence.limitMs]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => stream.watch(() => attachedRef.current, silence.limitMs), [silence.limitMs]);
 
   // Tear the stream down when the whole provider unmounts (app teardown), matching today's cleanup.
-  useEffect(() => () => {
-    reconnectRef.current?.stop();
-    if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
-    esRef.current?.close();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => stream.stop(), []);
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued: visibleQueue, readOnly, activeSessionId,
