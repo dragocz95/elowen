@@ -117,6 +117,7 @@ export const cs = {
     collapseNav: 'Sbalit navigaci na ikony',
     expandNav: 'Rozbalit navigaci',
     openCommandPalette: 'Otevřít paletu příkazů',
+    logout: 'Odhlásit se',
     language: 'Jazyk',
     theme: 'Motiv',
     rangeLabel: 'Období',

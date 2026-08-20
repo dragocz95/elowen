@@ -117,6 +117,7 @@ export const sk = {
     collapseNav: 'Zbaliť navigáciu na ikony',
     expandNav: 'Rozbaliť navigáciu',
     openCommandPalette: 'Otvoriť paletu príkazov',
+    logout: 'Odhlásiť sa',
     language: 'Jazyk',
     theme: 'Motív',
     rangeLabel: 'Obdobie',

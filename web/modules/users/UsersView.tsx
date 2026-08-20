@@ -2,9 +2,9 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Users, UserPlus, Trash2, LogOut, Shield, ShieldCheck, Lock, LogIn, MoreHorizontal, Search, FolderGit2, Cpu } from 'lucide-react';
 import { useUsers, useMe, useProjects, useConfig } from '../../lib/queries';
-import { useCreateUser, useDeleteUser, useLogout, useUpdateUser } from '../../lib/mutations';
+import { useCreateUser, useDeleteUser, useSignOut, useUpdateUser } from '../../lib/mutations';
 import type { User as ElowenUser } from '../../lib/types';
-import { clearToken, impersonateUser } from '../../lib/token';
+import { impersonateUser } from '../../lib/token';
 import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
@@ -31,7 +31,7 @@ export function UsersView() {
   const deleteUser = useDeleteUser();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
-  const logout = useLogout();
+  const { signOut, isPending: signingOut } = useSignOut();
   const config = useConfig();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
@@ -66,13 +66,6 @@ export function UsersView() {
         onError: (err) => toast(String(err), 'error'),
       },
     );
-  }
-
-  function handleLogout() {
-    logout.mutate(undefined, {
-      onSuccess: () => { clearToken(); window.location.reload(); },
-      onError: () => { clearToken(); window.location.reload(); },
-    });
   }
 
   function handleRole(user: ElowenUser) {
@@ -171,7 +164,7 @@ export function UsersView() {
           description: t.users.workspaceIntro,
           mascotState: users.isLoading ? 'saving' : users.isError ? 'error' : 'idle',
           status: !users.isLoading && !users.isError ? <span className="workspace-status">{t.users.workspaceReady}</span> : undefined,
-          action: <div className="flex items-center gap-3"><button type="button" onClick={handleLogout} disabled={logout.isPending} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><LogOut size={13} aria-hidden />{t.users.logout}</button><Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button></div>,
+          action: <div className="flex items-center gap-3"><button type="button" onClick={signOut} disabled={signingOut} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><LogOut size={13} aria-hidden />{t.users.logout}</button><Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button></div>,
           metrics: <>
             <WorkspaceMetric label={t.users.metricUsers} value={data.length} icon={Users} />
             <WorkspaceMetric label={t.users.metricAdmins} value={adminCount} icon={ShieldCheck} />

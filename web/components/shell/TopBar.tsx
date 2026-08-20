@@ -1,9 +1,10 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronRight, Menu, Search, User } from 'lucide-react';
+import { ChevronRight, LogOut, Menu, Search, User } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useMe, useAgentsPlugin } from '../../lib/queries';
+import { useSignOut } from '../../lib/mutations';
 import { usePageHeader } from '../../lib/pageHeader';
 import { navigationWorldForPath } from '../../modules/registry';
 import { NotificationBell } from '../ui/NotificationBell';
@@ -18,6 +19,7 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
   const pathname = usePathname();
   const agentsUi = useAgentsPlugin();
   const pageHeader = usePageHeader();
+  const { signOut, isPending: signingOut } = useSignOut();
   const { title, count, icon: Icon } = pageHeader?.header ?? {};
   const world = navigationWorldForPath(pathname);
   const context = world
@@ -67,6 +69,19 @@ export function TopBar({ onMenuClick, showLocation = true }: { onMenuClick?: () 
           <span className="hidden font-mono text-[10px] tracking-wide text-text-muted/70 lg:inline">⌘K</span>
         </button>
         <NotificationBell />
+        {/* Only when there is a session to end — the login screen has nothing to sign out of. */}
+        {me.data?.user ? (
+          <button
+            type="button"
+            onClick={signOut}
+            disabled={signingOut}
+            aria-label={t.common.logout}
+            title={t.common.logout}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-elevated hover:text-text disabled:opacity-50"
+          >
+            <LogOut size={17} aria-hidden />
+          </button>
+        ) : null}
         <LanguageSwitcher collapsed={Boolean(onMenuClick)} />
         <Link
           href="/account"

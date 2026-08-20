@@ -117,6 +117,7 @@ export const en = {
     collapseNav: 'Collapse navigation to icons',
     expandNav: 'Expand navigation',
     openCommandPalette: 'Open command palette',
+    logout: 'Sign out',
     language: 'Language',
     theme: 'Theme',
     rangeLabel: 'Date range',

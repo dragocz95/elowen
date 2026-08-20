@@ -1,6 +1,7 @@
 'use client';
 import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
+import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
 import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill } from './types';
 
@@ -192,6 +193,17 @@ export function useLogin() {
 }
 export function useLogout() {
   return useMutation({ mutationFn: () => elowenClient.logout() });
+}
+/** Ending a session, ready to hand straight to an onClick. The cookie is cleared and the page reloaded on
+ *  EITHER outcome on purpose: when the daemon is already unreachable the request fails, and leaving the
+ *  user inside a session the UI still believes in is the one result a logout button must never produce. */
+export function useSignOut(): { signOut: () => void; isPending: boolean } {
+  const logout = useLogout();
+  const finish = (): void => { clearToken(); window.location.reload(); };
+  return {
+    signOut: () => logout.mutate(undefined, { onSuccess: finish, onError: finish }),
+    isPending: logout.isPending,
+  };
 }
 export function useCreateUser() {
   const qc = useQueryClient();
