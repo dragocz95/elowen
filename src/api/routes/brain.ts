@@ -20,8 +20,9 @@ import { kimiUsageSource } from '../../brain/kimiUsage.js';
 import { anthropicUsageSource } from '../../brain/anthropicUsage.js';
 import { brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
 import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer.js';
-import { clientOrigin } from '../clientIp.js';
-import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
+import type { ElowenApp, RouteContext } from '../context.js';
+import { registerBrainDebugRoutes } from './brainDebug.js';
+import { createBrainRouteContext, messagePageOpts } from './brainRouteContext.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
  *  the length so a stray large payload can't bloat the summary prompt. Undefined means "default compaction". */
@@ -46,27 +47,12 @@ function sessionPageOpts(rawLimit?: string, rawOffset?: string): { limit?: numbe
   return opts;
 }
 
-/** Opt-in backwards pagination for the message history (the chat's lazy-load): undefined when `?limit` is
- *  absent so the caller keeps the historical full bare-array response (the CLI + read-only view rely on
- *  that). `limit` is clamped to a sane window; `before` is the exclusive upper-bound cursor a previous page
- *  returned as `nextBefore` (absent → the newest turns). */
-function messagePageOpts(rawLimit?: string, rawBefore?: string): { limit: number; before?: number } | undefined {
-  if (rawLimit === undefined) return undefined;
-  const limit = Number(rawLimit);
-  if (!Number.isFinite(limit) || limit <= 0) return undefined; // garbage limit → the historical bare array
-  const opts: { limit: number; before?: number } = { limit: Math.min(Math.floor(limit), 200) };
-  if (rawBefore !== undefined) {
-    const before = Number(rawBefore);
-    if (Number.isFinite(before) && before >= 0) opts.before = Math.floor(before);
-  }
-  return opts;
-}
-
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
  *  Full-scope callers only — a spawned agent must not drive a human's brain. Each route acts on the
  *  caller's own conversation (`brain-<userId>`). Degrades gracefully when the brain is not wired. */
 export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
-  const { d } = ctx;
+  const route = createBrainRouteContext(ctx);
+  const { d, forbidden, pinOrigin, withBrain } = route;
   // One usage poller per provider that publishes a subscription rate-limit rail, keyed by the pi provider
   // id the active model reports. Each returns null until its OAuth account is connected, so the route can
   // look one up unconditionally and simply get null when the active model has no rail.
@@ -75,145 +61,8 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     [kimiUsageSource.provider]: new UsageService(kimiUsageSource, d.brainAuth),
     [anthropicUsageSource.provider]: new UsageService(anthropicUsageSource, d.brainAuth),
   } : {};
-  const forbidden = (c: { get: (k: 'tokenScope') => string }) => c.get('tokenScope') === 'agent';
 
-  /** Pin this request's origin to the conversation whose turn it is about to start, so the spend of that
-   *  turn is attributed to the address that ORDERED it — read now, at request time, not at settle, when
-   *  the requester may be gone or on another network. Called on the turn-STARTING routes only; a read
-   *  route has nothing to attribute. Silent no-op where the store is unwired (minimal test wiring). */
-  const pinOrigin = (c: ElowenContext, sessionId: string): void => {
-    d.usageOrigins?.recordRequest(
-      sessionId, c.get('user').id,
-      clientOrigin(c, d.config.get().security.trustProxy), d.clock.now(),
-    );
-  };
-
-  /** The prologue almost every brain route shares: 503 when the engine isn't wired, 403 for an agent-scope
-   *  token (a spawned agent must never drive a human's brain), and — with `{ admin: true }` — 403 for a
-   *  non-admin. Wrapping it hands the handler a guaranteed-present `brain`, so the guard is the DEFAULT a new
-   *  route can't forget rather than a two-line prologue copy-pasted (and occasionally mis-ordered) per handler.
-   *  Routes whose unavailable response is a benign default (`status`/`sessions`/`rate-limits` → {} / [] / null)
-   *  and the SSE stream keep their bespoke guard — this covers only the uniform `503 + forbidden` shape. */
-  type BrainService = NonNullable<typeof d.brain>;
-  const withBrain = (handler: (c: ElowenContext, brain: BrainService) => Response | Promise<Response>, opts?: { admin?: boolean }) =>
-    async (c: ElowenContext): Promise<Response> => {
-      if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-      if (forbidden(c) || (opts?.admin === true && !c.get('user')?.is_admin)) return c.json({ error: 'forbidden' }, 403);
-      return handler(c, d.brain);
-    };
-
-  const debugNumber = (raw?: string): number | undefined => {
-    if (raw === undefined) return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) ? Math.floor(value) : undefined;
-  };
-  const debugDate = (raw: string | undefined, endOfDay = false): string | undefined => {
-    if (raw === undefined) return undefined;
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
-    const date = new Date(dateOnly ? `${raw}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z` : raw);
-    if (!Number.isFinite(date.getTime())) throw new Error('invalid debug filter');
-    return date.toISOString().replace('T', ' ').slice(0, 19);
-  };
-  const debugEnum = <T extends string>(raw: string | undefined, values: readonly T[]): T | undefined => {
-    if (raw === undefined) return undefined;
-    if ((values as readonly string[]).includes(raw)) return raw as T;
-    throw new Error('invalid debug filter');
-  };
-  const debugError = (c: ElowenContext, error: unknown): Response => {
-    const message = (error as Error).message;
-    if (message === 'invalid debug cursor' || message === 'invalid debug filter') return c.json({ error: message }, 400);
-    const bytes = /^debug payload exceeds byte limit:(\d+)$/.exec(message)?.[1];
-    if (bytes) return c.json({ error: 'payload exceeds byte limit', requiredBytes: Number(bytes) }, 413);
-    throw error;
-  };
-
-  // Raw model prompts may contain private user/tool data. Every response in this namespace — including
-  // auth failures and 404s — is private and non-cacheable. Agent-scope tokens are denied even for admins.
-  app.use('/brain/debug/*', async (c, next) => {
-    if (forbidden(c) || !c.get('user')?.is_admin) {
-      const response = c.json({ error: 'forbidden' }, 403);
-      response.headers.set('Cache-Control', 'private, no-store');
-      return response;
-    }
-    await next();
-    c.res.headers.set('Cache-Control', 'private, no-store');
-  });
-
-  app.get('/brain/debug/sessions', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      return c.json(d.brain.debugSessions({
-        cursor: c.req.query('cursor'), limit: debugNumber(c.req.query('limit')), search: c.req.query('search'),
-        from: debugDate(c.req.query('from')), to: debugDate(c.req.query('to'), true), userId: debugNumber(c.req.query('userId')),
-        surface: debugEnum(c.req.query('surface'), ['conversation', 'channel', 'task', 'subagent'] as const),
-        provider: c.req.query('provider'), model: c.req.query('model'),
-        status: debugEnum(c.req.query('status'), ['pending', 'succeeded', 'error', 'interrupted', 'captured', 'legacy'] as const),
-      }));
-    } catch (error) { return debugError(c, error); }
-  });
-
-  app.get('/brain/debug/sessions/:id', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    const item = d.brain.debugSession(c.req.param('id'));
-    return item ? c.json(item) : c.json({ error: 'not found' }, 404);
-  });
-
-  app.get('/brain/debug/sessions/:id/requests', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      const page = d.brain.debugRequests(c.req.param('id'), {
-        cursor: c.req.query('cursor'), limit: debugNumber(c.req.query('limit')), search: c.req.query('search'),
-        kind: debugEnum(c.req.query('kind'), ['chat', 'compaction', 'remote_compaction'] as const),
-        provider: c.req.query('provider'), model: c.req.query('model'),
-        status: debugEnum(c.req.query('status'), ['pending', 'succeeded', 'error', 'interrupted'] as const),
-      });
-      return page ? c.json(page) : c.json({ error: 'not found' }, 404);
-    } catch (error) { return debugError(c, error); }
-  });
-
-  app.get('/brain/debug/sessions/:id/requests/:requestId', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    const item = d.brain.debugRequest(c.req.param('id'), c.req.param('requestId'));
-    return item ? c.json(item) : c.json({ error: 'not found' }, 404);
-  });
-
-  app.get('/brain/debug/sessions/:id/requests/:requestId/segments', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      const page = d.brain.debugRequestSegments(c.req.param('id'), c.req.param('requestId'), {
-        cursor: c.req.query('cursor'), limit: debugNumber(c.req.query('limit')), maxBytes: debugNumber(c.req.query('maxBytes')),
-      });
-      return page ? c.json(page) : c.json({ error: 'not found' }, 404);
-    } catch (error) { return debugError(c, error); }
-  });
-
-  app.get('/brain/debug/sessions/:id/requests/:requestId/segments/:index', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      const item = d.brain.debugRequestSegment(
-        c.req.param('id'), c.req.param('requestId'), Number(c.req.param('index')), debugNumber(c.req.query('maxBytes')),
-      );
-      return item ? c.json(item) : c.json({ error: 'not found' }, 404);
-    } catch (error) { return debugError(c, error); }
-  });
-
-  app.get('/brain/debug/sessions/:id/requests/:requestId/raw', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      const payload = d.brain.debugRawRequest(c.req.param('id'), c.req.param('requestId'), debugNumber(c.req.query('maxBytes')));
-      return payload ? c.json(payload) : c.json({ error: 'not found' }, 404);
-    } catch (error) { return debugError(c, error); }
-  });
-
-  app.get('/brain/debug/sessions/:id/legacy-transcript', c => {
-    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    try {
-      const page = d.brain.debugLegacyTranscript(c.req.param('id'), {
-        cursor: c.req.query('cursor'), limit: debugNumber(c.req.query('limit')), maxBytes: debugNumber(c.req.query('maxBytes')),
-      });
-      return page ? c.json(page) : c.json({ error: 'not found' }, 404);
-    } catch (error) { return debugError(c, error); }
-  });
+  registerBrainDebugRoutes(app, route);
 
   app.get('/brain/status', async c => {
     if (!d.brain) return c.json({ running: false, sessionId: null, model: '', usage: null, statusline: null, project: { cwd: null, branch: null }, mcp: null });
