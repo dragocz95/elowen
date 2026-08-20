@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { BrainProviderEntry } from '../providers.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
+import { trimAllTrailingSlashes } from '../../shared/url.js';
 import type { HostedToolSearchCapabilities } from '../../shared/wireContract.js';
 export { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
 export type { HostedToolSearchCapabilities, HostedToolSearchCapability } from '../../shared/wireContract.js';
@@ -50,7 +51,7 @@ const normalizedEndpoint = (entry: Pick<BrainProviderEntry, 'type' | 'baseUrl'>)
   try {
     const url = new URL(raw);
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return undefined;
-    const path = url.pathname.replace(/\/+$/, '') || '/';
+    const path = trimAllTrailingSlashes(url.pathname) || '/';
     return { host: url.hostname.toLowerCase(), path };
   } catch {
     return undefined;

@@ -1,4 +1,5 @@
 import type { BrainProviderEntry } from './providers.js';
+import { trimAllTrailingSlashes } from '../shared/url.js';
 
 export type HostedToolSearchProbeStatus = 'supported' | 'unsupported' | 'error';
 export interface HostedToolSearchProbeResult {
@@ -64,7 +65,7 @@ export async function probeAzureHostedToolSearch(options: ProbeOptions): Promise
   const checkedAt = (options.now ?? Date.now)();
   const apiKey = options.provider.apiKey;
   if (!apiKey) return { status: 'error', reason: 'api_key_missing', checkedAt };
-  const endpoint = `${options.provider.baseUrl.replace(/\/+$/, '')}/responses`;
+  const endpoint = `${trimAllTrailingSlashes(options.provider.baseUrl)}/responses`;
   const doFetch = options.fetchImpl ?? fetch;
   const headers = {
     Authorization: `Bearer ${apiKey}`,

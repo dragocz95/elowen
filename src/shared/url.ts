@@ -11,6 +11,19 @@ export function trimTrailingSlash(value: string): string {
   return value.replace(/\/$/, '');
 }
 
+/** Remove EVERY trailing slash. The name is spelled out because the difference from
+ *  {@link trimTrailingSlash} is one character of regex and a real difference in output: an operator base
+ *  URL of `https://x//` becomes `https://x` here and `https://x/` there.
+ *
+ *  This is the one the endpoint builders want. They append their own absolute path (`/responses`,
+ *  `/codex/responses`), so any slash the operator left on the end would show up doubled in the URL that
+ *  actually goes out. `trimTrailingSlash` keeps its single-slash behavior for the callers that compose
+ *  differently — see the note at the top of this file on why these stay two primitives and not one
+ *  function with a flag. */
+export function trimAllTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
 /** Remove a trailing `/v1` API-version segment the operator may have included, so the caller's own
  *  versioned path is the only one on the URL. Case-sensitive — `/V1` is left alone. */
 export function stripTrailingV1(value: string): string {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { trimTrailingSlash, stripTrailingV1 } from '../../src/shared/url.js';
+import { trimTrailingSlash, trimAllTrailingSlashes, stripTrailingV1 } from '../../src/shared/url.js';
 
 describe('trimTrailingSlash', () => {
   it('removes a single trailing slash', () => {
@@ -11,6 +11,28 @@ describe('trimTrailingSlash', () => {
 
   it('removes exactly one slash, matching the old /\/$/ pattern', () => {
     expect(trimTrailingSlash('https://x//')).toBe('https://x/');
+  });
+});
+
+describe('trimAllTrailingSlashes', () => {
+  it('removes every trailing slash', () => {
+    expect(trimAllTrailingSlashes('https://x/')).toBe('https://x');
+    expect(trimAllTrailingSlashes('https://x//')).toBe('https://x');
+    expect(trimAllTrailingSlashes('https://x/////')).toBe('https://x');
+    expect(trimAllTrailingSlashes('https://x')).toBe('https://x');
+    expect(trimAllTrailingSlashes('')).toBe('');
+    expect(trimAllTrailingSlashes('/')).toBe('');
+  });
+
+  it('leaves inner slashes and the rest of the path alone', () => {
+    expect(trimAllTrailingSlashes('https://x/openai/v1/')).toBe('https://x/openai/v1');
+    expect(trimAllTrailingSlashes('https://x//openai//v1//')).toBe('https://x//openai//v1');
+    expect(trimAllTrailingSlashes('/openai/v1')).toBe('/openai/v1');
+  });
+
+  it('differs from trimTrailingSlash by more than its name', () => {
+    expect(trimTrailingSlash('https://x//')).toBe('https://x/');
+    expect(trimAllTrailingSlashes('https://x//')).toBe('https://x');
   });
 });
 

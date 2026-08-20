@@ -4,6 +4,7 @@ import type { Api, AssistantMessageEventStream, Context, Message, Model } from '
 import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { logger } from '../../shared/logger.js';
+import { trimAllTrailingSlashes } from '../../shared/url.js';
 
 /** pi-ai's `CODEX_TOOL_CALL_PROVIDERS` (openai-codex-responses.js) is module-private, so the same set is
  *  restated here. It decides which historical tool calls keep their provider-native ids during conversion;
@@ -169,7 +170,7 @@ export function buildCompactionRequestBody(input: CompactionRequestInput): Recor
  *  or the bare backend root. */
 export function resolveCodexUrl(baseUrl: string | undefined): string {
   const raw = baseUrl && baseUrl.trim().length > 0 ? baseUrl : DEFAULT_CODEX_BASE_URL;
-  const normalized = raw.replace(/\/+$/, '');
+  const normalized = trimAllTrailingSlashes(raw);
   if (normalized.endsWith('/codex/responses')) return normalized;
   if (normalized.endsWith('/codex')) return `${normalized}/responses`;
   return `${normalized}/codex/responses`;
