@@ -58,6 +58,7 @@ export function createWorkflowHostRpc(resolvePlugins: () => Promise<PluginRegist
 }
 
 export { runMemoryEvictionSweep } from './maintenance.js';
+export type { MemoryEvictionSweepDeps } from './maintenance.js';
 
 // Bounded ring of recent log lines, installed as the logger's single sink so it captures every
 // emitted line (including plugin output prefixed `[plugin:<name>]` and `plugin skipped: <name>`).
@@ -66,6 +67,7 @@ const pluginLogs = new PluginLogBuffer();
 setLogSink(pluginLogs);
 
 export { announceBoot, installGracefulShutdown, RESTART_EXIT_CODE } from './shutdown.js';
+export type { ShutdownControl } from './shutdown.js';
 
 export interface BuildOpts {
   dbPath: string;
