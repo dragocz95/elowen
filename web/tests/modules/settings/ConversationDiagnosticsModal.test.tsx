@@ -30,9 +30,9 @@ function manifest(requestId: string) {
   return {
     ...requests.find((request) => request.requestId === requestId)!, canonicalizationVersion: 1, assistantMessageId: null, segmentBytes: 400,
     segments: [
-      { index: 0, section: 'system', key: 'system', kind: 'system', digest: `${requestId}-sys`, canonicalizationVersion: 1, byteLength: 30, estimatedTokens: 20 },
-      { index: 1, section: 'input', key: 'messages', kind: 'message', digest: `${requestId}-msg`, canonicalizationVersion: 1, byteLength: 60, estimatedTokens: 30 },
-      { index: 2, section: 'tool', key: 'tools', kind: 'tool', digest: `${requestId}-tool`, canonicalizationVersion: 1, byteLength: 90, estimatedTokens: 40 },
+      { index: 0, section: 'system', key: 'system', kind: 'system', role: 'system', label: 'system', preview: 'You are Elowen.', digest: `${requestId}-sys`, canonicalizationVersion: 1, byteLength: 30, estimatedTokens: 20 },
+      { index: 1, section: 'input', key: 'messages', kind: 'message', role: 'user', label: 'user', preview: requestId === 'request-1' ? 'First prompt' : 'Second prompt', digest: `${requestId}-msg`, canonicalizationVersion: 1, byteLength: 60, estimatedTokens: 30 },
+      { index: 2, section: 'tool', key: 'tools', kind: 'tool', role: 'tool', label: requestId === 'request-1' ? 'alpha_tool' : 'beta_search', preview: requestId === 'request-1' ? 'Alpha tool schema' : 'Server search tool', digest: `${requestId}-tool`, canonicalizationVersion: 1, byteLength: 90, estimatedTokens: 40 },
       { index: 3, section: 'options', key: null, kind: 'options', digest: `${requestId}-opt`, canonicalizationVersion: 1, byteLength: 20, estimatedTokens: 5 },
     ],
   };
@@ -90,9 +90,8 @@ describe('ConversationDiagnosticsModal', () => {
     expect(segmentReads).toBe(0);
     expect(rawReads).toBe(0);
 
-    fireEvent.click(screen.getByText('tools'));
-    expect(await screen.findByText('alpha_tool')).toBeInTheDocument();
-    expect(segmentReads).toBe(1);
+    fireEvent.click(screen.getByText('alpha_tool'));
+    await waitFor(() => expect(segmentReads).toBe(1));
 
     fireEvent.click(screen.getByRole('button', { name: /Raw provider request/ }));
     await waitFor(() => expect(rawReads).toBe(1));
@@ -102,8 +101,8 @@ describe('ConversationDiagnosticsModal', () => {
   it('updates the exact tool set per request and renders graph/cache metrics with textual status', async () => {
     renderModal();
     expect(await screen.findByLabelText('Prompt token segments')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('tools'));
-    expect(await screen.findByText('alpha_tool')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('alpha_tool'));
+    await waitFor(() => expect(segmentReads).toBe(1));
     expect(screen.getByText(/Estimated cached prefix/)).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
     expect(screen.getAllByText('succeeded').length).toBeGreaterThan(0);
@@ -111,10 +110,22 @@ describe('ConversationDiagnosticsModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /#2/ }));
     await waitFor(() => expect(screen.queryByText('alpha_tool')).not.toBeInTheDocument());
     await screen.findByText('Not available');
-    fireEvent.click(screen.getByText('tools'));
-    expect(await screen.findByText('beta_search')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('beta_search'));
+    await waitFor(() => expect(segmentReads).toBe(2));
     expect(screen.getByText('Server')).toBeInTheDocument();
     expect(screen.getByText('Not available')).toBeInTheDocument();
+  });
+
+  it('switches a selected message between semantic Pretty and JSON views', async () => {
+    renderModal();
+    fireEvent.click(await screen.findByText('First prompt'));
+    const inspector = screen.getByTestId('diagnostics-inspector');
+    expect(await within(inspector).findByText('First prompt')).toBeInTheDocument();
+    expect(within(inspector).getByRole('tab', { name: 'Pretty' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'JSON' }));
+    expect(within(inspector).getByRole('tab', { name: 'JSON' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(inspector).getByText(/"content": "First prompt"/)).toBeInTheDocument();
   });
 
   it('sends server-side filters and renders capture-disabled and legacy states', async () => {
@@ -158,6 +169,9 @@ describe('ConversationDiagnosticsModal', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<ConversationDiagnosticsModal captureEnabled onClose={vi.fn()} />, { wrapper: Wrapper });
     await screen.findByLabelText('Prompt token segments');
+    expect(screen.getByRole('tab', { name: 'Messages' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByText('First prompt'));
+    expect(screen.getByRole('tab', { name: 'Detail' })).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
     const sessionsDrawer = await screen.findByRole('dialog', { name: 'Sessions' });
@@ -168,7 +182,7 @@ describe('ConversationDiagnosticsModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
     const toolsDrawer = await screen.findByRole('dialog', { name: 'Tools' });
-    fireEvent.click(within(toolsDrawer).getByText('tools'));
-    expect(await within(toolsDrawer).findByText('alpha_tool')).toBeInTheDocument();
+    fireEvent.click(within(toolsDrawer).getByText('alpha_tool'));
+    await waitFor(() => expect(segmentReads).toBe(1));
   });
 });

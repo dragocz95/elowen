@@ -43,6 +43,7 @@ function segmentPayload(segment: SegmentLike): unknown {
 }
 
 function segmentRole(segment: SegmentLike): string {
+  if (segment.role) return segment.role;
   if (segment.section === 'system') return 'system';
   if (segment.section === 'tool') return 'tool';
   if (segment.section === 'options') return 'options';
@@ -56,19 +57,88 @@ function segmentRole(segment: SegmentLike): string {
 }
 
 function segmentLabel(segment: SegmentLike): string {
+  if (segment.label) return segment.label;
   const item = asRecord(segmentPayload(segment));
   const name = typeof item?.name === 'string' ? item.name : typeof item?.type === 'string' ? item.type : null;
   return name ?? segment.key ?? segment.kind;
 }
 
-function searchable(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try { return JSON.stringify(value); } catch { return String(value); }
-}
-
 function pretty(value: unknown): string {
   if (typeof value === 'string') return value;
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function PrettyPayload({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || value === undefined) return <span className="text-text-muted">—</span>;
+  if (typeof value === 'string') return <div className="whitespace-pre-wrap text-sm leading-6 text-text">{value}</div>;
+  if (typeof value === 'number' || typeof value === 'boolean') return <span className="font-mono text-sm text-text">{String(value)}</span>;
+  if (Array.isArray(value)) return <div className="space-y-3">{value.map((item, index) => <PrettyPayload key={index} value={item} depth={depth + 1} />)}</div>;
+  const item = asRecord(value);
+  if (!item) return <pre className="whitespace-pre-wrap text-xs text-text-muted">{pretty(value)}</pre>;
+
+  const type = typeof item.type === 'string' ? item.type : '';
+  const role = typeof item.role === 'string' ? item.role : '';
+  const fn = asRecord(item.function);
+  const name = String(item.name ?? fn?.name ?? (type || 'Item'));
+  const text = item.text ?? item.output_text ?? item.input_text;
+  if (typeof text === 'string') {
+    const reasoning = /reason|thinking/i.test(type);
+    return reasoning ? (
+      <details className="rounded-md border border-border bg-elevated/30">
+        <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-text-muted">Reasoning</summary>
+        <div className="border-t border-border p-3"><PrettyPayload value={text} depth={depth + 1} /></div>
+      </details>
+    ) : <PrettyPayload value={text} depth={depth + 1} />;
+  }
+  if (role && item.content !== undefined) {
+    return (
+      <article className="rounded-md border border-border bg-elevated/20 p-3">
+        <div className="mb-3 flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${ROLE_CLASS[role] ?? 'bg-text-muted'}`} /><strong className="text-xs uppercase tracking-wide text-text-muted">{role}</strong></div>
+        <PrettyPayload value={item.content} depth={depth + 1} />
+      </article>
+    );
+  }
+  if (/^(tool_use|function_call|server_tool_use)$/i.test(type) || item.input !== undefined || item.arguments !== undefined || fn?.arguments !== undefined) {
+    const args = item.input ?? item.arguments ?? fn?.arguments;
+    return (
+      <article className="rounded-md border border-accent/30 bg-accent/5 p-3">
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong><Badge tone="accent">Tool call</Badge></div>
+        {args === undefined ? null : <pre className="max-h-80 overflow-auto rounded bg-bg/60 p-3 text-xs text-text-muted">{pretty(args)}</pre>}
+      </article>
+    );
+  }
+  if (/tool_result|function_call_output|tool_search_tool_result/i.test(type) || item.output !== undefined) {
+    return (
+      <article className="rounded-md border border-success/30 bg-success/5 p-3">
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-success" /><strong className="text-sm text-text">{name}</strong><Badge tone="success">Tool result</Badge></div>
+        <PrettyPayload value={item.content ?? item.output} depth={depth + 1} />
+      </article>
+    );
+  }
+  if (/image|audio|video|file/i.test(type)) {
+    return <div className="flex items-center gap-2 rounded-md border border-border bg-elevated/30 p-3"><Badge>{type}</Badge><span className="text-xs text-text-muted">Binary or media content</span></div>;
+  }
+  if (item.content !== undefined) return <PrettyPayload value={item.content} depth={depth + 1} />;
+  if (item.input_schema !== undefined || fn?.parameters !== undefined || item.parameters !== undefined) {
+    return (
+      <article className="rounded-md border border-border bg-elevated/20 p-3">
+        <div className="mb-2 flex items-center gap-2"><Wrench size={14} className="text-accent" /><strong className="text-sm text-text">{name}</strong></div>
+        {typeof item.description === 'string' ? <p className="mb-3 text-sm leading-6 text-text-muted">{item.description}</p> : null}
+        <pre className="max-h-80 overflow-auto rounded bg-bg/60 p-3 text-xs text-text-muted">{pretty(toolSchema(value))}</pre>
+      </article>
+    );
+  }
+  if (depth > 2) return <pre className="whitespace-pre-wrap text-xs text-text-muted">{pretty(value)}</pre>;
+  return (
+    <dl className="divide-y divide-border rounded-md border border-border bg-elevated/20">
+      {Object.entries(item).map(([key, nested]) => (
+        <div key={key} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 p-3">
+          <dt className="font-mono text-[11px] text-text-muted">{key}</dt>
+          <dd className="min-w-0"><PrettyPayload value={nested} depth={depth + 1} /></dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function toolName(payload: unknown): string {
@@ -255,6 +325,7 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
   const selectedPayload = useBrainDebugSegment(sessionId, requestId, selectedSegment?.index ?? null);
   const [visibleMessages, setVisibleMessages] = useState(100);
   const [inspectorRaw, setInspectorRaw] = useState(false);
+  const [mobileContent, setMobileContent] = useState<'messages' | 'inspector'>('messages');
   const [toolQuery, setToolQuery] = useState('');
   const [mobilePanel, setMobilePanel] = useState<'sessions' | 'tools' | null>(null);
 
@@ -266,13 +337,13 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
     setRequestId((current) => current && requests.some((request) => request.requestId === current) ? current : requests[0]?.requestId ?? null);
   }, [sessionId, requests]);
   useEffect(() => {
-    setRawOpen(false); setSelectedSegment(null); setToolQuery(''); setVisibleMessages(100);
+    setRawOpen(false); setSelectedSegment(null); setInspectorRaw(false); setMobileContent('messages'); setToolQuery(''); setVisibleMessages(100);
   }, [requestId]);
 
   const messages = segments.filter((segment) => segment.section !== 'tool' && segment.section !== 'options');
   const filteredMessages = messages.filter((segment) => {
     const itemRole = segmentRole(segment);
-    const haystack = `${segment.key ?? ''} ${segment.kind} ${segment.digest}`.toLowerCase();
+    const haystack = `${segment.role ?? ''} ${segment.label ?? ''} ${segment.preview ?? ''} ${segment.key ?? ''} ${segment.kind} ${segment.digest}`.toLowerCase();
     return (role === 'all' || role === itemRole) && haystack.includes(messageQuery.toLowerCase());
   });
   const visibleMessageItems = filteredMessages.slice(0, visibleMessages);
@@ -330,8 +401,12 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
                       {selectedRequest.errorMessage ? <div className="mt-3 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger">{selectedRequest.errorCode ? `${selectedRequest.errorCode}: ` : ''}{selectedRequest.errorMessage}</div> : null}
                     </section>
 
+                    <div className="flex rounded-md border border-border bg-elevated/30 p-1 xl:hidden" role="tablist" aria-label={d.contentView}>
+                      <button type="button" role="tab" aria-selected={mobileContent === 'messages'} onClick={() => setMobileContent('messages')} className={`flex-1 rounded px-3 py-2 text-xs font-semibold ${mobileContent === 'messages' ? 'bg-surface text-text shadow-sm' : 'text-text-muted'}`}>{d.messages}</button>
+                      <button type="button" role="tab" aria-selected={mobileContent === 'inspector'} disabled={!selectedSegment} onClick={() => setMobileContent('inspector')} className={`flex-1 rounded px-3 py-2 text-xs font-semibold disabled:opacity-40 ${mobileContent === 'inspector' ? 'bg-surface text-text shadow-sm' : 'text-text-muted'}`}>{d.inspector}</button>
+                    </div>
                     <section className="grid min-h-[24rem] grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
-                      <div className="flex min-h-0 flex-col rounded-lg border border-border">
+                      <div className={`${mobileContent === 'inspector' ? 'hidden xl:flex' : 'flex'} min-h-0 flex-col rounded-lg border border-border`}>
                         <div className="flex flex-wrap gap-2 border-b border-border p-3">
                           <Input className="min-w-48 flex-1" aria-label={d.searchMessages} placeholder={d.searchMessages} value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} />
                           <Select label={d.role} value={role} onChange={setRole}><option value="all">{d.allRoles}</option>{roles.map((item) => <option key={item} value={item}>{item}</option>)}</Select>
@@ -339,14 +414,14 @@ export function ConversationDiagnosticsModal({ captureEnabled, onClose }: { capt
                         <div className="max-h-[32rem] min-h-0 flex-1 overflow-y-auto">
                           {visibleMessageItems.map((segment) => {
                             const itemRole = segmentRole(segment);
-                            return <button key={`${segment.index}-${segment.digest}`} type="button" aria-pressed={selectedSegment?.index === segment.index} onClick={() => setSelectedSegment(segment)} className={`flex w-full items-start gap-3 border-b border-border p-3 text-left hover:bg-elevated ${selectedSegment?.index === segment.index ? 'bg-elevated' : ''}`}><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${ROLE_CLASS[itemRole] ?? 'bg-text-muted'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-xs text-text">{itemRole}</strong><Badge>{segmentLabel(segment)}</Badge><span className="ml-auto font-mono text-[10px] text-text-muted">~{segment.estimatedTokens}</span></span><span className="mt-1 line-clamp-2 font-mono text-[10px] text-text-muted">{segment.digest}</span></span></button>;
+                            return <button key={`${segment.index}-${segment.digest}`} type="button" aria-pressed={selectedSegment?.index === segment.index} onClick={() => { setSelectedSegment(segment); setMobileContent('inspector'); }} className={`flex w-full items-start gap-3 border-b border-border p-3 text-left hover:bg-elevated ${selectedSegment?.index === segment.index ? 'bg-elevated' : ''}`}><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${ROLE_CLASS[itemRole] ?? 'bg-text-muted'}`} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-xs text-text">{itemRole}</strong><Badge>{segmentLabel(segment)}</Badge><span className="ml-auto font-mono text-[10px] text-text-muted">~{segment.estimatedTokens}</span></span><span className={`mt-1 line-clamp-2 text-xs ${segment.preview ? 'text-text-muted' : 'font-mono text-[10px] text-text-subtle'}`}>{segment.preview ?? segment.digest}</span></span></button>;
                           })}
                           {visibleMessages < filteredMessages.length ? <div className="p-3"><Button onClick={() => setVisibleMessages((value) => value + 100)}>{d.loadMore}</Button></div> : null}
                         </div>
                       </div>
-                      <div className="flex min-h-0 flex-col rounded-lg border border-border">
-                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex gap-1"><Button variant="ghost" onClick={() => setInspectorRaw((value) => !value)}>{inspectorRaw ? d.pretty : d.raw}</Button>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
-                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? selectedPayload.isLoading ? <LoadingState /> : selectedPayload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => selectedPayload.refetch()} /> : <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{inspectorRaw ? searchable(selectedPayload.data?.payload) : pretty(selectedPayload.data?.payload)}</pre> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
+                      <div data-testid="diagnostics-inspector" className={`${mobileContent === 'messages' ? 'hidden xl:flex' : 'flex'} min-h-0 flex-col rounded-lg border border-border`}>
+                        <div className="flex items-center gap-2 border-b border-border p-3"><Braces size={14} className="text-accent" /><strong className="text-xs text-text">{d.inspector}</strong><div className="ml-auto flex items-center gap-1"><div className="flex rounded-md border border-border bg-bg p-0.5" role="tablist" aria-label={d.displayMode}><button type="button" role="tab" aria-selected={!inspectorRaw} onClick={() => setInspectorRaw(false)} className={`rounded px-2.5 py-1 text-xs font-semibold ${!inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.pretty}</button><button type="button" role="tab" aria-selected={inspectorRaw} onClick={() => setInspectorRaw(true)} className={`rounded px-2.5 py-1 text-xs font-semibold ${inspectorRaw ? 'bg-elevated text-text' : 'text-text-muted'}`}>{d.json}</button></div>{selectedPayload.data ? <Button variant="ghost" icon={Copy} aria-label={d.copy} onClick={() => copy(selectedPayload.data.payload)}>{d.copy}</Button> : null}</div></div>
+                        <div className="max-h-[32rem] min-h-0 flex-1 overflow-auto p-3">{selectedSegment ? selectedPayload.isLoading ? <LoadingState /> : selectedPayload.isError ? <ErrorState message={d.payloadTooLarge} onRetry={() => selectedPayload.refetch()} /> : inspectorRaw ? <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-text-muted">{pretty(selectedPayload.data?.payload)}</pre> : <PrettyPayload value={selectedPayload.data?.payload} /> : <EmptyState title={d.pickMessage} icon={ListFilter} />}</div>
                       </div>
                     </section>
 

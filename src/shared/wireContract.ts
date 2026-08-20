@@ -360,6 +360,10 @@ export interface BrainDebugSegmentManifestItem {
   canonicalizationVersion: number;
   byteLength: number;
   estimatedTokens: number;
+  /** Small semantic hints captured beside the immutable payload so the request timeline stays readable without downloading every segment. */
+  role?: string;
+  label?: string;
+  preview?: string;
 }
 
 export interface BrainDebugRequestDetail extends BrainDebugRequestItem {

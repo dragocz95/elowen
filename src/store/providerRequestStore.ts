@@ -16,6 +16,7 @@ export interface ProviderRequestSegmentRef {
   kind: string;
   digest: string;
   canonicalizationVersion: number;
+  display?: { role?: string; label?: string; preview?: string };
 }
 
 export interface ProviderRequestManifest {
@@ -157,6 +158,46 @@ function costTotal(value: ProviderRequestUsage['cost']): number | null {
   return typeof total === 'number' && Number.isFinite(total) ? total : null;
 }
 
+function displayRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function displayText(value: unknown, depth = 0): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (depth > 3) return '';
+  if (Array.isArray(value)) return value.map((item) => displayText(item, depth + 1)).filter(Boolean).join(' ');
+  const record = displayRecord(value);
+  if (!record) return '';
+  for (const key of ['text', 'output_text', 'input_text', 'description']) {
+    if (typeof record[key] === 'string') return record[key] as string;
+  }
+  if (record.content !== undefined) {
+    const content = displayText(record.content, depth + 1);
+    if (content) return content;
+  }
+  const fn = displayRecord(record.function);
+  const name = typeof record.name === 'string' ? record.name : typeof fn?.name === 'string' ? fn.name : undefined;
+  const args = record.input ?? record.arguments ?? fn?.arguments;
+  if (name) return args === undefined ? name : `${name} ${JSON.stringify(args)}`;
+  try { return JSON.stringify(record); } catch { return ''; }
+}
+
+function segmentDisplay(kind: string, value: unknown): ProviderRequestSegmentRef['display'] {
+  const record = displayRecord(value);
+  const fn = displayRecord(record?.function);
+  const rawRole = typeof record?.role === 'string' ? record.role : typeof record?.type === 'string' ? record.type : undefined;
+  const role = kind === 'system' ? 'system' : kind === 'tool' ? 'tool' : kind === 'options' ? 'options'
+    : kind === 'response' ? rawRole ?? 'assistant' : rawRole;
+  const label = typeof record?.name === 'string' ? record.name
+    : typeof fn?.name === 'string' ? fn.name
+      : typeof record?.type === 'string' ? record.type
+        : role ?? kind;
+  const preview = displayText(value).replace(/\s+/g, ' ').trim().slice(0, 240);
+  return { ...(role ? { role } : {}), ...(label ? { label } : {}), ...(preview ? { preview } : {}) };
+}
+
 export class ProviderRequestStore {
   constructor(private readonly db: Db) {}
 
@@ -177,7 +218,7 @@ export class ProviderRequestStore {
     if (!stored || stored.payload !== payload) {
       throw new Error(`provider request segment digest collision for ${sessionId}/${kind}/${digest}`);
     }
-    return { kind, digest, canonicalizationVersion: version };
+    return { kind, digest, canonicalizationVersion: version, display: segmentDisplay(kind, value) };
   }
 
   private segmentPayload(sessionId: string, ref: ProviderRequestSegmentRef): unknown {
@@ -538,7 +579,7 @@ export class ProviderRequestStore {
       return {
         index: start + relativeIndex, section: entry.section, key: entry.key, kind: entry.ref.kind, digest: entry.ref.digest,
         canonicalizationVersion: entry.ref.canonicalizationVersion, byteLength: segment.byte_length,
-        estimatedTokens: segment.estimated_tokens, ref: entry.ref,
+        estimatedTokens: segment.estimated_tokens, ...entry.ref.display, ref: entry.ref,
       };
     });
   }

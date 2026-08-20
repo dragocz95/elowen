@@ -157,6 +157,9 @@ describe('ProviderRequestStore', () => {
 
     const detail = requests.debugRequest('s1', attempt.requestId)!;
     expect(detail.segments.map((segment) => segment.section)).toEqual(['system', 'input', 'tool', 'options', 'response']);
+    expect(detail.segments[0]).toMatchObject({ role: 'system', label: 'system', preview: 'system' });
+    expect(detail.segments[1]).toMatchObject({ role: 'user', label: 'user', preview: 'hello' });
+    expect(detail.segments[2]).toMatchObject({ role: 'tool', label: 'Read', preview: 'Read' });
     expect(detail.segmentBytes).toBeGreaterThan(0);
     let metadataReads = 0;
     const originalPrepare = db.prepare.bind(db);
