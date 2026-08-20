@@ -26,7 +26,7 @@ const IMAGE_TYPE_BY_EXTENSION: Record<string, string> = {
 export type AttachRefusal = 'too-large' | 'unsupported';
 
 /** The image type to send this file as, or null when it is not an image we can forward. */
-export function imageTypeOf(file: File): string | null {
+function imageTypeOf(file: File): string | null {
   if (file.type.startsWith('image/')) return SUPPORTED_IMAGE_TYPES.has(file.type) ? file.type : null;
   if (file.type) return null; // a declared non-image type — text branch
   const ext = file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase();

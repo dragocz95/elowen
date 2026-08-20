@@ -23,7 +23,7 @@ type AskFrame = { id: string; questions: AskQuestion[]; kind?: 'approval' };
 type SubagentFrame = { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string };
 type WorkflowFrame = { id: string; toolCallId: string; title?: string; status: WorkflowState['status']; nodes: WorkflowState['nodes'] };
 
-export interface LiveStreamHandlers {
+interface LiveStreamHandlers {
   connecting: () => void;
   ready: () => void;
   snapshotStart: () => void;
@@ -55,7 +55,7 @@ export interface LiveStreamHandlers {
   idle: (usage?: BrainUsage) => void;
 }
 
-export interface ReadOnlyStreamHandlers {
+interface ReadOnlyStreamHandlers {
   snapshot: (snapshot: BrainStreamSnapshotFrame) => void;
   card: (card: BrainCard) => void;
   error: (message: string) => void;
