@@ -418,20 +418,27 @@ function useBrainChatController(): BrainChatValue {
         ready: () => setReady(true),
         snapshotStart: () => setNotice(''),
         snapshot: (snap) => {
+          // An idle rollover this stream never saw retargeted the binding server-side. Follow it so lazy-load
+          // and every later send name the replacement conversation.
           if (snap.sessionId && snap.sessionId !== boundSessionRef.current) {
             boundSessionRef.current = snap.sessionId;
             setActiveSessionId(snap.sessionId);
           }
+          // The snapshot replaces the transcript, so discard any older history page still in flight.
           replaceHistoryWindow(snap.nextBefore ?? null, snap.hasMore ?? false);
           const folded = fromSnapshot(snap);
+          // Daemon control state wins over journal shape: the bounded journal may omit terminal events or
+          // survive an internal retry. Older daemons have no control field, where the fold remains authoritative.
           const control = snap.control;
           const streaming = control ? control.streaming : folded.thinking;
           setView({ ...folded, thinking: streaming });
+          // Explicit nulls matter here: the snapshot can clear a question or plan that another surface settled.
           if (control) {
             setAsk(control.pendingAsk);
             setDaemonMode(control.workMode);
             setPendingPlan(control.pendingPlan);
           }
+          // Goal outlives the journal. Presence distinguishes an older daemon from an explicit cleared goal.
           if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
           truncatedPendingRef.current = streaming && snap.truncated === true;
         },
@@ -439,14 +446,18 @@ function useBrainChatController(): BrainChatValue {
         notice: (message, done) => setNotice(done ? '' : message),
         error: (message) => {
           setNotice(message);
+          // Folding the error ends the streaming turn and its tool/thinking indicators. A successful
+          // reconnect replaces it from durable history.
           applyEvent({ type: 'error', message });
           repairTruncatedHistory();
         },
         session: (sessionId) => {
+          // Rebind without changing generation. The fresh conversation is rebuilt solely from stream events.
           boundSessionRef.current = sessionId;
           setActiveSessionId(sessionId);
           setCards([]);
           setGoal(null);
+          // Close the lazy-load window and bump its epoch so an older page cannot duplicate the new session.
           clearHistoryWindow();
           applyEvent({ type: 'session', sessionId });
           setNotice(t.brainChat.freshConversation);
@@ -457,6 +468,8 @@ function useBrainChatController(): BrainChatValue {
         toolProgress: ({ id, text }) => applyEvent({ type: 'tool_progress', id, text }),
         subagent: (subagent) => {
           applyEvent({ type: 'subagent', ...subagent });
+          // Child usage is persisted before terminal progress. Refresh immediately, fenced so a late read
+          // cannot overwrite a newer step or idle snapshot.
           if (subagent.status !== 'running') {
             const stamp = usageStampRef.current;
             void elowenClient.brainStatus(boundSessionRef.current)
@@ -466,21 +479,28 @@ function useBrainChatController(): BrainChatValue {
         },
         workflow: (workflow) => applyEvent({ type: 'workflow', ...workflow }),
         goal: setGoal,
+        // Seed the same query used by process panels so live push and API hydration cannot diverge.
         process: (processes) => qc.setQueryData(['brain-processes'], processes),
         card: (card) => {
+          // The background-process card is rendered by ProcessPanel; use it only as a refresh signal.
           if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
           setCards((cur) => upsertCard(cur, card));
         },
+        // A queue frame supersedes every optimistic removal still in flight.
         queue: (items) => { setRemovingQueue(new Set()); setQueued(items); },
         user: ({ text, durableId, images }) => applyEvent({
           type: 'user', text, ...(durableId ? { durableId } : {}), ...(images?.length ? { images } : {}),
         }),
+        // A cancelled just-sent turn is removed by durable id and restored only into an empty composer.
         discardUser: ({ durableId, text }) => {
           applyEvent({ type: 'discard_user', durableId, text });
           setInput((current) => (current.trim() ? current : text));
           bumpFocus();
         },
+        // Compaction rewrites durable history to a divider plus kept tail, so refetch the exact model context.
         compacted: () => { void loadHistory(genRef.current).catch(() => { /* best-effort */ }); },
+        // In-place model/mode/reasoning changes keep the same stream. Refresh history and status without
+        // reconnecting; usage stays fenced against a newer stream event.
         sessionEvent: () => {
           void loadHistory(genRef.current).catch(() => { /* best-effort */ });
           const stamp = usageStampRef.current;
@@ -499,11 +519,13 @@ function useBrainChatController(): BrainChatValue {
         toolOutput: ({ output, id, plan }) => applyEvent({ type: 'tool_output', output, id, plan }),
         toolEnd: ({ id, plan }) => applyEvent({ type: 'tool_end', id, plan }),
         image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
+        // Ask stays visible until the daemon resolves this exact id; idle alone cannot prove it is settled.
         ask: ({ id, questions, kind }) => setAsk({ id, questions, kind }),
         askResolved: (id) => setAsk((cur) => (cur && cur.id === id ? null : cur)),
         step: (nextUsage) => { if (nextUsage) setUsage(nextUsage); },
         idle: (nextUsage) => {
           setNotice('');
+          // Do not clear ask here. Only snapshot/ask_resolved can say whether the parked question remains.
           applyEvent({ type: 'idle' });
           repairTruncatedHistory();
           if (nextUsage) setUsage(nextUsage);
