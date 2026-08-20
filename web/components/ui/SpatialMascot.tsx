@@ -40,10 +40,10 @@ class SceneBoundary extends Component<{ onError: () => void; children: ReactNode
  *  rail-sized box shows only the middle of its face. This layer is sized in percentages, so it is correct
  *  at any size, and it keeps the per-state ember animation that makes the mascot read as alive. */
 export function MascotGlyph({ state = 'idle' }: { state?: SpatialMascotState }) {
-  const { appName, iconSrc } = useBrand();
+  const { appName, mascotSrc } = useBrand();
   return (
     <div className="spatial-mascot" role="img" aria-label={appName}>
-      <StaticMascot state={state} iconSrc={iconSrc} />
+      <StaticMascot state={state} iconSrc={mascotSrc} />
     </div>
   );
 }
@@ -59,10 +59,13 @@ const SpatialMascotScene = dynamic(
  *  fast). Prevents the plain-icon fallback from flashing on every navigation before the scene fades in. */
 let sceneWarmedUp = false;
 
-/** Lazy WebGL identity scene with the original mascot visible as an immediate static fallback. */
+/** Lazy WebGL identity scene with the original mascot visible as an immediate static fallback.
+ *  A theme carrying an ANIMATED mascot (mascot.svg) skips the WebGL layer entirely: the scene would
+ *  snapshot the SVG into a static texture, freezing the very animation the asset exists for, while
+ *  the <img> path keeps its CSS animations (blinking etc.) running. */
 export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }) {
-  const { appName, iconSrc } = useBrand();
-  const renderWebGl = process.env.NODE_ENV !== 'test';
+  const { appName, mascotSrc, mascotAnimated } = useBrand();
+  const renderWebGl = process.env.NODE_ENV !== 'test' && !mascotAnimated;
   // On a warm navigation the scene is already primed, so start ready with no fallback: show the WebGL layer
   // straight away and let it repaint (fast when warm) instead of flashing the plain static icon + crossfade.
   const warm = sceneWarmedUp && renderWebGl;
@@ -80,11 +83,11 @@ export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }
 
   return (
     <div className={`spatial-mascot ${ready ? 'spatial-mascot--ready' : ''}`} role="img" aria-label={appName}>
-      {fallbackVisible ? <StaticMascot state={state} iconSrc={iconSrc} /> : null}
+      {fallbackVisible ? <StaticMascot state={state} iconSrc={mascotSrc} /> : null}
       {renderWebGl && !sceneFailed ? (
         <div className="spatial-mascot__webgl" aria-hidden>
           <SceneBoundary onError={failScene}>
-            <SpatialMascotScene state={state} iconSrc={iconSrc} onReady={markReady} />
+            <SpatialMascotScene state={state} iconSrc={mascotSrc} onReady={markReady} />
           </SceneBoundary>
         </div>
       ) : null}

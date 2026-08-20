@@ -211,16 +211,16 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     colors: Record<string, string>;
     fonts: { sans?: string; mono?: string };
     text: Record<string, Record<string, string>>;
-    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>>;
+    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>>;
     v: string;
   } => {
     const active = activeThemeName();
     const theme = active ? d.themes?.get(active) ?? null : null;
     const brand = resolveBrand(d.config.get(), theme?.manifest.brand ?? null, active);
-    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512'> = {
-      'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512',
+    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot'> = {
+      'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512', 'mascot.svg': 'mascot',
     };
-    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>> = {};
+    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>> = {};
     for (const file of theme?.assets ?? []) {
       assets[assetKey[file]] = `/public/theme/assets/${file}?v=${theme!.version}`;
     }
@@ -272,9 +272,13 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
         assetBytesCache.set(key, cached);
       }
       // `immutable` is safe because every served URL carries the theme-version query param — new bytes
-      // arrive under a new URL. `nosniff` because the bytes are operator-supplied.
+      // arrive under a new URL. `nosniff` because the bytes are operator-supplied. The SVG mascot gets
+      // a no-script CSP on top: from <img> scripts never run anyway, but a direct navigation to the
+      // asset URL must not execute operator-supplied markup either — inline style stays allowed so the
+      // CSS animations that make the mascot blink keep working.
       return c.body(cached.bytes, 200, {
-        'content-type': 'image/png',
+        'content-type': file.endsWith('.svg') ? 'image/svg+xml' : 'image/png',
+        ...(file.endsWith('.svg') ? { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } : {}),
         'cache-control': 'public, max-age=31536000, immutable',
         'x-content-type-options': 'nosniff',
       });

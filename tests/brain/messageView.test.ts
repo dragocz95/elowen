@@ -58,6 +58,28 @@ describe('shapeBrainMessages: compaction divider', () => {
   });
 });
 
+describe('shapeBrainMessages: imported platform history', () => {
+  it('keeps model-only history out of human transcripts without hiding ordinary JSON text', () => {
+    const envelope = JSON.stringify({
+      source: 'platform_history', untrusted: true, platform: 'msteams', channelId: 'chat-1', text: 'imported text',
+    });
+    const visibleJson = JSON.stringify({ source: 'platform_history', untrusted: true, text: 'ordinary user text' });
+    const rows = [
+      { role: 'user', content: JSON.stringify({ role: 'user', content: envelope }) },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: envelope }] }) },
+      { role: 'user', content: JSON.stringify({ role: 'user', content: visibleJson }) },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'normal answer' }] }) },
+    ];
+    const before = structuredClone(rows);
+
+    expect(shapeBrainMessages(rows).map((view) => ({ role: view.role, text: view.text }))).toEqual([
+      { role: 'user', text: visibleJson },
+      { role: 'assistant', text: 'normal answer' },
+    ]);
+    expect(rows).toEqual(before);
+  });
+});
+
 describe('shapeBrainMessages: durable sub-agent state', () => {
   it('keeps the tool-call id and attaches the validated sidecar snapshot for reconnect/drill-in', () => {
     const rows = [{

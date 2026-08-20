@@ -243,13 +243,25 @@ export function register(ctx) {
   // re-established every run — an explicit `cwd` from one call never carries into the next.
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
-  // Owner-only gate. The shell runs with process.env and can read ANY absolute path — cwd guarding
-  // doesn't contain that (e.g. `cat ~/.config/elowen/elowen.db`). So these tools are reserved for
-  // the verified operator: a role-scoped platform member (Discord) is refused even with an admin role.
-  // Gate on `owner`, never `admin` — an admin-mapped stranger is admin-but-not-owner.
-  const denyNonOwner = () => (ctx.currentIdentity?.()?.owner === true
-    ? null
-    : ok('Error: terminal tools are only available to the operator.'));
+  // Who may run a shell. The operator always may. Beyond that, a turn must clear BOTH halves: it runs
+  // with admin scope AND its sender resolves to a real Elowen account. Each half closes a hole the
+  // other leaves open.
+  //
+  // Admin scope alone is not enough, because a role policy may carry `admin: true` for a whole ROOM — a
+  // `*` wildcard is a normal way to serve a company — and that would hand the shell to anyone able to
+  // type into that channel. A linked account alone is not enough either: having an account says who you
+  // are, not that anybody trusted you with the machine.
+  //
+  // The shell runs with the daemon's own environment and reads ANY absolute path — the config DB and
+  // every secret in it included — and cwd guarding does not contain that. So this stays deliberately
+  // narrower than the tool allowlist wrapped around it: the allowlist decides which tools a role SEES,
+  // this decides who may actually reach the host.
+  const denyNonOwner = () => {
+    const id = ctx.currentIdentity?.();
+    if (id?.owner === true) return null;
+    if (ctx.isAdminSession?.() === true && id?.elowenUserId != null) return null;
+    return ok('Error: terminal tools need an admin role AND a linked Elowen account. The operator grants the first in the messaging plugin\'s role policies ("admin": true on your entry) and the second by mapping that entry to an Elowen account — an account alone, or an admin role alone, is not enough. Ask the operator, or have them run the command.');
+  };
 
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',

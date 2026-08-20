@@ -12,7 +12,7 @@ export function BrandProvider({ theme, children }: { theme: ThemePayload; childr
 
 /** The resolved brand for the CURRENT locale: display names plus the mascot/logo sources every
  *  component should render instead of the hardcoded Elowen assets. */
-export function useBrand(): { appName: string; agentName: string; iconSrc: string; logoSrc: string } {
+export function useBrand(): { appName: string; agentName: string; iconSrc: string; logoSrc: string; mascotSrc: string; mascotAnimated: boolean } {
   const theme = useBrandTheme();
   const locale = useLocaleSafe();
   const appName = theme.text[locale]?.appName ?? theme.brand.productName;
@@ -20,10 +20,16 @@ export function useBrand(): { appName: string; agentName: string; iconSrc: strin
   // route never becomes an <img> src.
   const asset = (path: string | undefined, fallback: string): string =>
     path && THEME_ASSET_PATH_RE.test(path) ? themeAssetUrl(path) : fallback;
+  const iconSrc = asset(theme.assets.icon, '/icon.png');
   return {
     appName,
     agentName: theme.brand.agentName,
-    iconSrc: asset(theme.assets.icon, '/icon.png'),
+    iconSrc,
     logoSrc: asset(theme.assets.logo, '/elowen-logo.png'),
+    // The mascot prefers the theme's animated SVG (CSS animations run inside <img>) and falls back to
+    // the static icon. `mascotAnimated` tells consumers the source is the SVG — the WebGL scene skips
+    // itself then, since a texture snapshot would freeze the very animation the asset exists for.
+    mascotSrc: asset(theme.assets.mascot, iconSrc),
+    mascotAnimated: !!theme.assets.mascot && THEME_ASSET_PATH_RE.test(theme.assets.mascot),
   };
 }

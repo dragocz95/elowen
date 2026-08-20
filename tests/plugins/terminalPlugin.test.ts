@@ -16,6 +16,8 @@ const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
 const scoped: TurnIdentity = { platform: 'discord', userId: '999', admin: true, owner: false };
+/** A platform sender mapped to a real Elowen account — an admin colleague, but NOT the operator. */
+const linkedAdmin: TurnIdentity = { platform: 'msteams', userId: '29:michal', admin: true, owner: false, elowenUserId: 2 };
 
 const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
   const tool = reg.tools.find((t) => t.name === name);
@@ -103,7 +105,10 @@ describe('terminal plugin', () => {
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
-  it('refuses ALL terminal tools for a role-scoped (non-owner) caller, even with an admin role', async () => {
+  it('refuses ALL terminal tools for an admin-scoped caller with no Elowen account behind them', async () => {
+    // The dangerous shape: a role policy may carry `admin: true` for a whole ROOM (a `*` wildcard is a
+    // normal way to serve a company), so admin scope on its own must never be enough — otherwise anyone
+    // able to type into that channel gets a shell on the host.
     for (const [name, params] of [
       ['Bash', { command: 'cat /etc/hostname' }],
       ['ListProcesses', {}],
@@ -111,13 +116,26 @@ describe('terminal plugin', () => {
       ['KillProcess', { id: 'x' }],
     ] as const) {
       const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), { identity: scoped });
-      expect(res.content[0].text).toMatch(/only available to the operator/);
+      expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
     }
+  });
+
+  it('lets a linked account with an admin role run a command, without making them the operator', async () => {
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo linkedadmin' }), { identity: linkedAdmin });
+    expect(res.content[0].text).toContain('linkedadmin');
+    expect(res.content[0].text).toContain('[exit 0]');
+  });
+
+  it('refuses a linked account whose turn does not carry admin scope', async () => {
+    // The other half of the pair: having an Elowen account says who you are, not that anyone trusted
+    // you with the machine.
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo nope' }), { identity: linkedAdmin });
+    expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
   });
 
   it('denies terminal tools when there is no identity (outside a turn)', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo x' }));
-    expect(res.content[0].text).toMatch(/only available to the operator/);
+    expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
   });
 });
 

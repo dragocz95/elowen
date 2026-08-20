@@ -98,6 +98,7 @@ describe('GET /public/theme', () => {
   it('every emitted asset URL matches the web client re-validation shape', async () => {
     writeTheme('acme');
     for (const f of ['icon.png', 'icon-192.png', 'icon-512.png']) writeFileSync(join(dir, 'acme', f), Buffer.from('png'));
+    writeFileSync(join(dir, 'acme', 'mascot.svg'), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
     activate('acme');
     const { app } = await makeApp();
     const src = readFileSync(join(__dirname, '..', '..', 'web', 'lib', 'brandShared.ts'), 'utf-8');
@@ -106,7 +107,7 @@ describe('GET /public/theme', () => {
     const webRe = new RegExp(shape!.replace(/\\\//g, '/'));
     const body = await (await app.request('/public/theme')).json() as { assets: Record<string, string> };
     const urls = Object.values(body.assets);
-    expect(urls).toHaveLength(4);
+    expect(urls).toHaveLength(5);
     for (const url of urls) expect(url, `web boundary would reject "${url}"`).toMatch(webRe);
   });
 });
@@ -122,6 +123,24 @@ describe('GET /public/theme/assets/:file', () => {
     expect(res.headers.get('cache-control')).toContain('immutable');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe('png');
+  });
+
+  // The animated mascot is the whitelist's one SVG: it must go out as image/svg+xml (an <img> ignores
+  // a PNG-typed SVG) with a no-script CSP so a direct navigation cannot execute operator markup.
+  it('serves the mascot SVG with its own content-type and a no-script CSP', async () => {
+    writeTheme('acme');
+    writeFileSync(join(dir, 'acme', 'mascot.svg'), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+    activate('acme');
+    const { app } = await makeApp();
+    const res = await app.request('/public/theme/assets/mascot.svg');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/svg+xml');
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'");
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    // and the PNG route is untouched by the branch
+    const png = await app.request('/public/theme/assets/logo.png');
+    expect(png.headers.get('content-type')).toBe('image/png');
+    expect(png.headers.get('content-security-policy')).toBeNull();
   });
 
   it('404s on a non-whitelisted file, with no active theme, and for an absent asset', async () => {

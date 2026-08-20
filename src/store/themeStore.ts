@@ -37,8 +37,10 @@ export function activeThemeName(env: NodeJS.ProcessEnv = process.env): string | 
 }
 
 /** The only files a theme may serve as assets. A fixed whitelist (not a pattern) because these names are
- *  part of the public URL contract and nothing else in the folder must ever be reachable. */
-export const THEME_ASSET_FILES = ['logo.png', 'icon.png', 'icon-192.png', 'icon-512.png'] as const;
+ *  part of the public URL contract and nothing else in the folder must ever be reachable. `mascot.svg`
+ *  is the one non-PNG: an ANIMATED mascot (CSS animations run inside <img>) that the web prefers over
+ *  the static icon wherever the mascot is rendered as an image. */
+export const THEME_ASSET_FILES = ['logo.png', 'icon.png', 'icon-192.png', 'icon-512.png', 'mascot.svg'] as const;
 export type ThemeAssetFile = (typeof THEME_ASSET_FILES)[number];
 
 /** The design-token suffixes a theme may override — exactly the `--color-*` names in the web's

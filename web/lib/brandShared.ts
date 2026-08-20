@@ -12,7 +12,7 @@ export interface ThemePayload {
   /** Per-locale shallow UI text overrides (documented key: `appName`). */
   text: Record<string, Record<string, string>>;
   /** Daemon asset paths (`/public/theme/assets/…?v=…`) — prefix with `/api` for the browser. */
-  assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512', string>>;
+  assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>>;
   v: string;
 }
 
@@ -27,4 +27,4 @@ export const themeAssetUrl = (daemonPath: string): string => `/api${daemonPath}`
 /** The only asset-path shape the daemon ever emits. Both the server style injection and the client
  *  useBrand() re-check payload paths against it, so a hostile payload cannot steer an <img>/url() at an
  *  arbitrary daemon route. */
-export const THEME_ASSET_PATH_RE = /^\/public\/theme\/assets\/[a-z0-9-]+\.png\?v=[0-9a-f]{16}$/;
+export const THEME_ASSET_PATH_RE = /^\/public\/theme\/assets\/[a-z0-9-]+\.(png|svg)\?v=[0-9a-f]{16}$/;

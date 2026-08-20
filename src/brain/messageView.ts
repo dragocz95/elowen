@@ -407,6 +407,28 @@ export function extractText(msg: unknown): string {
   return '';
 }
 
+/** Imported platform transcript rows are model-only context. Their JSON envelope intentionally remains
+ *  in storage and provider payloads, but no human transcript should render it as a chat message. Require
+ *  the complete provenance shape so an ordinary JSON-looking user message is not hidden by accident. */
+function isPlatformHistoryMessage(msg: { content?: unknown }): boolean {
+  const raw = typeof msg.content === 'string'
+    ? msg.content
+    : Array.isArray(msg.content) && msg.content.length === 1
+      && msg.content[0]?.type === 'text' && typeof msg.content[0].text === 'string'
+      ? msg.content[0].text
+      : undefined;
+  if (!raw) return false;
+  try {
+    const envelope: unknown = JSON.parse(raw);
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return false;
+    const e = envelope as Record<string, unknown>;
+    return e.source === 'platform_history' && e.untrusted === true
+      && typeof e.platform === 'string' && typeof e.channelId === 'string' && typeof e.text === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /** The most recent assistant message in a list, or undefined — the single "what did the agent last say"
  *  expression, reused by the turn runner, channels, spawner and status views. Scans from the end so it
  *  neither copies nor reverses the array. */
@@ -493,6 +515,7 @@ export function shapeBrainMessages(
       const parsed: unknown = JSON.parse(row.content);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) msg = parsed;
     } catch { /* malformed row → skipped below */ }
+    if (isPlatformHistoryMessage(msg)) continue;
     if (row.role === 'user') {
       const images = parseStoredChatImages((msg as { images?: unknown }).images);
       // The stored text keeps its `[📎 N× image]` marker — that is the only trace the MODEL has of the
