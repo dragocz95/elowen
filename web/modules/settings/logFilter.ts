@@ -78,9 +78,3 @@ export function refreshScrollAction(sameView: boolean, atBottom: boolean): Scrol
   return atBottom ? 'follow' : 'keep';
 }
 
-/** Human byte size for the file list — matches the compact style used elsewhere in Settings. */
-export function formatLogSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

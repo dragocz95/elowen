@@ -14,7 +14,8 @@ import { ElowenApiError } from '../../lib/elowenClient';
 import { useLogFiles, useLogFile } from '../../lib/queries';
 import { useDeleteLogFile, useDeleteAllLogFiles } from '../../lib/mutations';
 import { useTranslation } from '../../lib/i18n';
-import { parseLogLines, filterLogLines, formatLogSize, refreshScrollAction, LOG_LEVELS, type LogLevel } from './logFilter';
+import { parseLogLines, filterLogLines, refreshScrollAction, LOG_LEVELS, type LogLevel } from './logFilter';
+import { formatBytes } from '../../lib/format';
 
 /** Line count asked for when the user opts out of the default tail. Matches the daemon's own ceiling. */
 const FULL_FILE_LINES = 50_000;
@@ -139,7 +140,7 @@ export function LogsModal({ onClose }: { onClose: () => void }) {
                       <div className="truncate text-xs text-text">{f.name}</div>
                       <div className="mt-0.5 flex items-center gap-2 text-[11px] text-text-muted">
                         <Badge>{f.source}</Badge>
-                        <span>{formatLogSize(f.bytes)}</span>
+                        <span>{formatBytes(f.bytes)}</span>
                         <span>{new Date(f.modifiedAt).toLocaleTimeString(locale)}</span>
                       </div>
                     </button>

@@ -58,6 +58,21 @@ export function formatCost(usd: number, decimals = 4): string {
   return `$${usd.toFixed(decimals)}`;
 }
 
+/** Human-readable byte size on the 1024 ladder: "512 B", "1.5 KB", "20 MB", "1.0 GB". One decimal below
+ *  10 units, none above, so a size column stays narrow without losing resolution where it matters.
+ *  Single source of truth for on-disk sizes across the UI — plugin data footprints and log files.
+ *
+ *  Anything not a positive finite number renders "0 B". The unit index is clamped at both ends: an
+ *  unclamped Math.log ratio goes NEGATIVE below one byte and is NaN for a NaN input, and indexing the
+ *  unit array with either produced the literal "512 undefined" / "NaN undefined" this replaces. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(1024))));
+  const n = bytes / 1024 ** i;
+  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
+}
+
 /** Generation speed as a "62 tok/s" label; null/0 (unmeasured) renders the em dash. */
 export function formatSpeed(tps: number | null | undefined): string {
   return tps != null && tps > 0 ? `${Math.round(tps)} tok/s` : '—';

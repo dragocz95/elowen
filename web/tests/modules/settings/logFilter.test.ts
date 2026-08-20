@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseLogLines, filterLogLines, formatLogSize, refreshScrollAction, type LogLevel } from '../../../modules/settings/logFilter';
+import { parseLogLines, filterLogLines, refreshScrollAction, type LogLevel } from '../../../modules/settings/logFilter';
 
 const levels = (...v: LogLevel[]) => new Set<LogLevel>(v);
 const none = new Set<LogLevel>();
@@ -109,10 +109,3 @@ describe('refreshScrollAction', () => {
   });
 });
 
-describe('formatLogSize', () => {
-  it('scales the unit to the size', () => {
-    expect(formatLogSize(512)).toBe('512 B');
-    expect(formatLogSize(2048)).toBe('2.0 kB');
-    expect(formatLogSize(5 * 1024 * 1024)).toBe('5.0 MB');
-  });
-});

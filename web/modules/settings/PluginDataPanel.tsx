@@ -7,17 +7,9 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { formatBytes } from '../../lib/format';
 import { useClearPluginData } from '../../lib/mutations';
 import type { PluginDetail } from '../../lib/types';
-
-/** Human-readable byte size for the Data section (KB/MB steps, 1 decimal above 10 units). */
-function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const n = bytes / 1024 ** i;
-  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
-}
 
 /** A label → value pair for the read-only detail grids (Overview, Data). */
 function Meta({ label, children }: { label: string; children: ReactNode }) {

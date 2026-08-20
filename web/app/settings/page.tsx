@@ -16,7 +16,7 @@ import { useAgentsPlugin, useBrainModels, useConfig, useMe, usePluginUi, useSyst
 import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { ConversationDiagnosticsModal } from '../../modules/settings/ConversationDiagnosticsModal';
-import { formatLogSize } from '../../modules/settings/logFilter';
+import { formatBytes } from '../../lib/format';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
@@ -712,7 +712,7 @@ export default function SettingsPage() {
               repeating them here bought a row between two sections and nothing else. */}
           <SettingsGroup
             title={logFiles.data
-              ? `${t.settings.logs} · ${formatLogSize(logFiles.data.files.reduce((sum, f) => sum + f.bytes, 0))}`
+              ? `${t.settings.logs} · ${formatBytes(logFiles.data.files.reduce((sum, f) => sum + f.bytes, 0))}`
               : t.settings.logs}
             icon={ScrollText}
             actions={<Button icon={ScrollText} onClick={() => setLogsOpen(true)}>{t.settings.logsOpen}</Button>}

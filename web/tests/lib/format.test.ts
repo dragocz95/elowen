@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDuration, compactElapsed, formatTokens, formatCost, formatTaskTime, localDateTime, parseTs } from '../../lib/format';
+import { formatBytes, formatDuration, compactElapsed, formatTokens, formatCost, formatTaskTime, localDateTime, parseTs } from '../../lib/format';
 
 const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H;
 
@@ -60,6 +60,45 @@ describe('formatTokens', () => {
   it('guards non-finite and negative inputs', () => {
     expect(formatTokens(NaN)).toBe('0');
     expect(formatTokens(-5)).toBe('0');
+  });
+});
+
+describe('formatBytes', () => {
+  it('scales the unit up the 1024 ladder', () => {
+    expect(formatBytes(1)).toBe('1 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1023)).toBe('1023 B');
+    expect(formatBytes(1024)).toBe('1.0 KB');
+    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(2048)).toBe('2.0 KB');
+    expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+    expect(formatBytes(1024 ** 3)).toBe('1.0 GB');
+    expect(formatBytes(1024 ** 4)).toBe('1.0 TB');
+  });
+
+  it('drops the decimal at 10 units and above, keeping the column narrow', () => {
+    expect(formatBytes(10 * 1024)).toBe('10 KB');
+    expect(formatBytes(20 * 1024 * 1024)).toBe('20 MB');
+  });
+
+  it('tops out at TB rather than running the largest unit off the scale', () => {
+    // The old log-file formatter stopped at MB and rendered a 2 GB log as "2048.0 MB".
+    expect(formatBytes(2 * 1024 ** 3)).toBe('2.0 GB');
+    expect(formatBytes(1024 ** 5)).toBe('1024 TB');
+  });
+
+  it('renders anything not a positive finite size as "0 B"', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(-1)).toBe('0 B');
+    expect(formatBytes(-1024)).toBe('0 B');
+    expect(formatBytes(NaN)).toBe('0 B');
+    expect(formatBytes(Infinity)).toBe('0 B');
+    expect(formatBytes(-Infinity)).toBe('0 B');
+  });
+
+  it('never indexes the unit array out of range below one byte', () => {
+    // An unclamped log ratio is negative here and used to render "512 undefined".
+    expect(formatBytes(0.5)).toBe('1 B');
   });
 });
 
