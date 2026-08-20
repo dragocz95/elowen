@@ -14,10 +14,6 @@ import { personalityText } from '../brain/personality.js';
 import { BrainTerminalService } from '../brain/terminalService.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { isSubagentSession } from '../brain/sessionId.js';
-// Keep these runtime modules in their original bootstrap evaluation order after the maintenance extraction.
-import '../store/memoryStore.js';
-import '../brain/memoryVitality.js';
-import '../brain/chatImages.js';
 import { discoverPlugins } from '../plugins/loader.js';
 import { MarketplaceService } from '../plugins/marketplace.js';
 import { createRequire } from 'node:module';
