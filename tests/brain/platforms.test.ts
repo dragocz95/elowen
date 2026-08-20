@@ -176,9 +176,11 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       return sent!;
     };
 
-    it('anchors a brand-new one on its own sender', async () => {
+    it('anchors a brand-new one on its own sender and exposes only the validated direct identity', async () => {
       const sent = await runDirect(undefined);
       expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+      expect(sent.identity?.conversation).toBe('direct');
+      expect(sent.deliveryTarget).toBe('destination:discord:c1');
     });
 
     // The row lands on the operator when an UNLINKED stranger opens the chat. If linking later flipped it
@@ -188,11 +190,35 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       const sent = await runDirect(1);
       expect(sent?.direct).toBe(false);
       expect(sent?.ownerUserId).toBe(1); // and the transcript is NOT re-pointed behind the owner's back
+      expect(sent?.identity?.conversation).toBe('shared');
+      expect(sent?.deliveryTarget).toBeUndefined();
     });
 
     it('is direct again once the row is the sender\'s own', async () => {
       const sent = await runDirect(2);
       expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+    });
+
+    it('does not accept actAsUserId as verification of an adapter direct claim', async () => {
+      let sent: ChannelSendOpts | undefined;
+      let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+      const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+      const orch = new PlatformOrchestrator({
+        plugins: async () => ({ platforms: [adapter] }) as never,
+        platformOwner: () => 1,
+        policyForUser: () => userPolicy,
+        identity: linkedResolver(false),
+        channels: { sessionOwnerUserId: () => undefined, send: async (opts: ChannelSendOpts) => { sent = opts; return 'ok'; }, fragmentFor: () => '' } as never,
+        dispatch: noDispatch,
+      });
+      await orch.startAll();
+      await handler!({
+        platform: 'discord', userId: 'unverified', channelId: 'c1', roleIds: [], direct: true,
+        access: { admin: false, projectIds: [], actAsUserId: 2 },
+      } as never, 'relay');
+      expect(sent).toMatchObject({ direct: false, ownerUserId: 1, writerUserId: 2 });
+      expect(sent?.identity?.conversation).toBe('shared');
+      expect(sent?.deliveryTarget).toBeUndefined();
     });
   });
 
@@ -539,6 +565,79 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(reply).toBe('bound reply');
     expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up']]);
     expect(sent).toBeUndefined(); // the channel path never ran
+  });
+
+  it('runs a direct origin through the channel session and confirms only after platform delivery', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string, onEvent?: (event: BrainEvent) => void) => Promise<unknown>) | undefined;
+    const delivered: { text: string; channelId?: string }[] = [];
+    const cron = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const discord = {
+      name: 'discord', listen: () => {}, connect: async () => {},
+      notify: async (text: string, channelId?: string) => { delivered.push({ text, channelId }); },
+    };
+    const events: BrainEvent[] = [];
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [cron, discord], platformPromptsFor: (platform: string) => platform === 'discord' ? ['DIRECT SURFACE'] : [] }) as never,
+      platformOwner: () => 1,
+      policyForUser: () => userPolicy,
+      disabledToolsFor: () => ['DiscordApi'],
+      identity: linkedResolver(false),
+      channels: {
+        mayDeliverDirectSession: (userId: number, sessionId: string, channelId: string) =>
+          userId === 2 && sessionId === 'brain-ch-discord-dm-7' && channelId === 'discord-dm-7',
+        send: async (opts: ChannelSendOpts) => { sent = opts; return 'scheduled reply'; },
+        fragmentFor: () => '',
+      } as never,
+      dispatch: noDispatch,
+      originSend: async () => { throw new Error('owner-chat path must not run'); },
+    });
+    await orch.startAll();
+
+    const reply = await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
+      origin: { sessionId: 'brain-ch-discord-dm-7', userId: 2, deliveryTarget: 'destination:discord:dm-7' },
+      access: { admin: false, projectIds: [], actAsUserId: 2 },
+    } as never, 'wake up', (event) => events.push(event));
+
+    expect(reply).toBe('scheduled reply');
+    expect(sent).toMatchObject({
+      channelId: 'discord-dm-7', ownerUserId: 2, direct: true,
+      writerUserId: 2, deliveryTarget: 'destination:discord:dm-7', policy: userPolicy,
+      promptAppend: ['DIRECT SURFACE'],
+    });
+    expect(sent?.identity?.conversation).toBe('direct');
+    expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) });
+    expect(delivered).toEqual([{ text: 'scheduled reply', channelId: 'dm-7' }]);
+    expect(events.at(-1)).toEqual({ type: 'delivery', sessionId: 'brain-ch-discord-dm-7' });
+  });
+
+  it('does not confirm direct delivery when the platform outbound sink fails', async () => {
+    let handler: ((src: never, text: string, onEvent?: (event: BrainEvent) => void) => Promise<unknown>) | undefined;
+    const events: BrainEvent[] = [];
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [
+        { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} },
+        { name: 'discord', listen: () => {}, connect: async () => {}, notify: async () => { throw new Error('offline'); } },
+      ] }) as never,
+      platformOwner: () => 1,
+      policyForUser: () => userPolicy,
+      identity: linkedResolver(false),
+      channels: {
+        mayDeliverDirectSession: () => true,
+        send: async () => 'scheduled reply',
+        fragmentFor: () => '',
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    await expect(handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
+      origin: { sessionId: 'brain-ch-discord-dm-7', userId: 2, deliveryTarget: 'destination:discord:dm-7' },
+      access: { admin: false, projectIds: [], actAsUserId: 2 },
+    } as never, 'wake up', (event) => events.push(event))).rejects.toThrow('offline');
+    expect(events.some((event) => event.type === 'delivery')).toBe(false);
   });
 
   it('falls back to the channel path when the bound send refuses (origin session gone / foreign)', async () => {

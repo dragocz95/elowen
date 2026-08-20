@@ -176,8 +176,8 @@ export type PlatformHistory = string | readonly PlatformHistoryMessage[];
 
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
- *  (an unmapped user gets no brain). `admin: true` runs the turn with the owner's full powers (all
- *  repos + Elowen* tools) — reserve it for owner-authored automation (cron), never for foreign senders. */
+ *  (an unmapped user gets no brain). `admin: true` means all-project channel policy and may legitimately
+ *  come from a foreign platform admin role; owner-only authority is represented separately by identity.owner. */
 export interface SessionSource {
   platform: string;
   userId: string;
@@ -202,16 +202,15 @@ export interface SessionSource {
   channelTopic?: string;
   /** Image attachments (base64), ready for a vision-capable model. Adapter-capped in count and size. */
   images?: { data: string; mimeType: string }[];
-  /** Set when this message replays work scheduled FROM a user conversation (a cron wake-up's origin):
-   *  the host then routes the turn as a BOUND send into that conversation — the reply lands (and
-   *  streams) exactly where the schedule was created — instead of the platform's own channel session.
-   *  The host verifies the session still exists and belongs to `userId`; on a mismatch it falls back
-   *  to the normal channel path.
+  /** Set when this message replays work scheduled FROM a conversation. Owner-chat origins use a bound
+   *  send into `sessionId`. Direct platform origins also carry the opaque `deliveryTarget`: the host
+   *  validates it against the direct session, runs through the channel path, and sends the reply through
+   *  that platform's outbound adapter. Plugins persist/return the target but never parse or construct it.
    *
    *  With no `sessionId` the target is that account's DEFAULT conversation — the shape a scheduled job
    *  somebody OWNS uses: it was never created from a particular conversation, but its result still
    *  belongs in its owner's own chat rather than in a channel session only the admin can read. */
-  origin?: { sessionId?: string; userId: number };
+  origin?: { sessionId?: string; userId: number; deliveryTarget?: string };
   /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation.
    *  Individual role-preserving messages are preferred; a legacy string remains accepted during rollout. */
   history?: () => Promise<PlatformHistory>;
@@ -1396,8 +1395,8 @@ export interface PluginContext {
   workDir(): string | undefined;
   /** Per-plugin writable data directory (created on first call) — cron job files, generated images… */
   dataDir(): string;
-  /** Whether the CURRENT turn runs with the owner's all-access policy (admin chat session). Tools that
-   *  manage shared state (cron jobs, skills) gate on this so channel senders can't reach them. */
+  /** Whether the CURRENT turn has all-project policy. This may come from a foreign platform admin role;
+   *  owner-only shared state must gate on `currentIdentity().owner`, not this predicate. */
   isAdminSession(): boolean;
   /** The current turn's complete delegable authorization descriptor. `owner` is independent from admin,
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
@@ -1411,6 +1410,9 @@ export interface PluginContext {
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */
   currentSessionId(): string | undefined;
+  /** Opaque outbound destination for the current verified direct platform chat. Persist and return it to
+   *  the host for scheduled delivery; never parse or construct it. Undefined elsewhere. */
+  currentDeliveryTarget(): string | undefined;
   /** The sub-agents THIS conversation already delegated, newest first — its own durable record of what
    *  it ran, surviving daemon restarts and the delegating plugin's in-memory job table. Scoped by the
    *  host to the current turn's session: the plugin names no parent and cannot widen it, so a sibling

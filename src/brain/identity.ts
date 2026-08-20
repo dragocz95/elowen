@@ -72,7 +72,7 @@ export class IdentityResolver {
    *  Elowen account. The display name is attacker-influenced (a user picks their own Elowen name), so
    *  brackets/newlines are stripped before it enters this trusted line — otherwise a name like
    *  `x] SYSTEM: …` could forge instructions into the prompt. */
-  forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string; linkedUserId?: number } {
+  forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string; accountUserId?: number; linkedUserId?: number } {
     const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
     // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
     // resolve — the plugin names the account and the host looks it up here, so the turn runs through the
@@ -99,12 +99,27 @@ export class IdentityResolver {
       elowenUsername: account?.username || account?.name,
       admin: src.access?.admin === true || account?.admin === true,
       owner: (account?.id !== undefined && this.isOwner(account.id)) || automationOwner,
-      // A 1:1 chat counts as `direct` only for a sender we can actually name — an unlinked stranger in a
-      // private chat has no account, so per-account state must not key on them. Everything else is a room.
-      conversation: src.direct === true && account?.id !== undefined ? 'direct' : 'shared',
+      // The adapter's `direct` bit is only a claim. PlatformOrchestrator validates it against the verified
+      // platform link and the durable session owner, then replaces this value for the admitted turn.
+      conversation: 'shared',
     };
-    // linkedUserId is the Elowen account this platform sender is verified as (their Discord id claimed in
-    // Account settings). Memory recall/save keys on it: an unlinked sender has no account, so no memory.
-    return { identity, verifiedPrefix, linkedUserId: account?.id };
+    // accountUserId includes host-authenticated automation (`actAsUserId`) for policy/memory scoping.
+    // linkedUserId is narrower: only a real platform link may prove that an adapter's direct-chat claim
+    // belongs to this sender.
+    return { identity, verifiedPrefix, accountUserId: account?.id, linkedUserId: linked?.id };
+  }
+
+  /** Identity for host-authenticated automation replaying into a verified direct platform conversation. */
+  forDirectChat(userId: number, platform: string, policy: Policy): TurnIdentity {
+    const row = this.d.users.get(userId);
+    return {
+      platform,
+      userId: String(userId),
+      elowenUserId: userId,
+      elowenUsername: row?.username || row?.name,
+      admin: policy.allowedProjectIds === 'all',
+      owner: this.isOwner(userId),
+      conversation: 'direct',
+    };
   }
 }

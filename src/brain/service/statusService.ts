@@ -389,8 +389,9 @@ export class BrainStatusService {
     return paginate(all, opts);
   }
 
-  /** Fulltext search across the user's stored conversations (channel sessions included — they carry
-   *  the owner's user_id, so ownership scoping is the store's join). */
+  /** Fulltext search across the user's personal owner-chat conversations. Channel sessions stay excluded
+   *  even when a verified direct chat is owned by this account: platform transcripts do not enter the
+   *  personal chat sidebar search. */
   searchMessages(userId: number, query: string): BrainSearchHit[] {
     return this.d.store.searchMessages(userId, query);
   }

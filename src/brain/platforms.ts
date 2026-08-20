@@ -1,5 +1,5 @@
 import type { PluginRegistry } from '../plugins/registry.js';
-import { decodeNotificationDestination } from '../plugins/destinations.js';
+import { decodeNotificationDestination, encodeNotificationDestination } from '../plugins/destinations.js';
 import type { ChannelRef, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { ToolPolicy, TurnIdentity } from '../plugins/policyContext.js';
@@ -46,11 +46,8 @@ export interface PlatformOrchestratorDeps {
   /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
    *  the brain (it needs systemd + the marker path), so this returns undefined until it's wired. */
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
-  /** BOUND send into a user's OWN stored conversation — origin-carrying messages (a cron wake-up
-   *  scheduled from a user conversation) route here so the reply lands where the schedule was created.
-   *  Resolves with the reply text, or null when the session no longer exists / isn't owned by that
-   *  user — the orchestrator then falls back to the normal channel path. Emits a `session` event
-   *  carrying the origin session id on success, so the caller can tell origin delivery happened. */
+  /** BOUND send into a user's OWN stored owner-chat conversation. Direct platform origins are handled
+   *  here in the orchestrator through ChannelSessionService and the platform outbound adapter instead. */
   originSend?: (userId: number, sessionId: string | undefined, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
   /** The caller's OWN conversations eligible to bind into a channel (the /context picker), resolved from
    *  the platform sender id to their linked Elowen account. Null when that sender is not linked to any
@@ -87,17 +84,45 @@ export class PlatformOrchestrator {
         const onMessage: Parameters<typeof adapter.listen>[0] = async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
-          // Origin-bound work (#116): a message replaying a job scheduled FROM a user conversation runs
-          // as a bound send into that conversation — the reply lands + streams + persists where the
-          // schedule was created, not in the job's own channel session. Falls through to the normal
-          // channel path when the origin session vanished or changed hands (originSend returns null).
+          // Direct-chat scheduled work must remain a CHANNEL turn: owner-chat send() would mint a second
+          // live session with owner tooling over the same transcript. The plugin persists this opaque target;
+          // core validates it against the durable direct row, runs through ChannelSessionService, then pushes
+          // the settled text through the original platform adapter before confirming delivery.
+          if (src.origin?.sessionId && src.origin.deliveryTarget) {
+            const destination = decodeNotificationDestination(src.origin.deliveryTarget, this.knownPlatforms);
+            if (!destination) throw new Error('invalid direct delivery target');
+            const channelId = `${destination.platform}-${destination.id}`;
+            if (!this.d.channels.mayDeliverDirectSession(src.origin.userId, src.origin.sessionId, channelId)) {
+              throw new Error('direct origin session is unavailable');
+            }
+            const policy = this.d.policyForUser?.(src.origin.userId);
+            if (!policy) throw new Error('direct origin account is unavailable');
+            const denied = this.d.disabledToolsFor?.(src.origin.userId) ?? [];
+            const reply = await this.d.channels.send({
+              channelId,
+              ownerUserId: src.origin.userId,
+              direct: true,
+              policy,
+              // A direct wake-up resumes the interactive DM's normal composition and context. The cron
+              // source already frames the turn as scheduled; using the scheduled persona here would leave
+              // a cold/evicted DM live under that persona for the next human message.
+              promptAppend: plugins?.platformPromptsFor?.(destination.platform) ?? undefined,
+              toolPolicy: denied.length ? { deny: new Set(denied) } : undefined,
+              identity: this.d.identity.forDirectChat(src.origin.userId, destination.platform, policy),
+              writerUserId: src.origin.userId,
+              historyPlatform: destination.platform,
+              deliveryTarget: src.origin.deliveryTarget,
+              onEvent,
+            }, text);
+            await this.notify(reply, src.origin.deliveryTarget);
+            onEvent?.({ type: 'delivery', sessionId: src.origin.sessionId });
+            return reply;
+          }
+          // Owner-chat origins use the bound owner path. A named session may fall through only when it is
+          // gone/foreign; an account-bound job without a session never falls into an operator-owned channel.
           if (src.origin && this.d.originSend) {
             const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, onEvent);
             if (reply !== null) return reply;
-            // An origin naming no session is bound to the ACCOUNT (an owned scheduled job): its result
-            // belongs to that person, so it must never fall through to the channel path, which anchors the
-            // session on the instance owner and would persist the transcript under the operator's account.
-            // The caller records the outcome itself (cron keeps it in the job's last result).
             if (src.origin.sessionId === undefined) return undefined;
           }
           // Delegated children belong to the account that owns their durable parent, not necessarily the
@@ -240,11 +265,11 @@ export class PlatformOrchestrator {
           // role's projects, plus the role's tool allowlist. Neither ever gets the owner's Elowen* API
           // tools/token — a shared channel is never the verified owner's own chat.
           const resolved = this.d.identity.forPlatformTurn(src, owner);
-          const identity: TurnIdentity = resolved.identity;
+          const accountUserId = resolved.accountUserId;
           const linkedUserId = resolved.linkedUserId;
           // A DIRECT 1:1 chat is its sender's own conversation, not a room the operator hosts. It counts
-          // only when the adapter says so AND the sender is verified as an account — an unlinked stranger
-          // in a private chat still has no account to anchor anything on.
+          // only when the adapter says so AND the sender has a VERIFIED platform link — `actAsUserId` is a
+          // host automation account scope, not proof of who sent an arbitrary plugin source.
           const claimsDirect = src.platform !== 'subagent' && src.direct === true && linkedUserId != null;
           // An existing row keeps its owner on purpose: re-pointing a transcript (with its usage, spills
           // and running processes) at another account is a migration, not something an incoming message
@@ -257,16 +282,20 @@ export class PlatformOrchestrator {
           // links their account afterwards. Such a conversation stays shared until it is migrated.
           const directChat = claimsDirect && (existingOwner === undefined || existingOwner === linkedUserId);
           // Safe unconditionally BECAUSE of that check: the row either does not exist yet or is already
-          // this account's, so nothing is re-pointed. It must not be skipped for an existing row — the
-          // owner travels on to skill resolution and bound delivery, and leaving the platform owner there
-          // would serve the operator's personal context inside somebody else's private chat.
+          // this account's, so nothing is re-pointed. Ownership intentionally carries usage attribution,
+          // account-deletion cleanup and the account-scoped managed-session view with it; personal search
+          // and the ordinary web conversation list continue to exclude every channel session.
           if (directChat) sessionOwner = linkedUserId;
+          const identity: TurnIdentity = {
+            ...resolved.identity,
+            conversation: directChat ? 'direct' : 'shared',
+          };
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
           const turnDenied = src.access.denyTools ?? [];
-          if (linkedUserId != null && this.d.policyForUser) {
-            policy = this.d.policyForUser(linkedUserId);
-            const denied = [...new Set([...(this.d.disabledToolsFor?.(linkedUserId) ?? []), ...turnDenied])];
+          if (accountUserId != null && this.d.policyForUser) {
+            policy = this.d.policyForUser(accountUserId);
+            const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
             toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
           } else {
             policy = src.access.admin
@@ -312,11 +341,15 @@ export class PlatformOrchestrator {
             toolPolicy,
             images: src.images,
             identity,
-            // The Elowen account this sender is verified as — memory recall/save keys on it. Unlinked
-            // senders have no linkedUserId, so the channel turn gets no memory (shared-space privacy).
-            writerUserId: linkedUserId,
+            // The effective account view: a verified human link or host-authenticated automation relay.
+            // Arbitrary actAsUserId still cannot validate `direct`; it only scopes the admitted automation.
+            writerUserId: accountUserId,
             history: src.history,
             historyPlatform: src.platform,
+            // Only a validated direct chat exposes an outbound target to tools creating scheduled work.
+            deliveryTarget: directChat
+              ? encodeNotificationDestination(src.platform, src.threadId ?? src.channelId)
+              : undefined,
             onEvent,
             // The identity prefix travels in opts (not concatenated) so channels.send can gate a RAW plugin
             // prompt-command on the un-prefixed text; it is applied to every ordinary message there, exactly

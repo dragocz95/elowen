@@ -834,6 +834,9 @@ export class MsTeamsAdapter {
         {
           platform: 'msteams', userId: String(from.aadObjectId || from.id), userName: senderName, roleIds: ids,
           channelId: convoKey, access: turnAccess,
+          // Only an explicit Teams personal conversation is a 1:1 chat. `kind` defaults a missing
+          // conversationType for history behavior, but direct-chat privileges must fail closed.
+          direct: conv.conversationType === 'personal',
           channelName: kind !== 'personal' ? (conv.name || undefined) : undefined,
           images: images.length ? images : undefined,
           // MUST be async: the brain calls `opts.history().catch(…)` on the result, so a plain string

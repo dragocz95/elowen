@@ -17,7 +17,7 @@ import type { CardRegistry } from './cards.js';
 import { projectUserTurn } from './persistence.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
-import { channelSessionId, archivedChannelSessionId, isChannelSession, channelIdOf } from './sessionId.js';
+import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
@@ -158,6 +158,8 @@ export interface ChannelSendOpts {
   history?: () => Promise<PlatformHistory>;
   /** Adapter platform name stamped into imported history provenance. */
   historyPlatform?: string;
+  /** Opaque outbound destination exposed to tools only for verified direct platform conversations. */
+  deliveryTarget?: string;
   onEvent?: (e: BrainEvent) => void;
   /** Steer this message into the channel's RUNNING turn even though the sender differs from the turn's
    *  originator. Set ONLY by BrainService.sendToSubagent after verifying the caller OWNS the session row
@@ -300,6 +302,13 @@ export class ChannelSessionService {
     return this.d.store.getSession(sessionId)?.user_id;
   }
 
+  /** Validate an opaque scheduled-delivery target against the durable direct session it claims to name. */
+  mayDeliverDirectSession(userId: number, sessionId: string, channelId: string): boolean {
+    return sessionId === channelSessionId(channelId)
+      && mayDeliverToSession(this.d.store.getSession(sessionId), userId, sessionId)
+      && !isSubagentSession(sessionId);
+  }
+
   /** Send one channel message into that channel's own conversation; resolves with the final
    *  assistant text. Serialized per channel: two rapid messages must not prompt() one PI session
    *  concurrently (and must not both spawn it). */
@@ -376,11 +385,16 @@ export class ChannelSessionService {
       const modelChanged = !!opts.model?.model && ch?.model !== opts.model.model;
       const providerChanged = !!opts.model?.provider && ch?.providerId !== opts.model.provider;
       const thinkingChanged = !!ch && (ch.thinkingLevel ?? '') !== (opts.thinkingLevel ?? '');
+      // Ownership and direct/shared classification determine personal skills, account instructions and
+      // other spawn-time composition. Re-stamping SQLite alone would leave the live session serving the
+      // old account/classification until an unrelated respawn.
+      const classificationChanged = !!ch
+        && (ch.ownerUserId !== opts.ownerUserId || ch.direct !== (opts.direct === true));
       // A channel respawn is invisible to the model, so the compaction it was already oriented for has
       // to survive it — otherwise every model switch re-sends the whole post-compaction block for a
       // compaction the model has already been told about.
       let carriedOrientation: string | undefined;
-      if (ch && (providerChanged || modelChanged || thinkingChanged || opts.rebuildSession)) {
+      if (ch && (providerChanged || modelChanged || thinkingChanged || classificationChanged || opts.rebuildSession)) {
         carriedOrientation = ch.orientedForCompaction;
         this.d.registry.channelDispose(opts.channelId);
         ch = undefined;
@@ -589,7 +603,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, workDir: ch.workDir, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: ch.workDir, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

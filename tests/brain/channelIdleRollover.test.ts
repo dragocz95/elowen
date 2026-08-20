@@ -10,7 +10,7 @@ const agedTs = (agoMs: number): string => new Date(Date.now() - agoMs).toISOStri
 
 /** A minimal fake LiveBrain — only the fields ChannelSessionService.send touches. `prompt` appends a
  *  settled assistant message so the reply-extraction + thinking-only guard have something to read. */
-function fakeBrain(sessionId = 'brain-ch-discord-c1') {
+function fakeBrain(sessionId = 'brain-ch-discord-c1', ownerUserId = 1, direct = false) {
   const messages: { role?: string; content?: unknown }[] = [];
   const session = {
     isStreaming: false,
@@ -23,7 +23,7 @@ function fakeBrain(sessionId = 'brain-ch-discord-c1') {
     setActiveToolsByName: () => {},
   };
   return {
-    session, sessionId,
+    session, sessionId, ownerUserId, direct,
     model: 'kimi',
     thinkingLevel: undefined as string | undefined,
     providerId: 'moonshot',
@@ -42,12 +42,12 @@ function setup() {
   const store = new BrainStore(db);
   const registry = new LiveSessionRegistry<Brain>();
   const titler = { run: vi.fn() };
-  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number; seedMessages?: { id: string; role: string; content: unknown }[] }) => {
+  const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number; direct?: boolean; seedMessages?: { id: string; role: string; content: unknown }[] }) => {
     // Mirror the real factory: create the row only when it is missing (a respawn keeps the durable
     // conversation), atomically seed imported history, then expose the live brain.
     if (!store.getSession(o.sessionId)) store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     if (o.seedMessages?.length) store.seedMessages(o.sessionId, o.seedMessages);
-    return fakeBrain();
+    return fakeBrain(o.sessionId, o.ownerUserId, o.direct === true);
   });
   const svc = new ChannelSessionService({ registry, store, users: { get: () => ({ username: "owner" }) }, spawn, titler } as never);
   const channelId = 'discord-c1';
@@ -250,7 +250,20 @@ describe('ChannelSessionService.send — rebuildSession', () => {
     expect(t.store.listSessions(1).some((s) => s.id.startsWith(`brain-ch-${t.channelId}-arch-`))).toBe(false);
   });
 
-  it('reuses the live session when the flag is absent', async () => {
+  it('rebuilds when effective direct classification changes and keeps the transcript', async () => {
+    const t = setup();
+    const live = fakeBrain(t.sessionId, 1, false);
+    t.seed(ONE_MIN, live);
+
+    await t.svc.send({ ...t.baseOpts, direct: true }, 'this is now a verified DM');
+
+    expect(live.session.dispose).toHaveBeenCalledOnce();
+    expect(t.spawn).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: 1, direct: true }));
+    expect(t.store.getSession(t.sessionId)?.direct).toBe(1);
+    expect(t.store.getMessages(t.sessionId).some((m) => JSON.parse(m.content).content === 'old')).toBe(true);
+  });
+
+  it('reuses the live session when the spawn-time owner and classification are unchanged', async () => {
     const t = setup();
     const live = fakeBrain();
     t.seed(ONE_MIN, live);

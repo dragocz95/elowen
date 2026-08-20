@@ -446,7 +446,7 @@ describe('msteams identity + role mapping', () => {
     adapter.listen(async (src, text) => { seen.push({ src, text }); return 'brain says hi'; });
     await adapter.onActivity(activity());
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.src).toMatchObject({ platform: 'msteams', userId: 'aad-1', userName: 'Alex Rivera', channelId: 'a:conv1#0' });
+    expect(seen[0]!.src).toMatchObject({ platform: 'msteams', userId: 'aad-1', userName: 'Alex Rivera', channelId: 'a:conv1#0', direct: true });
     expect(seen[0]!.text).toBe('Alex Rivera wrote: hello there');
     const reply = calls.find((c) => c.kind === 'reply');
     expect(reply?.args[3]).toMatchObject({ type: 'message', textFormat: 'markdown', text: 'brain says hi' });
@@ -455,6 +455,15 @@ describe('msteams identity + role mapping', () => {
       { kind: 'deleteReaction', args: ['https://smba.test/emea', 'a:conv1', 'in-1', '1f440_eyes'] },
       { kind: 'addReaction', args: ['https://smba.test/emea', 'a:conv1', 'in-1', '2705_whiteheavycheckmark'] },
     ]);
+  });
+
+  it('fails closed when Teams omits conversationType', async () => {
+    const { adapter } = await makeAdapter({ rolePolicies: [{ roleId: 'aad-1', projectIds: [1] }] });
+    const seen: Record<string, unknown>[] = [];
+    adapter.listen(async (src) => { seen.push(src); return 'done'; });
+    await adapter.onActivity(activity({ conversation: { id: 'a:conv1', tenantId: 'tenant-guid' } }));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.direct).toBe(false);
   });
 
   it('can disable processing reactions', async () => {

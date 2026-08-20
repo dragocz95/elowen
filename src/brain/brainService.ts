@@ -23,7 +23,7 @@ import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, BrainEvent, CompactResult } from './events.js';
-import { isNonUserSession, isOwnedUserSession, mayDeliverToSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
+import { isNonUserSession, isOwnedUserSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
@@ -356,12 +356,9 @@ export class BrainService {
       channels: this.channelService,
       dispatch: this.subagents,
       restart: () => this.restartHandler,
-      // Origin-bound platform work (a cron wake-up scheduled from a user conversation): run the prompt
-      // as a BOUND send into that conversation — the reply lands, streams and persists exactly where
-      // the schedule was created. Ownership-verified here (the ONE place with the store): a vanished or
-      // foreign session returns null and the orchestrator falls back to the channel path. The `session`
-      // event is emitted only AFTER the send succeeded, so the caller (cron) can tell origin delivery
-      // apart from a failed attempt and still deliver errors through its notify fallback.
+      // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
+      // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
+      // `brain-ch-*` row through send() would create an owner-chat live session with owner capabilities.
       originSend: async (userId, sessionId, text, onEvent) => {
         // No session named → the account's own default conversation. A scheduled job somebody owns has
         // no originating conversation, but its result belongs to that person, not to a channel session
@@ -373,12 +370,10 @@ export class BrainService {
         // somebody else's session — it is one that does not exist, and `send` creates it under this
         // account. Refusing here would push the turn onto the channel fallback, where the transcript ends
         // up in a session owned by the operator: the exact place this person's job must not report.
-        // A NAMED session still has to exist and be theirs; only the derived default may be created.
-        // `mayDeliverToSession`, not `isOwnedUserSession`: a direct 1:1 platform chat must be able to
-        // RECEIVE a scheduled result (that is how "remind me here" lands in the DM it was promised in)
-        // while staying out of the web session list. A shared channel is still refused.
+        // A NAMED session still has to exist, belong to the account and be an owner-chat conversation;
+        // only the derived default may be created. Channel rows never cross this boundary.
         const mayCreate = sessionId === undefined && row === undefined;
-        if (!mayCreate && !mayDeliverToSession(row, userId, target)) return null;
+        if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
         await this.send({ userId, text, mode: 'build', session: target });
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);

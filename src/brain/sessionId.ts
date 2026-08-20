@@ -67,6 +67,11 @@ export function isSubagentSession(id: string): boolean {
   return id.startsWith(SUBAGENT_PREFIX);
 }
 
+/** Archived channel transcript produced by {@link archivedChannelSessionId}; never a live delivery target. */
+export function isArchivedChannelSession(id: string): boolean {
+  return isChannelSession(id) && /-arch-[a-z0-9]+$/.test(id);
+}
+
 /** WHOSE personal skills a session may load. A skill set is fixed at spawn, so a SHARED channel — where
  *  the sender changes from turn to turn — can only carry the instance-wide ones.
  *
@@ -125,14 +130,17 @@ export function isOwnedUserSession<T extends { user_id: number }>(row: T | undef
  *
  *  A SHARED channel is still refused: its row is anchored on the operator, so one member's scheduled job
  *  would otherwise report in front of everyone else in the room. */
-export function mayDeliverToSession<T extends { user_id: number; direct?: number }>(
+export function mayDeliverToSession<T extends { user_id: number; direct: number }>(
   row: T | undefined,
   userId: number,
   sessionId: string,
 ): row is T {
   if (!row || row.user_id !== userId) return false;
   if (!isNonUserSession(sessionId)) return true;
-  return isChannelSession(sessionId) && row.direct === 1;
+  return isChannelSession(sessionId)
+    && !isSubagentSession(sessionId)
+    && !isArchivedChannelSession(sessionId)
+    && row.direct === 1;
 }
 
 /** The deterministic tmux session name for an admin's interactive `elowen chat` terminal bound to one

@@ -12,7 +12,7 @@ import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
-import { currentIdentity, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -964,6 +964,7 @@ export class PluginRegistry {
       currentAccess,
       currentIdentity,
       currentSessionId,
+      currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is
       // the whole scoping boundary for all three calls. Outside a prompt turn there is no conversation to
       // scope to, so listing is empty and reading/continuing are refused rather than using "any parent".

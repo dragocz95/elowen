@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, channelIdOf, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the four id shapes', () => {
@@ -24,6 +24,8 @@ describe('brain session id conventions', () => {
     expect(isSubagentSession('brain-ch-subagent-abc')).toBe(true);
     expect(isChannelSession('brain-ch-subagent-abc')).toBe(true);
     expect(isSubagentSession(channelSessionId('discord-1'))).toBe(false);
+    expect(isArchivedChannelSession(archivedChannelSessionId('discord-1'))).toBe(true);
+    expect(isArchivedChannelSession(channelSessionId('discord-1'))).toBe(false);
     expect(channelIdOf('brain-ch-subagent-abc')).toBe('subagent-abc');
     expect(channelIdOf(channelSessionId('discord-1'))).toBe('discord-1');
   });
@@ -71,11 +73,12 @@ describe('brain session id conventions', () => {
     expect(isOwnedUserSession({ user_id: 7 }, 7, dm)).toBe(false); // …yet stays out of the web list
 
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, room)).toBe(false); // shared room: never
-    expect(mayDeliverToSession({ user_id: 7 }, 7, room)).toBe(false); // fail-closed without the flag
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 8, dm)).toBe(false); // someone else's DM
     expect(mayDeliverToSession(undefined, 7, dm)).toBe(false); // no row
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, taskSessionId('t1'))).toBe(false); // task session
-    expect(mayDeliverToSession({ user_id: 7 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
+    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, 'brain-ch-subagent-job')).toBe(false); // delegated
+    expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, archivedChannelSessionId('msteams-personal-1'))).toBe(false); // archive
+    expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
   });
 
   it('isOwnedUserSession: owner AND a real conversation AND the row exists (and narrows the row type)', () => {

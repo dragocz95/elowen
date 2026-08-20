@@ -97,6 +97,9 @@ export type BrainEvent =
    *  The shared fold resets the transcript to the triggering turn; ignoring it is safe (the stream
    *  keeps flowing, only the visible history would look continued). */
   | { type: 'session'; sessionId: string }
+  /** Host confirmation that an origin-bound result reached its external platform sink. Scheduler plugins
+   *  must not infer this from `session`, which only proves where the turn ran. */
+  | { type: 'delivery'; sessionId: string }
   /** Live progress of a delegated sub-agent run, keyed to the parent's `delegate` tool call by `id`.
    *  The delegating plugin emits these while the child session works (see `ctx.subagentEmitter`):
    *  `detail` mirrors the child's current tool, `tools`/`tokens`/`seconds` accumulate, and `sessionId`

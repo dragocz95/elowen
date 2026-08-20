@@ -43,9 +43,11 @@ describe('IdentityResolver — owner vs admin gating', () => {
   // (project policy, tool deny-list, memory scope) it is that person and nothing wider.
   it('resolves access.actAsUserId to the acting account, without vouching for it as a sender', () => {
     const owned = src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 2 } });
-    const { identity, verifiedPrefix, linkedUserId } = resolver(null).forPlatformTurn(owned, 1);
+    const { identity, verifiedPrefix, accountUserId, linkedUserId } = resolver(null).forPlatformTurn(owned, 1);
     expect(identity.elowenUserId).toBe(2);
-    expect(linkedUserId).toBe(2); // memory and policy key on it, exactly like a linked sender
+    expect(accountUserId).toBe(2); // host-authenticated automation still gets this account's policy/memory
+    expect(linkedUserId).toBeUndefined(); // but it is not a verified platform sender
+    expect(identity.conversation).toBe('shared');
     expect(identity.admin).toBe(false);
     expect(identity.owner).toBe(false);
     // The verified line exists to tell a human sender apart from someone typing their name. Automation has

@@ -54,6 +54,9 @@ export interface TurnContextBlocks {
 export interface LiveBrain {
   session: AgentSession;
   sessionId: string;
+  /** Spawn-time ownership/classification inputs that determine skills, instructions and tool composition. */
+  ownerUserId: number;
+  direct: boolean;
   model: string;
   /** The CONFIG provider entry id the model resolved from (selection.provider, else the default first
    *  entry) — lets delegation inherit "same provider + model" without re-deriving config defaults. */
