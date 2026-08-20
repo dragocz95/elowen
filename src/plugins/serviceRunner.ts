@@ -1,4 +1,5 @@
 import { logger } from '../shared/logger.js';
+import { withTimeout } from '../shared/withTimeout.js';
 import type { PluginRegistry } from './registry.js';
 
 /** How long a plugin service's stop() may take before the host abandons it. A reload must not be
@@ -54,10 +55,7 @@ export class PluginServiceRunner {
     this.running = [];
     for (const { plugin, name, stop } of toStop) {
       try {
-        await Promise.race([
-          Promise.resolve(stop()),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`stop exceeded ${STOP_GRACE_MS}ms`)), STOP_GRACE_MS).unref?.()),
-        ]);
+        await withTimeout(Promise.resolve(stop()), STOP_GRACE_MS, `stop exceeded ${STOP_GRACE_MS}ms`);
       } catch (e) {
         log.error(`[${plugin}] service '${name}' stop abandoned: ${e instanceof Error ? e.message : String(e)}`);
       }

@@ -15,6 +15,7 @@ import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import { isNonUserSession, isChannelSession, isTaskSession, channelIdOf, defaultUserSessionId } from '../sessionId.js';
 import { terminalizeWorkflow } from '../workflowRuns.js';
+import { withTimeout } from '../../shared/withTimeout.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { ConversationLifecycle } from './lifecycle.js';
@@ -280,11 +281,9 @@ export class BrainStatusService {
         customTools: [], tools: [], noTools: 'all',
       }));
       const live = session;
-      // ~20s ceiling: a wedged endpoint must not hang the admin request. On timeout we abort the run.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('brain did not respond within 20s')), 20_000); });
-      try { await Promise.race([live.prompt('Reply with just: OK'), timeout]); }
-      finally { if (timer) clearTimeout(timer); }
+      // ~20s ceiling: a wedged endpoint must not hang the admin request. On timeout we abort the run
+      // (the finally below), since withTimeout only stops WAITING for the prompt — it cannot cancel it.
+      await withTimeout(live.prompt('Reply with just: OK'), 20_000, 'brain did not respond within 20s');
       const last = lastAssistant(live.messages as { role?: string }[]);
       const reply = (last ? extractText(last) : '').trim();
       if (!reply) return { ok: false, model: resolved.id, error: 'brain returned an empty reply' };
