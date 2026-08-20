@@ -245,13 +245,22 @@ export class PlatformOrchestrator {
           // A DIRECT 1:1 chat is its sender's own conversation, not a room the operator hosts. It counts
           // only when the adapter says so AND the sender is verified as an account — an unlinked stranger
           // in a private chat still has no account to anchor anything on.
-          const directChat = src.platform !== 'subagent' && src.direct === true && linkedUserId != null;
-          // Anchor a BRAND-NEW direct conversation on its own sender. An existing row keeps its owner on
-          // purpose: re-pointing a transcript (with its usage, spills and running processes) at another
-          // account is a migration, not something an incoming message may do behind the user's back.
-          if (directChat && this.d.channels.sessionOwnerUserId(channelSessionId(keyOf(src))) === undefined) {
-            sessionOwner = linkedUserId;
-          }
+          const claimsDirect = src.platform !== 'subagent' && src.direct === true && linkedUserId != null;
+          // An existing row keeps its owner on purpose: re-pointing a transcript (with its usage, spills
+          // and running processes) at another account is a migration, not something an incoming message
+          // may do behind the user's back. Only a BRAND-NEW direct conversation is anchored on its sender.
+          const existingOwner = claimsDirect ? this.d.channels.sessionOwnerUserId(channelSessionId(keyOf(src))) : undefined;
+          // …which is exactly why the flag also requires the row to be THIS sender's. Personal skills and
+          // bound delivery are resolved from the session's owner, so marking a conversation owned by
+          // somebody else as direct would serve that owner's private context to whoever writes here — the
+          // case that arises when an unlinked sender opens a chat (the row lands on the operator) and only
+          // links their account afterwards. Such a conversation stays shared until it is migrated.
+          const directChat = claimsDirect && (existingOwner === undefined || existingOwner === linkedUserId);
+          // Safe unconditionally BECAUSE of that check: the row either does not exist yet or is already
+          // this account's, so nothing is re-pointed. It must not be skipped for an existing row — the
+          // owner travels on to skill resolution and bound delivery, and leaving the platform owner there
+          // would serve the operator's personal context inside somebody else's private chat.
+          if (directChat) sessionOwner = linkedUserId;
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
           const turnDenied = src.access.denyTools ?? [];

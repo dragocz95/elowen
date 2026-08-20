@@ -154,6 +154,48 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity?.owner).toBe(false); // a second admin's child is not the instance operator
   });
 
+  describe('a direct 1:1 chat', () => {
+    /** One inbound direct message, against a channel store whose row is owned by `rowOwner`
+     *  (undefined = the conversation does not exist yet). */
+    const runDirect = async (rowOwner: number | undefined): Promise<ChannelSendOpts> => {
+      let sent: ChannelSendOpts | undefined;
+      let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+      const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+      const channels = { sessionOwnerUserId: () => rowOwner, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '' };
+      const orch = new PlatformOrchestrator({
+        plugins: async () => ({ platforms: [adapter] }) as never,
+        platformOwner: () => 1,
+        policyForProjects: () => rolePolicy,
+        policyForUser: () => userPolicy,
+        identity: linkedResolver(true), // resolves the sender to account 2
+        channels: channels as never,
+        dispatch: noDispatch,
+      });
+      await orch.startAll();
+      await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], direct: true, access: { admin: false, projectIds: [3] } } as never, 'hi');
+      return sent!;
+    };
+
+    it('anchors a brand-new one on its own sender', async () => {
+      const sent = await runDirect(undefined);
+      expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+    });
+
+    // The row lands on the operator when an UNLINKED stranger opens the chat. If linking later flipped it
+    // to direct without moving ownership, personal skills and bound delivery — both resolved from the
+    // session's owner — would serve the OPERATOR's private context to whoever writes here.
+    it('stays shared while the row still belongs to somebody else', async () => {
+      const sent = await runDirect(1);
+      expect(sent?.direct).toBe(false);
+      expect(sent?.ownerUserId).toBe(1); // and the transcript is NOT re-pointed behind the owner's back
+    });
+
+    it('is direct again once the row is the sender\'s own', async () => {
+      const sent = await runDirect(2);
+      expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+    });
+  });
+
   // The parent-supplied context used to travel as ONE string, so the delegated-scope per-chunk bound
   // (8 000 chars) applied to every workflow dependency result joined together and a wide fan-in reached
   // its node with a fraction of the text. Each block must land as its OWN prompt append.
