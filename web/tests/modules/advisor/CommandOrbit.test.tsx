@@ -81,7 +81,9 @@ describe('mascot command field', () => {
     await waitFor(() => expect(screen.queryByTestId('command-orbit')).toBeNull());
 
     await openField();
-    await act(async () => { fireEvent.click(screen.getByTestId('command-orbit-backdrop')); });
+    const backdrop = screen.getByTestId('command-orbit-backdrop');
+    expect(backdrop.style.backdropFilter).toBe('var(--command-orbit-backdrop-filter, none)');
+    await act(async () => { fireEvent.click(backdrop); });
     await waitFor(() => expect(screen.queryByTestId('command-orbit')).toBeNull());
   });
 
