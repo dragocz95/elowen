@@ -19,7 +19,8 @@ function errorStatus(error: MicrosoftSsoError): 400 | 403 | 404 | 409 | 429 {
     case 'no_account':
     case 'not_setup':
     case 'tenant_mismatch':
-    case 'guest': return 403;
+    case 'guest':
+    case 'directory_unavailable': return 403;
     default: return 400;
   }
 }

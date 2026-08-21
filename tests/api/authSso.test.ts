@@ -7,6 +7,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { UserSettingStore } from '../../src/store/userSettingStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
+import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
@@ -40,6 +41,12 @@ interface SetupOptions {
   oid?: string;
   tofu?: boolean;
   bind?: boolean;
+  ssoLinkByEmail?: boolean;
+  ssoProvision?: 'off' | 'tenant';
+  ssoDefaultProjects?: string;
+  graphStatus?: number;
+  graphUser?: { id?: string; userType?: string; accountEnabled?: boolean };
+  graphFailure?: Error;
 }
 
 function setup(options: SetupOptions = {}) {
@@ -47,6 +54,8 @@ function setup(options: SetupOptions = {}) {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const userSettings = new UserSettingStore(db);
+  const projects = new ProjectStore(db);
+  const userProjects = new UserProjectStore(db);
   const user = options.createUser === false ? null : users.create('alice', 'secret');
   const config = new ConfigStore(db);
   config.update({
@@ -59,6 +68,9 @@ function setup(options: SetupOptions = {}) {
           tenantId: TENANT.toUpperCase(),
           ssoEnabled: true,
           ssoRedirectBase: options.redirectBase === undefined ? 'https://elowen.example' : options.redirectBase,
+          ssoLinkByEmail: options.ssoLinkByEmail,
+          ssoProvision: options.ssoProvision ?? 'off',
+          ssoDefaultProjects: options.ssoDefaultProjects ?? '',
         },
       },
     },
@@ -78,6 +90,12 @@ function setup(options: SetupOptions = {}) {
     const url = String(input);
     if (url.includes('.well-known/openid-configuration')) return Response.json(DISCOVERY);
     if (url === DISCOVERY.token_endpoint) return Response.json({ id_token: idToken });
+    if (url.includes('/oauth2/v2.0/token')) return Response.json({ access_token: 'graph-token', expires_in: 3600 });
+    if (url.startsWith('https://graph.microsoft.com/')) {
+      if (options.graphFailure) throw options.graphFailure;
+      if (options.graphStatus && options.graphStatus !== 200) return new Response('', { status: options.graphStatus });
+      return Response.json(options.graphUser ?? { id: options.oid ?? OID, userType: 'Member', accountEnabled: true });
+    }
     return new Response('', { status: 404 });
   }) as unknown as typeof fetch;
   const microsoftSso = new MicrosoftSsoService({
@@ -87,6 +105,9 @@ function setup(options: SetupOptions = {}) {
     clock,
     bus,
     advisor: () => ({ ensureOnLogin } as never),
+    projects,
+    userProjects,
+    project: { id: 1 },
     fetch: fetchImpl,
     keyResolver: () => createLocalJWKSet(jwks),
   });
@@ -103,7 +124,8 @@ function setup(options: SetupOptions = {}) {
     config,
     users,
     userSettings,
-    projects: new ProjectStore(db),
+    projects,
+    userProjects,
     microsoftSso,
     advisor: { ensureOnLogin } as never,
   } as never);
@@ -140,7 +162,7 @@ function setup(options: SetupOptions = {}) {
     body: JSON.stringify({ flowId, state, code: 'authorization-code' }),
   });
 
-  return { app, users, userSettings, user, config, clock, events, ensureOnLogin, microsoftSso, start, callback, signFor };
+  return { app, db, users, userSettings, userProjects, user, config, clock, events, ensureOnLogin, fetchImpl, microsoftSso, start, callback, signFor };
 }
 
 describe('Microsoft SSO routes', () => {
@@ -245,6 +267,162 @@ describe('Microsoft SSO routes', () => {
     expect(users.count()).toBe(before);
   });
 
+  it('does not link a matching email when email linking is disabled', async () => {
+    const { start, signFor, callback, users, user } = setup({ bind: false, ssoLinkByEmail: false });
+    users.setProfile(user!.id, { email: 'alice@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'alice@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
+    expect(users.externalIdentity('msteams', TENANT, OID)).toBeNull();
+  });
+
+  it('links one unambiguous matching email without provisioning', async () => {
+    const { start, signFor, callback, users } = setup({ bind: false, ssoLinkByEmail: true });
+    const target = users.create('bob', 'secret');
+    users.setProfile(target.id, { email: 'bob@example.com' });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, { email: ' BOB@example.com ' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(target.id);
+    expect(users.count()).toBe(before);
+    expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(target.id);
+  });
+
+  it('defaults email linking on and links one unambiguous email to an admin account by owner decision', async () => {
+    const { start, signFor, callback, users, user } = setup({ bind: false });
+    // Deliberate owner decision: email linking defaults on and may link an admin account too.
+    users.setProfile(user!.id, { email: 'owner@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'owner@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(user!.id);
+    expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(user!.id);
+  });
+
+  it('refuses an ambiguous email instead of provisioning another account', async () => {
+    const { start, signFor, callback, db, users, user } = setup({ bind: false, ssoLinkByEmail: true, ssoProvision: 'tenant' });
+    const second = users.create('bob', 'secret');
+    db.prepare('DROP INDEX idx_users_email_normalized').run();
+    db.prepare('UPDATE users SET email = ? WHERE id IN (?, ?)').run('shared@example.com', user!.id, second.id);
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'shared@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
+    expect(users.count()).toBe(before);
+    expect(users.externalIdentity('msteams', TENANT, OID)).toBeNull();
+  });
+
+  it('rejects a B2B guest reported by Graph even when the token tenant matches', async () => {
+    const { start, signFor, callback, users, fetchImpl } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoProvision: 'tenant',
+      graphUser: { id: UNKNOWN_OID, userType: 'Guest', accountEnabled: true },
+    });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'guest@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'guest' });
+    expect(users.count()).toBe(before);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1.0/users/${UNKNOWN_OID}?`),
+      expect.objectContaining({ headers: { authorization: 'Bearer graph-token' } }),
+    );
+  });
+
+  it('rejects a disabled tenant member', async () => {
+    const { start, signFor, callback, users } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoProvision: 'tenant',
+      graphUser: { id: UNKNOWN_OID, userType: 'Member', accountEnabled: false },
+    });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce);
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
+    expect(users.count()).toBe(before);
+  });
+
+  it.each([
+    ['Graph 403', { graphStatus: 403 }],
+    ['Graph timeout', { graphFailure: new Error('timeout') }],
+  ])('fails closed when %s prevents directory verification', async (_label, graph) => {
+    const { start, signFor, callback, users } = setup({ oid: UNKNOWN_OID, bind: false, ssoProvision: 'tenant', ...graph });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'member@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'directory_unavailable' });
+    expect(users.count()).toBe(before);
+  });
+
+  it('provisions a passwordless non-admin and grants only configured existing projects', async () => {
+    const { start, signFor, callback, db, users, userProjects } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoProvision: 'tenant',
+      ssoDefaultProjects: '1, 999, invalid',
+    });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, {
+      preferred_username: 'new.user@example.com',
+      name: 'New User',
+      email: 'new.user@example.com',
+    });
+
+    const response = await callback(flow.body.flowId, flow.state);
+    const body = await response.json() as { user: { id: number; username: string; is_admin: boolean; name: string; email: string } };
+
+    expect(response.status).toBe(200);
+    expect(users.count()).toBe(before + 1);
+    expect(body.user).toMatchObject({ is_admin: false, name: 'New User', email: 'new.user@example.com' });
+    expect(userProjects.forUser(body.user.id)).toEqual([1]);
+    expect(db.prepare('SELECT 1 FROM user_projects WHERE project_id = 999').get()).toBeUndefined();
+    expect(users.verify(body.user.username, 'new.user@example.com')).toBeNull();
+    expect(users.verify(body.user.username, '')).toBeNull();
+  });
+
+  it('cannot provision on an instance that has users but no administrator', async () => {
+    const { start, signFor, callback, db, users } = setup({ oid: UNKNOWN_OID, bind: false, ssoProvision: 'tenant' });
+    db.prepare('UPDATE users SET is_admin = 0').run();
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce);
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(500);
+    expect(users.count()).toBe(before);
+  });
+
   it('matches password-login session shape, TTL, and ensureOnLogin side effect', async () => {
     const { app, start, signFor, callback, ensureOnLogin, user } = setup();
     const password = await app.request('/auth/login', {
@@ -278,7 +456,7 @@ describe('Microsoft SSO routes', () => {
   it('caps live flows at 500 and sweeps expired entries', async () => {
     const { microsoftSso, clock } = setup();
     for (let i = 0; i < 500; i++) await microsoftSso.start();
-    await expect(microsoftSso.start()).rejects.toMatchObject<Partial<MicrosoftSsoError>>({ code: 'too_many_flows' });
+    await expect(microsoftSso.start()).rejects.toMatchObject({ code: 'too_many_flows' } satisfies Partial<MicrosoftSsoError>);
     clock.advance(10 * 60_000);
     await expect(microsoftSso.start()).resolves.toHaveProperty('flowId');
   });

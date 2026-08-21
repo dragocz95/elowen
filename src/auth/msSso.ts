@@ -2,8 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from 'jose';
 import { ExternalIdentityConflictError, type User, type UserStore } from '../store/userStore.js';
 import type { UserSettingStore } from '../store/userSettingStore.js';
+import type { UserProjectStore } from '../store/userProjectStore.js';
+import type { ProjectStore } from '../store/projectStore.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { Clock } from '../shared/clock.js';
+import { MicrosoftGraphDirectoryError, MicrosoftGraphMembership } from './msGraphMembership.js';
 import type { EventBus } from '../api/sse.js';
 import type { AgentsAdvisorHooks } from '../plugins/api.js';
 import { logger } from '../shared/logger.js';
@@ -23,6 +26,7 @@ export type MicrosoftSsoErrorCode =
   | 'already_linked'
   | 'tenant_mismatch'
   | 'guest'
+  | 'directory_unavailable'
   | 'sso_failed'
   | 'too_many_flows';
 
@@ -42,6 +46,9 @@ interface MicrosoftSsoConfig {
   appPassword: string;
   tenantId: string;
   redirectUri: string;
+  linkByEmail: boolean;
+  provision: 'off' | 'tenant';
+  defaultProjects: number[];
 }
 
 export interface MicrosoftOidcDiscovery {
@@ -70,6 +77,9 @@ export interface MicrosoftSsoDependencies {
   config: ConfigStore;
   users: UserStore;
   userSettings?: UserSettingStore;
+  projects?: ProjectStore;
+  userProjects?: UserProjectStore;
+  project?: { id: number };
   clock: Clock;
   bus: EventBus;
   advisor?: () => AgentsAdvisorHooks | undefined;
@@ -104,18 +114,19 @@ function safeNext(value: unknown): string {
     : '/';
 }
 
-/** Tenant-scoped Microsoft OIDC for existing Elowen identities only. Account provisioning deliberately
- * lives outside this phase: a subject without a durable or Teams TOFU binding is always denied. */
+/** Tenant-scoped Microsoft OIDC with guarded linking and Graph-verified account provisioning. */
 export class MicrosoftSsoService {
   private readonly fetchImpl: typeof fetch;
   private readonly keyResolver: (jwksUri: URL) => JWTVerifyGetKey;
   private readonly flows = new Map<string, Flow>();
   private discoveryCache: { tenantId: string; value: MicrosoftOidcDiscovery; expiresAt: number } | null = null;
+  private readonly graph: MicrosoftGraphMembership;
   private readonly log = logger('auth');
 
   constructor(private readonly d: MicrosoftSsoDependencies) {
     this.fetchImpl = d.fetch ?? fetch;
     this.keyResolver = d.keyResolver ?? ((url) => createRemoteJWKSet(url));
+    this.graph = new MicrosoftGraphMembership(d.clock, this.fetchImpl);
   }
 
   providers(): { id: 'msteams'; label: 'Microsoft' }[] {
@@ -172,7 +183,14 @@ export class MicrosoftSsoService {
       });
 
       const subject = `${identity.objectId}@${identity.tenantId}`;
+      const email = text(identity.claims.email);
       let user = this.d.users.externalIdentity(PROVIDER, identity.tenantId, identity.objectId);
+      if (user && email) {
+        const emailUser = this.d.users.userByUniqueEmail(email);
+        if (emailUser && emailUser.id !== user.id) {
+          this.log.warn(`Microsoft SSO kept the existing subject binding for ${subject} despite an email match to user #${emailUser.id}`);
+        }
+      }
       if (!user && GUID.test(identity.objectId)) {
         const tofuUserId = this.d.userSettings?.userIdBySetting('msteamsUserId', identity.objectId) ?? null;
         if (tofuUserId !== null) {
@@ -191,6 +209,67 @@ export class MicrosoftSsoService {
             }
             throw error;
           }
+        }
+      }
+      if (!user && email && this.d.users.hasAmbiguousEmail(email)) {
+        this.publish('sso.denied', subject, 'ambiguous');
+        throw new MicrosoftSsoError('no_account');
+      }
+      if (!user && cfg.linkByEmail) {
+        const emailUser = email ? this.d.users.userByUniqueEmail(email) : null;
+        if (emailUser) {
+          try {
+            user = this.d.users.linkExistingExternalIdentity({
+              provider: PROVIDER,
+              tenantId: identity.tenantId,
+              subjectId: identity.objectId,
+              userId: emailUser.id,
+            }).user;
+            this.publish('sso.link', subject, 'linked');
+          } catch (error) {
+            if (error instanceof ExternalIdentityConflictError) {
+              this.publish('sso.denied', subject, 'already_linked');
+              throw new MicrosoftSsoError('already_linked');
+            }
+            throw error;
+          }
+        }
+      }
+      if (!user && cfg.provision === 'tenant') {
+        let membership;
+        try {
+          membership = await this.graph.checkUser(cfg, identity.objectId);
+        } catch (error) {
+          if (error instanceof MicrosoftGraphDirectoryError) {
+            throw new MicrosoftSsoError('directory_unavailable', 'Microsoft Graph directory check failed', {
+              subject,
+              detail: 'directory_unavailable',
+            });
+          }
+          throw error;
+        }
+        if (membership === 'guest') {
+          throw new MicrosoftSsoError('guest', 'guest accounts are not allowed', { subject, detail: 'guest' });
+        }
+        if (membership !== 'member') {
+          throw new MicrosoftSsoError('no_account', 'Microsoft directory account is not an enabled member', {
+            subject,
+            detail: 'not_member',
+          });
+        }
+
+        const result = this.d.users.linkExternalIdentity({
+          provider: PROVIDER,
+          tenantId: identity.tenantId,
+          subjectId: identity.objectId,
+          preferredUsername: text(identity.claims.preferred_username),
+          name: text(identity.claims.name),
+          email: text(identity.claims.email),
+        });
+        user = result.user;
+        if (result.created) {
+          this.assignDefaultProjects(user.id, cfg.defaultProjects);
+          this.publish('sso.provision', subject, 'provisioned');
         }
       }
       if (!user) {
@@ -259,7 +338,19 @@ export class MicrosoftSsoService {
       const url = new URL(redirectBase);
       if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('invalid');
       const base = url.toString().replace(/\/$/, '');
-      return { appId, appPassword, tenantId, redirectUri: `${base}/api/auth/sso/microsoft/callback` };
+      const provision = raw.ssoProvision === 'tenant' ? 'tenant' : 'off';
+      const defaultProjects = [...new Set(text(raw.ssoDefaultProjects).split(',')
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isSafeInteger(value) && value > 0))];
+      return {
+        appId,
+        appPassword,
+        tenantId,
+        redirectUri: `${base}/api/auth/sso/microsoft/callback`,
+        linkByEmail: raw.ssoLinkByEmail !== false,
+        provision,
+        defaultProjects,
+      };
     } catch {
       this.log.warn('Microsoft SSO disabled: ssoRedirectBase must be an absolute HTTPS URL');
       return null;
@@ -313,6 +404,17 @@ export class MicrosoftSsoService {
     }
   }
 
+  private assignDefaultProjects(userId: number, projectIds: number[]): void {
+    if (!this.d.userProjects) return;
+    for (const projectId of projectIds) {
+      if (projectId !== this.d.project?.id && !this.d.projects?.get(projectId)) {
+        this.log.warn(`Microsoft SSO ignored unknown default project #${projectId}`);
+        continue;
+      }
+      this.d.userProjects.assign(userId, projectId);
+    }
+  }
+
   private async exchangeCode(tokenEndpoint: string, cfg: MicrosoftSsoConfig, flow: Flow, code: string): Promise<string> {
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -338,7 +440,7 @@ export class MicrosoftSsoService {
     }
   }
 
-  private publish(kind: 'sso.login' | 'sso.link' | 'sso.denied', subject: string, detail: string): void {
+  private publish(kind: 'sso.login' | 'sso.provision' | 'sso.link' | 'sso.denied', subject: string, detail: string): void {
     this.d.bus.publish({ type: 'auth', kind, subject, detail });
   }
 }

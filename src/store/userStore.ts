@@ -307,6 +307,15 @@ export class UserStore {
     return rows.length === 1 ? mask(rows[0]!) : null;
   }
 
+  /** Whether a normalized e-mail matches multiple legacy accounts. SSO must distinguish this from no
+   * match so provisioning cannot turn an ambiguous identity into yet another account. */
+  hasAmbiguousEmail(email: string): boolean {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return false;
+    const rows = this.db.prepare('SELECT 1 FROM users WHERE lower(trim(email)) = ? LIMIT 2').all(normalized);
+    return rows.length > 1;
+  }
+
   /** Self-service profile fields (name / email / preferred default executor). Only provided keys
    *  are written, so a partial update leaves the rest untouched. A normalized non-empty e-mail may belong
    *  to only one account because Teams uses it solely as a guarded first-contact identity bootstrap. */
