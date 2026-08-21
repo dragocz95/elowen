@@ -20,6 +20,7 @@ import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
 import { normalizeNotificationDestination } from './destinations.js';
+import { isPrivateAccountContext } from '../brain/identity.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -1051,12 +1052,13 @@ export class PluginRegistry {
       },
       config,
       // Per-account values resolve at CALL time, from the identity of whoever is acting right now — the
-      // same AsyncLocalStorage `currentIdentity()` reads. Capturing them at register time would freeze one
-      // account's credentials into a plugin shared by everyone.
+      // same AsyncLocalStorage `currentIdentity()` reads. They are private conversation state: shared rooms
+      // and delegated children retain attribution but never expose the account's plugin credentials.
       userConfig: () => {
-        const userId = currentIdentity()?.elowenUserId;
+        const identity = currentIdentity();
+        const userId = identity?.elowenUserId;
         const read = host?.userPluginConfig;
-        if (userId === undefined || !read) return null;
+        if (!isPrivateAccountContext(identity) || userId === undefined || !read) return null;
         return read(userId, name);
       },
       logger: scoped,

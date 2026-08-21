@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { IdentityResolver } from '../../src/brain/identity.js';
+import { IdentityResolver, isPrivateAccountContext } from '../../src/brain/identity.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -10,6 +10,20 @@ const src = (over: Record<string, unknown>) => ({
   access: { projectIds: [], admin: false },
   ...over,
 }) as never;
+
+describe('isPrivateAccountContext', () => {
+  const identity = (conversation: 'own' | 'direct' | 'shared' | 'delegated') => ({
+    platform: 'test', userId: '1', elowenUserId: 1, admin: true, owner: true, conversation,
+  });
+
+  it('accepts only own and verified direct conversations', () => {
+    expect(isPrivateAccountContext(identity('own'))).toBe(true);
+    expect(isPrivateAccountContext(identity('direct'))).toBe(true);
+    expect(isPrivateAccountContext(identity('shared'))).toBe(false);
+    expect(isPrivateAccountContext(identity('delegated'))).toBe(false);
+    expect(isPrivateAccountContext(null)).toBe(false);
+  });
+});
 
 describe('IdentityResolver — owner vs admin gating', () => {
   const resolver = (linked?: { id: number; name: string; username?: string; admin: boolean } | null) =>
@@ -39,13 +53,13 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(unlinked.linkedUserId).toBeUndefined(); // unlinked sender → no memory
   });
 
-  // A scheduled job somebody owns runs through the SAME account view a linked sender gets, so downstream
-  // (project policy, tool deny-list, memory scope) it is that person and nothing wider.
+  // A scheduled job somebody owns keeps that account's attribution. The orchestrator separately decides
+  // whether its surface admits private account policy or remains bounded by shared-room access.
   it('resolves access.actAsUserId to the acting account, without vouching for it as a sender', () => {
     const owned = src({ platform: 'cron', userId: 'cron', access: { projectIds: [], admin: false, actAsUserId: 2 } });
     const { identity, sender, accountUserId, linkedUserId } = resolver(null).forPlatformTurn(owned, 1);
     expect(identity.elowenUserId).toBe(2);
-    expect(accountUserId).toBe(2); // host-authenticated automation still gets this account's policy/memory
+    expect(accountUserId).toBe(2); // host-authenticated automation remains attributed to this account
     expect(linkedUserId).toBeUndefined(); // but it is not a verified platform sender
     expect(identity.conversation).toBe('shared');
     expect(identity.admin).toBe(false);

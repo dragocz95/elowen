@@ -61,11 +61,41 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.promptAppend).toEqual(['You are replying through Discord.']);
   });
 
-  it('a LINKED sender runs fully through their Elowen account: their policy + their tool deny-list', async () => {
-    const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
-    expect(sent.policy).toBe(userPolicy); // Elowen account policy, NOT the role's
-    expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) }); // their disabled_tools, role allowlist ignored
-    expect(sent.identity?.elowenUserId).toBe(2);
+  it('a verified shared sender keeps account attribution but remains bounded by room policy and personal denies', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const resolver = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: () => ({ id: 1, name: 'Owner', username: 'owner', admin: true }),
+      users: { get: () => ({ username: 'owner', is_admin: true }) },
+    });
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      policyForUser: () => userPolicy,
+      disabledToolsFor: () => ['DiscordApi'],
+      identity: resolver,
+      channels: { send: async (opts: ChannelSendOpts) => { sent = opts; return 'ok'; }, fragmentFor: () => '' } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+    const access = { admin: false, projectIds: [3], tools: ['MemorySearch'], denyTools: ['DiscordSend'] };
+    await handler!({
+      platform: 'discord', userId: 'owner-platform-id', channelId: 'room', roleIds: [], access,
+    } as never, 'hi');
+    access.tools.push('ElowenApi');
+    access.denyTools.length = 0;
+
+    expect(sent?.policy).toBe(rolePolicy);
+    expect(sent?.policy).not.toBe(userPolicy);
+    expect(sent?.toolPolicy?.allow).toEqual(new Set(['MemorySearch']));
+    expect(sent?.toolPolicy?.deny).toEqual(new Set(['DiscordApi', 'DiscordSend']));
+    expect(sent?.identity).toEqual({
+      platform: 'discord', userId: 'owner-platform-id', elowenUserId: 1, elowenUsername: 'owner',
+      admin: false, owner: false, conversation: 'shared',
+    });
   });
 
   it('an UNLINKED sender falls back to the Role-ID policy + the role tool allowlist', async () => {
@@ -88,7 +118,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
   });
 
-  it('runs a synthetic relay through the target account channel and only narrows its tools', async () => {
+  it('keeps synthetic relay attribution while applying the room policy and personal denies', async () => {
     let control: PlatformControlApi | undefined;
     let sent: ChannelSendOpts | undefined;
     let message = '';
@@ -120,9 +150,9 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     expect(reply).toBe('target reply');
     expect(message).toBe('agent relay');
-    expect(sent).toMatchObject({ channelId: 'discord-target#0', writerUserId: 2, policy: userPolicy });
+    expect(sent).toMatchObject({ channelId: 'discord-target#0', writerUserId: 2, policy: rolePolicy });
     expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
-    expect(sent?.identity?.elowenUserId).toBe(2);
+    expect(sent?.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
 
   it('anchors a delegated child to its non-owner parent account, never the platform owner', async () => {
@@ -151,7 +181,10 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     } as never, 'inspect');
 
     expect(sent).toMatchObject({ ownerUserId: 2, parentSessionId: 'brain-2' });
-    expect(sent?.identity?.owner).toBe(false); // a second admin's child is not the instance operator
+    expect(sent?.policy.allowedProjectIds).toBe('all');
+    expect(sent?.identity).toMatchObject({
+      elowenUserId: 2, admin: true, owner: false, conversation: 'delegated',
+    }); // account attribution survives; authority is the captured delegated access
   });
 
   describe('a direct 1:1 chat', () => {
@@ -167,6 +200,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         platformOwner: () => 1,
         policyForProjects: () => rolePolicy,
         policyForUser: () => userPolicy,
+        disabledToolsFor: () => ['DiscordApi'],
         identity: linkedResolver(true), // resolves the sender to account 2
         channels: channels as never,
         dispatch: noDispatch,
@@ -179,6 +213,8 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     it('anchors a brand-new one on its own sender and exposes only the validated direct identity', async () => {
       const sent = await runDirect(undefined);
       expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
+      expect(sent.policy).toBe(userPolicy);
+      expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) });
       expect(sent.identity?.conversation).toBe('direct');
       expect(sent.deliveryTarget).toBe('destination:discord:c1');
     });
@@ -763,7 +799,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     });
   });
 
-  it('a LINKED sender with no disabled tools gets an undefined tool policy (no restriction)', async () => {
+  it('a linked shared sender with an unrestricted role and no denies gets no tool restriction', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
     const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {}, control: () => {} };
@@ -780,6 +816,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     await orch.startAll();
     await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], access: { admin: false, projectIds: [3] } } as never, 'hi');
     expect(sent!.toolPolicy).toBeUndefined();
-    expect(sent!.policy).toBe(userPolicy);
+    expect(sent!.policy).toBe(rolePolicy);
   });
 });

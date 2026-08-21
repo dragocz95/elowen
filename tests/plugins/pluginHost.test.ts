@@ -41,15 +41,25 @@ describe('ctx.userConfig()', () => {
     expect(wire(undefined, {}).userConfig()).toBeNull();
   });
 
-  it('reads the acting account, and asks for its OWN plugin name', () => {
+  it.each(['own', 'direct'] as const)('reads the acting account in a private %s conversation', (conversation) => {
     const calls: [number, string][] = [];
     const ctx = wire(undefined, reads(calls));
     const seen = runWithPolicy(null, () => ctx.userConfig(), {
-      identity: { platform: 'http', userId: '7', elowenUserId: 7, admin: false, owner: false },
+      identity: { platform: 'http', userId: '7', elowenUserId: 7, admin: false, owner: false, conversation },
     });
     expect(seen).toEqual({ apiKey: 'k' });
     // The plugin never names the user OR itself — a plugin that could would read another's credentials.
     expect(calls).toEqual([[7, 'demo']]);
+  });
+
+  it.each(['shared', 'delegated'] as const)('returns null in an attributed %s context', (conversation) => {
+    const calls: [number, string][] = [];
+    const ctx = wire(undefined, reads(calls));
+    const seen = runWithPolicy(null, () => ctx.userConfig(), {
+      identity: { platform: 'discord', userId: '7', elowenUserId: 7, admin: true, owner: true, conversation },
+    });
+    expect(seen).toBeNull();
+    expect(calls).toEqual([]);
   });
 });
 

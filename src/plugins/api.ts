@@ -230,11 +230,10 @@ export interface SessionSource {
     /** True only when the ORIGINAL delegating turn belongs to the instance operator. `admin` is project
      *  scope and is deliberately insufficient: a foreign platform role may be admin without being owner. */
     owner?: boolean;
-    /** The Elowen account this automation turn acts FOR (a scheduled job somebody owns). The host
-     *  resolves it exactly like a linked platform sender, so the turn gets that account's project
-     *  policy, tool deny-list, plugin grants and memory scope — never the instance operator's. Ignored
-     *  when the sender is already linked to an account, and never a way to gain rights: a plugin that
-     *  wanted more could simply set `admin` instead, which is why this narrows rather than widens. */
+    /** The Elowen account this automation turn acts FOR (a scheduled job somebody owns). The host uses
+     *  it for account attribution and personal deny-lists; shared/delegated authority still comes from
+     *  this access descriptor, while a verified direct conversation may use the account's own policy.
+     *  Ignored when the sender is already linked to an account, and never a way to gain rights. */
     actAsUserId?: number;
     /** Exact execute-time plugin-tool policy inherited by a delegated child. Arrays preserve an empty
     *  allow-list (deny everything), unlike a platform role's legacy `tools: []` = unrestricted convention. */

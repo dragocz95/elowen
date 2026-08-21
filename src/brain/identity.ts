@@ -8,6 +8,12 @@ interface LinkedUser { id: number; name: string; username?: string; admin: boole
 
 export interface PlatformSenderAttribution { id: string; name: string }
 
+/** Whether this turn is a private conversation owned by its attributed account. Shared rooms and
+ * delegated children may retain account attribution, but must not expose per-account private state. */
+export function isPrivateAccountContext(identity: TurnIdentity | null | undefined): boolean {
+  return identity?.conversation === 'own' || identity?.conversation === 'direct';
+}
+
 /** Platform display names are attacker-controlled. Keep them inert as JSON values and bound by Unicode
  *  code points so astral characters count as one visible character rather than two UTF-16 code units. */
 export function sanitizePlatformSenderName(value: unknown): string {
@@ -56,9 +62,12 @@ export class IdentityResolver {
    * the account owner merely because that account owns its SQLite row: only the captured origin-owner
    * bit survives, and even that is meaningful only for the configured instance operator. */
   forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity {
+    const row = this.d.users.get(ownerUserId);
     return {
       platform: 'subagent',
       userId: 'subagent',
+      elowenUserId: ownerUserId,
+      elowenUsername: row?.username || row?.name,
       admin: scope.admin,
       owner: scope.owner && this.isOwner(ownerUserId),
       conversation: 'delegated',
@@ -81,10 +90,10 @@ export class IdentityResolver {
   forPlatformTurn(src: SessionSource, _owner: number): { identity: TurnIdentity; sender?: PlatformSenderAttribution; accountUserId?: number; linkedUserId?: number } {
     const linked = this.d.resolvePlatformUser?.(src.platform, src.userId, src.verifiedEmail);
     // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
-    // resolve — the plugin names the account and the host looks it up here, so the turn runs through the
-    // SAME account view a linked sender gets: that account's project policy, its tool deny-list and its
-    // memory scope, never anything wider. A real platform link always wins, so this can never override
-    // who a message actually came from.
+    // resolve — the plugin names the account and the host looks it up here. This supplies attribution and
+    // personal deny-lists; the orchestrator still decides whether the surface is private account context or
+    // a shared room whose role policy remains authoritative. A real platform link always wins, so this can
+    // never override who a message actually came from.
     const account = linked ?? this.actingUser(src.access?.actAsUserId);
     // Only real inbound platform messages carry a human sender. Server automation (cron/subagent) has no
     // display-name claim to serialize, even when it acts for an account.

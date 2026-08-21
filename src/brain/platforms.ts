@@ -28,11 +28,11 @@ export interface PlatformOrchestratorDeps {
   agents?: () => Map<string, AgentDef>;
   /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
   policyForProjects?: (projectIds: number[]) => Policy;
-  /** A LINKED platform sender runs fully through their Elowen account: this resolves that account's own
-   *  project Policy (same as their web chat). Absent → falls back to the role policy. */
+  /** Resolve an account's own project Policy for a verified direct conversation. Shared rooms always use
+   *  the adapter-provided role policy even when the sender is linked to an Elowen account. */
   policyForUser?: (userId: number) => Policy;
-  /** A linked user's own tool deny-list (their Account → disabled tools plus any per-user-granted plugin
-   *  they do not hold), applied for their platform turns. */
+  /** A linked user's personal tool deny-list (Account → disabled tools plus any per-user-granted plugin
+   *  they do not hold). It narrows both direct account policy and shared room role policy. */
   disabledToolsFor?: (userId: number) => string[];
   /** The grant-gated tool names to withhold from a sender that has NO Elowen account (an unlinked channel
    *  member), described by the access their platform role gives them. Absent → nothing is withheld. */
@@ -259,11 +259,9 @@ export class PlatformOrchestrator {
               ...(src.access.sessionIdleMs !== undefined ? { idleRolloverMs: src.access.sessionIdleMs } : {}),
             }, text, onEvent);
           }
-          // A LINKED sender runs fully through their Elowen account — their own project Policy AND their
-          // own tool deny-list — exactly as in their web chat (the role policy is bypassed for them). An
-          // UNLINKED sender falls back to the Role-ID policy: all-project for an admin role, else the
-          // role's projects, plus the role's tool allowlist. Neither ever gets the owner's Elowen* API
-          // tools/token — a shared channel is never the verified owner's own chat.
+          // Account linkage supplies attribution and private-DM ownership, never room authority. A verified
+          // direct conversation uses the account's normal policy; every shared room remains bounded by the
+          // adapter's SessionSource.access role policy, with account and turn deny-lists intersected on top.
           const resolved = this.d.identity.forPlatformTurn(src, owner);
           const accountUserId = resolved.accountUserId;
           const linkedUserId = resolved.linkedUserId;
@@ -288,14 +286,19 @@ export class PlatformOrchestrator {
           if (directChat) sessionOwner = linkedUserId;
           const identity: TurnIdentity = {
             ...resolved.identity,
+            // A linked admin/owner remains attributed in a room, but account power never crosses the shared
+            // boundary. Owner-only Elowen API/token surfaces therefore stay unavailable in shared channels.
+            admin: directChat ? resolved.identity.admin : src.access.admin === true,
+            owner: directChat ? resolved.identity.owner : false,
             conversation: directChat ? 'direct' : 'shared',
           };
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
           const turnDenied = src.access.denyTools ?? [];
-          if (accountUserId != null && this.d.policyForUser) {
+          const personalDenied = accountUserId != null ? (this.d.disabledToolsFor?.(accountUserId) ?? []) : [];
+          if (directChat && accountUserId != null && this.d.policyForUser) {
             policy = this.d.policyForUser(accountUserId);
-            const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
+            const denied = [...new Set([...personalDenied, ...turnDenied])];
             toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
           } else {
             policy = src.access.admin
@@ -309,11 +312,13 @@ export class PlatformOrchestrator {
             const roleTools = src.access.tools;
             const unrestricted = !roleTools?.length || roleTools.includes('*');
             const allow = !src.access.admin && !unrestricted ? new Set(roleTools) : undefined;
-            // A per-user-granted plugin is reached through an ACCOUNT, and this sender has none. An admin
-            // role still passes (that is what an admin role means for every other tool here); anyone else
-            // is denied, so an unlinked stranger cannot borrow a subsystem an admin hands out per person.
-            const ungranted = this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? [];
-            const denied = [...new Set([...ungranted, ...turnDenied])];
+            // Per-user plugin grants are already represented in a linked account's personal deny-list. For
+            // an unlinked sender, derive the missing grants from the room role so they cannot borrow a
+            // subsystem that is granted person-by-person.
+            const ungranted = accountUserId == null
+              ? this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? []
+              : [];
+            const denied = [...new Set([...ungranted, ...personalDenied, ...turnDenied])];
             toolPolicy = allow || denied.length
               ? { ...(allow ? { allow } : {}), ...(denied.length ? { deny: new Set(denied) } : {}) }
               : undefined;
