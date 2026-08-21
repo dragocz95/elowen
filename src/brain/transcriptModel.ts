@@ -1,6 +1,7 @@
 import type { BrainEvent } from './events.js';
 import { isSubagentToolName } from './messageView.js';
 import {
+  isToolOnlyTurn,
   submittedPlanOf,
   turnsFromHistory,
   type ChatTurn,
@@ -174,6 +175,7 @@ export class TranscriptModel implements TranscriptRead {
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + event.delta;
         this.thinkingState = true;
         this.noticeState = undefined;
+        this.syncPreviousToolOnlyJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -184,6 +186,7 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         const name = event.ref.slice(event.ref.lastIndexOf('/') + 1);
         appendSegmentText(turn, 'text', `\n🖼 ${event.caption?.trim() || `shared ${name}`}\n`);
+        this.syncPreviousToolOnlyJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -191,6 +194,7 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'reasoning', event.delta);
         this.thinkingState = true;
+        this.syncPreviousToolOnlyJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -338,6 +342,7 @@ export class TranscriptModel implements TranscriptRead {
         this.activityStartedAtState = undefined;
         this.compactionActive = false;
         this.noticeState = undefined;
+        this.syncPreviousToolOnlyJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -379,6 +384,7 @@ export class TranscriptModel implements TranscriptRead {
     this.lastToolLocation = location;
     if (event.id) this.toolLocations.set(event.id, location);
     this.thinkingState = true;
+    this.syncPreviousToolOnlyJoin(index);
     this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
     return true;
   }
@@ -527,6 +533,23 @@ export class TranscriptModel implements TranscriptRead {
     this.turns.push(turn);
     this.lastAssistant = '';
     return { turn, index: this.turns.length - 1, fresh: true };
+  }
+
+  /** Keep the previous step's visual join marker aligned with the CURRENT step's actual content. A fresh
+   *  tool call may establish the join; later prose/reasoning in that same step removes it again. Publishing
+   *  the previous index separately lets the viewport patch both cached step blocks without merging them. */
+  private syncPreviousToolOnlyJoin(index: number): void {
+    if (index <= 0) return;
+    const previous = this.turns[index - 1];
+    if (previous?.role !== 'elowen') return;
+    const join = isToolOnlyTurn(previous) && isToolOnlyTurn(this.turns[index]);
+    if (Boolean(previous.joinNextToolOnly) === join) return;
+    if (join) this.turns[index - 1] = { ...previous, joinNextToolOnly: true };
+    else {
+      const { joinNextToolOnly: _drop, ...rest } = previous;
+      this.turns[index - 1] = rest;
+    }
+    this.publish({ kind: 'turn', index: index - 1 });
   }
 
   /** Settle a still-`streaming` assistant tail before a different turn is appended over it. Once it stops

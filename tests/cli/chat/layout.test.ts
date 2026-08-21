@@ -121,6 +121,57 @@ describe('chat layout components', () => {
     });
   });
 
+  describe('settled turn spacing', () => {
+    const renderLines = (turn: Parameters<TurnRenderer['render']>[0], index = 0): string[] =>
+      new TurnRenderer(getMarkdownTheme())
+        .render(turn, index, 80, { showThoughts: true, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set() })
+        .map((row) => row.line.replace(/\x1b\[[0-9;]*m/g, ''));
+
+    it.each([
+      ['tool row', { role: 'elowen' as const, streaming: false, durationMs: 42_000, segments: [{ kind: 'tools' as const, items: [{ name: 'Delegate', id: 'd1' }] }] }],
+      ['plain text', { role: 'elowen' as const, streaming: false, durationMs: 42_000, segments: [{ kind: 'text' as const, text: 'First line.\nSecond line.' }] }],
+      ['quick answer', { role: 'elowen' as const, streaming: false, durationMs: 2_000, segments: [{ kind: 'text' as const, text: 'Done.' }] }],
+    ])('puts one blank row before duration when ending with %s', (_shape, turn) => {
+      const lines = renderLines(turn);
+      const meta = lines.findIndex((line) => line.includes('Worked for'));
+      expect(meta).toBeGreaterThan(0);
+      expect(lines[meta - 1]).toBe('');
+      expect(lines.slice(meta + 1)).toEqual(['']); // one fixed turn separator, never an accumulating tail
+    });
+
+    it('renders consecutive tool-only steps as one gapless tool-row block, with no empty marker', () => {
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'Read', id: 'r1', detail: 'a.ts' });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1', detail: 'src' });
+
+      const first = transcript.turnAt(0)!;
+      const second = transcript.turnAt(1)!;
+      expect(first).toMatchObject({ role: 'elowen', streaming: false, joinNextToolOnly: true });
+      const lines = [...renderLines(first, 0), ...renderLines(second, 1)];
+      expect(lines.some((line) => line.trim() === '…')).toBe(false);
+      expect(lines.slice(0, -1).every((line) => line !== '')).toBe(true);
+      expect(lines.at(-1)).toBe('');
+    });
+
+    it.each([
+      ['assistant text', { type: 'text' as const, delta: 'I found it.' }],
+      ['reasoning', { type: 'reasoning' as const, delta: 'Checking the result.' }],
+    ])('restores the step separator when a tool-only step later gains %s', (_kind, content) => {
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'Read', id: 'r1' });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1' });
+      transcript.apply(content);
+
+      const first = transcript.turnAt(0)!;
+      expect(first).not.toHaveProperty('joinNextToolOnly');
+      expect(renderLines(first, 0).at(-1)).toBe('');
+    });
+  });
+
   describe('sub-agent block Ctrl+B hint', () => {
     const renderSub = (sub: Record<string, unknown>): string => {
       const turn = { role: 'elowen' as const, streaming: true, segments: [

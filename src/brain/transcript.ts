@@ -133,6 +133,9 @@ export function groupToolItems(items: ToolItem[]): ToolGroup[] {
 
 type YouTurn = { role: 'you'; text: string; id?: string };
 export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; createdAt?: string; durationMs?: number;
+  /** The next step is also tool-only, so the CLI may omit this turn's separator while preserving both
+   *  independent step blocks. Display-only and derived again on history hydration. */
+  joinNextToolOnly?: boolean;
   /** True while the model is writing a tool call whose marker has not yet rendered — a live-only hint set
    *  by `tool_authoring` and cleared by the first `tool` of the turn. Never persisted (history turns are
    *  never streaming). */
@@ -181,6 +184,13 @@ export interface HistoryMessage {
   durationMs?: number;
 }
 
+/** True when an assistant step contains real tool rows and nothing else. An empty streaming placeholder is
+ *  not tool-only; reasoning/text/image content keeps the normal inter-step separation. */
+export function isToolOnlyTurn(turn: ChatTurn | undefined): turn is ElowenTurn {
+  return turn?.role === 'elowen' && turn.segments.length > 0
+    && turn.segments.every((segment) => segment.kind === 'tools' && segment.items.length > 0);
+}
+
 /** Parse the durable wire/storage transcript into render turns without adding runtime bookkeeping. */
 export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
   const turns: ChatTurn[] = [];
@@ -219,6 +229,10 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
       ...(m.createdAt ? { createdAt: m.createdAt } : {}),
       ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
     });
+  }
+  for (let index = 0; index + 1 < turns.length; index += 1) {
+    const turn = turns[index];
+    if (isToolOnlyTurn(turn) && isToolOnlyTurn(turns[index + 1])) turn.joinNextToolOnly = true;
   }
   return turns;
 }

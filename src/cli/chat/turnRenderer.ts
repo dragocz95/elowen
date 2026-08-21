@@ -300,9 +300,18 @@ export class TurnRenderer {
       // without touching the spinner. It rides the tail turn's existing ~4fps repaint, so it costs nothing.
       const pulse = Math.floor(options.spinnerFrame / 2) % 2 === 0 ? color.dim : color.faint;
       add(`${TOOL_INDENT}${color.warning(spin)} ${pulse(truncateToWidth(label, Math.max(12, width - 10), '…'))}`);
-    } else if (!hasText && turn.streaming) add(`  ${color.faint('…')}`);
-    if (!turn.streaming && turn.durationMs != null) add(`  ${settledTurnMeta(turn.durationMs)}`);
-    addBlank();
+    } else if (!hasText && toolItems.length === 0 && turn.streaming) {
+      // A wholly empty streaming step still needs a pulse of life. Once a real tool row exists, this marker
+      // says nothing and became the stray per-step filler the owner saw between consecutive tool-only calls.
+      add(`  ${color.faint('…')}`);
+    }
+    if (!turn.streaming && turn.durationMs != null) {
+      // One blank row separates settled metadata from content. Two made quick answers look detached; one is
+      // enough to read as metadata while the single trailing blank below remains the next turn's separator.
+      if (rows.length > 0 && rows.at(-1)?.line !== '') addBlank();
+      add(`  ${settledTurnMeta(turn.durationMs)}`);
+    }
+    if (!turn.joinNextToolOnly || turn.durationMs != null) addBlank();
     return rows;
   }
 
