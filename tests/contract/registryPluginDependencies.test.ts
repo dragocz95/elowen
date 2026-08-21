@@ -41,6 +41,6 @@ describe('dependencies kept for plugins that live in the registry', () => {
     for (const pkg of ['jose', 'botframework-connector', 'grammy', 'baileys', 'qrcode']) {
       expect(knip.ignoreDependencies, `${pkg} has no bundled consumer and must stay exempt`).toContain(pkg);
     }
-    expect(knip.ignoreDependencies, 'elowen-plugin-shared is imported by bundled core plugins').not.toContain('elowen-plugin-shared');
+    expect(knip.ignoreDependencies, 'elowen-plugin-shared has no bundled consumer and must stay exempt').toContain('elowen-plugin-shared');
   });
 });

@@ -62,6 +62,7 @@
     "botframework-connector",
     "grammy",
     "baileys",
-    "qrcode"
+    "qrcode",
+    "elowen-plugin-shared"
   ]
 }
