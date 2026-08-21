@@ -253,7 +253,7 @@ export class TurnContextBuilder {
       const prevStatus = visible.status === 'done' || visible.status === 'error'
         ? this.d.store.getSubagentRuns(live.sessionId).find((run) => run.sessionId === visible.sessionId)?.status
         : undefined;
-      if (!this.d.store.upsertSubagentRun(live.sessionId, visible)) return;
+      if (!this.d.store.upsertSubagentRun(live.sessionId, visible, update.status)) return;
       // As the 'progress' source: this emitter tracks the plugin's progress ROW, not the child's actual
       // run (that claim belongs to begin/endDelegatedCall). A DelegateContinue that steered into a
       // running child settles its OWN progress claim, while `visible` stays running under the actual

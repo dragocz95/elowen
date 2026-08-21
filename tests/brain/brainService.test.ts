@@ -4832,6 +4832,13 @@ describe('sub-agent session tap + owner steering', () => {
 
     await svc.send({ userId: 1, text: 'steer it' });
     expect(d.store.getSubagentRuns('brain-1').find((run) => run.sessionId === child)?.status).toBe('running');
+    // The visible row stays running under the original child call, but the DelegateContinue call itself has
+    // finished. Recovery reads lifecycle, not the display projection, so a restart must not respawn it.
+    expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
+    expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
 
     // Once the actual call claim ends, the child's own terminal progress is terminal again.
     sessions.setChildRunning('brain-1', child, false, 'call');

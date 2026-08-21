@@ -297,13 +297,18 @@ export class BrainDelegationStore {
    *  never race ahead of the durable state a reconnect reads. Both sessions must exist, have the same
    *  owner, and be a DIRECT parent/child pair; a plugin cannot smuggle a foreign transcript id into the
    *  parent's drill-in UI. A tool-call id is permanently bound to its first child. */
-  upsertSubagentRun(parentSessionId: string, raw: unknown): boolean {
+  upsertSubagentRun(
+    parentSessionId: string,
+    raw: unknown,
+    durableStatus?: BrainSubagentRunState['status'],
+  ): boolean {
     if (!parentSessionId || !raw || typeof raw !== 'object') return false;
     const update = raw as Record<string, unknown>;
     if (typeof update.id !== 'string' || !update.id || update.id.length > 512) return false;
     if (typeof update.sessionId !== 'string' || !update.sessionId) return false;
     const state = normalizeSubagentState(update);
     if (!state) return false;
+    if (durableStatus !== undefined && durableStatus !== 'running' && durableStatus !== 'done' && durableStatus !== 'error') return false;
     return withWriteLock(this.db, () => {
       const relation = this.db.prepare(
         `SELECT p.user_id AS parent_user, c.user_id AS child_user, c.parent_session_id AS linked_parent
@@ -315,12 +320,14 @@ export class BrainDelegationStore {
         'SELECT child_session_id FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ?'
       ).get(parentSessionId, update.id) as { child_session_id: string } | undefined;
       if (prior && prior.child_session_id !== update.sessionId) return false;
-      // Mirror the JSON status onto the host-owned lifecycle column, and stamp THIS boot's id on a running
-      // row so a later boot can recognise it as a restart orphan and claim it. On terminal states the
-      // owner_boot_id is left untouched (a done/error row is never claimed — the claim filters on lifecycle
-      // — so its owner is irrelevant, and preserving it keeps the audit trail of who finished it).
-      const lifecycle = state.status; // running | done | error
-      const ownerBootId = state.status === 'running' ? this.bootId : null;
+      // The JSON status is the DISPLAY projection, while lifecycle is the recovery authority. Usually they
+      // match. A DelegateContinue that finishes after steering into an older still-running child is the one
+      // exception: the UI deliberately keeps that row visibly running until the child's actual call claim
+      // ends, but the continuation tool call itself is already terminal and must never be restart-recovered.
+      // Stamp THIS boot only on genuinely running lifecycle rows; terminal rows retain their prior owner as
+      // audit context and are excluded from recovery regardless of the visible JSON status.
+      const lifecycle = durableStatus ?? state.status;
+      const ownerBootId = lifecycle === 'running' ? this.bootId : null;
       this.db.prepare(
         `INSERT INTO brain_subagent_runs (parent_session_id, tool_call_id, child_session_id, state, lifecycle, owner_boot_id)
          VALUES (?, ?, ?, ?, ?, ?)

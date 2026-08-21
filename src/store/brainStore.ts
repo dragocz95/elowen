@@ -732,8 +732,12 @@ export class BrainStore {
 
   /** Persist the newest progress snapshot for one delegate tool call — see
    *  {@link BrainDelegationStore.upsertSubagentRun}. */
-  upsertSubagentRun(parentSessionId: string, raw: unknown): boolean {
-    return this.delegation.upsertSubagentRun(parentSessionId, raw);
+  upsertSubagentRun(
+    parentSessionId: string,
+    raw: unknown,
+    durableStatus?: 'running' | 'done' | 'error',
+  ): boolean {
+    return this.delegation.upsertSubagentRun(parentSessionId, raw, durableStatus);
   }
 
   /** The still-valid direct same-owner sub-agent runs of a conversation — see
