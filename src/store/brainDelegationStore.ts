@@ -816,6 +816,10 @@ export class BrainDelegationStore {
                 ) ELSE state END,
                 owner_boot_id = NULL, lease_until = NULL, updated_at = datetime('now')
           WHERE lifecycle IN ('running', 'recovering', 'recovery_required')
+            -- Background/detached tools return a settled handle while their child is genuinely still running.
+            -- Only a foreground toolResult proves the delegated call itself reached a terminal state.
+            AND CASE WHEN json_valid(r.state)
+              THEN COALESCE(json_extract(r.state, '$.background'), 0) ELSE 1 END = 0
             AND EXISTS (
               SELECT 1 FROM brain_messages m
                WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)

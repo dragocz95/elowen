@@ -5169,6 +5169,32 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.session.prompt).not.toHaveBeenCalled();
   });
 
+  it('does not heal a detached delegation merely because its start handle already returned', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-detached-running';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-detached', sessionId: child, status: 'running', task: 'keep working', tools: 0, seconds: 1,
+      background: true, autoDeliver: true,
+    });
+    d.store.appendMessage({
+      id: 'detached-handle', sessionId, parentId: null, role: 'toolResult',
+      content: {
+        role: 'toolResult', toolCallId: 'delegate-detached', toolName: 'Delegate',
+        content: [{ type: 'text', text: 'Started background delegation dlg-1.' }], isError: false,
+      },
+    });
+
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+
+    expect((d.db.prepare(
+      "SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-detached'"
+    ).get() as { lifecycle: string }).lifecycle).toBe('recovering');
+  });
+
   it('boot recovery parks a run as recovery_required when the interrupted tail has an unanswered tool call', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
