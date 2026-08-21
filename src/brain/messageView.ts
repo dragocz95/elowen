@@ -611,6 +611,39 @@ export function shapeBrainMessages(
   return merged;
 }
 
+/** Every sub-agent rendering keys on its Delegate tool row: both clients rebuild their panel projection
+ *  from `segment.sub`, and LIVE `subagent` events patch that row by tool call id. Compaction and first-page
+ *  windowing can remove the tool row while the delegated child keeps running, leaving the durable run alive
+ *  but invisible. Prepend a synthetic Delegate row for each genuinely running sidecar with no loaded anchor.
+ *
+ *  `subagentRuns` has already passed the status service's liveness filter, so this must not broaden what
+ *  counts as running: a stale durable row whose child edge is gone never reaches this helper and cannot
+ *  regain a phantom spinner. Terminal runs are not synthesized; resurrecting old completed delegates at the
+ *  top of a compacted conversation would be history noise, not live state recovery. */
+export function withSubagentAnchors(
+  views: BrainMessageView[],
+  subagentRuns: readonly ({ toolCallId: string } & BrainSubagentView)[],
+): BrainMessageView[] {
+  const running = subagentRuns.filter((run) => run.status === 'running');
+  if (running.length === 0) return views;
+  const anchored = new Set<string>();
+  for (const view of views) {
+    for (const segment of view.segments ?? []) {
+      if (segment.kind === 'tool' && segment.id && segment.sub) anchored.add(segment.id);
+    }
+  }
+  const synthetic = running
+    .filter((run) => !anchored.has(run.toolCallId))
+    .map(({ toolCallId, ...sub }): BrainMessageView => ({
+      id: `sub-anchor-${toolCallId}`,
+      synthetic: true,
+      role: 'assistant',
+      text: '',
+      segments: [{ kind: 'tool', name: 'Delegate', id: toolCallId, ...(sub.task ? { detail: sub.task } : {}), sub }],
+    }));
+  return synthetic.length ? [...synthetic, ...views] : views;
+}
+
 /** Every workflow rendering keys on the WorkflowStart tool row: the transcript chip, the panel projection
  *  (both clients rebuild it from the loaded views) and even LIVE `workflow` events, which clients attach
  *  by tool call id and silently drop when no such row is loaded. That row is not guaranteed to be there —

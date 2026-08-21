@@ -2,7 +2,7 @@ import { createAgentSession, SessionManager, DefaultResourceLoader } from '@eare
 import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
-import { extractText, shapeBrainMessages, withWorkflowAnchors, lastAssistant, pendingSubmittedPlan } from '../messageView.js';
+import { extractText, shapeBrainMessages, withSubagentAnchors, withWorkflowAnchors, lastAssistant, pendingSubmittedPlan } from '../messageView.js';
 import type { BrainMessageView } from '../messageView.js';
 import type { BrainContextBreakdown, BrainPendingPlan, BrainWorkMode } from '../../shared/wireContract.js';
 import { buildContextBreakdown, contextSnapshotOf } from '../contextBreakdown.js';
@@ -206,6 +206,15 @@ export class BrainStatusService {
       rows,
       this.subagentRuns(sessionId),
       this.d.store.getSessionEvents(sessionId),
+      this.workflowRuns(sessionId),
+    );
+  }
+
+  /** Pin live sidecars whose transcript tool row was compacted or windowed away. The status readers are the
+   *  source of truth for liveness; the synthetic rows only restore the client anchor they need to project it. */
+  private withRunningAnchors(sessionId: string, views: BrainMessageView[]): BrainMessageView[] {
+    return withWorkflowAnchors(
+      withSubagentAnchors(views, this.subagentRuns(sessionId)),
       this.workflowRuns(sessionId),
     );
   }
@@ -419,7 +428,7 @@ export class BrainStatusService {
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
     const id = this.d.lifecycle.activeSessionId(userId);
-    return withWorkflowAnchors(this.shapedHistory(id), this.workflowRuns(id));
+    return this.withRunningAnchors(id, this.shapedHistory(id));
   }
 
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
@@ -428,7 +437,7 @@ export class BrainStatusService {
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    return withWorkflowAnchors(this.shapedHistory(sessionId), this.workflowRuns(sessionId));
+    return this.withRunningAnchors(sessionId, this.shapedHistory(sessionId));
   }
 
   /** A backwards-paged window over a conversation's history for the chat's lazy-load: the newest `limit`
@@ -443,11 +452,11 @@ export class BrainStatusService {
     const id = sessionId ?? this.d.lifecycle.activeSessionId(userId);
     const page = windowViews(this.shapedHistory(id), opts);
     // Anchors are pinned AFTER windowing, and only into the FIRST (newest) page: the window can cut a
-    // running workflow's WorkflowStart row out of view, and without it the panel and every subsequent
-    // live snapshot are lost (see withWorkflowAnchors). Older pages are skipped so paging back never
-    // duplicates the pin, and the cursor is untouched — synthetic views carry no window position.
+    // running sidecar's tool row out of view, and without it the panel and every subsequent live snapshot
+    // are lost. Older pages are skipped so paging back never duplicates the pin, and the cursor is untouched
+    // — synthetic views carry no window position.
     return opts.before === undefined
-      ? { ...page, items: withWorkflowAnchors(page.items, this.workflowRuns(id)) }
+      ? { ...page, items: this.withRunningAnchors(id, page.items) }
       : page;
   }
 
@@ -475,12 +484,11 @@ export class BrainStatusService {
     // i.e. the very tail, so everything before `nextBefore` is identical in the unfiltered array the
     // lazy-load pages through — the cursor stays valid across the two endpoints.
     const page = history ? windowViews(clean, history) : undefined;
-    // Same first-page pinning as messagesPage: a reconnect hydrates from THIS frame, so a running
-    // workflow whose anchor row was compacted or windowed away would otherwise vanish from the panel
-    // and drop every later live snapshot (no row to attach to).
+    // Same first-page pinning as messagesPage: a reconnect hydrates from THIS frame, so running work whose
+    // anchor row was compacted or windowed away would otherwise vanish and drop every later live snapshot.
     const views = page ? page.items : clean;
     const anchoredViews = history?.before === undefined
-      ? withWorkflowAnchors(views, this.workflowRuns(sessionId))
+      ? this.withRunningAnchors(sessionId, views)
       : views;
     return {
       type: 'snapshot',

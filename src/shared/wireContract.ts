@@ -90,9 +90,9 @@ export type BrainSegment =
 export interface BrainMessageImage { url: string; mimeType: string }
 
 /** A durable display row (the `GET /brain/messages` payload). `id` is the SQLite message UUID when the
- *  source is a real store row; structural callers may omit it. The ONE non-row view served over HTTP is a
- *  synthetic workflow anchor (see withWorkflowAnchors), whose derived `wf-anchor-<toolCallId>` id is
- *  stable across refetches and marked with `synthetic: true` so a client can tell it from — and drop it
+ *  source is a real store row; structural callers may omit it. The only non-row views served over HTTP are
+ *  synthetic running-work anchors (see withSubagentAnchors/withWorkflowAnchors), whose derived ids are
+ *  stable across refetches and marked with `synthetic: true` so a client can tell them from — and drop them
  *  in favour of — the real anchor row once paging loads that row. `text` is the flat reply; `segments`
  *  preserve the true order. `kind`/`detail` mark a non-message system row (a model/mode/rename/cwd event)
  *  rather than an assistant/user turn. `images` are a user row's surviving attachments. */

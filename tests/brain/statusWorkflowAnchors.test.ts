@@ -222,3 +222,42 @@ describe('the engine liveness probe overrides session-liveness guessing', () => 
     expect(anchorItems(status.messagesPage(1, SESSION, { limit: 50 }).items)).toHaveLength(1);
   });
 });
+
+describe('status reads keep running sub-agents visible across parent compaction', () => {
+  const subagentItems = (views: { segments?: BrainSegment[] }[]) => views
+    .flatMap((view) => view.segments ?? [])
+    .filter((segment): segment is Extract<BrainSegment, { kind: 'tool' }> => segment.kind === 'tool' && segment.sub !== undefined);
+
+  function seedDelegation(store: BrainStore, id: string, child: string) {
+    store.createSession({ id: child, userId: 1, model: 'child-model', provider: 'child-provider', parentSessionId: SESSION });
+    store.appendMessage({
+      id: `anchor-${id}`, sessionId: SESSION, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id, name: 'Delegate', arguments: { task: `task ${id}` } }] },
+    });
+    expect(store.upsertSubagentRun(SESSION, {
+      id, sessionId: child, status: 'running', task: `task ${id}`, tools: 2, seconds: 30, background: true,
+    })).toBe(true);
+  }
+
+  it('projects a genuinely running child after compaction deletes its Delegate tool row, but still hides a dead child', () => {
+    const { store, sessions, status } = harness();
+    seedDelegation(store, 'call-live', 'child-live');
+    seedDelegation(store, 'call-dead', 'child-dead');
+    sessions.setChildRunning(SESSION, 'child-live', true);
+
+    store.appendMessage({ id: 'u-tail', sessionId: SESSION, parentId: null, role: 'user', content: { role: 'user', content: 'newer question' } });
+    store.appendMessage({ id: 'a-tail', sessionId: SESSION, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'newer answer' }] } });
+
+    expect(subagentItems(status.streamSnapshot(1, SESSION).history).map((item) => item.id)).toEqual(['call-live']);
+
+    store.compactSessionMessages(SESSION, {
+      id: 'summary', role: 'compaction', content: { role: 'compactionSummary', summary: 'older turns' },
+    }, 2);
+    expect(store.getMessages(SESSION).map((row) => row.id)).toEqual(['summary', 'u-tail', 'a-tail']);
+    expect(store.getSubagentRuns(SESSION).map((run) => run.toolCallId)).toEqual(['call-live', 'call-dead']);
+
+    const projected = subagentItems(status.streamSnapshot(1, SESSION).history);
+    expect(projected.map((item) => item.id)).toEqual(['call-live']);
+    expect(projected[0]?.sub).toMatchObject({ sessionId: 'child-live', status: 'running' });
+  });
+});
