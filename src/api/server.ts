@@ -41,6 +41,8 @@ export function createServer(d: ServerDeps): ElowenApp {
   });
   app.use('*', cors());
   app.use('/auth/login', bodyLimitBytes(MAX_LOGIN_BODY_BYTES));
+  app.use('/auth/sso/msteams/start', bodyLimitBytes(MAX_LOGIN_BODY_BYTES));
+  app.use('/auth/sso/msteams/callback', bodyLimitBytes(MAX_LOGIN_BODY_BYTES));
   // Single source of truth for malformed-body handling: most POST/PATCH routes call `c.req.json()`
   // without a per-route catch, and Hono throws a SyntaxError on invalid JSON. Convert that to a clean
   // 400 instead of leaking a default 500 with no useful body.

@@ -6,6 +6,9 @@ function isPublic(method: string, path: string, hasAvatarSig: boolean): boolean 
   if (path === '/health') return true;
   if (path === '/setup') return true; // fresh-install check, reachable before any user exists
   if (method === 'POST' && path === '/auth/login') return true;
+  if (method === 'GET' && path === '/auth/sso/providers') return true;
+  if (method === 'POST' && path === '/auth/sso/msteams/start') return true;
+  if (method === 'POST' && path === '/auth/sso/msteams/callback') return true;
   // The VAPID public key is, by definition, public — the browser needs it to subscribe to push.
   if (method === 'GET' && path === '/push/vapid-public-key') return true;
   // White-label brand + theme assets: the login screen renders the instance's name, colors and logo

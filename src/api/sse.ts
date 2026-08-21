@@ -22,6 +22,7 @@ export type ElowenEvent =
   // A recall delivered memories to the model, so their usage counters and vitality just moved. Carries no
   // memory content and no ids — only whose view is now stale. The /events gate gives it to that user alone.
   | { type: 'memory'; userId: number }
+  | { type: 'auth'; kind: 'sso.login' | 'sso.provision' | 'sso.link' | 'sso.denied'; subject: string; detail: string }
   | { type: 'plan'; jobId: string; status: PlanJobStatus; epicId?: string; phases?: Phase[]; error?: string }
   // A plugin-originated event (plugin platform). `projectId` IS the tenancy: subscribers scoped to
   // projects receive it only when it names one of theirs, and null reaches admins alone (fail closed —

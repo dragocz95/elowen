@@ -19,6 +19,7 @@ import type { BrainCredentialAccess } from '../brain/providerUsage.js';
 import type { EmbeddingService } from '../embeddings/embeddingService.js';
 import type { SubagentPoolStats } from '../subagent/poolStats.js';
 import type { ThemeStore } from '../store/themeStore.js';
+import type { MicrosoftSsoService } from '../auth/msSso.js';
 
 /** Everything the daemon injects into the REST server. Lives in its own module (rather than server.ts)
  *  so the route context and the route families can depend on the dependency shape without importing
@@ -54,6 +55,8 @@ export interface ServerDeps {
   clock: Clock;
   config: ConfigStore;
   users?: UserStore;
+  /** Test seam for the public Microsoft SSO routes. Production builds the service from the live stores. */
+  microsoftSso?: MicrosoftSsoService;
   events?: EventStore;
   projects?: ProjectStore;
   userProjects?: UserProjectStore;

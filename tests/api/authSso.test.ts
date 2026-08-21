@@ -1,0 +1,285 @@
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWK, type KeyLike } from 'jose';
+import { MicrosoftSsoError, MicrosoftSsoService } from '../../src/auth/msSso.js';
+import { createServer } from '../../src/api/server.js';
+import { EventBus } from '../../src/api/sse.js';
+import { UserStore } from '../../src/store/userStore.js';
+import { UserSettingStore } from '../../src/store/userSettingStore.js';
+import { ConfigStore } from '../../src/store/configStore.js';
+import { ProjectStore } from '../../src/store/projectStore.js';
+import { FakeClock } from '../../src/shared/clock.js';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { RefMissions, RefTaskStore } from '../helpers/refStores.js';
+
+const NOW = 2_000_000_000_000;
+const TENANT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const OID = '11111111-2222-3333-4444-555555555555';
+const UNKNOWN_OID = '99999999-2222-3333-4444-555555555555';
+const APP_ID = 'client-id';
+const ISSUER = `https://login.microsoftonline.com/${TENANT}/v2.0`;
+const DISCOVERY = {
+  issuer: ISSUER,
+  authorization_endpoint: 'https://login.microsoftonline.com/authorize',
+  token_endpoint: 'https://login.microsoftonline.com/token',
+  jwks_uri: 'https://login.microsoftonline.com/keys',
+};
+
+let privateKey: KeyLike;
+let jwks: { keys: JWK[] };
+
+beforeAll(async () => {
+  const pair = await generateKeyPair('RS256');
+  privateKey = pair.privateKey;
+  jwks = { keys: [{ ...(await exportJWK(pair.publicKey)), kid: 'test-key', alg: 'RS256', use: 'sig' }] };
+});
+
+interface SetupOptions {
+  createUser?: boolean;
+  enabled?: boolean;
+  redirectBase?: string;
+  oid?: string;
+  tofu?: boolean;
+  bind?: boolean;
+}
+
+function setup(options: SetupOptions = {}) {
+  const db = openPluginTablesDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+  const users = new UserStore(db);
+  const userSettings = new UserSettingStore(db);
+  const user = options.createUser === false ? null : users.create('alice', 'secret');
+  const config = new ConfigStore(db);
+  config.update({
+    plugins: {
+      enabled: options.enabled === false ? [] : ['msteams'],
+      config: {
+        msteams: {
+          appId: APP_ID,
+          appPassword: 'server-secret',
+          tenantId: TENANT.toUpperCase(),
+          ssoEnabled: true,
+          ssoRedirectBase: options.redirectBase === undefined ? 'https://elowen.example' : options.redirectBase,
+        },
+      },
+    },
+  });
+  if (user && options.bind !== false && !options.tofu) {
+    users.linkExistingExternalIdentity({ provider: 'msteams', tenantId: TENANT, subjectId: options.oid ?? OID, userId: user.id });
+  }
+  if (user && options.tofu) userSettings.set(user.id, 'msteamsUserId', options.oid ?? OID);
+
+  const clock = new FakeClock(NOW);
+  const bus = new EventBus();
+  const events: unknown[] = [];
+  bus.subscribe((event) => events.push(event));
+  const ensureOnLogin = vi.fn(async () => {});
+  let idToken = '';
+  const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('.well-known/openid-configuration')) return Response.json(DISCOVERY);
+    if (url === DISCOVERY.token_endpoint) return Response.json({ id_token: idToken });
+    return new Response('', { status: 404 });
+  }) as unknown as typeof fetch;
+  const microsoftSso = new MicrosoftSsoService({
+    config,
+    users,
+    userSettings,
+    clock,
+    bus,
+    advisor: () => ({ ensureOnLogin } as never),
+    fetch: fetchImpl,
+    keyResolver: () => createLocalJWKSet(jwks),
+  });
+  const app = createServer({
+    tasks: new RefTaskStore(db),
+    missions: new RefMissions(db),
+    bus,
+    engine: null as never,
+    spawn: null as never,
+    tmux: null as never,
+    project: { id: 1, path: '/o' },
+    fallback: { program: 'claude-code', model: 'sonnet' },
+    clock,
+    config,
+    users,
+    userSettings,
+    projects: new ProjectStore(db),
+    microsoftSso,
+    advisor: { ensureOnLogin } as never,
+  } as never);
+
+  const signFor = async (nonce: string, claims: Record<string, unknown> = {}) => {
+    const now = Math.floor(clock.now() / 1000);
+    idToken = await new SignJWT({
+      iss: ISSUER,
+      aud: APP_ID,
+      tid: TENANT,
+      oid: options.oid ?? OID,
+      nonce,
+      iat: now,
+      nbf: now - 1,
+      exp: now + 600,
+      ...claims,
+    }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).sign(privateKey);
+  };
+
+  const start = async (next?: string) => {
+    const response = await app.request('/auth/sso/msteams/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(next === undefined ? {} : { next }),
+    });
+    const body = await response.json() as { flowId: string; authorizationUrl: string; error?: string };
+    const url = body.authorizationUrl ? new URL(body.authorizationUrl) : null;
+    return { response, body, state: url?.searchParams.get('state') ?? '', nonce: url?.searchParams.get('nonce') ?? '', url };
+  };
+
+  const callback = (flowId: string, state: string) => app.request('/auth/sso/msteams/callback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ flowId, state, code: 'authorization-code' }),
+  });
+
+  return { app, users, userSettings, user, config, clock, events, ensureOnLogin, microsoftSso, start, callback, signFor };
+}
+
+describe('Microsoft SSO routes', () => {
+  it('returns no providers and 404s start/callback while SSO is unavailable', async () => {
+    for (const options of [
+      { enabled: false },
+      { redirectBase: '' },
+      { createUser: false },
+    ]) {
+      const { app } = setup(options);
+      expect(await (await app.request('/auth/sso/providers')).json()).toEqual([]);
+      expect((await app.request('/auth/sso/msteams/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(options.createUser === false ? 403 : 404);
+    }
+    const { app } = setup({ enabled: false });
+    const callback = await app.request('/auth/sso/msteams/callback', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flowId: 'x', state: 'y', code: 'z' }),
+    });
+    expect(callback.status).toBe(404);
+  });
+
+  it('builds a tenant authorization URL with PKCE S256', async () => {
+    const { start } = setup();
+    const flow = await start();
+    expect(flow.response.status).toBe(200);
+    expect(flow.url?.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(flow.url?.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(flow.url?.searchParams.get('redirect_uri')).toBe('https://elowen.example/api/auth/sso/microsoft/callback');
+  });
+
+  it('returns only a validated relative next path after callback', async () => {
+    for (const [requested, expected] of [['/dash?tab=1', '/dash?tab=1'], ['https://evil.example', '/'], ['//evil.example', '/'], ['/\\evil', '/']] as const) {
+      const { start, signFor, callback } = setup();
+      const flow = await start(requested);
+      await signFor(flow.nonce);
+      const response = await callback(flow.body.flowId, flow.state);
+      expect((await response.json()).next).toBe(expected);
+    }
+  });
+
+  it('consumes state once', async () => {
+    const { start, signFor, callback } = setup();
+    const flow = await start();
+    await signFor(flow.nonce);
+    expect((await callback(flow.body.flowId, flow.state)).status).toBe(200);
+    const replay = await callback(flow.body.flowId, flow.state);
+    expect(replay.status).toBe(400);
+    expect(await replay.json()).toEqual({ error: 'state_expired' });
+  });
+
+  it('rejects an expired flow', async () => {
+    const { start, callback, clock } = setup();
+    const flow = await start();
+    clock.advance(10 * 60_000);
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'state_expired' });
+  });
+
+  it('finds a lowercase binding for uppercase Entra ids', async () => {
+    const { start, signFor, callback, user } = setup();
+    const flow = await start();
+    await signFor(flow.nonce, { tid: TENANT.toUpperCase(), oid: OID.toUpperCase() });
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(user?.id);
+  });
+
+  it('records a sanitized denial event for a guest token', async () => {
+    const { start, signFor, callback, events } = setup();
+    const flow = await start();
+    await signFor(flow.nonce, { acct: 1 });
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(403);
+    expect(events).toContainEqual({
+      type: 'auth',
+      kind: 'sso.denied',
+      subject: `${OID}@${TENANT}`,
+      detail: 'guest',
+    });
+  });
+
+  it('promotes a Teams TOFU setting to a durable binding without creating an account', async () => {
+    const { start, signFor, callback, users, user } = setup({ tofu: true, bind: false });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce);
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(user?.id);
+    expect(users.count()).toBe(before);
+    expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(user?.id);
+  });
+
+  it('denies an unknown oid and cannot create an account', async () => {
+    const { start, signFor, callback, users } = setup({ oid: UNKNOWN_OID, bind: false });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce);
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
+    expect(users.count()).toBe(before);
+  });
+
+  it('matches password-login session shape, TTL, and ensureOnLogin side effect', async () => {
+    const { app, start, signFor, callback, ensureOnLogin, user } = setup();
+    const password = await app.request('/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'alice', password: 'secret' }),
+    });
+    const passwordBody = await password.json() as Record<string, unknown>;
+    const flow = await start();
+    await signFor(flow.nonce);
+    const sso = await callback(flow.body.flowId, flow.state);
+    const ssoBody = await sso.json() as Record<string, unknown>;
+    expect(ssoBody.tokenTtlDays).toBe(passwordBody.tokenTtlDays);
+    expect(ssoBody.user).toEqual(passwordBody.user);
+    expect(typeof ssoBody.token).toBe('string');
+    expect(ensureOnLogin).toHaveBeenCalledTimes(2);
+    expect(ensureOnLogin).toHaveBeenNthCalledWith(1, user?.id);
+    expect(ensureOnLogin).toHaveBeenNthCalledWith(2, user?.id);
+  });
+
+  it('shares the fixed-window rate limit with password login', async () => {
+    const { app } = setup({ enabled: false });
+    const headers = { 'content-type': 'application/json', 'x-real-ip': '10.0.0.9' };
+    for (let i = 0; i < 5; i++) {
+      expect((await app.request('/auth/login', { method: 'POST', headers, body: JSON.stringify({ username: 'alice', password: 'wrong' }) })).status).toBe(401);
+    }
+    for (let i = 0; i < 5; i++) {
+      expect((await app.request('/auth/sso/msteams/start', { method: 'POST', headers, body: '{}' })).status).toBe(404);
+    }
+    expect((await app.request('/auth/sso/msteams/callback', { method: 'POST', headers, body: '{}' })).status).toBe(429);
+  });
+
+  it('caps live flows at 500 and sweeps expired entries', async () => {
+    const { microsoftSso, clock } = setup();
+    for (let i = 0; i < 500; i++) await microsoftSso.start();
+    await expect(microsoftSso.start()).rejects.toMatchObject<Partial<MicrosoftSsoError>>({ code: 'too_many_flows' });
+    clock.advance(10 * 60_000);
+    await expect(microsoftSso.start()).resolves.toHaveProperty('flowId');
+  });
+});

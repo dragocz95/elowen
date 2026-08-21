@@ -31,30 +31,16 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   if (!d.users) return;
   const users = d.users;
 
-  // Brute-force guard for the only unauthenticated, credential-checking endpoint: a fixed window per
-  // client IP. The precedence rule (x-real-ip from our nginx over the client-spoofable x-forwarded-for)
-  // lives in `clientOrigin` — the single source shared with usage attribution. In-memory per-process is
-  // enough for the single-daemon deployment; entries self-expire and are swept when the map grows large
-  // so distinct-IP traffic can't leak memory.
-  const LOGIN_MAX = 10, LOGIN_WINDOW_MS = 5 * 60_000;
-  const loginHits = new Map<string, { count: number; resetAt: number }>();
-  const loginLimited = (ip: string, now: number): boolean => {
-    if (loginHits.size > 5000) for (const [k, v] of loginHits) if (now >= v.resetAt) loginHits.delete(k);
-    const h = loginHits.get(ip);
-    if (!h || now >= h.resetAt) { loginHits.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS }); return false; }
-    h.count++;
-    return h.count > LOGIN_MAX;
-  };
   app.post('/auth/login', async (c) => {
     // Keyed on the origin VALUE, trusted or not: an unverifiable claim must still be rate-limited, and
     // bucketing every unproxied hit under one key is the conservative direction for a loopback client.
     const ip = clientOrigin(c, d.config.get().security.trustProxy).value;
-    if (loginLimited(ip, d.clock.now())) return c.json({ error: 'too many login attempts, try again later' }, 429);
+    if (ctx.loginRateLimiter.limited(ip, d.clock.now())) return c.json({ error: 'too many login attempts, try again later' }, 429);
     // A missing/invalid body fails the schema → onError maps it to a 400, never an unhandled 500.
     const body = await parseBody(c, loginSchema);
     const user = users.verify(body.username, body.password);
     if (!user) return c.json({ error: 'invalid credentials' }, 401);
-    loginHits.delete(ip); // a valid login clears the counter so an earlier typo streak can't lock the user out
+    ctx.loginRateLimiter.clear(ip); // a valid login clears the counter so an earlier typo streak can't lock the user out
     const token = users.issueToken(user.id);
     void d.advisor?.ensureOnLogin(user.id); // fire-and-forget: bring the user's advisor back up; never block login
     // Surface the token's TTL so the web BFF can persist the session cookie for exactly as long as the

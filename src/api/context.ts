@@ -5,6 +5,8 @@ import type { EventProjectDeps } from './eventProject.js';
 import type { Context, Hono } from 'hono';
 import type { User, TokenScope } from '../store/userStore.js';
 import type { ServerDeps } from './deps.js';
+import { MicrosoftSsoService } from '../auth/msSso.js';
+import { createLoginRateLimiter, type LoginRateLimiter } from './loginRateLimit.js';
 
 /** The per-request Hono variables the auth middleware sets — the single source for `c.get('user')` etc.
  *  `agentTask` is the task an agent token was minted for (null for every unbound token). */
@@ -35,6 +37,8 @@ type UserCtx = { get: (k: 'user') => User | undefined };
 export interface RouteContext {
   d: ServerDeps;
   log: ReturnType<typeof logger>;
+  loginRateLimiter: LoginRateLimiter;
+  microsoftSso: MicrosoftSsoService | null;
 
   /** Projects an AGENT-scoped token may currently touch (its live working set). */
   agentProjects(): Set<number>;
@@ -63,6 +67,15 @@ export interface RouteContext {
  *  closure, so tenancy/path semantics are unchanged. */
 export function createRouteContext(d: ServerDeps): RouteContext {
   const log = logger('api');
+  const loginRateLimiter = createLoginRateLimiter();
+  const microsoftSso = d.microsoftSso ?? (d.users ? new MicrosoftSsoService({
+    config: d.config,
+    users: d.users,
+    userSettings: d.userSettings,
+    clock: d.clock,
+    bus: d.bus,
+    advisor: () => d.advisor,
+  }) : null);
   // The projects an AGENT-scoped token may touch. The shared service token is owned by the admin user,
   // so without this it would inherit admin's cross-project bypass and a prompt-injected agent could
   // read/close tasks in tenants it isn't working in (finding S51). Bind it to the daemon's live work:
@@ -161,7 +174,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     : undefined;
 
   return {
-    d, log,
+    d, log, loginRateLimiter, microsoftSso,
     agentProjects, canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects,
     eventDeps, memoryService,
   };

@@ -1,6 +1,7 @@
 import type { ElowenApp, RouteContext } from '../context.js';
 import { registerAuthGuards } from '../middleware.js';
 import { registerAuthRoutes } from './auth.js';
+import { registerAuthSsoRoutes } from './authSso.js';
 import { registerProjectRoutes } from './projects.js';
 import { registerActivityRoutes } from './activity.js';
 import { registerBrainRoutes } from './brain.js';
@@ -19,6 +20,7 @@ import { registerPluginUiRoutes } from './pluginUi.js';
 export function registerRoutes(app: ElowenApp, ctx: RouteContext): void {
   registerAuthGuards(app, ctx);
   registerAuthRoutes(app, ctx);
+  registerAuthSsoRoutes(app, ctx);
   registerUsageRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
