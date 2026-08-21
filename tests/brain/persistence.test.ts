@@ -77,7 +77,9 @@ describe('brain persistence', () => {
       project({ type: 'agent_settled' } as never);
 
       const row = store.getMessages('s1').at(-1)!;
-      expect(row.turn_duration_ms).toBe(6_000);
+      // Terminal agent_end publishes idle and freezes the value the user sees. A later canonical
+      // agent_settled must not silently change hydration to a different duration.
+      expect(row.turn_duration_ms).toBe(4_000);
       const stored = JSON.parse(row.content) as Record<string, unknown>;
       expect(stored).not.toHaveProperty('turnDurationMs');
       expect(stored).not.toHaveProperty('turnCompletedAt');

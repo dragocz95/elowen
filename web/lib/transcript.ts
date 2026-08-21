@@ -40,7 +40,7 @@ export type TranscriptEvent =
   /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
    *  a 'you' turn. `durableId` is the store row id, kept on the turn so a later `discard_user` can find it.
    *  The `queue` snapshot event (PI steering queue) is handled outside this fold. */
-  | { type: 'user'; text: string; durableId?: string; createdAt?: string; images?: BrainMessageImage[] }
+  | { type: 'user'; text: string; durableId?: string; images?: BrainMessageImage[] }
   /** The daemon discarded a just-sent user turn (Esc/Stop before any output): remove the matching 'you'
    *  bubble by `durableId`. Its `text` is restored to the composer by the provider, which owns input state. */
   | { type: 'discard_user'; durableId: string; text: string }
@@ -192,7 +192,6 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
       // that draws the thumbnails, so the images alone are enough to keep the bubble.
       if (m.text.trim() || m.images?.length) turns.push({
         role: 'you', text: m.text, id: m.id,
-        ...(m.createdAt ? { createdAt: m.createdAt } : {}),
         ...(m.images?.length ? { images: m.images } : {}),
       });
       continue;
@@ -394,7 +393,6 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
           role: 'you',
           text: e.text,
           ...(e.durableId ? { id: e.durableId } : {}),
-          ...(e.createdAt ? { createdAt: e.createdAt } : {}),
           // Same references the reload path will serve, so the bubble does not change on refresh.
           ...(e.images?.length ? { images: e.images } : {}),
         }],

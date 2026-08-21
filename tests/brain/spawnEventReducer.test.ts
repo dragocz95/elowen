@@ -101,9 +101,11 @@ describe('spawn event reducer (characterization)', () => {
     d.emit({ type: 'turn_start' });
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Hello' } });
     d.emit(successAgentEnd('Hello'));
-    d.emit({ type: 'agent_settled' });
-
+    // Terminal agent_end is the public settle boundary: clients must receive idle now, not wait for PI's
+    // later canonical bookkeeping event (abort/respawn adapters do not all emit that event).
     expect(events.map((e) => e.type)).toEqual(['step', 'text', 'idle']);
+    d.emit({ type: 'agent_settled' });
+    expect(events.map((e) => e.type)).toEqual(['step', 'text', 'idle']); // no delayed/duplicate idle
     const step = events[0] as Extract<BrainEvent, { type: 'step' }>;
     expect(step).toMatchObject({ step: 1, maxSteps: 0 });
     expect(step.usage).toBeDefined();
@@ -173,9 +175,9 @@ describe('spawn event reducer (characterization)', () => {
     d.emit({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, errorMessage: '429 rate limit' });
     d.emit({ type: 'auto_retry_end', success: true });
     d.emit(successAgentEnd('recovered after retry'));
-    d.emit({ type: 'agent_settled' });
-
     expect(events.map((e) => e.type)).toEqual(['step', 'notice', 'notice', 'idle']);
+    d.emit({ type: 'agent_settled' });
+    expect(events.map((e) => e.type)).toEqual(['step', 'notice', 'notice', 'idle']); // no delayed/duplicate idle
     expect(events.some((e) => e.type === 'error')).toBe(false);
     expect(events[1]).toEqual(expect.objectContaining({ type: 'notice', kind: 'retry' }));
     expect(events[2]).toEqual(expect.objectContaining({ type: 'notice', kind: 'retry', done: true }));

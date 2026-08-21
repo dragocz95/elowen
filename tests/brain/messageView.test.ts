@@ -65,7 +65,8 @@ describe('shapeBrainMessages: display metadata', () => {
       { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'answer' }] }), created_at: '2026-08-21 14:01:23', turn_duration_ms: 83_000 },
       { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'legacy' }] }), created_at: '2026-08-20 10:00:00' },
     ]);
-    expect(views[0]).toMatchObject({ role: 'user', createdAt: '2026-08-21 14:00:00' });
+    expect(views[0]).toMatchObject({ role: 'user', text: 'question' });
+    expect(views[0]).not.toHaveProperty('createdAt');
     expect(views[1]).toMatchObject({ role: 'assistant', createdAt: '2026-08-21 14:01:23', durationMs: 83_000 });
     expect(views[2]).not.toHaveProperty('durationMs');
   });

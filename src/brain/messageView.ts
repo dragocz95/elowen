@@ -540,7 +540,6 @@ export function shapeBrainMessages(
           at: row.created_at ?? '',
           view: {
             ...(row.id ? { id: row.id } : {}), role: 'user', text,
-            ...(row.created_at ? { createdAt: row.created_at } : {}),
             ...(images.length ? { images: toMessageImages(images) } : {}),
           },
         });

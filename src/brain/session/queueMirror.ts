@@ -139,7 +139,6 @@ export function deliverQueuedUserEcho(store: BrainStore, live: LiveBrain, delive
     type: 'user' as const,
     text: echo.displayText,
     durableId,
-    createdAt: new Date().toISOString(),
     ...(echo.images?.length ? { images: toMessageImages(echo.images) } : {}),
   };
   if (echo.publish) live.replay.publish(event);

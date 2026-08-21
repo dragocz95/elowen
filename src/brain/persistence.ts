@@ -223,6 +223,7 @@ export function createSessionPersistenceProjector(
   // for later subscribers and persisted in a DB column, never added to PI's message object or `content`.
   let turnStartedAt = 0;
   let lastTurnAssistantId: string | undefined;
+  let turnDurationFinalized = false;
   // Wall-clock start of the in-flight assistant generation (its `message_start`). Stamped onto the
   // finished message as `durationMs` at `message_end`, so usage stats can report a REAL output
   // tokens/sec: per-step generation time excludes tool execution, which happens BETWEEN steps.
@@ -235,7 +236,10 @@ export function createSessionPersistenceProjector(
   return (event): void => {
     if ((event as { type?: string }).type === 'agent_start') {
       agentRunOpen = true;
-      if (turnStartedAt === 0) turnStartedAt = Date.now();
+      if (turnStartedAt === 0) {
+        turnStartedAt = Date.now();
+        turnDurationFinalized = false;
+      }
       (event as AgentSessionEvent & { turnStartedAt?: number }).turnStartedAt = turnStartedAt;
       return;
     }
@@ -275,6 +279,7 @@ export function createSessionPersistenceProjector(
       // state. Persist them too so a later compaction can align the same clean row sequence.
       const persistedDuration = (event as AgentSessionEvent & { willRetry?: boolean }).willRetry === true ? null : turnDurationMs;
       lastTurnAssistantId = projectEvent(store, sessionId, event, imagesDir, persistedDuration) ?? lastTurnAssistantId;
+      if (lastTurnAssistantId && persistedDuration != null) turnDurationFinalized = true;
       // Read AFTER projectEvent, which is where the provider-reported cost is stamped onto the run's last
       // assistant message — summing before it would report every OpenRouter turn as costing nothing.
       if (onTurnSettled) onTurnSettled(settledTurnUsage(event.messages));
@@ -294,13 +299,17 @@ export function createSessionPersistenceProjector(
       agentRunOpen = false;
       const completedAt = Date.now();
       const turnDurationMs = turnStartedAt > 0 ? Math.max(0, completedAt - turnStartedAt) : undefined;
-      if (lastTurnAssistantId && turnDurationMs != null) store.setTurnDuration(lastTurnAssistantId, sessionId, turnDurationMs);
+      if (!turnDurationFinalized && lastTurnAssistantId && turnDurationMs != null) {
+        store.setTurnDuration(lastTurnAssistantId, sessionId, turnDurationMs);
+        turnDurationFinalized = true;
+      }
       Object.assign(event as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string }, {
         ...(turnDurationMs != null ? { turnDurationMs } : {}),
         turnCompletedAt: new Date(completedAt).toISOString(),
       });
       turnStartedAt = 0;
       lastTurnAssistantId = undefined;
+      turnDurationFinalized = false;
       return;
     }
 
@@ -334,7 +343,14 @@ export function createSessionPersistenceProjector(
       return;
     }
     if (overflow && deferredOverflow) {
-      lastTurnAssistantId = projectEvent(store, sessionId, deferredOverflow, imagesDir) ?? lastTurnAssistantId;
+      const completedAt = Date.now();
+      const turnDurationMs = turnStartedAt > 0 ? Math.max(0, completedAt - turnStartedAt) : undefined;
+      lastTurnAssistantId = projectEvent(store, sessionId, deferredOverflow, imagesDir, turnDurationMs) ?? lastTurnAssistantId;
+      if (lastTurnAssistantId && turnDurationMs != null) turnDurationFinalized = true;
+      Object.assign(event as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string }, {
+        ...(turnDurationMs != null ? { turnDurationMs } : {}),
+        turnCompletedAt: new Date(completedAt).toISOString(),
+      });
       deferredOverflow = null;
       persistPendingRunCompaction();
     }

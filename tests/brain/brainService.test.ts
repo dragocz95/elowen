@@ -2937,7 +2937,7 @@ describe('BrainService', () => {
     const h = svc.history(1);
     expect(h).toEqual([
       { id: 'a', role: 'user', text: 'ahoj' },
-      { id: 'b', role: 'assistant', text: 'čau', segments: [
+      { id: 'b', role: 'assistant', text: 'čau', createdAt: expect.any(String), segments: [
         { kind: 'text', text: 'čau' },
         { kind: 'tool', id: 'tc1', name: 'edit', detail: 'src/a.ts', diff: '-old\n+new' },
       ] },

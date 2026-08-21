@@ -109,9 +109,11 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
   return (e: AgentSessionEvent): void => {
     const live = getLive();
     const raw = (e as { type?: string }).type;
-    // The persistence subscriber finalizes the exact wall clock on PI's canonical `agent_settled` event.
-    // Hold every agent_end idle until then so the live label is byte-for-byte the value hydration will read.
-    let suppressAgentEndIdle = raw === 'agent_end';
+    // Retry/overflow agent_end is intermediate; every ordinary terminal agent_end keeps the established
+    // lifecycle contract and publishes idle immediately. `agent_settled` remains only the fallback for PI
+    // paths that genuinely produce no terminal agent_end (for example cancelled retry backoff).
+    let suppressAgentEndIdle = raw === 'agent_end' && (e as { willRetry?: boolean }).willRetry === true;
+    let emitFailedRecoveryIdle = false;
     // A REAL compaction has settled: attached clients refetch the shrunk transcript. The model-facing
     // half is deliberately NOT armed here — it is derived from the compaction divider row on the next
     // turn instead, because `live` is not reliably resolvable at this moment and a flag set here would
@@ -122,7 +124,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       : [];
     const agentEndLastAssistant = lastAssistant(agentEndMessages);
     const agentEndOverflow = !!agentEndLastAssistant && isErroredContextOverflow(agentEndLastAssistant, model.contextWindow);
-    if (raw === 'agent_end' || raw === 'agent_settled') {
+    if (raw === 'agent_end' || raw === 'agent_settled' || raw === 'compaction_end') {
       const timed = e as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string };
       settledDurationMs = timed.turnDurationMs ?? settledDurationMs;
       settledCompletedAt = timed.turnCompletedAt ?? settledCompletedAt;
@@ -224,7 +226,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       else if (deferredOverflowError) {
         replay.publish({ type: 'error', message: ce.errorMessage?.trim() || deferredOverflowError });
         deferredOverflowError = null;
-        terminalIdleDeferred = true;
+        emitFailedRecoveryIdle = true;
       }
       // A previous successful between-turn compaction waited for this overflow outcome. On failure the
       // factory just persisted the deferred run and applied that pending rewrite; refetch only now.
@@ -276,5 +278,14 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       live.turnProducedOutput = true;
     }
     replay.publish(be);
+    if (emitFailedRecoveryIdle) {
+      replay.publish({
+        type: 'idle', model: model.id,
+        usage: sessionUsageSnapshot(session, store, sessionId),
+        ...(settledDurationMs != null ? { durationMs: settledDurationMs } : {}),
+        ...(settledCompletedAt ? { completedAt: settledCompletedAt } : {}),
+      });
+      terminalIdleDeferred = false;
+    }
   };
 }

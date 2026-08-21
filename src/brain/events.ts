@@ -147,7 +147,6 @@ export type BrainEvent =
       text: string;
       /** Store row replaced by this ordered live marker in snapshots. */
       durableId?: string;
-      createdAt?: string;
       /** Attachments kept on disk for this turn. The sender's bubble draws them right away and the reload
        *  path rebuilds the identical thing from the store, so a refresh changes nothing on screen. */
       images?: BrainMessageImage[];
