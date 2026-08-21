@@ -191,7 +191,9 @@ export function useInstallSkills() {
 export function useLogin() {
   return useMutation({ mutationFn: (v: { username: string; password: string }) => elowenClient.login(v.username, v.password) });
 }
-export function useLogout() {
+/** Internal to `useSignOut` — ending a session always has to clear the cookie and reload, so nothing
+ *  outside this file should call the bare mutation and re-implement that half. */
+function useLogout() {
   return useMutation({ mutationFn: () => elowenClient.logout() });
 }
 /** Ending a session, ready to hand straight to an onClick. The cookie is cleared and the page reloaded on
