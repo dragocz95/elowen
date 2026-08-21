@@ -122,6 +122,12 @@ describe('bundled plugin manifests', () => {
     expect(names.length).toBeGreaterThan(0);
   });
 
+  it('does not bundle marketplace-owned Microsoft Teams', () => {
+    // Teams has a separately released registry adapter (and Chetty has an intentional fork). Keeping a
+    // third core copy silently pins production to whichever authority model happened to be copied last.
+    expect(names).not.toContain('msteams');
+  });
+
   for (const name of names) {
     it(`${name}: manifest parses and its declarations are coherent`, () => {
       const m = parseManifest(JSON.parse(readFileSync(join(pluginsDir, name, 'elowen-plugin.json'), 'utf-8')));

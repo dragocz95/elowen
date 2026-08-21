@@ -20,9 +20,9 @@ const REGISTRY_PLUGIN_DEPENDENCIES: Record<string, string> = {
   grammy: 'telegram — the Bot API client the adapter is built on (plugins/telegram/lib/adapter.mjs in the registry)',
   baileys: 'whatsapp — the WhatsApp Web protocol client behind the paired session (plugins/whatsapp/lib/adapter.mjs in the registry)',
   qrcode: 'whatsapp — renders the pairing QR the Settings screen shows (plugins/whatsapp/lib/adapter.mjs in the registry)',
-  // Published FROM this repository (packages/plugin-shared) and imported by registry plugins as well as
-  // Chetty's bundled adapters. Installed plugins resolve it through the daemon's node_modules, so it has
-  // to stay declared. tests/contract/pluginSharedPackage.test.ts pins its exact version alongside this.
+  // Published FROM this repository (packages/plugin-shared) and imported by registry plugins. Installed
+  // plugins resolve it through the daemon's node_modules, so it has to stay declared.
+  // tests/contract/pluginSharedPackage.test.ts pins its exact version alongside this.
   'elowen-plugin-shared': 'every registry plugin built on the shared helpers (HTTP client, message formatting)',
 };
 
@@ -38,11 +38,9 @@ describe('dependencies kept for plugins that live in the registry', () => {
 
   it('exempts only dependencies without a bundled consumer from Knip', () => {
     const knip = JSON.parse(readFileSync(join(repoRoot, 'knip.json'), 'utf-8')) as { ignoreDependencies: string[] };
-    for (const pkg of ['grammy', 'baileys', 'qrcode']) {
+    for (const pkg of ['jose', 'botframework-connector', 'grammy', 'baileys', 'qrcode']) {
       expect(knip.ignoreDependencies, `${pkg} has no bundled consumer and must stay exempt`).toContain(pkg);
     }
-    for (const pkg of ['jose', 'elowen-plugin-shared']) {
-      expect(knip.ignoreDependencies, `${pkg} is imported by a bundled Chetty plugin`).not.toContain(pkg);
-    }
+    expect(knip.ignoreDependencies, 'elowen-plugin-shared is imported by bundled core plugins').not.toContain('elowen-plugin-shared');
   });
 });
