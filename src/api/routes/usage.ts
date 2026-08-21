@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { queryInt } from '../validation.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { TokenUsage, CostSource, ModelUsage } from '../../integrations/usage/types.js';
@@ -94,7 +95,10 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (!cur) byExec.set(r.id, r);
       else cur.usage = mergeModelUsage(cur.usage, r.usage);
     }
-    return c.json([...byExec.values()]);
+    const payload = [...byExec.values()];
+    const etag = `"${createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 16)}"`;
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, { etag, 'cache-control': 'private, max-age=0, must-revalidate' });
+    return c.json(payload, 200, { etag, 'cache-control': 'private, max-age=0, must-revalidate' });
   });
   // Daily spend/token totals over the last N days (default 7) for the dashboard's spend sparkline.
   // Same project scoping as /usage/by-model; only days with settled tasks come back, so the client
@@ -115,7 +119,6 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
     const tasks = d.taskUsage?.aggregateByDay(projectIds, days) ?? [];
     const userId = c.get('user')?.id;
     const brain = !projectScoped && userId != null ? d.brainStore?.usageByDay(userId, days) ?? [] : [];
-    if (brain.length === 0) return c.json(tasks);
     const byDay = new Map(tasks.map((r) => [r.day, { ...r }]));
     for (const r of brain) {
       const cur = byDay.get(r.day);
@@ -123,7 +126,10 @@ export function registerUsageRoutes(app: ElowenApp, ctx: RouteContext): void {
       cur.tokens += r.tokens;
       cur.cost = cur.cost == null && r.cost == null ? null : (cur.cost ?? 0) + (r.cost ?? 0);
     }
-    return c.json([...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)));
+    const payload = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+    const etag = `"${createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 16)}"`;
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, { etag, 'cache-control': 'private, max-age=0, must-revalidate' });
+    return c.json(payload, 200, { etag, 'cache-control': 'private, max-age=0, must-revalidate' });
   });
   // Who burned the tokens, and from where. ADMIN-ONLY on the server (not merely hidden in the UI): the
   // rows carry client IP addresses, which are personal data, and they span every account on the instance.

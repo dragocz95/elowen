@@ -23,17 +23,25 @@ function Wrap({ children }: { children: React.ReactNode }) {
 }
 
 // EventBridge (rendered when the gate is open) opens an SSE stream; stub EventSource so jsdom doesn't choke.
-class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
+let openedEventSources = 0;
+class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) { openedEventSources += 1; } }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => { server.resetHandlers(); });
+afterEach(() => { server.resetHandlers(); openedEventSources = 0; });
 afterAll(() => server.close());
 
 const passwordInput = () => document.querySelector('input[type="password"]');
 
 describe('LoginGate', () => {
+  it('renders login on the first frame when the server saw no session cookie', () => {
+    server.use(http.get('*/api/setup', () => HttpResponse.json({ needsSetup: false })));
+    render(<Wrap><LoginGate sessionPresent={false}><span>secret-content</span></LoginGate></Wrap>);
+    expect(passwordInput()).toBeTruthy();
+    expect(screen.queryByText('secret-content')).toBeNull();
+  });
+
   it('shows the login form when there is no valid session (me() 401, setup done)', async () => {
     // The httpOnly cookie is absent/invalid → the proxy answers 401; setup is already complete.
     server.use(
@@ -90,6 +98,19 @@ describe('LoginGate', () => {
 
     render(<Wrap><LoginGate><span>secret-content</span></LoginGate></Wrap>);
     await waitFor(() => expect(screen.getByText('secret-content')).toBeInTheDocument());
+  });
+
+  it('opens on the first client frame when the server already validated the session', async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.get('*/api/auth/me', async () => {
+      await held;
+      return HttpResponse.json({ user: { id: 1, username: 'admin' } });
+    }));
+
+    render(<Wrap><LoginGate initiallyAuthenticated><span>secret-content</span></LoginGate></Wrap>);
+    await waitFor(() => expect(openedEventSources).toBe(1));
+    release();
   });
 
   it('flips to login when an AUTH_CLEARED_EVENT fires mid-session (no reload)', async () => {

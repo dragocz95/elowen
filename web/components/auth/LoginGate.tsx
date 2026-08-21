@@ -25,8 +25,10 @@ import { SetupPending } from './SetupPending';
 
 type Gate = 'checking' | 'open' | 'login' | 'setup';
 
-export function LoginGate({ children }: { children: ReactNode }) {
-  const [gate, setGate] = useState<Gate>('checking');
+export function LoginGate({ children, initiallyAuthenticated = false, sessionPresent = true }: { children: ReactNode; initiallyAuthenticated?: boolean; sessionPresent?: boolean }) {
+  // A server-prefetched identity already proved this exact request's httpOnly session. Conversely, the
+  // server's absence of a cookie proves it is logged out. Only a present-but-unvalidated cookie checks.
+  const [gate, setGate] = useState<Gate>(initiallyAuthenticated ? 'open' : sessionPresent ? 'checking' : 'login');
   const qc = useQueryClient();
   const me = useMe();
   const meSettled = !me.isPending;

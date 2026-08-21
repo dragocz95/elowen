@@ -138,6 +138,8 @@ export const useModelUsage = (projectId?: number, window?: { fromMs: number; toM
       Number.isFinite(window?.toMs) ? window!.toMs : null],
     queryFn: () => elowenClient.usageByModel(projectId, window),
     refetchInterval: 30_000,
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
   });
 
 /** Daily spend over the last `days` days, for the dashboard's spend sparkline. Slow-moving, so a
@@ -147,6 +149,8 @@ export const useUsageByDay = (projectId?: number, days = 7) =>
     queryKey: [...QUERY_KEYS.usageByDay, projectId ?? null, days],
     queryFn: () => elowenClient.usageByDay(projectId, days),
     refetchInterval: 60_000,
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
   });
 
 /** ADMIN-ONLY: who spent the tokens, and from which address. `enabled` exists because the route answers

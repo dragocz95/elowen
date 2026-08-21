@@ -61,6 +61,11 @@ export const readLocale = cache(async (): Promise<Locale> => {
   return value && value in dictionaries ? (value as Locale) : DEFAULT_LOCALE;
 });
 
+/** Cookie presence is not authentication, but absence is authoritative: a browser with no session must
+ * render the login route on its first frame instead of briefly painting authenticated shell chrome. */
+export const hasSessionCookie = cache(async (): Promise<boolean> =>
+  readCookieHeader((await headers()).get('cookie') ?? '', COOKIE_NAME) != null);
+
 /** Prefetch the caller's /plugins/ui listing so the navigation rail arrives complete in the HTML
  *  (no first-paint pop-in of plugin worlds). Deduped per request via React cache. */
 export const fetchPluginUiListing = cache((locale: string): Promise<PluginUiListing[] | null> =>

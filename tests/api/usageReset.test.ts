@@ -67,6 +67,19 @@ describe('GET /usage/by-model', () => {
     expect(res.status).toBe(200);
     expect((await res.json())[0].usage.total).toBe(165);
   });
+
+  it('revalidates unchanged aggregates with an ETag', async () => {
+    const { app, taskUsage, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    const first = await app.request('/usage/by-model', auth(adminTok));
+    const etag = first.headers.get('etag');
+    expect(etag).toBeTruthy();
+    const second = await app.request('/usage/by-model', {
+      headers: { authorization: `Bearer ${adminTok}`, 'if-none-match': etag! },
+    });
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe('');
+  });
 });
 
 describe('GET /usage/by-day', () => {

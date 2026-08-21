@@ -156,13 +156,14 @@ const USAGE_VIEW_TTL_MS = 60_000;
  *  mid-table delete/update that leaves every MAX untouched (deleteMessage, reassignSession); such a
  *  change is served stale until the TTL lapses. The probe runs before EVERY read, cached or not, so the
  *  stored sentinel always describes the data the value was computed from. */
-const usageSentinelSql = (hasTaskUsage: boolean) => `SELECT
+const usageSentinelSql = (hasTaskUsage: boolean, hasUsageRollup: boolean) => `SELECT
   (SELECT MAX(rowid) FROM brain_messages) AS m,
   (SELECT MAX(rowid) FROM brain_sessions) AS s,
   (SELECT MAX(updated_at) FROM brain_sessions) AS su,
-  ${hasTaskUsage ? '(SELECT MAX(rowid) FROM task_usage)' : 'NULL'} AS tu`;
+  ${hasTaskUsage ? '(SELECT MAX(rowid) FROM task_usage)' : 'NULL'} AS tu,
+  ${hasUsageRollup ? '(SELECT generation FROM brain_usage_rollup_state WHERE id = 1)' : 'NULL'} AS ur`;
 
-interface UsageSentinel { m: number | null; s: number | null; su: string | null; tu: number | null }
+interface UsageSentinel { m: number | null; s: number | null; su: string | null; tu: number | null; ur: number | null }
 interface ViewCacheEntry { at: number; sentinel: UsageSentinel; value: unknown }
 
 /** Bound on distinct (user × window) keys held at once; a flood of distinct windows clears and starts
@@ -302,6 +303,18 @@ export class BrainUsageStore {
     return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'task_usage'").get();
   }
 
+  /** Existing databases opt into the projection only after the explicit historical backfill commits.
+   * Fresh databases start ready because the trigger sees every message from the beginning. */
+  private hasUsageRollupTable(): boolean {
+    return !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'brain_usage_rollup_state'").get();
+  }
+
+  private hasUsageRollup(): boolean {
+    if (!this.hasUsageRollupTable()) return false;
+    const row = this.db.prepare('SELECT ready FROM brain_usage_rollup_state WHERE id = 1').get() as { ready: number } | undefined;
+    return row?.ready === 1;
+  }
+
   /** Strip this user's recorded spend from the rows the Stats charts are derived from. Chat spend has no
    *  separate snapshot to delete — it is read back out of the conversation itself — so clearing it means
    *  rewriting those rows. Only the accounting is removed; message text, model and timestamp stay, so
@@ -338,11 +351,12 @@ export class BrainUsageStore {
    *  pattern is borrowed from, a local SQL read has no transient failure mode worth riding out, and a
    *  genuinely broken database should surface errors, not hide behind last-known numbers. */
   private cachedView<T>(key: string, compute: () => T): T {
-    const sentinel = this.db.prepare(usageSentinelSql(this.hasTaskUsage())).get() as UsageSentinel;
+    const sentinel = this.db.prepare(usageSentinelSql(this.hasTaskUsage(), this.hasUsageRollupTable())).get() as UsageSentinel;
     const hit = this.viewCache.get(key);
     if (hit && this.now() - hit.at < USAGE_VIEW_TTL_MS
         && hit.sentinel.m === sentinel.m && hit.sentinel.s === sentinel.s
-        && hit.sentinel.su === sentinel.su && hit.sentinel.tu === sentinel.tu) {
+        && hit.sentinel.su === sentinel.su && hit.sentinel.tu === sentinel.tu
+        && hit.sentinel.ur === sentinel.ur) {
       return hit.value as T;
     }
     const value = compute();
@@ -357,18 +371,24 @@ export class BrainUsageStore {
    *  excluded only when already snapshotted in task_usage (see {@link taskSnapshotExclusion}). */
   usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
     const daysArg = `-${Math.max(0, Math.floor(days) - 1)} days`;
-    return this.cachedView(`byDay${userId}${daysArg}`, () => this.db.prepare(
-      `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
-       SELECT date(ts / 1000, 'unixepoch') AS day,
-              COALESCE(SUM(total), 0) AS tokens,
-              CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
-         FROM usage_rows
-        WHERE user_id = ?
-          AND ts IS NOT NULL
-          AND ${taskSnapshotExclusion(this.hasTaskUsage())}
-          AND date(ts / 1000, 'unixepoch') >= date('now', ?)
-        GROUP BY day ORDER BY day`
-    ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[]);
+    return this.cachedView(`byDay${userId}${daysArg}`, () => {
+      const source = this.hasUsageRollup()
+        ? 'brain_usage_rows'
+        : `usage_rows`;
+      const prefix = this.hasUsageRollup() ? '' : `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})`;
+      return this.db.prepare(
+        `${prefix}
+         SELECT date(ts / 1000, 'unixepoch') AS day,
+                COALESCE(SUM(total), 0) AS tokens,
+                CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
+           FROM ${source}
+          WHERE user_id = ?
+            AND ts IS NOT NULL
+            AND ${taskSnapshotExclusion(this.hasTaskUsage())}
+            AND ts >= unixepoch(date('now', ?)) * 1000
+          GROUP BY day ORDER BY day`
+      ).all(userId, daysArg) as { day: string; tokens: number; cost: number | null }[];
+    });
   }
 
   /** Total token/cost usage of the user's OWN brain CHAT sessions aggregated per executor identity, for
@@ -396,8 +416,10 @@ export class BrainUsageStore {
     // Key on the PARSED bounds so two ISO spellings of the same instant share one entry.
     return this.cachedView(`byModel${userId}${fromMs}${toMs}`, () => {
       interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
+      const source = this.hasUsageRollup() ? 'brain_usage_rows' : 'usage_rows';
+      const prefix = this.hasUsageRollup() ? '' : `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})`;
       const rows = this.db.prepare(
-        `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
+        `${prefix}
          SELECT provider AS provider, model AS model,
                 COALESCE(SUM(input), 0) AS input,
                 COALESCE(SUM(output), 0) AS output,
@@ -408,7 +430,7 @@ export class BrainUsageStore {
                 COALESCE(SUM(measured_output), 0) AS measured_output,
                 COALESCE(SUM(CASE WHEN measured_output > 0 THEN duration_ms ELSE 0 END), 0) AS duration_ms,
                 CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
-           FROM usage_rows
+           FROM ${source}
           WHERE ${clauses.join(' AND ')}
           GROUP BY provider, model`
       ).all(...params) as Row[];

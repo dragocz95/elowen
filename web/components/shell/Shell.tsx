@@ -194,7 +194,7 @@ function ConfiguredToastProvider({ children }: { children: ReactNode }) {
   return <ToastProvider durationMs={resolveToastDuration(config?.runtime?.limits)}>{children}</ToastProvider>;
 }
 
-export function Shell({ children, theme, pluginUiSeed, meSeed, initialLocale }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; initialLocale?: Locale }) {
+export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = true, initialLocale }: { children: ReactNode; theme?: ThemePayload; pluginUiSeed?: PluginUiSeed | null; meSeed?: MeSeed | null; sessionPresent?: boolean; initialLocale?: Locale }) {
   return (
     <EffectsProvider>
       <Providers pluginUiSeed={pluginUiSeed} meSeed={meSeed}>
@@ -204,7 +204,7 @@ export function Shell({ children, theme, pluginUiSeed, meSeed, initialLocale }: 
         <BrandProvider theme={theme ?? BUILTIN_THEME}>
         <ConfiguredToastProvider>
           <PageHeaderProvider>
-            <LoginGate>
+            <LoginGate initiallyAuthenticated={meSeed != null} sessionPresent={sessionPresent}>
               <ShellBody>{children}</ShellBody>
             </LoginGate>
           </PageHeaderProvider>

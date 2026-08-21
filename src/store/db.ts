@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { renameDocsTool, renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
 import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
+import { installBrainUsageRollup } from './brainUsageRollup.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -133,6 +134,7 @@ export function withWriteLock<T>(db: Db, apply: () => T): T {
 
 function applyAdditiveMigrations(db: Db): void {
   db.exec(readFileSync(join(here, 'schema.sql'), 'utf-8'));
+  installBrainUsageRollup(db);
   // Additive migrations for DBs created before a column existed. Idempotent: a column that already
   // exists is skipped via PRAGMA table_info, so we never rely on swallowing arbitrary ALTER errors
   // (a real failure — disk full, lock — now surfaces instead of being silently caught).

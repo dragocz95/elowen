@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
 import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
-import { fetchPluginUiListing, fetchMe, readLocale } from '../lib/serverPrefetch';
+import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale } from '../lib/serverPrefetch';
 import { activeSkin } from '../lib/skins';
 
 // Every route renders per request — the brand payload is fetched live, so a theme switch must land on
@@ -60,7 +60,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // key. Null — logged out, 401/403, daemon down — renders exactly as before and the client queries
   // fill it in.
   const locale = await readLocale();
-  const [pluginUi, me] = await Promise.all([fetchPluginUiListing(locale), fetchMe()]);
+  const [pluginUi, me, sessionPresent] = await Promise.all([
+    fetchPluginUiListing(locale), fetchMe(), hasSessionCookie(),
+  ]);
   // Compiled-in design skin (ELOWEN_SKIN env). All skins ship in every build scoped under
   // `:root[data-skin='…']`; without the attribute none of their rules match, so a skinless instance
   // renders byte-identical markup to a build from before skins existed.
@@ -80,7 +82,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} />
         {themeStyle ? <style id="theme-overrides" dangerouslySetInnerHTML={{ __html: themeStyle }} /> : null}
       </head>
-      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} initialLocale={locale}>{children}</Shell></body>
+      <body style={{ backgroundColor: '#000000' }}><Shell theme={theme} pluginUiSeed={pluginUi ? { locale, listing: pluginUi } : null} meSeed={me} sessionPresent={sessionPresent} initialLocale={locale}>{children}</Shell></body>
     </html>
   );
 }
