@@ -155,19 +155,53 @@ describe('chat layout components', () => {
       expect(lines.at(-1)).toBe('');
     });
 
-    it.each([
-      ['assistant text', { type: 'text' as const, delta: 'I found it.' }],
-      ['reasoning', { type: 'reasoning' as const, delta: 'Checking the result.' }],
-    ])('restores the step separator when a tool-only step later gains %s', (_kind, content) => {
+    it('keeps hidden-reasoning tool steps gapless, matching the live TaskUpdate shape', () => {
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'TaskCreate', id: 'create-1' });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'reasoning', delta: 'Updating the task before delegation.' });
+      transcript.apply({ type: 'tool', name: 'TaskUpdate', id: 'update-1' });
+      transcript.apply({ type: 'step', step: 3, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'DelegateModels', id: 'models-1' });
+
+      const lines = [0, 1, 2].flatMap((index) => {
+        const turn = transcript.turnAt(index)!;
+        return new TurnRenderer(getMarkdownTheme())
+          .render(turn, index, 80, { showThoughts: false, thinkingSeconds: 0, composingMarkerReady: false, spinnerFrame: 0, expandedThoughts: new Set(), expandedTools: new Set() })
+          .map((row) => row.line.replace(/\x1b\[[0-9;]*m/g, ''));
+      });
+      expect(lines).toEqual([
+        `${TOOL_INDENT}← TaskCreate`,
+        `${TOOL_INDENT}← TaskUpdate`,
+        `${TOOL_INDENT}⚙ DelegateModels`,
+        '',
+      ]);
+    });
+
+    it('restores the step separator when a tool-only step later gains assistant text', () => {
       const transcript = new TranscriptModel();
       transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
       transcript.apply({ type: 'tool', name: 'Read', id: 'r1' });
       transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
       transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1' });
-      transcript.apply(content);
+      transcript.apply({ type: 'text', delta: 'I found it.' });
 
       const first = transcript.turnAt(0)!;
       expect(first).not.toHaveProperty('joinNextToolOnly');
+      expect(renderLines(first, 0).at(-1)).toBe('');
+    });
+
+    it('keeps the step separator when reasoning rows are visible', () => {
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'Read', id: 'r1' });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'reasoning', delta: 'Checking the result.' });
+      transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1' });
+
+      const first = transcript.turnAt(0)!;
+      expect(first).toMatchObject({ role: 'elowen', joinNextToolOnly: 'thoughts-hidden' });
       expect(renderLines(first, 0).at(-1)).toBe('');
     });
   });

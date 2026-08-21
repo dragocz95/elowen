@@ -1,8 +1,8 @@
 import type { BrainEvent } from './events.js';
 import { isSubagentToolName } from './messageView.js';
 import {
-  isToolOnlyTurn,
   submittedPlanOf,
+  toolOnlyJoinMode,
   turnsFromHistory,
   type ChatTurn,
   type ElowenTurn,
@@ -535,16 +535,17 @@ export class TranscriptModel implements TranscriptRead {
     return { turn, index: this.turns.length - 1, fresh: true };
   }
 
-  /** Keep the previous step's visual join marker aligned with the CURRENT step's actual content. A fresh
-   *  tool call may establish the join; later prose/reasoning in that same step removes it again. Publishing
-   *  the previous index separately lets the viewport patch both cached step blocks without merging them. */
+  /** Keep the previous step's visual join marker aligned with the CURRENT step's rendered content. A fresh
+   *  tool call may establish the join; later visible prose removes it, while reasoning makes it conditional
+   *  on whether thought rows are shown. Publishing the previous index separately lets the viewport patch both
+   *  cached step blocks without merging them. */
   private syncPreviousToolOnlyJoin(index: number): void {
     if (index <= 0) return;
     const previous = this.turns[index - 1];
     if (previous?.role !== 'elowen') return;
-    const join = isToolOnlyTurn(previous) && isToolOnlyTurn(this.turns[index]);
-    if (Boolean(previous.joinNextToolOnly) === join) return;
-    if (join) this.turns[index - 1] = { ...previous, joinNextToolOnly: true };
+    const join = toolOnlyJoinMode(previous, this.turns[index]);
+    if (previous.joinNextToolOnly === join) return;
+    if (join) this.turns[index - 1] = { ...previous, joinNextToolOnly: join };
     else {
       const { joinNextToolOnly: _drop, ...rest } = previous;
       this.turns[index - 1] = rest;

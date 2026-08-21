@@ -311,7 +311,9 @@ export class TurnRenderer {
       if (rows.length > 0 && rows.at(-1)?.line !== '') addBlank();
       add(`  ${settledTurnMeta(turn.durationMs)}`);
     }
-    if (!turn.joinNextToolOnly || turn.durationMs != null) addBlank();
+    const joinsNextToolOnly = turn.joinNextToolOnly === true
+      || (turn.joinNextToolOnly === 'thoughts-hidden' && !options.showThoughts);
+    if (!joinsNextToolOnly || turn.durationMs != null) addBlank();
     return rows;
   }
 

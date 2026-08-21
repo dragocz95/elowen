@@ -259,6 +259,19 @@ describe('TranscriptModel', () => {
     ]);
   });
 
+  it('marks a reasoning-plus-tool step as joinable only while thought rows are hidden', () => {
+    const model = new TranscriptModel();
+    model.apply({ type: 'step', step: 1, maxSteps: 0 });
+    model.apply({ type: 'tool', id: 'read-1', name: 'Read' });
+    model.apply({ type: 'step', step: 2, maxSteps: 0 });
+    model.apply({ type: 'reasoning', delta: 'Checking the result.' });
+    model.apply({ type: 'tool', id: 'list-1', name: 'ListDir' });
+
+    expect(model.turnAt(0)).toMatchObject({
+      role: 'elowen', streaming: false, joinNextToolOnly: 'thoughts-hidden',
+    });
+  });
+
   it('matches durable assistant-message boundaries after snapshot replay', () => {
     const live = new TranscriptModel();
     live.apply({ type: 'user', text: 'run it', durableId: 'user-1' });

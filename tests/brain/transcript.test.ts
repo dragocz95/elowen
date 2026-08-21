@@ -117,7 +117,10 @@ describe('durable transcript parsing', () => {
   it('marks only consecutive durable tool-only steps for gapless CLI rendering', () => {
     const turns = turnsFromHistory([
       { role: 'assistant', text: '', segments: [{ kind: 'tool', name: 'Read', id: 'r1' }] },
-      { role: 'assistant', text: '', segments: [{ kind: 'tool', name: 'ListDir', id: 'l1' }] },
+      { role: 'assistant', text: '', segments: [
+        { kind: 'text', text: '   ' },
+        { kind: 'tool', name: 'ListDir', id: 'l1' },
+      ] },
       { role: 'assistant', text: 'done', segments: [{ kind: 'text', text: 'done' }] },
     ]);
     expect(turns[0]).toMatchObject({ role: 'elowen', joinNextToolOnly: true });
