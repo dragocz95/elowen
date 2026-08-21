@@ -20,28 +20,49 @@ export interface ManageSelectionItem {
   badges?: { text: string; tone?: 'accent' | 'muted' }[];
   /** Row cannot be toggled (e.g. built-in tools) — rendered faded with `disabledHint`. */
   disabled?: boolean;
+  /** Hover text for a row the user cannot toggle. In `readOnly` mode — where no row is toggleable —
+   *  it is simply the row's description. */
   disabledHint?: string;
 }
 
-interface ManageSelectionModalProps {
+interface ManageSelectionCommonProps {
   title: string;
   subtitle?: string;
   open: boolean;
   onClose: () => void;
   items: ManageSelectionItem[];
+  /** Header-chip and footer count label, e.g. (n) => `${n} models selected`. Defaults to the generic
+   *  "{n} selected". In `readOnly` mode it labels the number of ITEMS, since nothing is selected. */
+  countLabel?: (n: number) => string;
+  /** Optional icon per group key, shown in the group header and its filter chip. */
+  groupIcons?: Record<string, ReactNode>;
+}
+
+interface ManageSelectionEditableProps extends ManageSelectionCommonProps {
+  readOnly?: false;
   selected: Set<string>;
   onSave: (next: Set<string>) => void | Promise<void>;
   saving?: boolean;
   /** Shown in the footer instead of the count when nothing is selected (e.g. "empty = all allowed"). */
   emptySelectionHint?: string;
-  /** Footer count label, e.g. (n) => `${n} models selected`. Defaults to the generic "{n} selected". */
-  countLabel?: (n: number) => string;
-  /** Optional icon per group key, shown in the group header and its filter chip. */
-  groupIcons?: Record<string, ReactNode>;
   /** Single-select mode: clicking a row REPLACES the selection (radio-like check, no deselect)
    *  and the header chip + footer show the chosen item's label instead of a count. */
   single?: boolean;
 }
+
+/** Display-only variant of the same modal: the list is INFORMATION, not a choice. Rows are plain list
+ *  items — no checkbox, no button, nothing focusable — and the footer offers Close instead of
+ *  Cancel/Save. That is the whole point: a disabled checkbox still LOOKS like a control, so a user
+ *  clicks it and watches it ignore him, which reads worse than plain text. Search and the group chips
+ *  stay, because filtering a long list changes nothing about the data behind it.
+ *
+ *  Taking no `selected`/`onSave` at all is deliberate: a read-only caller cannot end up passing a
+ *  no-op save handler and calling that "locked". */
+interface ManageSelectionReadOnlyProps extends ManageSelectionCommonProps {
+  readOnly: true;
+}
+
+type ManageSelectionModalProps = ManageSelectionEditableProps | ManageSelectionReadOnlyProps;
 
 /** Case- and diacritics-insensitive haystack normalization for the search filter. */
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -68,8 +89,33 @@ function RadioDot({ checked }: { checked: boolean }) {
   );
 }
 
-/** One selectable row — checkbox in multi mode, radio-like dot in single mode. */
-function Row({ item, on, single, onToggle }: { item: ManageSelectionItem; on: boolean; single: boolean; onToggle: (item: ManageSelectionItem) => void }) {
+/** One row — checkbox in multi mode, radio-like dot in single mode, and in read-only mode a plain
+ *  static line carrying its description on hover, exactly as the list it replaces did. */
+function Row({ item, on, single, readOnly, onToggle }: {
+  item: ManageSelectionItem;
+  on: boolean;
+  single: boolean;
+  readOnly: boolean;
+  onToggle: (item: ManageSelectionItem) => void;
+}) {
+  const content = (
+    <>
+      {item.icon ? <span aria-hidden className="shrink-0">{item.icon}</span> : null}
+      <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
+      {item.badges?.map((b) => (
+        <span key={b.text} className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${BADGE_TONES[b.tone ?? 'muted']}`}>
+          {b.text}
+        </span>
+      ))}
+    </>
+  );
+  if (readOnly) {
+    return (
+      <div title={item.disabledHint} className="flex w-full items-center gap-2.5 rounded-lg border border-border px-3 py-2 text-left text-xs text-text">
+        {content}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -81,13 +127,7 @@ function Row({ item, on, single, onToggle }: { item: ManageSelectionItem; on: bo
         on ? 'border-accent/50 bg-accent/15 text-text' : 'border-border text-text hover:bg-elevated'
       } ${item.disabled ? 'cursor-not-allowed opacity-50' : ''}`}
     >
-      {item.icon ? <span aria-hidden className="shrink-0">{item.icon}</span> : null}
-      <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
-      {item.badges?.map((b) => (
-        <span key={b.text} className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${BADGE_TONES[b.tone ?? 'muted']}`}>
-          {b.text}
-        </span>
-      ))}
+      {content}
       {single ? <RadioDot checked={on} /> : <Checkbox checked={on} />}
     </button>
   );
@@ -104,12 +144,15 @@ export function ManageSelectionModal(props: ManageSelectionModalProps) {
   return <ManageSelectionModalBody {...props} />;
 }
 
-function ManageSelectionModalBody({
-  title, subtitle, onClose, items, selected, onSave, saving = false,
-  emptySelectionHint, countLabel, groupIcons, single = false,
-}: ManageSelectionModalProps) {
+function ManageSelectionModalBody(props: ManageSelectionModalProps) {
+  const { title, subtitle, onClose, items, countLabel, groupIcons } = props;
+  // Everything a selection needs lives on the editable variant only, so the read-only one cannot carry
+  // a half-wired save path.
+  const readOnly = props.readOnly === true;
+  const editable = props.readOnly === true ? undefined : props;
+  const { saving = false, emptySelectionHint, single = false } = editable ?? {};
   const { t } = useTranslation();
-  const [local, setLocal] = useState<Set<string>>(() => new Set(selected));
+  const [local, setLocal] = useState<Set<string>>(() => new Set(editable?.selected));
   const [query, setQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
 
@@ -142,10 +185,12 @@ function ManageSelectionModalBody({
   // Single mode surfaces the chosen item's label (header chip + footer) instead of a count.
   const chosen = single ? items.find((it) => local.has(it.id)) : undefined;
   const chosenLabel = chosen?.label ?? emptySelectionHint ?? '—';
+  const countText = countLabel ?? ((n: number) => t.managePicker.selectedCount.replace('{n}', String(n)));
 
   const save = async () => {
+    if (!editable) return;
     try {
-      const result = onSave(new Set(local));
+      const result = editable.onSave(new Set(local));
       // Synchronous pickers should close in the same interaction frame. Async persistence still
       // keeps the modal open until it resolves so failures remain retryable.
       if (result) await result;
@@ -174,7 +219,9 @@ function ManageSelectionModalBody({
             />
           </div>
           <span className="shrink-0 rounded-md border border-accent/40 bg-accent/15 px-2 py-1 text-[11px] font-medium text-accent">
-            {single ? chosenLabel : t.managePicker.selectedCount.replace('{n}', String(local.size))}
+            {readOnly
+              ? countText(items.length)
+              : single ? chosenLabel : t.managePicker.selectedCount.replace('{n}', String(local.size))}
           </span>
         </div>
 
@@ -211,7 +258,7 @@ function ManageSelectionModalBody({
             <div className="flex flex-col gap-4">
               {pinned.length > 0 && (
                 <ul className="flex flex-col gap-1">
-                  {pinned.map((item) => <li key={item.id}><Row item={item} on={local.has(item.id)} single={single} onToggle={toggle} /></li>)}
+                  {pinned.map((item) => <li key={item.id}><Row item={item} on={local.has(item.id)} single={single} readOnly={readOnly} onToggle={toggle} /></li>)}
                 </ul>
               )}
               {groups.map((g) => {
@@ -225,7 +272,7 @@ function ManageSelectionModalBody({
                     </h3>
                     <ul className="flex flex-col gap-1">
                       {groupItems.map((item) => (
-                        <li key={item.id}><Row item={item} on={local.has(item.id)} single={single} onToggle={toggle} /></li>
+                        <li key={item.id}><Row item={item} on={local.has(item.id)} single={single} readOnly={readOnly} onToggle={toggle} /></li>
                       ))}
                     </ul>
                   </section>
@@ -237,18 +284,26 @@ function ManageSelectionModalBody({
       <ModalFooter
         status={
           <span className="text-xs text-text-muted">
-            {single
-              ? chosenLabel
-              : local.size === 0 && emptySelectionHint
-                ? emptySelectionHint
-                : (countLabel ?? ((n: number) => t.managePicker.selectedCount.replace('{n}', String(n))))(local.size)}
+            {readOnly
+              ? countText(items.length)
+              : single
+                ? chosenLabel
+                : local.size === 0 && emptySelectionHint
+                  ? emptySelectionHint
+                  : countText(local.size)}
           </span>
         }
       >
-        <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>{t.common.cancel}</Button>
-        <Button type="button" variant="accent" onClick={save} disabled={saving}>
-          {saving ? t.common.saving : t.managePicker.saveChanges}
-        </Button>
+        {readOnly
+          ? <Button type="button" onClick={onClose}>{t.common.close}</Button>
+          : (
+            <>
+              <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>{t.common.cancel}</Button>
+              <Button type="button" variant="accent" onClick={save} disabled={saving}>
+                {saving ? t.common.saving : t.managePicker.saveChanges}
+              </Button>
+            </>
+          )}
       </ModalFooter>
     </Modal>
   );

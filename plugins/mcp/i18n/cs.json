@@ -42,6 +42,7 @@
       "colStatus": "Stav",
       "tools": "Nástroje",
       "toolsCount": "Počet nástrojů: {n}",
+      "viewTools": "Zobrazit nástroje",
       "noTools": "Nebyly nalezeny žádné nástroje",
       "empty": "Zatím není nastavený žádný MCP server.",
       "emptySearch": "Filtru neodpovídá žádný server",

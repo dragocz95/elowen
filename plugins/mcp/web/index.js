@@ -314,7 +314,7 @@ function McpServerRow({ server, showScope, selected, onSelect }) {
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { "aria-hidden": true, className: "text-text-muted/50 transition-colors group-hover:text-text", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 15 }) })
   ] });
 }
-function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove }) {
+function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove, onShowTools }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings("mcp");
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-3", children: [
@@ -356,10 +356,19 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
       ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: s.enabled }) })
     ] }),
-    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-1.5", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "text-xs font-medium uppercase tracking-wide text-text-muted", children: s.toolsCount.replace("{n}", String(server.toolCount)) }),
-      server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { className: "flex flex-col gap-1", children: server.tools.map((tool) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { title: tool.description, className: "truncate font-mono text-xs text-text-muted", children: tool.title || tool.name }, tool.name)) })
-    ] }) : null,
+    server ? server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      C.SelectionSummary,
+      {
+        variant: "line",
+        readOnly: true,
+        countText: s.toolsCount.replace("{n}", String(server.tools.length)),
+        samples: server.tools.slice(0, 3).map((tool) => ({ label: tool.title || tool.name })),
+        moreCount: Math.max(0, server.tools.length - 3),
+        onManage: onShowTools,
+        manageLabel: s.viewTools,
+        manageAriaLabel: `${s.viewTools}: ${server.name}`
+      }
+    ) : null,
     error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-danger", role: "alert", children: error }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3", children: [
       server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost-danger", icon: Trash2, onClick: onRemove, disabled: busy, children: s.removeServer }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {}),
@@ -385,6 +394,7 @@ function McpServersPage() {
   const [busy, setBusy] = (0, import_react3.useState)(false);
   const [actionError, setActionError] = (0, import_react3.useState)();
   const [removing, setRemoving] = (0, import_react3.useState)();
+  const [showTools, setShowTools] = (0, import_react3.useState)(false);
   const load = (0, import_react3.useCallback)(async () => {
     setLoading(true);
     setLoadError(false);
@@ -415,6 +425,7 @@ function McpServersPage() {
   const closeEditor = () => {
     setEditor(void 0);
     setActionError(void 0);
+    setShowTools(false);
   };
   const save = async () => {
     if (!editor) return;
@@ -576,9 +587,27 @@ function McpServersPage() {
             onReconnect: () => void reconnect(),
             onRemove: () => {
               if (selected) setRemoving(selected);
-            }
+            },
+            onShowTools: () => setShowTools(true)
           }
         ) }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          C.ManageSelectionModal,
+          {
+            readOnly: true,
+            open: showTools && (selected?.tools.length ?? 0) > 0,
+            title: s.tools,
+            subtitle: selected?.name,
+            onClose: () => setShowTools(false),
+            items: (selected?.tools ?? []).map((tool) => ({
+              id: tool.name,
+              label: tool.title || tool.name,
+              group: "",
+              disabledHint: tool.description
+            })),
+            countLabel: (n) => s.toolsCount.replace("{n}", String(n))
+          }
+        ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           C.ConfirmDialog,
           {

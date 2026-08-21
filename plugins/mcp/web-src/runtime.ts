@@ -57,6 +57,8 @@ interface McpRuntime {
     ErrorState: AnyComponent;
     EmptyState: AnyComponent;
     ConfirmDialog: AnyComponent;
+    SelectionSummary: AnyComponent;
+    ManageSelectionModal: AnyComponent;
   };
   hooks: {
     usePluginStrings(plugin: string): Record<string, string>;

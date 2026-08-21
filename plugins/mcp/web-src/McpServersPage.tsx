@@ -143,7 +143,7 @@ function McpServerRow({ server, showScope, selected, onSelect }: {
 /** The selected server's editor, rendered in the workspace's detail drawer. `server` is the saved copy
  *  (it carries the live connection state and the bridged tools); `draft` is what the user is editing.
  *  A draft with no saved copy is a server being added. */
-function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove }: {
+function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove, onShowTools }: {
   server?: McpServer;
   draft: ServerDraft;
   saving: boolean;
@@ -154,6 +154,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
   onSave: () => void;
   onReconnect: () => void;
   onRemove: () => void;
+  onShowTools: () => void;
 }) {
   const { components: C, hooks } = runtime();
   const s = hooks.usePluginStrings('mcp');
@@ -222,19 +223,24 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
         </div>
       </div>
 
+      {/* The bridged tools are a read-only fact about the server, so they wear the app's managed-
+          selection summary in its display-only mode: a count line with a few sample chips here, the
+          whole list behind the modal. A server with nothing bridged offers no modal to open onto. */}
       {server ? (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{s.toolsCount.replace('{n}', String(server.toolCount))}</span>
-          {server.tools.length === 0
-            ? <p className="text-xs text-text-muted">{s.noTools}</p>
-            : (
-              <ul className="flex flex-col gap-1">
-                {server.tools.map((tool) => (
-                  <li key={tool.name} title={tool.description} className="truncate font-mono text-xs text-text-muted">{tool.title || tool.name}</li>
-                ))}
-              </ul>
-            )}
-        </div>
+        server.tools.length === 0
+          ? <p className="text-xs text-text-muted">{s.noTools}</p>
+          : (
+            <C.SelectionSummary
+              variant="line"
+              readOnly
+              countText={s.toolsCount.replace('{n}', String(server.tools.length))}
+              samples={server.tools.slice(0, 3).map((tool) => ({ label: tool.title || tool.name }))}
+              moreCount={Math.max(0, server.tools.length - 3)}
+              onManage={onShowTools}
+              manageLabel={s.viewTools}
+              manageAriaLabel={`${s.viewTools}: ${server.name}`}
+            />
+          )
       ) : null}
 
       {error ? <p className="text-sm text-danger" role="alert">{error}</p> : null}
@@ -271,6 +277,7 @@ export function McpServersPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [removing, setRemoving] = useState<McpServer>();
+  const [showTools, setShowTools] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setLoadError(false);
@@ -297,7 +304,7 @@ export function McpServersPage() {
   // The editor's saved copy is looked up in the CURRENT data on every render, so a reload (after a save
   // or a reconnect) refreshes the connection state and the tool list under the open drawer.
   const selected = editor?.key != null ? rows.find((server) => serverKey(server) === editor.key) : undefined;
-  const closeEditor = () => { setEditor(undefined); setActionError(undefined); };
+  const closeEditor = () => { setEditor(undefined); setActionError(undefined); setShowTools(false); };
 
   const save = async () => {
     if (!editor) return;
@@ -463,9 +470,26 @@ export function McpServersPage() {
             onSave={() => void save()}
             onReconnect={() => void reconnect()}
             onRemove={() => { if (selected) setRemoving(selected); }}
+            onShowTools={() => setShowTools(true)}
           />
         </C.WorkspaceDetailRail>
       ) : null}
+
+      {/* Display-only: every bridged tool, its description on hover, and nothing to change. */}
+      <C.ManageSelectionModal
+        readOnly
+        open={showTools && (selected?.tools.length ?? 0) > 0}
+        title={s.tools}
+        subtitle={selected?.name}
+        onClose={() => setShowTools(false)}
+        items={(selected?.tools ?? []).map((tool) => ({
+          id: tool.name,
+          label: tool.title || tool.name,
+          group: '',
+          disabledHint: tool.description,
+        }))}
+        countLabel={(n: number) => s.toolsCount.replace('{n}', String(n))}
+      />
 
       <C.ConfirmDialog
         open={Boolean(removing)}

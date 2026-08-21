@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -118,5 +118,41 @@ describe('MCP page load states', () => {
     // The failure lands in the status cell as ONE line, not as a wrapped paragraph in a card.
     expect(screen.getByText('connect ECONNREFUSED')).toBeInTheDocument();
     expect(screen.queryByText(strings.loadError!)).not.toBeInTheDocument();
+  });
+});
+
+describe('MCP drawer tool list', () => {
+  const openDrawer = async (name: string) => {
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name }));
+    return within(await screen.findByRole('dialog', { name }));
+  };
+
+  it('summarizes the bridged tools and opens the full list read-only', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({
+      personal: [{ ...server, toolCount: 2, tools: [{ name: 'search', title: 'Search', description: 'Search the repository.' }, { name: 'issues', title: 'Issues' }] }],
+      instance: [],
+      canManageInstance: false,
+    })));
+    const drawer = await openDrawer('github');
+    expect(drawer.getByText(strings.toolsCount!.replace('{n}', '2'))).toBeInTheDocument();
+
+    fireEvent.click(drawer.getByRole('button', { name: `${strings.viewTools}: github` }));
+    const modal = within(await screen.findByRole('dialog', { name: strings.tools }));
+    expect(modal.getByText('Search')).toBeInTheDocument();
+    expect(modal.getByText('Issues')).toBeInTheDocument();
+    // Read-only: the tools are information, so the modal offers no way to change them.
+    expect(modal.queryByRole('checkbox')).toBeNull();
+    expect(modal.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect(modal.getByText('Search').closest('[title]')).toHaveAttribute('title', 'Search the repository.');
+  });
+
+  it('offers no modal for a server with nothing bridged', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({
+      personal: [{ ...server, toolCount: 0, tools: [] }], instance: [], canManageInstance: false,
+    })));
+    const drawer = await openDrawer('github');
+    expect(drawer.getByText(strings.noTools!)).toBeInTheDocument();
+    expect(drawer.queryByRole('button', { name: new RegExp(strings.viewTools!) })).toBeNull();
   });
 });

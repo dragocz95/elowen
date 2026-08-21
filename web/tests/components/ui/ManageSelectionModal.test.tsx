@@ -128,6 +128,57 @@ describe('ManageSelectionModal', () => {
   });
 });
 
+// Display-only mode: the same modal used to INSPECT a list nobody may change (bridged MCP tools).
+describe('ManageSelectionModal read-only mode', () => {
+  const mountReadOnly = () => {
+    const onClose = vi.fn();
+    render(
+      <ManageSelectionModal
+        readOnly
+        title="Tools"
+        subtitle="github"
+        open
+        onClose={onClose}
+        items={[
+          { id: 'search', label: 'Search', group: '', disabledHint: 'Search the repository.' },
+          { id: 'issues', label: 'Issues', group: '' },
+        ]}
+        countLabel={(n) => `${n} tools`}
+      />,
+      { wrapper: W },
+    );
+    return { onClose };
+  };
+
+  it('renders rows as plain list items — nothing clickable, checkable or focusable', () => {
+    mountReadOnly();
+    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('Issues')).toBeInTheDocument();
+    // No row control of any kind: the only buttons in the dialog are Close and the header's ×.
+    expect(screen.queryByRole('button', { name: /Search$/ })).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(document.querySelectorAll('[aria-pressed]')).toHaveLength(0);
+  });
+
+  it('keeps the description on hover, the way the inline list showed it', () => {
+    mountReadOnly();
+    expect(screen.getByText('Search').closest('[title]')).toHaveAttribute('title', 'Search the repository.');
+  });
+
+  it('offers Close instead of Cancel/Save, and counts items rather than a selection', () => {
+    const { onClose } = mountReadOnly();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    // Header chip + footer both label the number of ITEMS.
+    expect(screen.getAllByText('2 tools')).toHaveLength(2);
+    // The dialog's own × plus the footer action — both close, neither saves anything.
+    const close = screen.getAllByRole('button', { name: 'Close' });
+    expect(close).toHaveLength(2);
+    fireEvent.click(close.at(-1)!);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
 // Pinned rows (group '') + single-select mode — the cron channel/model picker pattern.
 const PICK_ITEMS: ManageSelectionItem[] = [
   { id: '', label: 'Default', group: '' },

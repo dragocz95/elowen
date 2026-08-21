@@ -41,6 +41,7 @@
       "colStatus": "Status",
       "tools": "Tools",
       "toolsCount": "{n} tools",
+      "viewTools": "View tools",
       "noTools": "No tools discovered",
       "empty": "No MCP server configured yet.",
       "emptySearch": "No server matches the filter",

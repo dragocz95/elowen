@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { Settings2 } from 'lucide-react';
+import { Eye, Settings2 } from 'lucide-react';
 
 interface SelectionSummaryProps {
   /** Count line, e.g. "14 models · 5 providers". Empty hides the line (chip-only summaries). */
@@ -15,11 +15,14 @@ interface SelectionSummaryProps {
   manageAriaLabel?: string;
   /** Quiet document treatment for settings pages: no raised surface or chip chrome. */
   variant?: 'default' | 'line';
+  /** The summary opens a display-only list (ManageSelectionModal in `readOnly` mode): the action is an
+   *  EYE rather than a gear, so the button does not promise a setting the modal will not offer. */
+  readOnly?: boolean;
 }
 
 /** Compact on-page summary for a managed selection: a count line, sample chips and a
  *  "Manage" button that opens the ManageSelectionModal. Replaces long toggle-pill rows. */
-export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, manageAriaLabel, variant = 'default' }: SelectionSummaryProps) {
+export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, manageAriaLabel, variant = 'default', readOnly = false }: SelectionSummaryProps) {
   const line = variant === 'line';
   return (
     <div
@@ -50,7 +53,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
         aria-label={manageAriaLabel}
         className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-elevated hover:text-text ${line ? '' : 'border border-border bg-transparent'}`}
       >
-        <Settings2 size={13} aria-hidden />
+        {readOnly ? <Eye size={13} aria-hidden /> : <Settings2 size={13} aria-hidden />}
         {manageLabel}
       </button>
     </div>
