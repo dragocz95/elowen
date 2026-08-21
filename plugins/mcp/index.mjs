@@ -118,6 +118,15 @@ function specForOwner(ownerUserId, name) {
   return state.specs.find((spec) => spec.ownerUserId === ownerUserId && spec.name === name);
 }
 
+/** A stdio server is arbitrary local process execution, regardless of whether its row is labelled
+ * personal or instance. Only the instance owner may create or start one. Remote HTTP/SSE servers do
+ * not execute a caller-supplied command on this host, so a linked account may keep those personal. */
+function assertTransportAuthority(ctx, spec) {
+  if (transportKind(spec) === 'stdio' && ctx.currentIdentity()?.owner !== true) {
+    throw new Error('local-process MCP servers can be managed only by the instance owner');
+  }
+}
+
 function validateServerInput(input) {
   const name = String(input?.name ?? '').trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(name)) throw new Error('server name must be 1-40 letters, numbers, underscores or dashes');
@@ -158,6 +167,7 @@ async function closeLiveSpec(spec) {
 async function addMcpServerForScope(ctx, scope, input) {
   const ownerUserId = ownerForScope(ctx, scope);
   const spec = { ...validateServerInput(input), ownerUserId, cachedBridged: [] };
+  assertTransportAuthority(ctx, spec);
   if (state.specs.some((candidate) => candidate.name === spec.name
     && (candidate.ownerUserId == null || candidate.ownerUserId === ownerUserId))) {
     throw new Error(`MCP server "${spec.name}" already exists in this account's visible scope`);
@@ -227,6 +237,7 @@ async function updateMcpServerForScope(ctx, scope, name, input) {
   if (!spec) throw new Error(`unknown ${scope} MCP server "${name}"`);
   const previous = { ...spec, args: [...(spec.args ?? [])], env: { ...(spec.env ?? {}) }, cachedBridged: [...(spec.cachedBridged ?? [])] };
   const next = { ...validateServerInput({ ...spec, ...input, name: spec.name }), ownerUserId, cachedBridged: [] };
+  assertTransportAuthority(ctx, next);
   await closeLiveSpec(spec);
   Object.assign(spec, next);
   const sql = ownerUserId == null
@@ -487,10 +498,14 @@ function connectLazily(ctx, spec, live) {
 /** Connect one server, list its tools, and bridge them. Errors propagate to the caller (per-server
  *  fail-open) — but a half-open connection is torn down first so a failed connect can't orphan a child. */
 async function connectServer(ctx, spec, live) {
+  // Instance servers were already approved by the owner when persisted and reconnect at daemon boot with
+  // no acting turn. Personal stdio rows, including legacy rows created before this gate existed, must
+  // re-check the CURRENT caller before every lazy/reconnect path reaches makeTransport().
+  if (spec.ownerUserId != null) assertTransportAuthority(ctx, spec);
   const key = serverKey(spec.ownerUserId, spec.name);
   setServerState(spec, { status: 'connecting', transport: transportKind(spec), lastError: null, tools: [], toolCount: 0 });
   const { transport, child } = makeTransport(spec);
-  const client = new Client({ name: 'elowen-mcp-bridge', version: '0.1.1' }, { capabilities: {} });
+  const client = new Client({ name: 'elowen-mcp-bridge', version: '0.1.2' }, { capabilities: {} });
   // `closing` suppresses the onclose transition below during OUR OWN deliberate teardown (reload/cleanup)
   // so a normal shutdown is never reported as a crash.
   const entry = { key, name: spec.name, ownerUserId: spec.ownerUserId, client, transport, child, closing: false, lastTransportError: undefined };
@@ -584,7 +599,7 @@ function registerManagementTools(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'AddMcpServer', label: 'Add MCP server',
-    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores credentials for the acting account only; instance shares them across the instance and is restricted to the instance owner. For stdio this RUNS the command and arguments supplied by the user as a local process, with the supplied environment variables, so use it only when the user explicitly asked to install that server.',
+    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores remote HTTP/SSE servers for the acting account only; instance shares them across the instance and is restricted to the instance owner. A stdio server RUNS the supplied command as a local process and is therefore restricted to the instance owner regardless of scope.',
     parameters: Type.Object({
       scope: scopeSchema,
       name: nameSchema,
@@ -630,7 +645,7 @@ function registerManagementTools(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'ReconnectMcpServer', label: 'Reconnect MCP server',
-    description: 'Reconnect and re-discover tools for one MCP server in the required personal or instance scope. Personal credentials remain account-private; instance scope is owner-only.',
+    description: 'Reconnect and re-discover tools for one MCP server in the required personal or instance scope. Personal remote credentials remain account-private; instance scope and every stdio process are owner-only.',
     parameters: Type.Object({ scope: scopeSchema, name: nameSchema }),
     execute: async (_id, p) => {
       try {

@@ -551,20 +551,24 @@ export class BrainClient {
   }
 
   async mcpServers(): Promise<McpServerView[]> {
-    const res = await this.f(`${this.o.base}/plugins/mcp/servers`, { headers: this.headers() });
+    const path = '/plugins/mcp/api/servers';
+    const res = await this.f(`${this.o.base}${path}`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
-    if (!res.ok) throw new Error(`elowen plugins ${res.status} on /plugins/mcp/servers`);
-    return (await res.json()) as McpServerView[];
+    if (!res.ok) throw new Error(`elowen plugins ${res.status} on ${path}`);
+    const body = (await res.json()) as { instance?: McpServerView[] };
+    return body.instance ?? [];
   }
 
   async reconnectMcp(name: string): Promise<McpServerView> {
-    const res = await this.post(`/plugins/mcp/servers/${encodeURIComponent(name)}/reconnect`, {});
-    return (await res.json()) as McpServerView;
+    const res = await this.post('/plugins/mcp/api/reconnect', { scope: 'instance', name });
+    return ((await res.json()) as { server: McpServerView }).server;
   }
 
   async reconnectMcpAll(): Promise<McpServerView[]> {
-    const res = await this.post('/plugins/mcp/reconnect', {});
-    return (await res.json()) as McpServerView[];
+    const servers = await this.mcpServers();
+    return Promise.all(servers
+      .filter((server) => server.status === 'disconnected' || server.status === 'error')
+      .map((server) => this.reconnectMcp(server.name)));
   }
 
   async skills(): Promise<SkillView[]> {

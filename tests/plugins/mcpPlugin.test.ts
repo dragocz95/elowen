@@ -8,6 +8,8 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import type { Db } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { channelSessionId, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { composeSessionTools } from '../../src/brain/session/capabilities.js';
+import { currentIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
 // The plugin is a plain ESM module (no build step) — import it directly.
 // @ts-expect-error - .mjs plugin has no type declarations
 import { register, killTree, sanitize, mapResult, DetachedStdioTransport, configNumber, listMcpServers, reconnectMcpServer, mcpBridgeSnapshot } from '../../plugins/mcp/index.mjs';
@@ -24,7 +26,7 @@ const waitFor = async (fn: () => boolean, ms = 3000) => { const end = Date.now()
 
 /** A minimal PluginContext stand-in capturing the tools/hooks the plugin registers. `mcpBridgeSnapshot`
  *  is what a forked sub-agent runner is handed: present ⇒ declare these tools and connect nothing. */
-function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb(), identity: Record<string, unknown> | null = null) {
+function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb(), identity: object | null | (() => object | null) = null) {
   const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown>; ownerUserId?: number }[] = [];
   const hooks: { name: string; run: (p: unknown) => unknown }[] = [];
   const controls = new Map<string, unknown>();
@@ -35,7 +37,7 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     ...(mcpBridgeSnapshot ? { mcpBridgeSnapshot } : {}),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     db: () => makePluginDb(db, 'mcp', { canMigrate: true }),
-    currentIdentity: () => identity,
+    currentIdentity: () => typeof identity === 'function' ? identity() : identity,
     requestReload: vi.fn(),
     registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
@@ -123,6 +125,28 @@ describe('mcp plugin — owner-scoped management tools', () => {
     await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
   });
 
+  it('refuses a shared-room non-owner before a personal stdio transport can start', async () => {
+    const db = openPluginTablesDb();
+    const member = new UserStore(db).create('shared-member', 'pw');
+    const ctx = fakeCtx({}, undefined, db, () => currentIdentity());
+    await register(ctx as never);
+    const add = composeSessionTools({ kind: 'foreign-channel', pluginTools: ctx.tools as never })
+      .find((tool) => tool.name === 'AddMcpServer')!;
+    expect(add, 'management tool is advertised in the shared-channel session').toBeTruthy();
+
+    const result = await runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] },
+      () => add.execute('shared-call', {
+        scope: 'personal', name: 'blocked-stdio', transport: 'stdio',
+        command: process.execPath, args: [MOCK_SERVER],
+      } as never, undefined, undefined, {} as never),
+      { identity: { platform: 'discord', userId: 'member-7', elowenUserId: member.id, elowenUsername: member.username, admin: false, owner: false, conversation: 'shared' } },
+    );
+    expect(resultText(result)).toContain('local-process MCP servers can be managed only by the instance owner');
+    expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
+    await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  }, 20000);
+
   it('refuses instance scope for a non-owner even when the account is an admin elsewhere', async () => {
     const ctx = fakeCtx({}, undefined, openPluginTablesDb(), { elowenUserId: 4, admin: true, owner: false });
     await register(ctx as never);
@@ -180,7 +204,7 @@ describe('mcp plugin — owner-scoped management tools', () => {
     const users = new UserStore(db);
     const amy = users.create('amy-mcp', 'pw');
     const bob = users.create('bob-mcp', 'pw');
-    const amyCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+    const amyCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
     await register(amyCtx as never);
     const add = amyCtx.tools.find((tool) => tool.name === 'AddMcpServer')!;
     const added = await add.execute('1', {

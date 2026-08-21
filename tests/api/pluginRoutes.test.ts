@@ -254,54 +254,11 @@ describe('plugin routes', () => {
     expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0 });
   });
 
-  it('exposes MCP server state and reconnect actions from the live MCP plugin module', async () => {
-    const root = tmpDir('mcproutes');
-    const dir = join(root, 'mcp');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
-      name: 'mcp', version: '1.0.0', apiVersion: '1', description: 'mcp', entry: 'index.mjs',
-    }));
-    writeFileSync(join(dir, 'index.mjs'), `
-      let reconnected = false;
-      const listMcpServers = () => [{ name: 'mock', transport: 'stdio', status: reconnected ? 'connected' : 'error', toolCount: reconnected ? 1 : 0, tools: [], lastError: reconnected ? null : 'boom', reconnecting: false }];
-      async function reconnectMcpServer(name){ reconnected = true; return { name, status: 'connected', toolCount: 1, tools: [{ name: 'echo', description: 'Echo', schema: {} }] }; }
-      async function reconnectMcpDisconnected(){ reconnected = true; return listMcpServers(); }
-      export function register(ctx){
-        ctx.registerControl('mcp', {
-          listServers: listMcpServers,
-          reconnectServer: reconnectMcpServer,
-          reconnectDisconnected: reconnectMcpDisconnected,
-        });
-      }
-    `);
-    const db = openPluginTablesDb(':memory:');
-    const users = new UserStore(db);
-    const admin = users.create('admin', 'pw');
-    const amy = users.create('amy', 'pw');
-    const foreignAdmin = users.create('foreign-admin', 'pw');
-    users.setAdmin(foreignAdmin.id, true);
-    const app = createServer({
-      tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
-      engine: null as never, spawn: null as never, tmux: null as never,
-      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
-      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-      pluginDirs: [root],
-      plugins: new PluginRegistryProvider(() => loadPlugins({ dirs: [root], enabled: ['mcp'], logger: { info() {}, warn() {}, error() {} } })),
-      brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
-    });
-    const adminTok = users.issueToken(admin.id);
-    const amyTok = users.issueToken(amy.id);
-    const foreignAdminTok = users.issueToken(foreignAdmin.id);
-    expect((await app.request('/plugins/mcp/servers', auth(amyTok))).status).toBe(403);
-    expect((await app.request('/plugins/mcp/servers', auth(foreignAdminTok))).status).toBe(403);
-    const before = await (await app.request('/plugins/mcp/servers', auth(adminTok))).json() as { status: string; lastError: string | null }[];
-    expect(before[0]).toMatchObject({ status: 'error', lastError: 'boom' });
-    const one = await app.request('/plugins/mcp/servers/mock/reconnect', { method: 'POST', headers: { authorization: `Bearer ${adminTok}` } });
-    expect(one.status).toBe(200);
-    expect(await one.json()).toMatchObject({ name: 'mock', status: 'connected', toolCount: 1 });
-    const all = await app.request('/plugins/mcp/reconnect', { method: 'POST', headers: { authorization: `Bearer ${adminTok}` } });
-    expect(all.status).toBe(200);
-    expect(await all.json()).toEqual([expect.objectContaining({ name: 'mock', status: 'connected' })]);
+  it('does not expose the removed legacy MCP management endpoints', async () => {
+    const { app, adminTok } = setup();
+    expect((await app.request('/plugins/mcp/servers', auth(adminTok))).status).toBe(404);
+    expect((await app.request('/plugins/mcp/servers/mock/reconnect', { method: 'POST', ...auth(adminTok) })).status).toBe(404);
+    expect((await app.request('/plugins/mcp/reconnect', { method: 'POST', ...auth(adminTok) })).status).toBe(404);
   });
 });
 

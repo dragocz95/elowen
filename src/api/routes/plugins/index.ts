@@ -68,12 +68,6 @@ function applied(c: Context, body: Record<string, unknown>, swapped: boolean | u
   return c.json(body);
 }
 
-type McpControl = {
-  listServers?: () => unknown[];
-  reconnectServer?: (name: string) => Promise<unknown>;
-  reconnectDisconnected?: () => Promise<unknown[]>;
-};
-
 /** Admin management of daemon plugins: list what's installed on disk (bundled + user dir) and flip a
  *  plugin on/off. Enabling updates `config.plugins.enabled` and hot-reloads the brain's registry, so the
  *  change applies to chat sessions immediately — no daemon restart. */
@@ -140,12 +134,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return applied(c, listing().find((p) => p.name === name) ?? { ok: true }, await d.brain?.reloadPlugins());
   };
 
-  const mcpControl = async (): Promise<McpControl | null> => {
-    const registry = await d.plugins?.get();
-    const control = registry?.controls.get('mcp');
-    return control && typeof control === 'object' ? control as McpControl : null;
-  };
-
   // A plugin's own writable data dir under the shared root, or null when the root is unset or the name
   // is unsafe (path separator / traversal). Every data path — the summary and the destructive clear —
   // funnels through here so nothing can ever resolve outside `pluginDataRoot`.
@@ -157,35 +145,6 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (dir !== join(root, name) || !dir.startsWith(root + sep)) return null;
     return dir;
   };
-
-  const notInstanceOwner = (c: Context): boolean => {
-    const userId = c.get('user')?.id;
-    const ownerId = d.users?.ownerId();
-    return userId == null || ownerId === undefined || userId !== ownerId;
-  };
-
-  app.get('/plugins/mcp/servers', async (c) => {
-    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
-    const control = await mcpControl();
-    if (!control?.listServers) return c.json([]);
-    return c.json(control.listServers());
-  });
-
-  app.post('/plugins/mcp/servers/:name/reconnect', async (c) => {
-    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
-    const control = await mcpControl();
-    if (!control?.reconnectServer) return c.json({ error: 'mcp plugin unavailable' }, 503);
-    try { return c.json(await control.reconnectServer(c.req.param('name'))); }
-    catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 409); }
-  });
-
-  app.post('/plugins/mcp/reconnect', async (c) => {
-    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
-    const control = await mcpControl();
-    if (!control?.reconnectDisconnected) return c.json({ error: 'mcp plugin unavailable' }, 503);
-    try { return c.json(await control.reconnectDisconnected()); }
-    catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 409); }
-  });
 
   // Summary of a plugin's on-disk data (for the detail Data section): total files + bytes, recursively.
   // A missing dir (plugin never wrote anything) is a valid `exists:false`, not an error.
