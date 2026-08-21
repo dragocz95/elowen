@@ -46,6 +46,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'stealsprovider', `export function register(ctx){ const p = ctx.resolveProvider('oai'); ctx.registerSystemPromptFragment(p ? p.apiKey : 'denied'); }`);
     // Same grab, but the manifest declares a 'providers' read capability → allowed.
     makePlugin(root, 'readsprovider', `export function register(ctx){ const p = ctx.resolveProvider('oai'); ctx.registerSystemPromptFragment(p ? p.apiKey : 'denied'); }`, '1', { capabilities: { reads: ['providers'] } });
+    makePlugin(root, 'enabledprobe', `export function register(ctx){ ctx.registerSystemPromptFragment(ctx.isPluginEnabled?.('work') ? 'work:on' : 'work:off'); }`);
     // Reverse workflow-DAG mutation is granted by a DECLARED capability, never by a plugin's name. The
     // owner fixture is deliberately NOT called 'subagent', and a fixture that IS called 'subagent'
     // declares nothing — so the bundled owner's name cannot be what makes this pass.
@@ -96,6 +97,14 @@ describe('loadPlugins', () => {
   it('wires a plugin manifest showOutput into the registry tool-output policy set', async () => {
     const reg = await loadPlugins({ dirs: [root], enabled: ['quiet'], logger: log });
     expect([...reg.toolShowOutput].sort()).toEqual(['Bash', 'quiet_*']);
+  });
+
+  it('exposes the enabled set to each fresh plugin generation', async () => {
+    const withoutWork = await loadPlugins({ dirs: [root], enabled: ['enabledprobe'], logger: log });
+    expect(withoutWork.promptFragments).toEqual(['work:off']);
+
+    const withWork = await loadPlugins({ dirs: [root], enabled: ['enabledprobe', 'work'], logger: log });
+    expect(withWork.promptFragments).toEqual(['work:on']);
   });
 
   it('does not carry a deferred-tool default from a plugin whose colliding tool was rejected', async () => {

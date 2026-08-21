@@ -1245,6 +1245,9 @@ export interface PluginContext {
    *  host re-scans and respawns sessions once the current turn settles, so the new/removed skill is in
    *  the model's available-skills block on the next message. No-op when the host wires no reloader. */
   requestReload(): void;
+  /** Whether a plugin name belongs to this registry generation's configured enabled set. Optional so a
+   *  marketplace plugin can stay compatible with older hosts; absence must be handled conservatively. */
+  isPluginEnabled?(name: string): boolean;
   /** Register an admin/runtime control surface for this plugin. Unlike tools, controls are called by
    *  daemon routes and operate on the LIVE loaded plugin instance.
    *
