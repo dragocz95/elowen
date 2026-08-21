@@ -16,9 +16,6 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'ToolSearch': '🧭',
   'ShareImage': '🖼',
   'ExitPlanMode': '📋',
-  // Not a real tool: the display name a skill-file Read is RENAMED to on the `tool` event (see
-  // toolDisplay in messageView.ts), so the stamped icon matches what clients render.
-  'Skill': '📚',
 };
 
 /** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
