@@ -103,11 +103,15 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
   let steps = 0; // model round-trips in the current run — reset on agent_start, one per turn_start
   let agentRunOpen = false;
   let deferredCompacted = false;
+  let turnStartedAt: number | undefined;
+  let settledDurationMs: number | undefined;
+  let settledCompletedAt: string | undefined;
   return (e: AgentSessionEvent): void => {
     const live = getLive();
     const raw = (e as { type?: string }).type;
-    let suppressAgentEndIdle = raw === 'agent_end' && (e as { willRetry?: boolean }).willRetry === true;
-    let emitFailedRecoveryIdle = false;
+    // The persistence subscriber finalizes the exact wall clock on PI's canonical `agent_settled` event.
+    // Hold every agent_end idle until then so the live label is byte-for-byte the value hydration will read.
+    let suppressAgentEndIdle = raw === 'agent_end';
     // A REAL compaction has settled: attached clients refetch the shrunk transcript. The model-facing
     // half is deliberately NOT armed here — it is derived from the compaction divider row on the next
     // turn instead, because `live` is not reliably resolvable at this moment and a flag set here would
@@ -118,6 +122,11 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       : [];
     const agentEndLastAssistant = lastAssistant(agentEndMessages);
     const agentEndOverflow = !!agentEndLastAssistant && isErroredContextOverflow(agentEndLastAssistant, model.contextWindow);
+    if (raw === 'agent_end' || raw === 'agent_settled') {
+      const timed = e as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string };
+      settledDurationMs = timed.turnDurationMs ?? settledDurationMs;
+      settledCompletedAt = timed.turnCompletedAt ?? settledCompletedAt;
+    }
     // Canonical fallback: PI can settle without a second agent_end when retry backoff is cancelled, or
     // without compaction_end when an overflow has nothing summarizable. Flush the deferred terminal
     // state here so no client remains spinning and a genuine overflow failure is still visible.
@@ -138,6 +147,8 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
         replay.publish({
           type: 'idle', model: model.id,
           usage: sessionUsageSnapshot(session, store, sessionId),
+          ...(settledDurationMs != null ? { durationMs: settledDurationMs } : {}),
+          ...(settledCompletedAt ? { completedAt: settledCompletedAt } : {}),
         });
         terminalIdleDeferred = false;
       }
@@ -147,8 +158,10 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
     // limit is read fresh per turn (a config change applies without a session restart). Past the
     // ceiling the run is aborted so a wedged agent can't loop forever — it settles into agent_end/idle
     // like a normal stop. `maxSteps ≤ 0` means unlimited (no counter emitted, no enforcement).
-    if (raw === 'agent_start') { replay.beginRun(); steps = 0; agentRunOpen = true; }
-    else if (raw === 'turn_start') {
+    if (raw === 'agent_start') {
+      replay.beginRun(); steps = 0; agentRunOpen = true;
+      turnStartedAt = (e as AgentSessionEvent & { turnStartedAt?: number }).turnStartedAt;
+    } else if (raw === 'turn_start') {
       steps += 1;
       const maxSteps = deps.maxSteps?.() ?? 0;
       if (maxSteps > 0 && steps > maxSteps) {
@@ -159,7 +172,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
         void abortSessionWork(session).catch(() => { /* already settling */ });
       } else {
         const usage = sessionUsageSnapshot(session, store, sessionId);
-        replay.publish({ type: 'step', step: steps, maxSteps, usage });
+        replay.publish({ type: 'step', step: steps, maxSteps, usage, ...(steps === 1 && turnStartedAt != null ? { turnStartedAt } : {}) });
       }
     }
     if (suppressAgentEndIdle) terminalIdleDeferred = true;
@@ -211,7 +224,7 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       else if (deferredOverflowError) {
         replay.publish({ type: 'error', message: ce.errorMessage?.trim() || deferredOverflowError });
         deferredOverflowError = null;
-        emitFailedRecoveryIdle = true;
+        terminalIdleDeferred = true;
       }
       // A previous successful between-turn compaction waited for this overflow outcome. On failure the
       // factory just persisted the deferred run and applied that pending rewrite; refetch only now.
@@ -263,12 +276,5 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
       live.turnProducedOutput = true;
     }
     replay.publish(be);
-    if (emitFailedRecoveryIdle) {
-      replay.publish({
-        type: 'idle', model: model.id,
-        usage: sessionUsageSnapshot(session, store, sessionId),
-      });
-      terminalIdleDeferred = false;
-    }
   };
 }

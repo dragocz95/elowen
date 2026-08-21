@@ -261,6 +261,9 @@ function applyAdditiveMigrations(db: Db): void {
   // Mid-turn (provisional) message rows — see brain_messages in schema.sql. Every existing row was written
   // by a settled agent_end, so the 0 default correctly reads the whole back catalogue as durable history.
   addColumn(db, 'brain_messages', 'pending', 'INTEGER NOT NULL DEFAULT 0');
+  // Display-only whole-turn timing lives outside message JSON: rehydration reads `content` only, so this
+  // additive column cannot alter a provider payload or invalidate the cached transcript prefix.
+  addColumn(db, 'brain_messages', 'turn_duration_ms', 'INTEGER');
   // Provider request rows are opened before the network call and terminally accounted exactly once. Any
   // pending row surviving process startup belongs to a request whose in-memory correlator died; mark it
   // interrupted before sessions can respawn, and never fold it into the summary a second time.

@@ -1597,6 +1597,7 @@ export const sk = {
     hideThoughts: 'Skryť uvažovanie',
     toolRunning: 'Prebieha',
     reasoningLabel: 'Uvažovanie',
+    turnDuration: 'Doba behu',
   },
   chat: {
     historyTitle: 'Konverzácie',

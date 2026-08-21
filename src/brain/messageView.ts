@@ -2,7 +2,7 @@
  *  raw content JSON). Kept as a local structural contract rather than importing `BrainMessageRow` from
  *  the store: the store imports `extractText` from here, so a type import back into the store would form
  *  a module cycle. `BrainMessageRow` satisfies this structurally, so callers pass their rows unchanged. */
-type StoredTurnRow = { id?: string; role: string; content: string; created_at?: string };
+type StoredTurnRow = { id?: string; role: string; content: string; created_at?: string; turn_duration_ms?: number | null };
 
 // The display-transcript shapes are the daemon↔web wire contract — defined once in src/shared and
 // re-exported here for daemon callers (BrainStore passes its validated rows straight through). See
@@ -538,7 +538,11 @@ export function shapeBrainMessages(
       if (text.trim() || images.length) {
         stamped.push({
           at: row.created_at ?? '',
-          view: { ...(row.id ? { id: row.id } : {}), role: 'user', text, ...(images.length ? { images: toMessageImages(images) } : {}) },
+          view: {
+            ...(row.id ? { id: row.id } : {}), role: 'user', text,
+            ...(row.created_at ? { createdAt: row.created_at } : {}),
+            ...(images.length ? { images: toMessageImages(images) } : {}),
+          },
         });
       }
       continue;
@@ -587,7 +591,14 @@ export function shapeBrainMessages(
       const clean = stripInlineReasoning(msg.content);
       if (clean.trim()) { text = clean; segments.push({ kind: 'text', text }); }
     }
-    if (segments.length > 0) stamped.push({ at: row.created_at ?? '', view: { ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments } });
+    if (segments.length > 0) stamped.push({
+      at: row.created_at ?? '',
+      view: {
+        ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments,
+        ...(row.created_at ? { createdAt: row.created_at } : {}),
+        ...(row.turn_duration_ms != null ? { durationMs: row.turn_duration_ms } : {}),
+      },
+    });
   }
   // Merge the session-event markers into the time-ordered views (both streams are already chronological).
   // Message rows carry SQLite time (`YYYY-MM-DD HH:MM:SS`, second precision), events carry ISO 8601, so

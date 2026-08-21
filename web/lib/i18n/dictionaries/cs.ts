@@ -1603,6 +1603,7 @@ export const cs = {
     hideThoughts: 'Skrýt uvažování',
     toolRunning: 'Probíhá',
     reasoningLabel: 'Uvažování',
+    turnDuration: 'Doba běhu',
   },
   chat: {
     historyTitle: 'Konverzace',

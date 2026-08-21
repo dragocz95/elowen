@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { createSessionPersistenceProjector, persistCompaction, projectEvent, projectUserTurn, rehydrate } from '../../src/brain/persistence.js';
@@ -56,6 +56,36 @@ describe('brain persistence', () => {
     const pending = db.prepare("SELECT content FROM brain_messages WHERE session_id = 's1' AND role = 'assistant'").all() as { content: string }[];
     expect(pending).toHaveLength(1);
     expect(JSON.parse(pending[0]!.content)).toHaveProperty('durationMs');
+  });
+
+  it('persists whole-turn wall time outside model-visible message content', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const session = { messages: [] as unknown[] } as unknown as AgentSession;
+      const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+      const assistant = { role: 'assistant', content: [{ type: 'text', text: 'done' }] };
+
+      project({ type: 'agent_start' } as never);
+      vi.setSystemTime(2_000);
+      project({ type: 'message_start', message: { role: 'assistant', content: [] } } as never);
+      vi.setSystemTime(2_500);
+      project({ type: 'message_end', message: assistant } as never);
+      vi.setSystemTime(5_000);
+      project({ type: 'agent_end', willRetry: false, messages: [assistant] } as never);
+      vi.setSystemTime(7_000);
+      project({ type: 'agent_settled' } as never);
+
+      const row = store.getMessages('s1').at(-1)!;
+      expect(row.turn_duration_ms).toBe(6_000);
+      const stored = JSON.parse(row.content) as Record<string, unknown>;
+      expect(stored).not.toHaveProperty('turnDurationMs');
+      expect(stored).not.toHaveProperty('turnCompletedAt');
+      expect(stored.durationMs).toBe(500); // existing per-generation measurement remains unchanged
+      expect(rehydrate(store, 's1', process.cwd()).buildSessionContext().messages).toEqual([stored]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not stamp a duration on non-assistant message boundaries', () => {
@@ -441,6 +471,7 @@ describe('brain persistence', () => {
       type: 'agent_end', willRetry: false,
       messages: [{ role: 'assistant', content: 'recovered answer', stopReason: 'stop' }],
     } as never);
+    project({ type: 'agent_settled' } as never);
 
     const rows = store.getMessages('s1');
     expect(rows.map((row) => row.role)).toEqual(['compaction', 'assistant', 'toolResult', 'assistant']);
@@ -450,6 +481,8 @@ describe('brain persistence', () => {
       expect.objectContaining({ content: 'current tool output' }),
       expect.objectContaining({ content: 'recovered answer' }),
     ]);
+    expect(rows[1]!.turn_duration_ms).toBeNull();
+    expect(rows[3]!.turn_duration_ms).toEqual(expect.any(Number));
   });
 
   it('persistCompaction maps NO_REPLY_NUDGE tails correctly — a nudge user message has no store row, so it is not counted', () => {

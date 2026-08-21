@@ -96,7 +96,12 @@ export interface BrainMessageImage { url: string; mimeType: string }
  *  in favour of — the real anchor row once paging loads that row. `text` is the flat reply; `segments`
  *  preserve the true order. `kind`/`detail` mark a non-message system row (a model/mode/rename/cwd event)
  *  rather than an assistant/user turn. `images` are a user row's surviving attachments. */
-export interface BrainMessageView { id?: string; synthetic?: boolean; role: string; text: string; segments?: BrainSegment[]; kind?: string; detail?: string; images?: BrainMessageImage[] }
+export interface BrainMessageView {
+  id?: string; synthetic?: boolean; role: string; text: string; segments?: BrainSegment[];
+  kind?: string; detail?: string; images?: BrainMessageImage[];
+  /** Display metadata only. Legacy rows omit duration; every stored row may expose its timestamp. */
+  createdAt?: string; durationMs?: number;
+}
 
 /** The mode a turn runs in: `build` (the default), `plan` (planning only, tools clamped) or `workflow`.
  *  Part of the wire contract because a surface stamps it per send AND reads it back off the daemon: the

@@ -44,6 +44,8 @@ export interface BrainSessionRow {
 }
 export interface BrainMessageRow {
   id: string; session_id: string; parent_id: string | null; role: string; content: string; created_at: string;
+  /** Display-only whole-turn wall time, present on the settled run's last assistant row. */
+  turn_duration_ms?: number | null;
 }
 /** One persisted tool-result clearing latch entry (brain_tool_result_spills): everything needed to
  *  re-send a cleared occurrence's placeholder byte-identically after a respawn. `placeholder` is that
@@ -72,6 +74,8 @@ export interface BrainRunMessage {
   role: string;
   content?: unknown;
   reusePreprojectedUser?: boolean;
+  /** Display metadata for the last assistant row only; never serialized into `content`. */
+  turnDurationMs?: number;
 }
 export interface BrainSearchHit {
   sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string;
@@ -211,8 +215,8 @@ export class BrainStore {
         spill_ns: mintSpillNamespace(newId),
       });
       this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending)
-         SELECT lower(hex(randomblob(16))), @new_id, NULL, role, content, created_at, pending
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, pending, turn_duration_ms)
+         SELECT lower(hex(randomblob(16))), @new_id, NULL, role, content, created_at, pending, turn_duration_ms
            FROM brain_messages WHERE session_id = @source_id ORDER BY rowid ASC`
       ).run({ new_id: newId, source_id: sourceId });
     })();
@@ -365,15 +369,22 @@ export class BrainStore {
     return this.usage.descendantUsage(sessionId);
   }
 
-  appendMessage(input: { id: string; sessionId: string; parentId: string | null; role: string; content: unknown }): BrainMessageRow {
+  appendMessage(input: { id: string; sessionId: string; parentId: string | null; role: string; content: unknown; turnDurationMs?: number }): BrainMessageRow {
     this.db.prepare(
-      `INSERT INTO brain_messages (id, session_id, parent_id, role, content)
-       VALUES (@id, @session_id, @parent_id, @role, @content)`
+      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, turn_duration_ms)
+       VALUES (@id, @session_id, @parent_id, @role, @content, @turn_duration_ms)`
     ).run({
       id: input.id, session_id: input.sessionId, parent_id: input.parentId,
-      role: input.role, content: JSON.stringify(input.content),
+      role: input.role, content: JSON.stringify(input.content), turn_duration_ms: input.turnDurationMs ?? null,
     });
     return this.db.prepare('SELECT * FROM brain_messages WHERE id = ?').get(input.id) as BrainMessageRow;
+  }
+
+  /** Finalize display-only timing after PI's canonical `agent_settled`. This updates only the side column:
+   *  `content` (the provider-visible message bytes) and its usage-rollup update trigger are untouched. */
+  setTurnDuration(messageId: string, sessionId: string, durationMs: number): void {
+    this.db.prepare('UPDATE brain_messages SET turn_duration_ms = ? WHERE id = ? AND session_id = ?')
+      .run(Math.max(0, Math.round(durationMs)), messageId, sessionId);
   }
 
   /** Seed one brand-new conversation with imported platform transcript rows. The empty-session check and
@@ -532,7 +543,7 @@ export class BrainStore {
       const userCount = messages.filter((message) => message.reusePreprojectedUser).length;
       if (userCount === 0) return false;
       const rows = this.db.prepare(
-        'SELECT id, session_id, parent_id, role, content, created_at FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
+        'SELECT id, session_id, parent_id, role, content, created_at, turn_duration_ms FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
       ).all(sessionId) as BrainMessageRow[];
       // The pre-projected users must still be the transcript's trailing user rows — the same turn
       // boundary `newestTurnStart` (../brain/messageView.js) cuts on, seen from the tail. Anything that
@@ -560,14 +571,15 @@ export class BrainStore {
           role: message.role,
           content: JSON.stringify(message.content),
           created_at: now,
+          turn_duration_ms: message.turnDurationMs ?? null,
         });
       }
       if (nextUser !== users.length) return false;
 
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(sessionId);
       const insert = this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at)
-         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at)`
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, turn_duration_ms)
+         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @turn_duration_ms)`
       );
       for (const row of ordered) insert.run(row);
       return true;
@@ -1106,7 +1118,7 @@ export class BrainStore {
   compactSessionMessages(sessionId: string, summary: { id: string; role: string; content: unknown }, keepLastN: number): void {
     this.db.transaction(() => {
       const rows = this.db.prepare(
-        'SELECT id, parent_id, role, content, created_at FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
+        'SELECT id, parent_id, role, content, created_at, turn_duration_ms FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
       ).all(sessionId) as BrainMessageRow[];
       const keep = keepLastN <= 0 ? [] : rows.slice(Math.max(0, rows.length - keepLastN));
       // Fold the token/cost usage of the rows about to be deleted onto the divider (under `$.usageRollup`)
@@ -1135,15 +1147,15 @@ export class BrainStore {
         : summary.content;
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(sessionId);
       const insert = this.db.prepare(
-        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at)
-         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at)`
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, created_at, turn_duration_ms)
+         VALUES (@id, @session_id, @parent_id, @role, @content, @created_at, @turn_duration_ms)`
       );
       // Summary first → it gets the lowest rowid of the fresh batch. Pin its display/accounting timestamp
       // to the oldest kept row while rowid remains the authoritative transcript order.
       const summaryTs = keep[0]?.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19);
-      insert.run({ id: summary.id, session_id: sessionId, parent_id: null, role: summary.role, content: JSON.stringify(summaryContent), created_at: summaryTs });
+      insert.run({ id: summary.id, session_id: sessionId, parent_id: null, role: summary.role, content: JSON.stringify(summaryContent), created_at: summaryTs, turn_duration_ms: null });
       for (const r of keep) {
-        insert.run({ id: r.id, session_id: sessionId, parent_id: r.parent_id, role: r.role, content: r.content, created_at: r.created_at });
+        insert.run({ id: r.id, session_id: sessionId, parent_id: r.parent_id, role: r.role, content: r.content, created_at: r.created_at, turn_duration_ms: r.turn_duration_ms ?? null });
       }
       // Markers annotate turns, so they die with the turns they annotate. Both tables stamp `datetime('now')`,
       // so this compares chronologically; `<` keeps any marker sharing the oldest kept row's second. Without

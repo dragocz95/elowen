@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3 } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -24,7 +24,7 @@ import { PlanDecisionModal } from './PlanDecisionModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { useBrainChat } from './BrainChatProvider';
-import { formatTokens, formatCost, formatDuration } from '../../lib/format';
+import { formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
@@ -432,6 +432,22 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
   );
 }
 
+function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen' }> }) {
+  const { locale, t } = useTranslation();
+  if (!turn.createdAt && (turn.role !== 'elowen' || turn.durationMs == null)) return null;
+  return (
+    <div className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
+      {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
+      {turn.role === 'elowen' && turn.durationMs != null ? (
+        <span className="inline-flex items-center gap-1" title={t.brainChat.turnDuration}>
+          <Clock3 size={10} aria-hidden />
+          {formatDuration(turn.durationMs)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
   const { t } = useTranslation();
   const { agentName } = useBrand();
@@ -462,6 +478,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
         <div className="min-w-0">
           {showRole ? <div className={`mb-0.5 text-xs font-semibold ${you ? 'text-accent' : 'text-text-muted'}`}>{you ? t.chat.roleYou : interpolate(t.chat.roleElowen, { agentName })}</div> : null}
           <div className="flex min-w-0 flex-col">{body}</div>
+          <MessageMeta turn={turn} />
         </div>
       </div>
     );
@@ -469,13 +486,16 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
 
   if (you) {
     return (
-      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
-        {turn.role === 'you' ? turn.text : null}
-        {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
+      <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
+        <div className="whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+          {turn.role === 'you' ? turn.text : null}
+          {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
+        </div>
+        <MessageMeta turn={turn} />
       </div>
     );
   }
-  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start">{body}</div>;
+  return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start">{body}<MessageMeta turn={turn} /></div>;
 }
 
 /** Header switch for showing the model's reasoning in the transcript. Rendered as a pressed-state icon

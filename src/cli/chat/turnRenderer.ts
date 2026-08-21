@@ -10,6 +10,7 @@ import { color, modalRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
 import { activeKeymap } from './keys.js';
 import { composingLabel, type ComposeLocale } from './composeLabels.js';
+import { settledTurnMeta } from './composeLines.js';
 
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
@@ -300,6 +301,7 @@ export class TurnRenderer {
       const pulse = Math.floor(options.spinnerFrame / 2) % 2 === 0 ? color.dim : color.faint;
       add(`${TOOL_INDENT}${color.warning(spin)} ${pulse(truncateToWidth(label, Math.max(12, width - 10), '…'))}`);
     } else if (!hasText && turn.streaming) add(`  ${color.faint('…')}`);
+    if (!turn.streaming && turn.durationMs != null) add(`  ${settledTurnMeta(turn.durationMs)}`);
     addBlank();
     return rows;
   }

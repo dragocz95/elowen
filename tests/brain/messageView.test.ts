@@ -58,6 +58,19 @@ describe('shapeBrainMessages: compaction divider', () => {
   });
 });
 
+describe('shapeBrainMessages: display metadata', () => {
+  it('surfaces timestamps and optional settled turn duration without requiring it on legacy rows', () => {
+    const views = shapeBrainMessages([
+      { role: 'user', content: JSON.stringify({ role: 'user', content: 'question' }), created_at: '2026-08-21 14:00:00' },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'answer' }] }), created_at: '2026-08-21 14:01:23', turn_duration_ms: 83_000 },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'legacy' }] }), created_at: '2026-08-20 10:00:00' },
+    ]);
+    expect(views[0]).toMatchObject({ role: 'user', createdAt: '2026-08-21 14:00:00' });
+    expect(views[1]).toMatchObject({ role: 'assistant', createdAt: '2026-08-21 14:01:23', durationMs: 83_000 });
+    expect(views[2]).not.toHaveProperty('durationMs');
+  });
+});
+
 describe('shapeBrainMessages: platform envelopes', () => {
   it('hides history, unwraps live messages and leaves lookalike user JSON visible', () => {
     const history = JSON.stringify({

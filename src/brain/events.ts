@@ -90,7 +90,7 @@ export type BrainEvent =
    *  `maxSteps` is the configured ceiling (0 = unlimited). `usage` snapshots context at step boundaries
    *  so clients don't wait until the final idle event to refresh context fill. Synthetic — counted
    *  daemon-side, not a raw PI event. */
-  | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage }
+  | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage; turnStartedAt?: number }
   /** The active conversation changed server-side mid-send: an idle conversation rolled over into a
    *  fresh session (see SESSION_IDLE_ROLLOVER_MS) and the triggering message runs there. Carries the
    *  NEW session id. Synthetic, like `ask`/`step` — emitted by send(), not derived from a PI event.
@@ -147,6 +147,7 @@ export type BrainEvent =
       text: string;
       /** Store row replaced by this ordered live marker in snapshots. */
       durableId?: string;
+      createdAt?: string;
       /** Attachments kept on disk for this turn. The sender's bubble draws them right away and the reload
        *  path rebuilds the identical thing from the store, so a refresh changes nothing on screen. */
       images?: BrainMessageImage[];
@@ -169,7 +170,7 @@ export type BrainEvent =
    * including the initial active row before the long kickoff turn settles. `null` means the goal was
    * cleared. Clients should replace their current goal state wholesale and may otherwise ignore it. */
   | { type: 'goal'; goal: BrainGoalState | null }
-  | { type: 'idle'; usage?: BrainUsage; model?: string }
+  | { type: 'idle'; usage?: BrainUsage; model?: string; durationMs?: number; completedAt?: string }
   | { type: 'error'; message: string };
 
 /** The payload a delegating plugin pushes through `ctx.subagentEmitter()` — everything of the
@@ -384,7 +385,14 @@ function progressTail(partial: unknown): string {
 /** Translate a PI session event into the stable BrainEvent contract. Defensive: unknown event types
  *  are dropped. `now` is injectable so the `tool_progress` throttle is deterministic in tests. */
 export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): BrainEvent | null {
-  if (e.type === 'agent_end') return { type: 'idle' };
+  if (e.type === 'agent_end') {
+    const timed = e as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string };
+    return {
+      type: 'idle',
+      ...(timed.turnDurationMs != null ? { durationMs: timed.turnDurationMs } : {}),
+      ...(timed.turnCompletedAt ? { completedAt: timed.turnCompletedAt } : {}),
+    };
+  }
   const anyE = e as {
     type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown } }; isError?: boolean;
     toolCallId?: string; partialResult?: unknown;

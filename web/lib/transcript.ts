@@ -40,11 +40,11 @@ export type TranscriptEvent =
   /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
    *  a 'you' turn. `durableId` is the store row id, kept on the turn so a later `discard_user` can find it.
    *  The `queue` snapshot event (PI steering queue) is handled outside this fold. */
-  | { type: 'user'; text: string; durableId?: string; images?: BrainMessageImage[] }
+  | { type: 'user'; text: string; durableId?: string; createdAt?: string; images?: BrainMessageImage[] }
   /** The daemon discarded a just-sent user turn (Esc/Stop before any output): remove the matching 'you'
    *  bubble by `durableId`. Its `text` is restored to the composer by the provider, which owns input state. */
   | { type: 'discard_user'; durableId: string; text: string }
-  | { type: 'idle' }
+  | { type: 'idle'; durationMs?: number; completedAt?: string }
   | { type: 'error'; message: string };
 
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
@@ -154,8 +154,8 @@ function imageFromRef(ref: string): BrainMessageImage {
  *  absent on turns synthesized live by `reduce` (a streaming reply, a steered user message). It is a
  *  STABLE React key (so a lazy-load prepend never remounts the live tail) and the identity `prependHistory`
  *  dedupes on — never a text fingerprint. */
-type YouTurn = { role: 'you'; text: string; id?: string; images?: BrainMessageImage[] };
-type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean };
+type YouTurn = { role: 'you'; text: string; id?: string; images?: BrainMessageImage[]; createdAt?: string };
+type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean; createdAt?: string; durationMs?: number };
 /** A context-compaction boundary: everything before it was summarized away server-side, so the dock
  *  renders a subtle "context compacted" divider in its place, followed by the kept tail. */
 type DividerTurn = { role: 'divider'; id?: string };
@@ -190,7 +190,11 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
     if (m.role === 'user') {
       // An attachment-only message has no text left once the daemon drops the `[📎 …]` marker for a client
       // that draws the thumbnails, so the images alone are enough to keep the bubble.
-      if (m.text.trim() || m.images?.length) turns.push({ role: 'you', text: m.text, id: m.id, ...(m.images?.length ? { images: m.images } : {}) });
+      if (m.text.trim() || m.images?.length) turns.push({
+        role: 'you', text: m.text, id: m.id,
+        ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+        ...(m.images?.length ? { images: m.images } : {}),
+      });
       continue;
     }
     const segments: Segment[] = [];
@@ -209,6 +213,8 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
     if (segments.length > 0) turns.push({
       role: 'elowen', segments, streaming: false, id: m.id,
       ...(m.synthetic ? { synthetic: true } : {}),
+      ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+      ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
     });
   }
   return { turns, thinking: false };
@@ -388,6 +394,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
           role: 'you',
           text: e.text,
           ...(e.durableId ? { id: e.durableId } : {}),
+          ...(e.createdAt ? { createdAt: e.createdAt } : {}),
           // Same references the reload path will serve, so the bubble does not change on refresh.
           ...(e.images?.length ? { images: e.images } : {}),
         }],
@@ -407,7 +414,11 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
     }
     case 'idle': {
       const last = turns[turns.length - 1];
-      if (last && last.role === 'elowen') turns[turns.length - 1] = { ...last, streaming: false };
+      if (last && last.role === 'elowen') turns[turns.length - 1] = {
+        ...last, streaming: false,
+        ...(e.completedAt ? { createdAt: e.completedAt } : {}),
+        ...(e.durationMs != null ? { durationMs: e.durationMs } : {}),
+      };
       return { turns, thinking: false, notice: undefined };
     }
     case 'error': {

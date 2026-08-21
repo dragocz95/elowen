@@ -168,7 +168,7 @@ describe('spawn event reducer (characterization)', () => {
       type: 'agent_end', willRetry: true,
       messages: [{ role: 'assistant', stopReason: 'error', errorMessage: '429 rate limit', content: [], usage: {} }],
     });
-    expect(events).toEqual([{ type: 'step', step: 1, maxSteps: 0, usage: expect.anything() }]);
+    expect(events).toEqual([{ type: 'step', step: 1, maxSteps: 0, usage: expect.anything(), turnStartedAt: expect.any(Number) }]);
 
     d.emit({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, errorMessage: '429 rate limit' });
     d.emit({ type: 'auto_retry_end', success: true });

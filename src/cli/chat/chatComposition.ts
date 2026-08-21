@@ -607,7 +607,8 @@ export function createChatComposition(
     const animateThinking = rt.transcript.thinking || !!rt.childView?.transcript.thinking;
     animations.updateThinking(animateThinking);
     animations.updateGoal(rt.goal?.status === 'active' && !animateThinking);
-    currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
+    const activityStartedAt = rt.childView?.transcript.activityStartedAt ?? rt.transcript.activityStartedAt ?? thinkStart;
+    currentRunSeconds = activityStartedAt ? Math.max(0, Math.round((Date.now() - activityStartedAt) / 1000)) : 0;
     // A tool-call authoring window only earns the "writing tool call" hint once it has stalled past the
     // threshold — the live thinking timer already re-renders four times a second, so no dedicated timer is
     // needed for the gate to flip. The window is shared with the child lane, like the thinking clock above.

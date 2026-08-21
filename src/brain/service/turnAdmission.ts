@@ -75,6 +75,7 @@ export class TurnAdmission {
       type: 'user',
       text: this.displayText(),
       durableId,
+      createdAt: new Date().toISOString(),
       ...(this.stored.length ? { images: toMessageImages(this.stored) } : {}),
     });
     this.echoed = true;

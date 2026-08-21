@@ -6,7 +6,7 @@ import {
   escalationPress, INTERRUPT_CONFIRM_MS, interruptPress, noticeAction, resolveInterruptConfirmMs,
 } from '../../../src/cli/chat/chatComposition.js';
 import {
-  bottomHintItems, modelMetaLine, quitHint, startScreenHintItems,
+  bottomHintItems, modelMetaLine, quitHint, settledTurnMeta, startScreenHintItems,
 } from '../../../src/cli/chat/composeLines.js';
 
 // The live footer/start screen render through `*Items` + `fitSegments`; these mirror the removed
@@ -350,10 +350,19 @@ describe('hint lines reflect the keymap', () => {
   });
 });
 
-describe('modelMetaLine', () => {
-  // The line carries ANSI colour; strip it so the assertions are about order, not styling.
-  const plain = (s: string) => s.replace(/\[[0-9;]*m/g, '').trim();
+// Chat metadata carries ANSI colour; strip it so assertions are about content, not styling.
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '').trim();
 
+describe('settledTurnMeta', () => {
+  it('uses compact Claude-Code-style boundaries', () => {
+    expect(plain(settledTurnMeta(400))).toBe('✻ Worked for 0s');
+    expect(plain(settledTurnMeta(8_000))).toBe('✻ Worked for 8s');
+    expect(plain(settledTurnMeta(83_000))).toBe('✻ Worked for 1m 23s');
+    expect(plain(settledTurnMeta(3_660_000))).toBe('✻ Worked for 1h 1m');
+  });
+});
+
+describe('modelMetaLine', () => {
   it('puts the activity chip directly after the mode label', () => {
     // The spinner is the one element that appears and disappears mid-turn. Next to the fixed-width mode
     // label it holds still; at the far end of the line it drifts with the model name's length.

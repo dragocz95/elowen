@@ -132,7 +132,7 @@ export function groupToolItems(items: ToolItem[]): ToolGroup[] {
 }
 
 type YouTurn = { role: 'you'; text: string; id?: string };
-export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean;
+export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; createdAt?: string; durationMs?: number;
   /** True while the model is writing a tool call whose marker has not yet rendered — a live-only hint set
    *  by `tool_authoring` and cleared by the first `tool` of the turn. Never persisted (history turns are
    *  never streaming). */
@@ -177,6 +177,8 @@ export interface HistoryMessage {
   /** Present only on a `role:'event'` row — the session-change marker's kind/detail. */
   kind?: string;
   detail?: string;
+  createdAt?: string;
+  durationMs?: number;
 }
 
 /** Parse the durable wire/storage transcript into render turns without adding runtime bookkeeping. */
@@ -212,7 +214,11 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
         else segments.push({ kind: 'tools', items: [item] });
       }
     }
-    if (segments.length > 0) turns.push({ role: 'elowen', segments, streaming: false });
+    if (segments.length > 0) turns.push({
+      role: 'elowen', segments, streaming: false,
+      ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+      ...(m.durationMs != null ? { durationMs: m.durationMs } : {}),
+    });
   }
   return turns;
 }

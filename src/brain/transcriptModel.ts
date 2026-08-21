@@ -39,6 +39,7 @@ export interface TranscriptRead {
   readonly turnCount: number;
   readonly thinking: boolean;
   readonly activity: 'agent' | 'compaction' | null;
+  readonly activityStartedAt: number | undefined;
   readonly notice: string | undefined;
   turnAt(index: number): ChatTurn | undefined;
   changesSince(revision: number): TranscriptChange;
@@ -83,6 +84,7 @@ export class TranscriptModel implements TranscriptRead {
   private readonly workflowIndices = new Map<string, number>();
   private lastAssistant = '';
   private thinkingState = false;
+  private activityStartedAtState: number | undefined;
   private compactionActive = false;
   private noticeState: string | undefined;
   private currentRevision = 0;
@@ -116,6 +118,7 @@ export class TranscriptModel implements TranscriptRead {
   get activity(): 'agent' | 'compaction' | null {
     return this.compactionActive ? 'compaction' : this.thinkingState ? 'agent' : null;
   }
+  get activityStartedAt(): number | undefined { return this.activityStartedAtState; }
   get notice(): string | undefined { return this.noticeState; }
 
   turnAt(index: number): ChatTurn | undefined { return this.visit(index); }
@@ -199,7 +202,9 @@ export class TranscriptModel implements TranscriptRead {
       case 'step':
         // A step is one model round-trip and therefore one durable assistant message. Settling the previous
         // streaming block here gives the live transcript the same granularity before and after reconnect,
-        // while the first step remains a no-op because it precedes any assistant content.
+        // while the first step remains a no-op because it precedes any assistant content. The first step also
+        // carries the projector's exact agent_start clock, so the watched timer and persisted result agree.
+        if (event.step === 1 && event.turnStartedAt != null) this.activityStartedAtState = event.turnStartedAt;
         return this.settleStreamingTail();
       case 'tool_authoring': {
         const { turn, index, fresh } = this.ensureAssistant();
@@ -247,6 +252,7 @@ export class TranscriptModel implements TranscriptRead {
         this.clearDerived();
         this.lastAssistant = '';
         this.thinkingState = false;
+        this.activityStartedAtState = undefined;
         this.compactionActive = false;
         this.noticeState = undefined;
         this.publish({ kind: 'reset' });
@@ -283,6 +289,7 @@ export class TranscriptModel implements TranscriptRead {
         this.userIds.delete(event.durableId);
         this.lastAssistant = '';
         this.thinkingState = false;
+        this.activityStartedAtState = undefined;
         this.publish({ kind: 'reset' });
         return true;
       }
@@ -310,8 +317,13 @@ export class TranscriptModel implements TranscriptRead {
       case 'idle': {
         const index = this.turns.length - 1;
         const last = index >= 0 ? this.visit(index) : undefined;
-        if (last?.role === 'elowen') this.turns[index] = { ...last, streaming: false, composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined };
+        if (last?.role === 'elowen') this.turns[index] = {
+          ...last, streaming: false, composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined,
+          ...(event.durationMs != null ? { durationMs: event.durationMs } : {}),
+          ...(event.completedAt ? { createdAt: event.completedAt } : {}),
+        };
         this.thinkingState = false;
+        this.activityStartedAtState = undefined;
         if (!this.compactionActive) this.noticeState = undefined;
         this.publish(last?.role === 'elowen' ? { kind: 'turn', index } : { kind: 'none' });
         return true;
@@ -323,6 +335,7 @@ export class TranscriptModel implements TranscriptRead {
         turn.streaming = false;
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + text;
         this.thinkingState = false;
+        this.activityStartedAtState = undefined;
         this.compactionActive = false;
         this.noticeState = undefined;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });

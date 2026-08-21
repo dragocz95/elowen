@@ -41,8 +41,13 @@ function durableGeneratedMessage(message: unknown, role: string, provider: strin
   return { ...content, provider, providerIdentity: 'config' };
 }
 
-export function projectEvent(store: BrainStore, sessionId: string, event: AgentSessionEvent, imagesDir?: string): void {
-  if (event.type !== 'agent_end') return;
+export function projectEvent(store: BrainStore, sessionId: string, event: AgentSessionEvent, imagesDir?: string, turnDurationMs?: number | null): string | undefined {
+  if (event.type !== 'agent_end') return undefined;
+  // `null` explicitly means this agent_end is an intermediate retry/recovery prefix. Undefined keeps the
+  // backwards-compatible direct-call behavior of reading timing off the event itself.
+  const settledDurationMs = turnDurationMs === undefined
+    ? (event as AgentSessionEvent & { turnDurationMs?: number }).turnDurationMs
+    : turnDurationMs ?? undefined;
   const meter = currentMeter();
   const costDelta = meter?.reported ? meter.costUsd - meter.stampedUsd : 0;
   if (meter && costDelta > 0) meter.stampedUsd = meter.costUsd;
@@ -64,8 +69,12 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
     if (i === lastAssistant && costDelta > 0) stampCost(m, costDelta);
     // Only the STORED copy loses its image bytes. `m` itself stays untouched, because PI keeps handing
     // that same object to the provider and rewriting an already-sent message is what breaks a warm cache.
-    run.push({ id: randomUUID(), role, content: durableGeneratedMessage(m, role, provider, imagesDir) });
+    run.push({
+      id: randomUUID(), role, content: durableGeneratedMessage(m, role, provider, imagesDir),
+      ...(i === lastAssistant && settledDurationMs != null ? { turnDurationMs: settledDurationMs } : {}),
+    });
   });
+  const lastAssistantId = run.findLast((message) => message.role === 'assistant')?.id;
   const reordered = store.persistAgentRun(sessionId, run);
   if (!reordered) {
     for (const message of run) {
@@ -73,10 +82,14 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
       // Every non-user run entry was created above with a UUID and content. Keep this defensive guard
       // so a malformed PI event cannot turn into a half-written transcript.
       if (!message.id || message.content === undefined) continue;
-      store.appendMessage({ id: message.id, sessionId, parentId: message.parentId ?? null, role: message.role, content: message.content });
+      store.appendMessage({
+        id: message.id, sessionId, parentId: message.parentId ?? null, role: message.role, content: message.content,
+        ...(message.turnDurationMs != null ? { turnDurationMs: message.turnDurationMs } : {}),
+      });
     }
   }
   store.touchSession(sessionId);
+  return lastAssistantId;
 }
 
 /** Mirror ONE message PI just finished, the moment it finishes it. Everything a turn produces used to
@@ -206,6 +219,10 @@ export function createSessionPersistenceProjector(
   let deferredOverflow: AgentSessionEvent | null = null;
   let agentRunOpen = false;
   let pendingRunCompaction = false;
+  // Whole agent-run wall clock (provider steps + tool execution + retries). It is attached to the raw event
+  // for later subscribers and persisted in a DB column, never added to PI's message object or `content`.
+  let turnStartedAt = 0;
+  let lastTurnAssistantId: string | undefined;
   // Wall-clock start of the in-flight assistant generation (its `message_start`). Stamped onto the
   // finished message as `durationMs` at `message_end`, so usage stats can report a REAL output
   // tokens/sec: per-step generation time excludes tool execution, which happens BETWEEN steps.
@@ -218,6 +235,8 @@ export function createSessionPersistenceProjector(
   return (event): void => {
     if ((event as { type?: string }).type === 'agent_start') {
       agentRunOpen = true;
+      if (turnStartedAt === 0) turnStartedAt = Date.now();
+      (event as AgentSessionEvent & { turnStartedAt?: number }).turnStartedAt = turnStartedAt;
       return;
     }
     if (event.type === 'message_start') {
@@ -239,6 +258,12 @@ export function createSessionPersistenceProjector(
     }
     if (event.type === 'agent_end') {
       agentRunOpen = false;
+      const completedAt = Date.now();
+      const turnDurationMs = turnStartedAt > 0 ? Math.max(0, completedAt - turnStartedAt) : undefined;
+      Object.assign(event as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string }, {
+        ...(turnDurationMs != null ? { turnDurationMs } : {}),
+        turnCompletedAt: new Date(completedAt).toISOString(),
+      });
       const assistants = event.messages.filter((message) => (message as { role?: string }).role === 'assistant');
       const last = assistants.at(-1);
       if (last && isErroredContextOverflow(last, contextWindow)) {
@@ -248,7 +273,8 @@ export function createSessionPersistenceProjector(
       deferredOverflow = null;
       // Generic retry errors remain in PI's SessionManager branch even when removed from live agent
       // state. Persist them too so a later compaction can align the same clean row sequence.
-      projectEvent(store, sessionId, event, imagesDir);
+      const persistedDuration = (event as AgentSessionEvent & { willRetry?: boolean }).willRetry === true ? null : turnDurationMs;
+      lastTurnAssistantId = projectEvent(store, sessionId, event, imagesDir, persistedDuration) ?? lastTurnAssistantId;
       // Read AFTER projectEvent, which is where the provider-reported cost is stamped onto the run's last
       // assistant message — summing before it would report every OpenRouter turn as costing nothing.
       if (onTurnSettled) onTurnSettled(settledTurnUsage(event.messages));
@@ -261,11 +287,20 @@ export function createSessionPersistenceProjector(
 
     if ((event as { type?: string }).type === 'agent_settled') {
       if (deferredOverflow) {
-        projectEvent(store, sessionId, deferredOverflow, imagesDir);
+        lastTurnAssistantId = projectEvent(store, sessionId, deferredOverflow, imagesDir) ?? lastTurnAssistantId;
         persistPendingRunCompaction();
       }
       deferredOverflow = null;
       agentRunOpen = false;
+      const completedAt = Date.now();
+      const turnDurationMs = turnStartedAt > 0 ? Math.max(0, completedAt - turnStartedAt) : undefined;
+      if (lastTurnAssistantId && turnDurationMs != null) store.setTurnDuration(lastTurnAssistantId, sessionId, turnDurationMs);
+      Object.assign(event as AgentSessionEvent & { turnDurationMs?: number; turnCompletedAt?: string }, {
+        ...(turnDurationMs != null ? { turnDurationMs } : {}),
+        turnCompletedAt: new Date(completedAt).toISOString(),
+      });
+      turnStartedAt = 0;
+      lastTurnAssistantId = undefined;
       return;
     }
 
@@ -282,7 +317,7 @@ export function createSessionPersistenceProjector(
       // assistant/tool prefix. Persist that clean prefix now, then apply the NEW overflow summary over
       // the aligned store. PI's transient overflow assistant is omitted from both operations.
       if (overflow && compact.willRetry === true && deferredOverflow && pendingRunCompaction && !agentRunOpen) {
-        projectEvent(store, sessionId, withoutTrailingOverflowAssistant(deferredOverflow, contextWindow), imagesDir);
+        lastTurnAssistantId = projectEvent(store, sessionId, withoutTrailingOverflowAssistant(deferredOverflow, contextWindow), imagesDir, null) ?? lastTurnAssistantId;
         pendingRunCompaction = false;
         persistCompaction(store, session, sessionId, { omitTrailingOverflowError: true });
         deferredOverflow = null;
@@ -299,7 +334,7 @@ export function createSessionPersistenceProjector(
       return;
     }
     if (overflow && deferredOverflow) {
-      projectEvent(store, sessionId, deferredOverflow, imagesDir);
+      lastTurnAssistantId = projectEvent(store, sessionId, deferredOverflow, imagesDir) ?? lastTurnAssistantId;
       deferredOverflow = null;
       persistPendingRunCompaction();
     }

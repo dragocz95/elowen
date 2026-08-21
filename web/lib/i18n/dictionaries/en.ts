@@ -1603,6 +1603,7 @@ export const en = {
     hideThoughts: 'Hide reasoning',
     toolRunning: 'Running',
     reasoningLabel: 'Reasoning',
+    turnDuration: 'Run time',
   },
   chat: {
     historyTitle: 'Conversations',

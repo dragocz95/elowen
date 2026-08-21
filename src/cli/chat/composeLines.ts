@@ -28,6 +28,12 @@ export function statusline(
   return parts.join('  ·  ');
 }
 
+/** Claude-Code-shaped settled turn metadata: one quiet icon + compact duration, composed here rather
+ * than in the renderer so live and settled labels share the chat shell's existing metadata language. */
+export function settledTurnMeta(durationMs: number): string {
+  return `${color.faint('✻')} ${color.faint(`Worked for ${formatDuration(durationMs / 1000)}`)}`;
+}
+
 /** One stable composer activity chip. Compaction is named explicitly because the agent run may already
  * be idle while its summary request is still busy; ordinary generation keeps the compact spinner/time. */
 export function activityChip(activity: 'agent' | 'compaction' | null, seconds: number): string | undefined {

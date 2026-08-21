@@ -183,7 +183,10 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   role TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  pending INTEGER NOT NULL DEFAULT 0
+  pending INTEGER NOT NULL DEFAULT 0,
+  -- Whole visible agent run, stamped only on the run's last assistant row. Kept outside `content` so
+  -- display metadata can never change the message bytes replayed to a provider (prompt-cache invariant).
+  turn_duration_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
 

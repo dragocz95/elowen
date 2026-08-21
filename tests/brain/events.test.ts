@@ -19,6 +19,14 @@ describe('PI overflow recovery contract', () => {
   });
 });
 
+describe('turn timing events', () => {
+  it('carries projector timing metadata on the terminal idle event', () => {
+    expect(ev({
+      type: 'agent_end', messages: [], turnDurationMs: 83_000, turnCompletedAt: '2026-08-21T14:01:23.000Z',
+    })).toEqual({ type: 'idle', durationMs: 83_000, completedAt: '2026-08-21T14:01:23.000Z' });
+  });
+});
+
 describe('retry notices (reconnect line above the input)', () => {
   it('renders a compact reconnect counter and digs the human message out of a provider JSON blob', () => {
     const raw = '429 {"error":{"message":"Rate limit exceeded: free-models-per-day","code":429},"user_id":"abc"}';
