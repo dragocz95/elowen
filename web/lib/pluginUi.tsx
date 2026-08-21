@@ -53,6 +53,7 @@ import { TaskUsageBadge } from '../components/ui/TaskUsageBadge';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../components/ui/SelectionSummary';
+import { DetailBlock } from '../components/ui/DetailBlock';
 import { BrainModelField } from '../components/ui/BrainModelField';
 import { useToast } from '../components/ui/Toast';
 import { TerminalModal } from '../components/terminal/TerminalModal';
@@ -311,8 +312,10 @@ export function ensurePluginUiRuntime(): void {
       // `layout: 'orbital'` in its manifest wraps itself in this, exactly as the core sections do.
       ConstellationScope,
       AutoSaveStatus, ProviderLogo,
-      // The moved settings-deck editors' primitives (cronjob's jobs editor and friends).
-      ManageSelectionModal, SelectionSummary, BrainModelField, MarkdownAssetEditor,
+      // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
+      // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin
+      // showing a managed selection reads as the same thing rather than an approximation of it.
+      ManageSelectionModal, SelectionSummary, DetailBlock, BrainModelField, MarkdownAssetEditor,
       // The work-extraction surface (F4): the task/kanban/timeline/stats views compose these. They are
       // app chrome shared with the surfaces that stay (the dashboard renders task shapes too), which is
       // why they live here rather than inside the plugin bundle.

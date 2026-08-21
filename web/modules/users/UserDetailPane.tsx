@@ -12,7 +12,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
-import { HelpTip } from '../../components/ui/HelpTip';
+import { DetailBlock } from '../../components/ui/DetailBlock';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
@@ -235,19 +235,6 @@ function PluginGrantChips({ user }: { user: ElowenUser }) {
   );
 }
 
-/** A labeled block within the detail pane. `hint` renders as a hover "?" (HelpTip), not inline text. */
-function Block({ icon: Icon, title, hint, children }: { icon: typeof FolderGit2; title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-        <Icon size={13} aria-hidden />{title}
-        {hint ? <HelpTip align="left">{hint}</HelpTip> : null}
-      </span>
-      {children}
-    </section>
-  );
-}
-
 /** The detail for a selected user: an identity header carrying a compact overview strip (memories /
  *  sessions / top model) beside the name, then full-width admin access controls — projects, allowed
  *  models, and the effective tool set (whose plugin tools toggle on/off per user). */
@@ -274,10 +261,10 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
       </header>
 
       <div className="flex flex-col gap-5">
-        <Block icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></Block>
-        <Block icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></Block>
-        <Block icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></Block>
-        <Block icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills userId={user.id} /></Block>
+        <DetailBlock icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></DetailBlock>
+        <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></DetailBlock>
+        <DetailBlock icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></DetailBlock>
+        <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills userId={user.id} /></DetailBlock>
       </div>
     </div>
   );

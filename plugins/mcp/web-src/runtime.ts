@@ -59,6 +59,7 @@ interface McpRuntime {
     ConfirmDialog: AnyComponent;
     SelectionSummary: AnyComponent;
     ManageSelectionModal: AnyComponent;
+    DetailBlock: AnyComponent;
   };
   hooks: {
     usePluginStrings(plugin: string): Record<string, string>;

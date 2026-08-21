@@ -40,6 +40,7 @@
       "statusDisabled": "Disabled",
       "colStatus": "Status",
       "tools": "Tools",
+      "toolsHint": "Tools this server bridges into the assistant. The server itself provides them, so they cannot be edited here.",
       "toolsCount": "{n} tools",
       "viewTools": "View tools",
       "noTools": "No tools discovered",

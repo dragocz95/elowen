@@ -41,6 +41,7 @@
       "statusDisabled": "Zakázané",
       "colStatus": "Stav",
       "tools": "Nástroje",
+      "toolsHint": "Nástroje, ktoré tento server sprístupňuje asistentovi. Poskytuje ich samotný server, preto ich tu nemožno upravovať.",
       "toolsCount": "Počet nástrojov: {n}",
       "viewTools": "Zobraziť nástroje",
       "noTools": "Neboli nájdené žiadne nástroje",

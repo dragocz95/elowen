@@ -225,22 +225,30 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
 
       {/* The bridged tools are a read-only fact about the server, so they wear the app's managed-
           selection summary in its display-only mode: a count line with a few sample chips here, the
-          whole list behind the modal. A server with nothing bridged offers no modal to open onto. */}
+          whole list behind the modal. Presented exactly like the tool access on a user's detail —
+          same caption block, same framed summary — because it is the same kind of thing being read.
+          A server with nothing bridged still gets the caption, so the block does not vanish. */}
       {server ? (
-        server.tools.length === 0
-          ? <p className="text-xs text-text-muted">{s.noTools}</p>
-          : (
-            <C.SelectionSummary
-              variant="line"
-              readOnly
-              countText={s.toolsCount.replace('{n}', String(server.tools.length))}
-              samples={server.tools.slice(0, 3).map((tool) => ({ label: tool.title || tool.name }))}
-              moreCount={Math.max(0, server.tools.length - 3)}
-              onManage={onShowTools}
-              manageLabel={s.viewTools}
-              manageAriaLabel={`${s.viewTools}: ${server.name}`}
-            />
-          )
+        <C.DetailBlock icon={Wrench} title={s.tools} hint={s.toolsHint}>
+          {server.tools.length === 0
+            ? <p className="text-xs text-text-muted">{s.noTools}</p>
+            : (
+              <C.SelectionSummary
+                readOnly
+                countText={s.toolsCount.replace('{n}', String(server.tools.length))}
+                samples={server.tools.slice(0, 3).map((tool) => ({
+                  label: tool.title || tool.name,
+                  // Bridged tools carry no icon of their own, so they all wear the generic wrench the
+                  // user detail falls back to — the chips stay aligned with the ones there.
+                  icon: <Wrench size={12} className="inline" />,
+                }))}
+                moreCount={Math.max(0, server.tools.length - 3)}
+                onManage={onShowTools}
+                manageLabel={s.viewTools}
+                manageAriaLabel={`${s.viewTools}: ${server.name}`}
+              />
+            )}
+        </C.DetailBlock>
       ) : null}
 
       {error ? <p className="text-sm text-danger" role="alert">{error}</p> : null}
