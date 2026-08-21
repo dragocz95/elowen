@@ -1009,12 +1009,12 @@ describe('BrainStore', () => {
       });
     });
 
-    // Refusing to borrow leaves the rollup buckets unattributed, and on real history that is most of the
-    // spend: the same model then shows up TWICE, once resolved and once as `elowen:<model>`. The provider
-    // is recoverable without guessing, though — the live messages the bucket was summarized from are still
-    // in the same session. This reads that, so it is a lookup of what actually ran, not a fallback.
-    // Mutation: drop the `sm.provider` term and this returns the `elowen:shared-model` legacy bucket.
-    it('recovers a rollup bucket provider from the live rows of the same session and model', () => {
+    // The legacy reader can recover a rollup provider from the session's complete live history, and the
+    // explicit backfill does the same once over that complete history. The ready write-time projection has
+    // a different contract: a trigger attributes only fields present when THAT row is inserted. It must not
+    // scan brain_messages, and it cannot safely depend on provider-identifying rows that may arrive later,
+    // so a provider-less rollup stays in the explicit legacy bucket while the live row remains attributed.
+    it('keeps a newly projected rollup bucket unresolved instead of consulting live message history', () => {
       store.createSession({ id: 'brain-a', userId: 1, provider: 'session-provider', model: 'session-model' });
       store.appendMessage({
         id: 'm1', sessionId: 'brain-a', parentId: null, role: 'assistant',
@@ -1029,10 +1029,10 @@ describe('BrainStore', () => {
           usageRollup: [{ model: 'shared-model', at: Date.now(), totalTokens: 100 }],
         }));
 
-      const rows = store.usageByModel(1);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ id: 'row-provider/shared-model', provider: 'row-provider' });
-      expect(rows[0]!.usage.total).toBe(110);
+      expect(store.usageByModel(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'row-provider/shared-model', provider: 'row-provider', usage: expect.objectContaining({ total: 10 }) }),
+        expect.objectContaining({ id: 'elowen:shared-model', provider: null, usage: expect.objectContaining({ total: 100 }) }),
+      ]));
     });
 
     // The whole safety property of that lookup. A session that served ONE model through TWO providers
