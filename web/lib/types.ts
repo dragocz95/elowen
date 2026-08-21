@@ -416,8 +416,8 @@ export interface PluginConfigField {
   visibleWhen?: { key: string; equals: string | number | boolean };
 }
 
-/** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
-export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean; elowenUser?: string }
+/** One platform role policy: admission, platform-admin status, and room-specific instructions. */
+export interface RolePolicy { roleId: string; name: string; prompt: string; admin?: boolean }
 
 /** One external MCP server row in a plugin's `mcpServers` config (the MCP-bridge pattern). `transport`
  *  picks how to reach it: `stdio` launches a local process (`command` + `args`, `env` extra vars — the

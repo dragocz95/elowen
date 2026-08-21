@@ -279,15 +279,12 @@ function toolDeferralCandidates(tools: readonly ToolDefinition[], spec: SessionT
   });
 }
 
-/** Compose the tool set for one session. THE security invariant lives here: `trusted-channel`,
- *  The owner's Elowen* control-plane tools are PLUGIN tools now (work: tasks, agents: missions and
- *  sessions), so the boundary this composition used to enforce structurally — a shared channel sender,
- *  even one holding the admin role, must never reach the owner's full-scope API token — lives in those
- *  plugins as an execute-time `currentAccess().owner` gate. Plugin tools are always composed but
- *  wrapped with the per-turn access gate (see gateToolAccess) — the effective allow/deny is decided at
- *  execute time from the acting identity's ToolPolicy, one shared mechanism for every session kind.
- *  The WHOLE composed set (built-ins included) then passes through the granular permission gate
- *  (gatePermissions) — the single choke point the per-user allow/ask/deny rules act on. */
+/** Compose the tool set for one session. Plugin tools are present on every session kind and are wrapped
+ *  with the per-turn access gate (see gateToolAccess); the acting account's ToolPolicy decides their
+ *  allow/deny state at execution time. Owner-only plugin capabilities must additionally gate on
+ *  `currentIdentity().owner` themselves, because a trusted shared-room administrator is not the instance
+ *  operator. The WHOLE composed set (built-ins included) then passes through the granular permission gate
+ *  (gatePermissions), the single choke point the per-user allow/ask/deny rules act on. */
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
   const interactive = spec.kind !== 'task-worker';

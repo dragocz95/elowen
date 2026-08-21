@@ -1097,7 +1097,8 @@ export class PluginRegistry {
       //
       // A SHARED room resolves them too, deliberately: the credential belongs to the verified sender of
       // THIS turn, so a colleague asking in a channel reaches their own integration and never anybody
-      // else's. What must not follow an account into a room is AUTHORITY, which `platforms.ts` withholds.
+      // else's. The linked account's normal project/tool policy follows them into that room; capabilities
+      // that belong only to the instance operator must gate on `currentIdentity().owner` at execution time.
       // A delegated child has no `elowenUserId` at all, so it lands on null here without a special case.
       userConfig: () => {
         const userId = currentIdentity()?.elowenUserId;

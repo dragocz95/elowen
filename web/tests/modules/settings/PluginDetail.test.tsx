@@ -5,7 +5,7 @@ import { ThemeProvider } from '../../../lib/useTheme';
 import { EffectsProvider } from '../../../lib/useEffects';
 import { SettingsDocument } from '../../../modules/settings/SettingsSurface';
 import { en } from '../../../lib/i18n/dictionaries/en';
-import type { PluginDetail as PluginDetailData, PluginConfigField, PluginInfo } from '../../../lib/types';
+import type { PluginDetail as PluginDetailData, PluginConfigField } from '../../../lib/types';
 
 const usePluginDetail = vi.hoisted(() => vi.fn());
 const usePluginContributions = vi.hoisted(() => vi.fn());
@@ -33,11 +33,6 @@ const detail = (configSchema: PluginConfigField[], config: Record<string, unknow
   source: 'user', enabled: true, configurable: true,
   configSchema, config, secretsSet,
   data: { path: '', exists: false, files: 0, bytes: 0 },
-});
-
-const plugin = (over: Partial<PluginInfo>): PluginInfo => ({
-  name: 'discord', version: '1.0.0', description: '', provides: {},
-  source: 'bundled', enabled: true, configurable: false, ...over,
 });
 
 const renderDetail = () => {
@@ -168,19 +163,21 @@ describe('PluginDetail workspace', () => {
   it('retains local editor disclosure state across workspace tab switches', async () => {
     usePluginDetail.mockReturnValue({ data: detail(
       [{ key: 'rolePolicies', label: 'Roles', type: 'rolePolicies' }],
-      { rolePolicies: [{ roleId: '1', name: 'dev', projectIds: [], prompt: '', tools: [] }] },
+      { rolePolicies: [{ roleId: '1', name: 'dev', prompt: 'Keep it short.', projectIds: [7], tools: ['Bash'], elowenUser: 'legacy' }] },
     ), isLoading: false });
     renderDetail();
 
     fireEvent.click(screen.getByText('dev'));
-    const allTools = screen.getByText(en.pluginCfg.roleToolsAll);
-    await waitFor(() => expect(allTools).toBeVisible());
+    const prompt = screen.getByDisplayValue('Keep it short.');
+    await waitFor(() => expect(prompt).toBeVisible());
+    expect(screen.queryByText('legacy')).toBeNull();
+    expect(screen.queryByText('Bash')).toBeNull();
 
     fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities }));
-    await waitFor(() => expect(allTools).not.toBeVisible());
+    await waitFor(() => expect(prompt).not.toBeVisible());
 
     fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior }));
-    await waitFor(() => expect(allTools).toBeVisible());
+    await waitFor(() => expect(prompt).toBeVisible());
   });
 });
 
@@ -301,78 +298,3 @@ describe('PluginDetail config density', () => {
   });
 });
 
-describe('PluginDetail per-role tool allowlist', () => {
-  const schema: PluginConfigField[] = [{ key: 'rolePolicies', label: 'Roles', type: 'rolePolicies' }];
-  const role = (tools: string[]) => [{ roleId: '1', name: 'dev', projectIds: [], prompt: '', tools }];
-
-  beforeEach(() => {
-    usePlugins.mockReturnValue({
-      data: [
-        plugin({ name: 'discord', hasIcon: true, provides: { tools: ['discord_send'] } }), // ships a brand icon
-        plugin({ name: 'web', provides: { tools: ['web_search'] } }), // no icon → lucide fallback glyph
-        plugin({ name: 'off', enabled: false, provides: { tools: ['off_tool'] } }), // disabled → not in the vocabulary
-      ],
-    });
-  });
-
-  const expandRole = () => fireEvent.click(screen.getByText('dev'));
-
-  it('empty selection keeps the "all tools" semantics in summary and modal footer', () => {
-    usePluginDetail.mockReturnValue({ data: detail(schema, { rolePolicies: role([]) }), isLoading: false });
-    renderDetail();
-    expandRole();
-    expect(screen.getByText(en.pluginCfg.roleToolsAll)).toBeInTheDocument(); // summary
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
-    // Footer shows the empty-selection hint too (summary + footer).
-    expect(screen.getAllByText(en.pluginCfg.roleToolsAll)).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: 'off_tool' })).toBeNull();
-  });
-
-  it('groups the vocabulary by owning plugin and saving updates the summary', async () => {
-    usePluginDetail.mockReturnValue({ data: detail(schema, { rolePolicies: role([]) }), isLoading: false });
-    renderDetail();
-    expandRole();
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
-    const discordHeading = screen.getByRole('heading', { name: 'discord' });
-    expect(discordHeading).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'web' })).toBeInTheDocument();
-    // Every group and tool row uses the same monochrome Lucide icon system, including plugins that
-    // ship an external brand asset.
-    expect(discordHeading.querySelector('svg')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'web' }).querySelector('svg')).toBeTruthy();
-    const toolRow = screen.getByRole('button', { name: 'discord_send' });
-    expect(toolRow.querySelector('svg')).toBeTruthy();
-    fireEvent.click(toolRow);
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.saveChanges }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: en.managePicker.saveChanges })).toBeNull());
-    expect(screen.getByText('1 tools selected')).toBeInTheDocument();
-    expect(screen.getByText('discord_send')).toBeInTheDocument(); // sample chip
-  });
-
-  it('a saved tool no longer contributed by any enabled plugin stays visible as a pinned row', () => {
-    usePluginDetail.mockReturnValue({ data: detail(schema, { rolePolicies: role(['ghost_tool']) }), isLoading: false });
-    renderDetail();
-    expandRole();
-    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
-    expect(screen.getByRole('button', { name: 'ghost_tool' })).toHaveAttribute('aria-pressed', 'true');
-  });
-
-  it('maps a platform role to an Elowen account without dropping the rest of the policy', () => {
-    useUsers.mockReturnValue({ data: [
-      { id: 7, username: 'amy', name: 'Amy' },
-      { id: 8, username: 'bob', name: 'Bob' },
-    ] });
-    usePluginDetail.mockReturnValue({ data: detail(schema, {
-      rolePolicies: [{ ...role([])[0], elowenUser: 'amy' }],
-    }), isLoading: false });
-    renderDetail();
-    expandRole();
-
-    const account = screen.getByRole('combobox', { name: en.pluginCfg.roleAccount });
-    expect(account).toHaveTextContent('Amy · @amy');
-    fireEvent.click(account);
-    fireEvent.click(screen.getByRole('option', { name: 'Bob · @bob' }));
-    expect(account).toHaveTextContent('Bob · @bob');
-    expect(screen.getByText(en.pluginCfg.roleToolsAll)).toBeInTheDocument();
-  });
-});

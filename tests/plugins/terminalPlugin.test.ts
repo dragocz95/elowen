@@ -116,26 +116,25 @@ describe('terminal plugin', () => {
       ['KillProcess', { id: 'x' }],
     ] as const) {
       const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), { identity: scoped });
-      expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
+      expect(res.content[0].text).toMatch(/available only to the instance operator/);
     }
   });
 
-  it('lets a linked account with an admin role run a command, without making them the operator', async () => {
+  it('refuses a linked shared-room admin who is not the instance operator', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo linkedadmin' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toContain('linkedadmin');
-    expect(res.content[0].text).toContain('[exit 0]');
+    expect(res.content[0].text).toMatch(/available only to the instance operator/);
   });
 
   it('refuses a linked account whose turn does not carry admin scope', async () => {
     // The other half of the pair: having an Elowen account says who you are, not that anyone trusted
     // you with the machine.
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo nope' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
+    expect(res.content[0].text).toMatch(/available only to the instance operator/);
   });
 
   it('denies terminal tools when there is no identity (outside a turn)', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo x' }));
-    expect(res.content[0].text).toMatch(/need an admin role AND a linked Elowen account/);
+    expect(res.content[0].text).toMatch(/available only to the instance operator/);
   });
 });
 

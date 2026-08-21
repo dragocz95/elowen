@@ -1,6 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
 import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
@@ -11,17 +11,14 @@ import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
-import { PluginIcon } from './PluginIcon';
 import { Toggle } from '../../components/ui/Toggle';
-import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
-import { SelectMenu } from '../../components/ui/SelectMenu';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations } from '../../lib/queries';
+import { useConfig, useBrainModels, useNotificationDestinations } from '../../lib/queries';
 import type { NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
@@ -41,47 +38,6 @@ function sectionIcon(field?: PluginConfigField): LucideIcon {
   if (!field) return SlidersHorizontal;
   const key = `${field.key} ${field.label}`.toLowerCase();
   return SECTION_ICONS.find((s) => s.test.test(key))?.icon ?? SlidersHorizontal;
-}
-
-/** Per-role tool allowlist: a compact summary (n selected / all) + a manage modal grouped by the
- *  owning plugin. Empty selection keeps the "no restriction — all tools allowed" semantics. A saved
- *  tool no longer contributed by any enabled plugin stays visible as a pinned row. */
-function RoleToolsField({ tools, selected, onChange }: { tools: { name: string; plugin: string; pluginHasIcon: boolean }[]; selected: string[]; onChange: (v: string[]) => void }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const known = new Set(tools.map((x) => x.name));
-  const items: ManageSelectionItem[] = [
-    ...selected.filter((x) => !known.has(x)).map((x) => ({ id: x, label: x, group: '', icon: <Wrench size={12} aria-hidden /> })),
-    ...tools.map((x) => ({ id: x.name, label: x.name, group: x.plugin, icon: <PluginIcon name={x.plugin} hasIcon={x.pluginHasIcon} size={14} /> })),
-  ];
-  // The owning plugin's brand logo on each group header/chip (matching the users-admin look).
-  const groupIcons = Object.fromEntries(
-    [...new Map(tools.map((x) => [x.plugin, x.pluginHasIcon])).entries()]
-      .map(([plugin, hasIcon]) => [plugin, <PluginIcon key={plugin} name={plugin} hasIcon={hasIcon} size={14} />]),
-  );
-  const countLabel = (n: number) => t.managePicker.toolsSelected.replace('{n}', String(n));
-  return (
-    <>
-      <SelectionSummary
-        countText={selected.length === 0 ? t.pluginCfg.roleToolsAll : countLabel(selected.length)}
-        samples={selected.slice(0, 3).map((x) => ({ label: x }))}
-        moreCount={Math.max(0, selected.length - 3)}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-      />
-      <ManageSelectionModal
-        title={t.pluginCfg.roleTools}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set(selected)}
-        onSave={(next) => onChange([...next])}
-        emptySelectionHint={t.pluginCfg.roleToolsAll}
-        countLabel={countLabel}
-        groupIcons={groupIcons}
-      />
-    </>
-  );
 }
 
 /** Generic `multiSelect` config field: a compact summary + a multi-select modal over the manifest's
@@ -154,41 +110,16 @@ function MultiSelectField({ label, options, value, onChange }: { label: string; 
   );
 }
 
-/** Structured editor for a `rolePolicies` field: each row maps a platform role (e.g. a Discord role id)
- *  to a name, the Elowen projects it may touch, and an extra prompt injected for that role — a per-role
- *  instructions pattern, kept in the plugin's own config. Rows collapse to a compact header so a
- *  long list stays scannable; a freshly added row starts expanded. */
+/** Structured editor for a `rolePolicies` field. A role decides admission, the room prompt, and
+ *  whether the sender is a platform administrator. Account identity and project/tool permissions come
+ *  from the linked Elowen account, so legacy fields stored by older versions are deliberately ignored. */
 function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange: (v: RolePolicy[]) => void }) {
   const { t } = useTranslation();
-  const { data: projects } = useProjects();
-  const { data: plugins } = usePlugins();
-  const { data: users } = useUsers();
-  // Every tool an enabled plugin contributes, tagged with its owner — the vocabulary (and the
-  // modal grouping) for per-role tool allowlists. First owner wins on a name clash.
-  const owners = new Map<string, string>();
-  const pluginHasIcon = new Map<string, boolean>();
-  for (const p of plugins ?? []) {
-    if (!p.enabled) continue;
-    pluginHasIcon.set(p.name, p.hasIcon ?? false);
-    for (const tool of p.provides.tools ?? []) if (!owners.has(tool)) owners.set(tool, p.name);
-  }
-  const allTools = [...owners.entries()].sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, plugin]) => ({ name, plugin, pluginHasIcon: pluginHasIcon.get(plugin) ?? false }));
-  const accountOptions = (current: string) => [
-    { value: '', label: t.pluginCfg.roleAccountNone },
-    ...(current && !(users ?? []).some((user) => user.username === current)
-      ? [{ value: current, label: current }]
-      : []),
-    ...(users ?? []).map((user) => ({
-      value: user.username,
-      label: user.name ? `${user.name} · @${user.username}` : `@${user.username}`,
-    })),
-  ];
   const patch = (i: number, p: Partial<RolePolicy>) => onChange(value.map((r, j) => (j === i ? { ...r, ...p } : r)));
   // Which rows are expanded (by index). Removing a row shifts the indices above it down by one.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggleRow = (i: number) => setExpanded((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
-  const addRole = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { roleId: '', name: '', projectIds: [], prompt: '' }]); };
+  const addRole = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { roleId: '', name: '', prompt: '' }]); };
   const removeRole = (i: number) => {
     onChange(value.filter((_, j) => j !== i));
     setExpanded((prev) => { const n = new Set<number>(); for (const idx of prev) { if (idx < i) n.add(idx); else if (idx > i) n.add(idx - 1); } return n; });
@@ -205,12 +136,7 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                 {open ? <ChevronDown size={15} className="shrink-0 text-text-muted" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-text-muted" aria-hidden />}
                 <span className="truncate text-sm font-medium text-text">{r.name || t.pluginCfg.roleNew}</span>
                 {r.roleId ? <span className="truncate font-mono text-[11px] text-text-muted">{r.roleId}</span> : null}
-                <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                  {r.admin === true ? <Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge> : null}
-                  {r.elowenUser ? <Badge>{`@${r.elowenUser}`}</Badge> : null}
-                  <Badge>{t.pluginCfg.roleProjectsCount.replace('{n}', String(r.projectIds.length))}</Badge>
-                  <Badge>{(r.tools ?? []).length === 0 ? t.pluginCfg.roleToolsAllBadge : t.pluginCfg.roleToolsCount.replace('{n}', String((r.tools ?? []).length))}</Badge>
-                </span>
+                {r.admin === true ? <span className="ml-auto shrink-0"><Badge tone="accent">{t.pluginCfg.roleAdminBadge}</Badge></span> : null}
               </button>
               <Button variant="ghost" icon={Trash2} aria-label={t.pluginCfg.removeRole} onClick={() => removeRole(i)} />
             </div>
@@ -226,14 +152,6 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                     </Field>
                   </div>
                 </div>
-                <Field label={t.pluginCfg.roleAccount} hint={t.pluginCfg.roleAccountHint}>
-                  <SelectMenu
-                    value={r.elowenUser ?? ''}
-                    onChange={(elowenUser) => patch(i, { elowenUser: elowenUser || undefined })}
-                    options={accountOptions(r.elowenUser ?? '')}
-                    label={t.pluginCfg.roleAccount}
-                  />
-                </Field>
                 <label className="flex cursor-pointer items-center gap-2.5">
                   <Toggle checked={r.admin === true} onChange={(v) => patch(i, { admin: v })} label={t.pluginCfg.roleAdmin} />
                   <span className="flex flex-col">
@@ -241,26 +159,6 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                     <span className="text-tiny text-text-muted">{t.pluginCfg.roleAdminHint}</span>
                   </span>
                 </label>
-                <Field label={t.pluginCfg.roleProjects} hint={t.help.roleProjects}>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2">
-                    {(projects ?? []).map((p) => {
-                      const on = r.projectIds.includes(p.id);
-                      return (
-                        <label key={p.id} className="flex cursor-pointer items-center gap-2 text-sm text-text">
-                          <span onClick={() => patch(i, { projectIds: on ? r.projectIds.filter((id) => id !== p.id) : [...r.projectIds, p.id] })}>
-                            <Checkbox checked={on} />
-                          </span>
-                          {p.slug}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </Field>
-                {/* A div-based label wrapper: `Field` renders a <label>, which would implicitly
-                    re-label the summary's Manage button with the whole field text. */}
-                <LabeledField label={t.pluginCfg.roleTools}>
-                  <RoleToolsField tools={allTools} selected={r.tools ?? []} onChange={(tools) => patch(i, { tools })} />
-                </LabeledField>
                 <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
                   <textarea value={r.prompt} onChange={(e) => patch(i, { prompt: e.target.value })} rows={3} className={textareaClass} />
                 </Field>

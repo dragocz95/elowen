@@ -72,16 +72,14 @@ describe('terminal plugin background processes', () => {
     await scoped('brain-child', async () => kill.execute('kc', { id: childId }, undefined as never, undefined as never));
   });
 
-  it('Bash is refused for a role-scoped identity with no Elowen account behind it', async () => {
+  it('Bash is refused for a shared-room administrator who is not the operator', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
     const run = reg.tools.find((t) => t.name === 'Bash')!;
-    // Admin scope but no linked account — a role policy may carry `admin: true` for a whole channel, so
-    // this shape must never reach a shell.
     const CHANNEL: TurnIdentity = { platform: 'discord', userId: 'disc-9', admin: true, owner: false };
     await runWithPolicy(ADMIN, async () => {
       const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
-      expect(out).toMatch(/need an admin role AND a linked Elowen account/);
+      expect(out).toMatch(/available only to the instance operator/);
     }, { identity: CHANNEL });
   });
 });
