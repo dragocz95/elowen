@@ -41,6 +41,40 @@ describe('buildBrainCore Microsoft Teams identity resolution', () => {
     } finally { core.db.close(); }
   });
 
+  // Signing in writes an external-identity binding and NOTHING else. If the inbound resolver does not read
+  // that binding, the only bridge left is the e-mail match — so a person whose profile mail differs from the
+  // roster UPN stays unlinked after a successful sign-in and runs with no account at all.
+  it('resolves the OAuth binding a sign-in created, even when no e-mail evidence matches', async () => {
+    const { core, bob, resolve } = await setup();
+    try {
+      core.users.setProfile(bob.id, { email: 'bob@example.com' });
+      const subject = '11111111-2222-3333-4444-555555555555';
+      const linked = core.users.linkExternalIdentity({
+        provider: 'msteams', tenantId: 'tenant-1', subjectId: subject,
+        preferredUsername: 'bob.novak', name: 'Bob Novák', email: 'bob.novak@contoso.onmicrosoft.com',
+      });
+      // The account's stored address then diverges from the UPN the roster reports — a rename, or simply an
+      // `…onmicrosoft.com` UPN against a real mail address. From here the e-mail match can never succeed, so
+      // the binding is the ONLY thing that can still resolve this person.
+      core.users.setProfile(linked.user.id, { email: 'bob.novak@contoso.cz' });
+      expect(core.users.userByUniqueEmail('bob.novak@contoso.onmicrosoft.com')).toBeNull();
+
+      expect(resolve('msteams', subject.toUpperCase(), 'bob.novak@contoso.onmicrosoft.com'))
+        .toMatchObject({ id: linked.user.id });
+      expect(resolve('msteams', subject, undefined)).toMatchObject({ id: linked.user.id });
+    } finally { core.db.close(); }
+  });
+
+  it('refuses a subject two tenants both claim, rather than picking one', async () => {
+    const { core, owner, bob, resolve } = await setup();
+    try {
+      const subject = '99999999-8888-7777-6666-555555555555';
+      core.users.linkExistingExternalIdentity({ provider: 'msteams', tenantId: 'tenant-a', subjectId: subject, userId: owner.id });
+      core.users.linkExistingExternalIdentity({ provider: 'msteams', tenantId: 'tenant-b', subjectId: subject, userId: bob.id });
+      expect(resolve('msteams', subject, undefined)).toBeNull();
+    } finally { core.db.close(); }
+  });
+
   it('bootstraps a unique normalized verified UPN once, then the explicit link survives e-mail changes', async () => {
     const { core, owner, bob, resolve } = await setup();
     try {

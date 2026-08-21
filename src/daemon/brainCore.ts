@@ -685,14 +685,23 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             const u = id != null ? users.get(id) : undefined;
             return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
           };
-          // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins. Only when
-          // none exists may the adapter's platform-verified UPN bootstrap a unique profile-email match; the
-          // first success is persisted immediately so later e-mail edits can never move this identity.
+          // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins, then the
+          // OAuth binding this subject already established by signing in. Only when neither exists may the
+          // adapter's platform-verified UPN bootstrap a unique profile-email match; the first success is
+          // persisted immediately so later e-mail edits can never move this identity.
+          //
+          // The OAuth binding is the SAME row `linkOrProvision` writes when someone signs in, and reading it
+          // here is what makes sign-in actually connect an account to their channel messages. Without it the
+          // only bridge is the e-mail match, which silently misses whenever the profile mail differs from
+          // the roster UPN — common with `…onmicrosoft.com` accounts and after a name change — leaving a
+          // signed-in person unlinked and running with no projects at all.
           if (platform === 'msteams') {
             const value = platformUserId.trim().toLowerCase();
             if (!value) return null;
             const explicit = linkedUser(userSettings.userIdBySetting('msteamsUserId', value));
             if (explicit) return explicit;
+            const bound = users.externalIdentityBySubject('msteams', value);
+            if (bound) return { id: bound.id, name: bound.name || bound.username, username: bound.username, admin: !!bound.is_admin };
             const email = verifiedEmail?.trim().toLowerCase() ?? '';
             if (!email) return null;
             const matched = users.userByUniqueEmail(email);

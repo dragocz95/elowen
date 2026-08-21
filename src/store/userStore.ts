@@ -153,6 +153,20 @@ export class UserStore {
     return this.describeExternalIdentity(provider, tenantId, subjectId)?.user ?? null;
   }
 
+  /** The same binding WITHOUT a tenant, for the inbound path: a platform reports the sender's immutable
+   *  subject id but not which tenant issued it. Entra object ids are globally unique, so a subject held by
+   *  more than one row means two tenants collided on it — identity is an auth boundary, so that resolves to
+   *  nothing rather than picking one. `LIMIT 2` is what makes "exactly one" provable in a single read. */
+  externalIdentityBySubject(provider: string, subjectId: string): User | null {
+    const rows = this.db.prepare(`SELECT u.*
+      FROM user_external_identities e
+      JOIN users u ON u.id = e.user_id
+      WHERE e.provider = @provider AND e.subject_id = @subjectId
+      LIMIT 2`)
+      .all({ provider: externalKey(provider, 'provider'), subjectId: externalKey(subjectId, 'subject') }) as Row[];
+    return rows.length === 1 ? mask(rows[0]!) : null;
+  }
+
   /** Atomically bind an external subject to an existing account, or explicitly reassign it with replace. */
   linkExistingExternalIdentity(input: ExternalIdentityBindingInput): ExternalIdentityView {
     const provider = externalKey(input.provider, 'provider', /^[a-z][a-z0-9._-]{0,63}$/);
