@@ -400,6 +400,38 @@ describe('subagent plugin', () => {
     expect(control.activeCount()).toBe(0);
   });
 
+  it('refuses a failed durable Ctrl+B detach and leaves the foreground run intact', async () => {
+    const dataRoot = freshDataRoot();
+    const warnings: string[] = [];
+    const reg = await loadPlugins({
+      dirs: [pluginsDir], enabled: ['subagent'], dataRoot,
+      logger: { ...log, warn: (message: string) => warnings.push(message) },
+    });
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
+    const control = reg.controls.get('subagent') as {
+      detachForeground(input: { sessionId: string; principal: string }): { detached: number };
+    };
+    let resolveChild!: (reply: string) => void;
+    const child = new Promise<string>((resolve) => { resolveChild = resolve; });
+    reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-detach-failed' });
+      return child;
+    });
+    const foreground = runWithPolicy(ADMIN, () =>
+      delegate.execute('call-detach-failed', { task: 'inspect slowly' }, undefined as never, undefined as never), {
+      sessionId: 'brain-parent-detach-failed', identity: OWNER,
+      emitSubagent: () => { throw new Error('database is locked'); },
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(control.detachForeground(
+      { sessionId: 'brain-parent-detach-failed', principal: 'elowen:1' },
+    )).toEqual({ detached: 0 });
+    resolveChild('foreground result survived');
+    expect(asText(await foreground)).toBe('foreground result survived');
+    expect(warnings).toContainEqual(expect.stringContaining('subagent progress fan-out failed: database is locked'));
+  });
+
   it('detaches a foreground continuation and delivers its eventual reply without stopping the child', async () => {
     const dataRoot = freshDataRoot();
     let resolveContinuation!: (result: { status: 'reply'; reply: string }) => void;
@@ -591,7 +623,7 @@ describe('subagent plugin', () => {
     }
   });
 
-  it('contains a failed progress fan-out so a detached background job still settles', async () => {
+  it('reports a failed durable start immediately instead of returning an orphan job id', async () => {
     const dataRoot = freshDataRoot();
     const warnings: string[] = [];
     const reg = await loadPlugins({
@@ -599,23 +631,19 @@ describe('subagent plugin', () => {
       logger: { ...log, warn: (message: string) => warnings.push(message) },
     });
     const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
-    const result = reg.tools.find((t) => t.name === 'DelegateResult')!;
     reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
       onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-fanout' });
       return 'child completed';
     });
 
-    const started = await runWithPolicy(ADMIN, async () =>
+    const response = await runWithPolicy(ADMIN, async () =>
       asText(await delegate.execute('call-fanout', { task: 'finish safely', background: true }, undefined as never, undefined as never)), {
       sessionId: 'brain-parent-fanout', identity: OWNER,
-      emitSubagent: () => { throw new Error('parent fan-out unavailable'); },
+      emitSubagent: () => { throw new Error('database is locked'); },
     });
-    const jobId = /Started background delegation (dlg-[\w-]+)\./.exec(started)?.[1];
-    expect(jobId).toBeTruthy();
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const scoped = <T>(fn: () => T): T => runWithPolicy(ADMIN, fn, { sessionId: 'brain-parent-fanout', identity: OWNER });
-    expect(await scoped(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('child completed');
-    expect(warnings).toContainEqual(expect.stringContaining('subagent progress fan-out failed'));
+    expect(response).toBe('Error: failed to persist the delegation start: database is locked');
+    expect(response).not.toMatch(/Started background delegation dlg-/);
+    expect(warnings).toContainEqual(expect.stringContaining('subagent progress fan-out failed: database is locked'));
   });
 });

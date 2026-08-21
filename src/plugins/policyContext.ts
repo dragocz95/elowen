@@ -14,7 +14,7 @@ export type CardEmitter = (card: unknown) => void;
 
 /** Push live sub-agent progress to the current conversation's clients as `subagent` BrainEvents.
  *  Bound per-turn by BrainService (see `ctx.subagentEmitter`). */
-export type SubagentEmitter = (update: SubagentUpdate) => void;
+export type SubagentEmitter = (update: SubagentUpdate) => boolean | void;
 export type SubagentCompletionEmitter = (completion: SubagentCompletion) => void;
 
 /** Push a live sub-agent WORKFLOW snapshot to the current conversation's clients as `workflow`

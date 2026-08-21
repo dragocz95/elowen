@@ -546,12 +546,13 @@ export class ChannelSessionService {
           const prevStatus = visible.status === 'done' || visible.status === 'error'
             ? this.d.store.getSubagentRuns(ch.sessionId).find((run) => run.sessionId === visible.sessionId)?.status
             : undefined;
-          if (!this.d.store.upsertSubagentRun(ch.sessionId, visible, u.status)) return;
+          if (!this.d.store.upsertSubagentRun(ch.sessionId, visible, u.status)) return false;
           // 'progress' source, mirroring turnContextBuilder.emitSubagent: the continuation tool's terminal
           // row stays visibly running under the actual call claim, but releases its own progress claim.
           this.d.registry.setChildRunning(ch.sessionId, visible.sessionId, u.status === 'running', 'progress');
           ch.replay.publish({ type: 'subagent', ...visible });
           recordSubagentFinishMarker(this.d.store, ch.sessionId, (event) => ch.replay.publish(event), prevStatus, visible);
+          return true;
         };
         const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
           ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, opts.ownerUserId, completion); }

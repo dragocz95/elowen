@@ -235,7 +235,7 @@ export class TurnContextBuilder {
       const card = this.d.cards.set(live.sessionId, raw);
       if (card) live.replay.publish({ type: 'card', card });
     };
-    const emitSubagent = (update: SubagentUpdate): void => {
+    const emitSubagent = (update: SubagentUpdate): boolean => {
       // The plugin's update has no reasoning effort — read the child's OWN effective level from its live
       // session so the drilled-in child status bar shows it (a delegated child may differ from the parent).
       const childBrain = this.d.sessions.get(update.sessionId);
@@ -253,7 +253,7 @@ export class TurnContextBuilder {
       const prevStatus = visible.status === 'done' || visible.status === 'error'
         ? this.d.store.getSubagentRuns(live.sessionId).find((run) => run.sessionId === visible.sessionId)?.status
         : undefined;
-      if (!this.d.store.upsertSubagentRun(live.sessionId, visible, update.status)) return;
+      if (!this.d.store.upsertSubagentRun(live.sessionId, visible, update.status)) return false;
       // As the 'progress' source: this emitter tracks the plugin's progress ROW, not the child's actual
       // run (that claim belongs to begin/endDelegatedCall). A DelegateContinue that steered into a
       // running child settles its OWN progress claim, while `visible` stays running under the actual
@@ -261,6 +261,7 @@ export class TurnContextBuilder {
       this.d.sessions.setChildRunning(live.sessionId, visible.sessionId, update.status === 'running', 'progress');
       live.replay.publish({ type: 'subagent', ...visible });
       recordSubagentFinishMarker(this.d.store, live.sessionId, (event) => live.replay.publish(event), prevStatus, visible);
+      return true;
     };
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {
       this.d.completeSubagent?.(live.sessionId, userId, completion);

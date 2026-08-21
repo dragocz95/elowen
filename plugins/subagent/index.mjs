@@ -256,9 +256,17 @@ export function register(ctx) {
           || job.originSessionId !== sessionId || job.originPrincipal !== principal) continue;
         job.background = true;
         job.autoDeliver = true;
+        const persisted = pushJob(job, 'running');
+        if (!persisted.ok) {
+          // Detach is optional; the foreground run is already valid and durably tracked. If switching that
+          // row to background fails, leave the original call alone instead of returning a fake handle or
+          // aborting work whose terminal update still needs to settle the existing running row.
+          job.background = false;
+          job.autoDeliver = false;
+          continue;
+        }
         job.resolveDetached?.();
         job.resolveDetached = undefined;
-        pushJob(job, 'running');
         detached += 1;
       }
       return { detached };
@@ -266,9 +274,13 @@ export function register(ctx) {
   });
 
   const pushJob = (job, status) => {
-    if (!job.emit || !job.sessionId) return;
+    // Some non-host/unit surfaces intentionally have no progress sink at all; they never promised durable
+    // listing. A PRESENT sink returning false or throwing is different: the host attempted persistence and
+    // rejected it, so a background handle would be an orphan.
+    if (!job.emit) return { ok: true };
+    if (!job.sessionId) return { ok: false, error: 'the sub-agent session id is unavailable' };
     try {
-      job.emit({
+      const accepted = job.emit({
         id: job.toolCallId,
         sessionId: job.sessionId,
         status,
@@ -285,8 +297,12 @@ export function register(ctx) {
         background: job.background,
         autoDeliver: job.autoDeliver,
       });
+      if (accepted === false) throw new Error('the host rejected the durable sub-agent progress row');
+      return { ok: true };
     } catch (e) {
-      ctx.logger.warn(`subagent progress fan-out failed: ${errorText(e)}`);
+      const error = errorText(e);
+      ctx.logger.warn(`subagent progress fan-out failed: ${error}`);
+      return { ok: false, error };
     }
   };
 
@@ -489,6 +505,14 @@ export function register(ctx) {
       const jobId = `dlg-${randomUUID()}`;
       const channelId = `sub-${jobId}`;
       const startedAt = Date.now();
+      let resolveAdmission;
+      const admission = new Promise((resolve) => { resolveAdmission = resolve; });
+      let admissionSettled = false;
+      const settleAdmission = (outcome) => {
+        if (admissionSettled) return;
+        admissionSettled = true;
+        resolveAdmission(outcome);
+      };
       const state = {
         id: jobId,
         toolCallId: id,
@@ -515,7 +539,18 @@ export function register(ctx) {
         result: undefined,
         error: undefined,
       };
-      const push = (status) => pushJob(state, status);
+      const push = (status) => {
+        if (state.persistenceFailed) return false;
+        const persisted = pushJob(state, status);
+        if (!admissionSettled && state.sessionId) {
+          if (!persisted.ok) {
+            state.persistenceFailed = true;
+            state.completionDelivered = true;
+          }
+          settleAdmission(persisted);
+        }
+        return persisted.ok;
+      };
       // Distil the child's live stream into progress updates: which tool it runs, how many so far, its
       // token spend. Low-frequency events only (tool starts + step boundaries) — text deltas are ignored.
       let lastActivityAt = Date.now();
@@ -602,6 +637,9 @@ export function register(ctx) {
         // long the child then took to unwind.
         state.finishedAt ??= Date.now();
         push(state.status);
+        if (!admissionSettled) {
+          settleAdmission({ ok: false, error: state.error || 'the sub-agent ended before its durable run row was created' });
+        }
         deliverCompletion(state);
         return state.status === 'done' ? state.result : `Error: ${state.error}`;
       };
@@ -649,7 +687,24 @@ export function register(ctx) {
         }
         state.finishedAt = Date.now();
         push('error');
+        if (!admissionSettled) settleAdmission({ ok: false, error: state.error });
       });
+      // A background handle is a promise that durable bookkeeping exists, not merely that runChild was
+      // scheduled in memory. Wait only for the child's early `session` event and its first running upsert.
+      // If that write exhausts SQLite's bounded retry, stop the untracked child and return the lock failure
+      // at this call site instead of handing the parent a job id that DelegateList can never resolve.
+      const admitted = await admission;
+      if (!admitted.ok) {
+        state.status = 'error';
+        state.error = clip(`failed to persist the delegation start: ${admitted.error}`, MAX_STORED_RESULT_CHARS);
+        state.finishedAt = Date.now();
+        state.settledExternally = true;
+        state.persistenceFailed = true;
+        state.completionDelivered = true;
+        jobs.delete(jobId);
+        await Promise.resolve(ctx.stopSubagent?.(state.sessionId)).catch(() => {});
+        return ok(`Error: ${state.error}`);
+      }
       return ok(
         `Started background delegation ${jobId}.\n`
           + (state.autoDeliver
