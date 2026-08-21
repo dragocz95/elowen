@@ -447,7 +447,7 @@ describe('msteams identity + role mapping', () => {
     await adapter.onActivity(activity());
     expect(seen).toHaveLength(1);
     expect(seen[0]!.src).toMatchObject({ platform: 'msteams', userId: 'aad-1', userName: 'Alex Rivera', channelId: 'a:conv1#0', direct: true });
-    expect(seen[0]!.text).toBe('Alex Rivera wrote: hello there');
+    expect(seen[0]!.text).toBe('hello there');
     const reply = calls.find((c) => c.kind === 'reply');
     expect(reply?.args[3]).toMatchObject({ type: 'message', textFormat: 'markdown', text: 'brain says hi' });
     expect(calls.filter((c) => c.kind.endsWith('Reaction'))).toEqual([
@@ -648,7 +648,7 @@ describe('msteams identity + role mapping', () => {
       text: '<at>Elowen</at> do the thing',
       entities: [{ type: 'mention', mentioned: { id: '28:bot', name: 'Elowen' } }],
     }));
-    expect(seen).toEqual(['Alex Rivera wrote: do the thing']);
+    expect(seen).toEqual(['do the thing']);
   });
 
   it('keeps the team group id a channel activity carries, and does not lose it later', async () => {
@@ -681,7 +681,7 @@ describe('msteams identity + role mapping', () => {
       recipient: { id: '28:bot', name: 'Elowen', isTargeted: true },
       text: 'status', entities: [],
     }));
-    expect(seen).toEqual(['Alex Rivera wrote: status']);
+    expect(seen).toEqual(['status']);
     const reply = calls.find((c) => c.kind === 'reply');
     // The private-reply flag on the call, the recipient Teams demands, and the entity that tells the
     // client which prompt is being answered.
@@ -1158,7 +1158,7 @@ describe('msteams mentions + runtime footer', () => {
         { type: 'mention', text: '<at>Dana Novák</at>', mentioned: { id: '29:dana', name: 'Dana Novák' } },
       ],
     }));
-    expect(seen).toEqual(['Alex Rivera wrote: ask @Dana Novák about it']);
+    expect(seen).toEqual(['ask @Dana Novák about it']);
   });
 
   it('rings a real member for both <@…> and a bare @name, and leaves a stranger as plain text', async () => {

@@ -3,6 +3,7 @@ import type { BrainStore } from '../store/brainStore.js';
 import type { PlatformHistory, PlatformHistoryMessage } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
+import type { PlatformSenderAttribution } from './identity.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
 import {
   delegatedToolPolicy,
@@ -52,6 +53,24 @@ type SeededSessionMessage = { id: string; role: 'user' | 'assistant'; content: {
 
 const boundedHistoryString = (value: unknown, max: number): string => String(value ?? '').trim().slice(0, max);
 
+type PlatformEnvelope = {
+  source: 'platform_history' | 'platform_message';
+  untrusted: true;
+  platform: string;
+  channelId: string;
+  messageId?: string;
+  author?: { id?: string; name?: string };
+  timestamp?: string;
+  text: string;
+  attachments?: { name?: string; mimeType?: string; kind: 'image' | 'file' | 'audio' | 'video' | 'unknown' }[];
+};
+
+/** One stable serializer for live platform turns and history backfill. Persist exactly what the model sees
+ *  so a rehydrated session never rewrites old attribution or invalidates an already-cached prefix. */
+export function serializePlatformEnvelope(envelope: PlatformEnvelope): string {
+  return JSON.stringify(envelope);
+}
+
 /** Convert adapter history into real transcript messages. Every body is a JSON envelope so provenance is
  *  explicit and arbitrary platform text cannot masquerade as a fresh unframed request. */
 function platformHistorySeed(history: PlatformHistory, platform: string, channelId: string): SeededSessionMessage[] {
@@ -69,7 +88,7 @@ function platformHistorySeed(history: PlatformHistory, platform: string, channel
       ...(boundedHistoryString(attachment.mimeType, 120) ? { mimeType: boundedHistoryString(attachment.mimeType, 120) } : {}),
       kind: attachment.kind ?? 'unknown',
     }));
-    const envelope = JSON.stringify({
+    const envelope = serializePlatformEnvelope({
       source: 'platform_history',
       untrusted: true,
       platform,
@@ -144,13 +163,12 @@ export interface ChannelSendOpts {
    *  session id is unchanged. */
   rebuildSession?: boolean;
   identity?: TurnIdentity;
-  /** Identity line spliced ABOVE an ordinary message's text (the `[Verified: …]` prefix from
-   *  identity.forPlatformTurn, or empty). Kept out of the raw `text` so the prompt-command gate can see the
-   *  UN-prefixed message: a plugin `/name` macro arrives RAW (adapters send it without their `[sender]`
-   *  prefix) and must keep starting with the slash for PI to expand it, whereas every ordinary message is
-   *  `[sender]`-prefixed by its adapter and gets this identity prefix applied here — byte-identical to the
-   *  previous `verifiedPrefix + text` concatenation. */
-  senderPrefix?: string;
+  /** Host-verified platform author. Shared-room turns serialize it with the clean text; direct chats and
+   *  automation omit the envelope entirely. */
+  sender?: PlatformSenderAttribution;
+  /** Explicit proof that the adapter recognized this as a plugin prompt-command. Never infer this from a
+   *  leading slash: ordinary shared-room users may legitimately type slash-leading text. */
+  promptCommand?: boolean;
   /** The Elowen account the sender is verified as (linked platform id). When set, that user's memory is
    *  recalled under their message and post-turn facts are saved to it — each gated by their own
    *  Account → Memory toggles. Unset (unlinked sender) → no memory at all (shared-space privacy). */
@@ -313,11 +331,16 @@ export class ChannelSessionService {
    *  assistant text. Serialized per channel: two rapid messages must not prompt() one PI session
    *  concurrently (and must not both spawn it). */
   async send(opts: ChannelSendOpts, text: string): Promise<string> {
-    // Splice the sender-identity prefix onto ordinary messages exactly as the caller used to
-    // (`verifiedPrefix + text`). A plugin prompt-command reaches us RAW — the only message that starts with
-    // a slash, because adapters `[sender]`-prefix everything else — so it is left untouched and keeps
-    // starting with the slash, letting the prompt-command gate below hand it to PI for native expansion.
-    if (!text.startsWith('/')) text = (opts.senderPrefix ?? '') + text;
+    const senderText = text;
+    const textWithAttachmentMarker = opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text;
+    // Prompt commands are adapter-recognized macros and stay raw for PI expansion. Every ordinary message
+    // in a validated shared room is serialized once here; this exact string goes to the model and SQLite.
+    const turnText = opts.identity?.conversation === 'shared' && opts.sender && !opts.promptCommand
+      ? serializePlatformEnvelope({
+          source: 'platform_message', untrusted: true, platform: opts.identity.platform,
+          channelId: opts.channelId, author: opts.sender, text: textWithAttachmentMarker,
+        })
+      : textWithAttachmentMarker;
     const sessionId = channelSessionId(opts.channelId);
     const parentSessionId = opts.parentSessionId;
     // Draining for shutdown: refuse a NEW ordinary channel turn so the drain converges. A delegated send
@@ -344,7 +367,7 @@ export class ChannelSessionService {
       delegatedCall = true;
     }
     try {
-    const steered = await this.trySteerIntoRunningTurn(opts, text, delegationAborted);
+    const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
     if (steered !== null) return steered;
     return await this.d.registry.withLock(sessionId, async () => {
       if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
@@ -369,7 +392,7 @@ export class ChannelSessionService {
       }
       // The post-turn curator must distill ONLY this sender's own words. Imported platform history is
       // seeded separately, so it can never land in THIS sender's private memory or conversation title.
-      const senderMessage = text;
+      const senderMessage = senderText;
       // A BRAND-NEW conversation may import what the platform said before the brain joined. Keep those
       // entries as individual transcript messages — never concatenate them into the live user's request.
       let seedMessages: SeededSessionMessage[] = [];
@@ -459,8 +482,9 @@ export class ChannelSessionService {
       // sink (which Discord message the reply edits into). Returns the assistant reply. A same-sender
       // follow-up sent mid-turn is steered into THIS running turn (see send()'s top), not a fresh turn.
       const runOne = async (turnText: string, senderMsg: string, turnImages: { data: string; mimeType: string }[] | undefined, turnOnEvent?: (e: BrainEvent) => void): Promise<string> => {
-        // Same image handling as owner chat: history keeps a marker, the pixels ride only the live prompt.
-        const displayText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
+        // The attachment marker was included before serialization, so the model and durable row receive the
+        // same parseable text while image bytes still ride only the live prompt.
+        const displayText = turnText;
         const durableId = opts.internalSystem ? undefined : projectUserTurn(this.d.store, sessionId, displayText);
         // A child transcript is an owner-facing chat surface, so its daemon stream is the one echo
         // authority just like owner chat. Ordinary Discord/WhatsApp messages remain platform-rendered
@@ -486,7 +510,7 @@ export class ChannelSessionService {
               : { projectId: null, categoryIds: new Set<number>() };
             const { memories } = await runWithPolicy(
               opts.policy,
-              () => memoryService.retrieve(writerUserId, turnText),
+              () => memoryService.retrieve(writerUserId, senderMsg),
               { memoryRecallScope: scope },
             );
             if (memories.length) {
@@ -566,13 +590,12 @@ export class ChannelSessionService {
           // is stamped onto the persisted assistant row by projectEvent, not lost as pi-ai's $0 estimate.
           const meter = newCostMeter();
           await runWithMeter(meter, () => runWithPolicy(opts.policy, async () => {
-            // A plugin prompt-command (`/name args`) rides RAW so PI expands its template natively — that
-            // only fires when the message starts with the slash, so it is sent alone (self-contained macro,
-            // no per-turn context). Everything else gets its ephemeral blocks placed around the user text.
+            // An adapter-recognized plugin prompt-command (`/name args`) rides RAW so PI expands its template
+            // natively. A leading slash alone proves nothing: ordinary user text remains a normal framed turn.
             let prompted = turnText;
             // Assigned by the drain below and called only after the prompt has reached the provider.
             let commitOrientation = (): void => {};
-            if (!isPromptCommand(turnText, ch.session)) {
+            if (!(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
               const turnContext = ch.turnContext();
               // Channel turns compose their prompt here rather than through TurnContextBuilder, so the
               // post-compaction re-orientation needs its own drain — wiring it only into the builder
@@ -634,7 +657,7 @@ export class ChannelSessionService {
 
       // A same-sender follow-up sent DURING this turn is steered into it (see send()'s top) — PI folds it in
       // between steps — so there is no post-turn flush: the running turn is the single place its words land.
-      return runOne(text, senderMessage, opts.images, opts.onEvent);
+      return runOne(turnText, senderMessage, opts.images, opts.onEvent);
     });
     } finally {
       if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
@@ -754,7 +777,7 @@ export class ChannelSessionService {
    *  — a shared channel keeps each sender isolated, so a different sender falls through to its own turn.
    *  Returns '' when it steered (nothing to run), or null when it fell through (no live turn / different
    *  sender) and send() must take the channel lock and run its own turn. */
-  private async trySteerIntoRunningTurn(opts: ChannelSendOpts, text: string, delegationAborted: () => boolean): Promise<string | null> {
+  private async trySteerIntoRunningTurn(opts: ChannelSendOpts, turnText: string, senderText: string, delegationAborted: () => boolean): Promise<string | null> {
     const streaming = this.d.registry.channelGet(opts.channelId);
     if (streaming?.session.isStreaming) {
       // A durable sub-agent/workflow result for a DELEGATED parent (BrainTurnRunner.sendCustomSystem →
@@ -768,7 +791,7 @@ export class ChannelSessionService {
       if (opts.internalSystem) {
         if (delegationAborted()) throw new Error('delegation aborted');
         steerCustomMessage(streaming.session, {
-          customType: opts.internalSystem.customType, content: text, display: false,
+          customType: opts.internalSystem.customType, content: turnText, display: false,
           details: { source: 'elowen', resultId: opts.internalSystem.resultId },
         });
         if (delegationAborted()) {
@@ -785,8 +808,8 @@ export class ChannelSessionService {
         // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
         // second check clears it again before rejecting; no late instruction survives the aborted tree.
         if (delegationAborted()) throw new Error('delegation aborted');
-        await enqueueMirrored(streaming, 'steer', text, undefined, {
-          persistText: text, displayText: text, sourceText: text, publish: true,
+        await enqueueMirrored(streaming, 'steer', turnText, undefined, {
+          persistText: turnText, displayText: senderText, sourceText: senderText, publish: true,
         });
         if (delegationAborted()) {
           streaming.session.clearQueue();
@@ -795,18 +818,17 @@ export class ChannelSessionService {
         }
         return '';
       }
-      // A platform (Discord) SAME-SENDER follow-up: steer it into the running turn. Its queue item carries
-      // the clean durable identity until PI actually delivers it; the spawner journals/persists that
-      // message_start without rebroadcasting it to the platform sink. Image bytes ride the same queue item.
+      // A platform (Discord) SAME-SENDER follow-up: the model and durable row receive the same envelope,
+      // while the platform UI event keeps the sender's clean words. Image bytes ride the same queue item.
       if (streaming.turnSender != null && streaming.turnSender === opts.identity?.userId) {
-        const persisted = opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text;
+        const displayText = opts.images?.length ? `${senderText}\n[📎 ${opts.images.length}× image]` : senderText;
         // Mirror the enqueue so the image bytes survive a positional queue-remove (PI's clearQueue drops them).
         await enqueueMirrored(
           streaming,
           'steer',
-          text,
+          turnText,
           opts.images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })),
-          { persistText: persisted, displayText: persisted, sourceText: text, publish: false },
+          { persistText: turnText, displayText, sourceText: senderText, publish: false },
         );
         return '';
       }
@@ -932,7 +954,7 @@ export class ChannelSessionService {
   }
 
   /** Shared-channel system-prompt fragment: names the room (and its topic) and pins the multi-user
-   *  etiquette — senders arrive `[name]`-prefixed and are usually NOT the instance owner, so the brain
+   *  etiquette — senders arrive in structured envelopes and are usually NOT the instance owner, so the brain
    *  must never address a stranger as the owner. Applied only when the channel session spawns via
    *  `promptAppend` → `extraAppend`; a later channel-name/topic change takes effect once the session
    *  respawns (LRU eviction or a /new reset). */

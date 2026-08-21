@@ -407,25 +407,29 @@ export function extractText(msg: unknown): string {
   return '';
 }
 
-/** Imported platform transcript rows are model-only context. Their JSON envelope intentionally remains
- *  in storage and provider payloads, but no human transcript should render it as a chat message. Require
- *  the complete provenance shape so an ordinary JSON-looking user message is not hidden by accident. */
-function isPlatformHistoryMessage(msg: { content?: unknown }): boolean {
+/** Parse only complete core-owned provenance envelopes. A user may type arbitrary JSON, so the live
+ *  shape additionally requires the structured author that core always writes. */
+function platformEnvelopeOf(msg: { content?: unknown }): { source: 'platform_history' | 'platform_message'; text: string } | undefined {
   const raw = typeof msg.content === 'string'
     ? msg.content
     : Array.isArray(msg.content) && msg.content.length === 1
       && msg.content[0]?.type === 'text' && typeof msg.content[0].text === 'string'
       ? msg.content[0].text
       : undefined;
-  if (!raw) return false;
+  if (!raw) return undefined;
   try {
     const envelope: unknown = JSON.parse(raw);
-    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return false;
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return undefined;
     const e = envelope as Record<string, unknown>;
-    return e.source === 'platform_history' && e.untrusted === true
-      && typeof e.platform === 'string' && typeof e.channelId === 'string' && typeof e.text === 'string';
+    if (e.untrusted !== true || typeof e.platform !== 'string'
+        || typeof e.channelId !== 'string' || typeof e.text !== 'string') return undefined;
+    if (e.source === 'platform_history') return { source: e.source, text: e.text };
+    if (e.source !== 'platform_message' || !e.author || typeof e.author !== 'object' || Array.isArray(e.author)) return undefined;
+    const author = e.author as Record<string, unknown>;
+    if (typeof author.id !== 'string' || typeof author.name !== 'string') return undefined;
+    return { source: e.source, text: e.text };
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -515,13 +519,15 @@ export function shapeBrainMessages(
       const parsed: unknown = JSON.parse(row.content);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) msg = parsed;
     } catch { /* malformed row → skipped below */ }
-    if (isPlatformHistoryMessage(msg)) continue;
+    const platformEnvelope = platformEnvelopeOf(msg);
+    if (platformEnvelope?.source === 'platform_history') continue;
     if (row.role === 'user') {
       const images = parseStoredChatImages((msg as { images?: unknown }).images);
       // The stored text keeps its `[📎 N× image]` marker — that is the only trace the MODEL has of the
       // attachment once the bytes are gone. A client that can draw the thumbnails does not need the words
       // too, so the marker is dropped from the view (and only there) when the files still exist.
-      const text = images.length ? stripAttachmentMarker(extractText(msg)) : extractText(msg);
+      const displayText = platformEnvelope?.source === 'platform_message' ? platformEnvelope.text : extractText(msg);
+      const text = images.length ? stripAttachmentMarker(displayText) : displayText;
       if (text.trim() || images.length) {
         stamped.push({
           at: row.created_at ?? '',

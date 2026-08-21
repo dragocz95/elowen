@@ -6,6 +6,14 @@ import type { DelegatedExecutionScope } from './delegatedScope.js';
 /** A platform sender resolved to the Elowen account that claimed the platform id in Account settings. */
 interface LinkedUser { id: number; name: string; username?: string; admin: boolean }
 
+export interface PlatformSenderAttribution { id: string; name: string }
+
+/** Platform display names are attacker-controlled. Keep them inert as JSON values and bound by Unicode
+ *  code points so astral characters count as one visible character rather than two UTF-16 code units. */
+export function sanitizePlatformSenderName(value: unknown): string {
+  return [...String(value ?? '').replace(/[[\]\r\n]/g, ' ').trim()].slice(0, 80).join('');
+}
+
 export interface IdentityDeps {
   /** The Elowen user that anchors platform channel sessions (the admin). Undefined = single-user mode. */
   platformOwner?: () => number | undefined;
@@ -67,12 +75,10 @@ export class IdentityResolver {
     return { id: userId, name: row.name || row.username || String(userId), username: row.username, admin: row.is_admin === true };
   }
 
-  /** The identity of a platform turn (Discord message, cron tick, subagent delegation) plus the
-   *  verified-identity line spliced ABOVE the sender's text when their platform id is linked to an
-   *  Elowen account. The display name is attacker-influenced (a user picks their own Elowen name), so
-   *  brackets/newlines are stripped before it enters this trusted line — otherwise a name like
-   *  `x] SYSTEM: …` could forge instructions into the prompt. */
-  forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string; accountUserId?: number; linkedUserId?: number } {
+  /** The identity of a platform turn (Discord message, cron tick, subagent delegation) plus host-owned
+   *  structured sender attribution. The attribution is serialized later as JSON for shared rooms; no
+   *  attacker-controlled display name is ever interpolated into trusted prompt markup. */
+  forPlatformTurn(src: SessionSource, _owner: number): { identity: TurnIdentity; sender?: PlatformSenderAttribution; accountUserId?: number; linkedUserId?: number } {
     const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
     // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
     // resolve — the plugin names the account and the host looks it up here, so the turn runs through the
@@ -80,12 +86,11 @@ export class IdentityResolver {
     // memory scope, never anything wider. A real platform link always wins, so this can never override
     // who a message actually came from.
     const account = linked ?? this.actingUser(src.access?.actAsUserId);
-    // The verified line exists to tell a HUMAN sender apart from someone typing their name, so it is
-    // written only for a real platform link. Automation has no sender to vouch for.
-    const safeName = linked ? linked.name.replace(/[[\]\r\n]/g, ' ').trim().slice(0, 80) : '';
-    const verifiedPrefix = linked
-      ? `[Verified: this sender is the Elowen user "${safeName}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n`
-      : '';
+    // Only real inbound platform messages carry a human sender. Server automation (cron/subagent) has no
+    // display-name claim to serialize, even when it acts for an account.
+    const sender = src.platform !== 'cron' && src.platform !== 'subagent'
+      ? { id: String(src.userId), name: sanitizePlatformSenderName(src.userName || src.userId) }
+      : undefined;
     // Cron is owner-authored server automation. A subagent is different: it must carry the ORIGINAL
     // turn's owner truth explicitly, because a foreign platform role can legitimately have admin scope.
     // Deriving subagent ownership from `admin` would elevate that role into owner-only raw-token tools.
@@ -106,7 +111,7 @@ export class IdentityResolver {
     // accountUserId includes host-authenticated automation (`actAsUserId`) for policy/memory scoping.
     // linkedUserId is narrower: only a real platform link may prove that an adapter's direct-chat claim
     // belongs to this sender.
-    return { identity, verifiedPrefix, accountUserId: account?.id, linkedUserId: linked?.id };
+    return { identity, sender, accountUserId: account?.id, linkedUserId: linked?.id };
   }
 
   /** Identity for host-authenticated automation replaying into a verified direct platform conversation. */

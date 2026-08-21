@@ -181,9 +181,12 @@ export type PlatformHistory = string | readonly PlatformHistoryMessage[];
 export interface SessionSource {
   platform: string;
   userId: string;
-  /** The sender's display name. Channel sessions are shared (one conversation per channel), so the
-   *  adapter also prefixes each message text with `[<userName>]` — this field carries it structurally. */
+  /** The sender's display name, supplied structurally. Adapters must pass clean message text and must not
+   *  interpolate this name into it; core serializes attribution only after validating the turn surface. */
   userName?: string;
+  /** True only when the adapter recognized the text as a plugin prompt-command it intentionally passes to
+   *  PI for native expansion. A leading slash by itself is ordinary user text. */
+  promptCommand?: boolean;
   roleIds: string[];
   channelId: string;
   threadId?: string;

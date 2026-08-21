@@ -1,8 +1,8 @@
 {
   "name": "msteams",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "apiVersion": "1",
-  "requiresCore": "0.28.5",
+  "requiresCore": "0.28.7",
   "capabilities": { "reads": ["stores", "project-files"], "mutates": ["users"] },
   "description": "Microsoft Teams bot (Azure Bot Framework): message it in a personal chat, group chat or team channel and it answers from Elowen AI. Incoming activities arrive on the daemon webhook /hooks/msteams/messages (validated against Microsoft's JWT); replies, typing indicators and images go out through the Bot Connector REST API. Slash commands (/model, /reasoning, /display, /new, /help) with Adaptive Card pickers, AskUserQuestion as tappable cards, live tool activity, proactive cron/tick pushes and a downloadable Teams app package. Chat tools (admin sessions): conversation & member info, member lists, list conversations and person lookup; plus send a message to any chat, message a person proactively by e-mail or name (the bot opens the 1:1 chat itself), and raw connector access (operator). Each rolePolicy maps an Entra object ID / UPN / conversation ID to allowed Elowen projects + a role prompt.",
   "entry": "index.mjs",

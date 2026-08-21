@@ -64,7 +64,7 @@ describe('the delegated-turn wire payload', () => {
     const opts = delegatedChannelSendOpts(request(), deps);
     expect(typeof opts.policy.allowedPaths).toBe('function'); // …the reason it cannot travel
     expect(opts.toolPolicy?.allow).toBeInstanceOf(Set);
-    expect(opts.identity).toEqual({ platform: 'subagent', userId: 'subagent', admin: false, owner: true });
+    expect(opts.identity).toEqual({ platform: 'subagent', userId: 'subagent', admin: false, owner: true, conversation: 'delegated' });
   });
 
   it('re-derives the SAME policy, toolPolicy and identity on the far side of the round-trip', () => {
@@ -92,7 +92,7 @@ describe('the delegated-turn wire payload', () => {
     const opts = delegatedChannelSendOpts(request(), deps);
     expect(opts.trusted).toBe(false); // === scope.admin
     expect(opts.promptAppend).toEqual(['You are a focused sub-agent.', 'context block']); // === scope.promptAppend
-    expect(opts.senderPrefix).toBe(''); // a delegated source has no verified platform sender
+    expect(opts.sender).toBeUndefined(); // a delegated source has no verified platform sender
     expect(opts.writerUserId).toBeUndefined(); // no private-memory identity crosses the boundary
     expect(opts.parentSessionId).toBe('brain-1');
     expect(opts.clientCwd).toBe('/repo/3');

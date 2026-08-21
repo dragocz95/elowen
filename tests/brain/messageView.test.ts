@@ -58,21 +58,29 @@ describe('shapeBrainMessages: compaction divider', () => {
   });
 });
 
-describe('shapeBrainMessages: imported platform history', () => {
-  it('keeps model-only history out of human transcripts without hiding ordinary JSON text', () => {
-    const envelope = JSON.stringify({
+describe('shapeBrainMessages: platform envelopes', () => {
+  it('hides history, unwraps live messages and leaves lookalike user JSON visible', () => {
+    const history = JSON.stringify({
       source: 'platform_history', untrusted: true, platform: 'msteams', channelId: 'chat-1', text: 'imported text',
     });
-    const visibleJson = JSON.stringify({ source: 'platform_history', untrusted: true, text: 'ordinary user text' });
+    const live = JSON.stringify({
+      source: 'platform_message', untrusted: true, platform: 'msteams', channelId: 'chat-1',
+      author: { id: '29:1a', name: 'Michal' }, text: 'live text',
+    });
+    const visibleJson = JSON.stringify({
+      source: 'platform_message', untrusted: true, platform: 'msteams', channelId: 'chat-1', text: 'ordinary user text',
+    });
     const rows = [
-      { role: 'user', content: JSON.stringify({ role: 'user', content: envelope }) },
-      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: envelope }] }) },
+      { role: 'user', content: JSON.stringify({ role: 'user', content: history }) },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: history }] }) },
+      { role: 'user', content: JSON.stringify({ role: 'user', content: live }) },
       { role: 'user', content: JSON.stringify({ role: 'user', content: visibleJson }) },
       { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'normal answer' }] }) },
     ];
     const before = structuredClone(rows);
 
     expect(shapeBrainMessages(rows).map((view) => ({ role: view.role, text: view.text }))).toEqual([
+      { role: 'user', text: 'live text' },
       { role: 'user', text: visibleJson },
       { role: 'assistant', text: 'normal answer' },
     ]);

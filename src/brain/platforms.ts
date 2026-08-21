@@ -351,10 +351,8 @@ export class PlatformOrchestrator {
               ? encodeNotificationDestination(src.platform, src.threadId ?? src.channelId)
               : undefined,
             onEvent,
-            // The identity prefix travels in opts (not concatenated) so channels.send can gate a RAW plugin
-            // prompt-command on the un-prefixed text; it is applied to every ordinary message there, exactly
-            // reproducing the previous `verifiedPrefix + text`.
-            senderPrefix: resolved.verifiedPrefix,
+            sender: resolved.sender,
+            promptCommand: src.promptCommand === true,
           }, text);
         };
         adapter.listen(onMessage);

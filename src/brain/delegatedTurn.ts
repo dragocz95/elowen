@@ -81,9 +81,6 @@ export function delegatedChannelSendOpts(
     toolPolicy: delegatedToolPolicy(scope),
     identity: deps.identity.forDelegatedTurn(scope, req.ownerUserId),
     ...(onEvent ? { onEvent } : {}),
-    // A delegated source carries no verified platform sender, so the identity prefix is empty — spelled
-    // out rather than omitted because that is literally what the orchestrator passed before.
-    senderPrefix: '',
   };
 }
 

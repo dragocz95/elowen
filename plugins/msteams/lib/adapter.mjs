@@ -792,13 +792,9 @@ export class MsTeamsAdapter {
     if (!text && images.length) text = '[The user sent an image]';
     if (!text) return;
 
-    // Chat sessions are SHARED (one conversation per chat), so every message names its speaker. Written
-    // as a sentence rather than a `[name]` tag because the model IMITATED the tag: it opened replies with
-    // "[Michale]" — a bracketed vocative that is not a Teams mention and reads like a stray marker.
-    // Discord can afford the tag because it answers as a native reply to the message it is quoting; a
-    // Teams post carries no such backlink, so the speaker has to be named in prose.
+    // Sender attribution is structural. Core envelopes it only for validated shared rooms; direct chats
+    // keep these clean words unchanged.
     const senderName = displayNameOf(from);
-    const prefixed = `${senderName} wrote: ${text}`;
 
     const gen = this.state.get(String(conv.id)).gen ?? 0;
     const convoKey = `${conv.id}#${gen}`;
@@ -834,6 +830,7 @@ export class MsTeamsAdapter {
         {
           platform: 'msteams', userId: String(from.aadObjectId || from.id), userName: senderName, roleIds: ids,
           channelId: convoKey, access: turnAccess,
+          ...(promptSlash ? { promptCommand: true } : {}),
           // Only an explicit Teams personal conversation is a 1:1 chat. `kind` defaults a missing
           // conversationType for history behavior, but direct-chat privileges must fail closed.
           direct: conv.conversationType === 'personal',
@@ -843,7 +840,7 @@ export class MsTeamsAdapter {
           // throws before the first turn of every new conversation ever reaches the model.
           history: async () => this.buildHistory(conv.id, m.id),
         },
-        promptSlash ?? prefixed,
+        promptSlash ?? text,
         onEvent,
       );
       const replyText = typeof this.accountLinking?.runWithActivity === 'function'
