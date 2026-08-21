@@ -19,7 +19,12 @@ const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context',
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
-  web?: { label?: string; nav?: { label: string; route?: string }[]; settings?: { id: string }[] };
+  web?: {
+    label?: string;
+    navKind?: 'domain' | 'infrastructure';
+    nav?: { label: string; route?: string }[];
+    settings?: { id: string }[];
+  };
 }
 
 function manifest(name: string): Manifest {
@@ -28,9 +33,14 @@ function manifest(name: string): Manifest {
 
 /** The rule itself, in one place so the fresh set below and the teeth check are measured by the SAME
  *  predicate — a rule that is re-spelled per test can be weakened in one copy and stay green in the
- *  other. `nav` is a plugin's own pages in the main navigation; `label` names the WORLD those pages
- *  live in, so either one on its own means the plugin owns a vertical. */
-const ownsVertical = (m: Manifest): boolean => (m.web?.nav?.length ?? 0) > 0 || (m.web?.label ?? null) !== null;
+ *  other. Main-navigation pages are domain verticals by default: workflow worlds with their own objects
+ *  and lifecycle. A manifest may explicitly classify a page as `infrastructure` only when it configures
+ *  a capability the assistant already ships (MCP servers), rather than introducing a product workflow.
+ *  That semantic marker is reviewable by future plugin authors; plugin names are deliberately irrelevant. */
+const ownsVertical = (m: Manifest): boolean => (
+  ((m.web?.nav?.length ?? 0) > 0 || (m.web?.label ?? null) !== null)
+  && m.web?.navKind !== 'infrastructure'
+);
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {
@@ -70,18 +80,17 @@ describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {
 });
 
 /** The rule a fresh install must satisfy, derived MECHANICALLY from each manifest rather than from a
- *  name list somebody has to remember to update: a plugin that contributes its own pages to the main
- *  navigation (`web.nav`) owns a domain vertical — its own world in the dashboard, its own objects, its
- *  own lifecycle (agents → Sessions/Escalations, work → Tasks/Kanban/Timeline/Stats).
- *  Elowen out of the box is an assistant, not somebody else's product, so none of those ship enabled;
- *  the owner installs them from Settings → Plugins. A plugin contributing only a SETTINGS section
- *  (subagent) configures the assistant itself and is fine. */
+ *  name list somebody has to remember to update. A main-navigation page is a domain vertical by default:
+ *  its own workflow world, objects and lifecycle (agents → Sessions/Escalations, work →
+ *  Tasks/Kanban/Timeline/Stats). Elowen out of the box is an assistant, not somebody else's product, so
+ *  those stay opt-in. An explicitly `infrastructure` page is different: like a Settings section, it
+ *  configures a capability the assistant already ships rather than adding a workflow product. */
 describe('a fresh install enables no plugin that owns a domain vertical', () => {
   const cfg = new ConfigStore(openDb(':memory:'));
   const enabled = cfg.get().plugins.enabled;
 
   for (const name of enabled) {
-    it(`${name}: contributes no top-level navigation of its own`, () => {
+    it(`${name}: owns no domain vertical`, () => {
       expect({ plugin: name, ownsVertical: ownsVertical(manifest(name)) }).toEqual({ plugin: name, ownsVertical: false });
     });
   }
@@ -95,21 +104,34 @@ describe('a fresh install enables no plugin that owns a domain vertical', () => 
     expect(enabled.filter((name) => !onDisk.includes(name))).toEqual([]);
   });
 
-  // agents, work and editor used to be named here as the plugins the rule catches. All three moved to
-  // the plugin registry, so this package has no manifest to read — and cannot accidentally ship one
-  // enabled either. That leaves the rule with no positive subject on disk, which would make the loop
-  // above pass by having nothing to reject, so the discrimination is proved directly instead: on the
-  // real manifest of the one bundled plugin that HAS a web block, and on that same manifest with a nav
-  // entry added. Nothing here is hand-written scenery — it is what ships, and what ships plus a page.
+  // agents, work and editor used to be the positive subjects. They moved to the registry, so the
+  // discrimination is proved directly: a real settings-only bundled manifest stays allowed; MCP's real
+  // explicitly-infrastructure page stays allowed; and a Tasks-shaped workflow world remains rejected by
+  // default. The default matters: adding nav without making and reviewing a semantic classification can
+  // never quietly turn a fresh-install plugin into an allowed exception.
   it('the rule still catches a plugin that owns a vertical', () => {
     const settingsOnly = manifest('subagent');
     expect(settingsOnly.web?.settings?.length ?? 0).toBeGreaterThan(0); // a real web block, not an absent one
     expect(ownsVertical(settingsOnly)).toBe(false); // configuring the assistant itself is fine
 
-    const withNav = { ...settingsOnly, web: { ...settingsOnly.web, nav: [{ label: 'Sub-agents', route: '/subagents' }] } };
-    expect(ownsVertical(withNav)).toBe(true);
-    const withLabel = { ...settingsOnly, web: { ...settingsOnly.web, label: 'Sub-agents' } };
-    expect(ownsVertical(withLabel)).toBe(true);
+    const infrastructure = manifest('mcp');
+    expect(infrastructure.web?.navKind).toBe('infrastructure');
+    expect(infrastructure.web?.nav?.length ?? 0).toBeGreaterThan(0);
+    expect(ownsVertical(infrastructure)).toBe(false);
+
+    const tasksShaped = {
+      ...settingsOnly,
+      web: {
+        ...settingsOnly.web,
+        label: 'Tasks',
+        nav: [
+          { label: 'Kanban', route: '/kanban' },
+          { label: 'Timeline', route: '/timeline' },
+          { label: 'Statistics', route: '/stats' },
+        ],
+      },
+    };
+    expect(ownsVertical(tasksShaped)).toBe(true);
 
     // …and a plugin the rule catches is one the fresh set would then have to exclude.
     expect(enabled.filter((name) => ownsVertical(manifest(name)))).toEqual([]);

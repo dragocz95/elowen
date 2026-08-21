@@ -140,6 +140,10 @@ export interface PluginManifest {
      *  the world borrows the first page's name, which reads wrong for a plugin contributing several
      *  peer pages ("Úkoly" standing over Kanban and Statistics). Overridable per locale like the rest. */
     label?: string;
+    /** Classify main-navigation pages by product role. `domain` (the default) owns a workflow world with
+     *  its own objects and lifecycle; `infrastructure` configures a capability the assistant already
+     *  ships. Fresh-install policy may allow the latter without opening the door to default domain apps. */
+    navKind?: 'domain' | 'infrastructure';
     nav?: { label: string; icon?: string; route?: string }[];
     /** `layout` picks which of the app's two settings renderings the section's groups/rows use:
      *  'classic' (default) stacks rows, 'orbital' renders them as the constellation of pods the core
@@ -231,6 +235,7 @@ const ManifestSchema = Type.Object({
     requiresApiVersion: Type.Optional(Type.Number()),
     adminOnly: Type.Optional(Type.Boolean()),
     label: Type.Optional(Type.String({ minLength: 1 })),
+    navKind: Type.Optional(Type.Union([Type.Literal('domain'), Type.Literal('infrastructure')])),
     nav: Type.Optional(Type.Array(Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),

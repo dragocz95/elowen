@@ -13,6 +13,7 @@
     "entry": "web/index.js",
     "css": "web/index.css",
     "requiresApiVersion": 2,
+    "navKind": "infrastructure",
     "nav": [{ "label": "MCP servers", "icon": "Blocks", "route": "" }],
     "strings": {
       "title": "MCP servers",
