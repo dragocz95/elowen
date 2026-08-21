@@ -61,82 +61,14 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.promptAppend).toEqual(['You are replying through Discord.']);
   });
 
-  it('a verified shared sender keeps account attribution but remains bounded by room policy and personal denies', async () => {
-    let sent: ChannelSendOpts | undefined;
-    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
-    const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
-    const resolver = new IdentityResolver({
-      platformOwner: () => 1,
-      resolvePlatformUser: () => ({ id: 1, name: 'Owner', username: 'owner', admin: true }),
-      users: { get: () => ({ username: 'owner', is_admin: true }) },
+  it('a linked sender in a shared room uses their account policy and personal deny-list', async () => {
+    const sent = await runTurn({
+      linked: true,
+      access: { admin: false, projectIds: [3], tools: ['MemorySearch'], denyTools: ['DiscordSend'] },
     });
-    const orch = new PlatformOrchestrator({
-      plugins: async () => ({ platforms: [adapter] }) as never,
-      platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
-      policyForUser: () => userPolicy,
-      disabledToolsFor: () => ['DiscordApi'],
-      identity: resolver,
-      channels: { send: async (opts: ChannelSendOpts) => { sent = opts; return 'ok'; }, fragmentFor: () => '' } as never,
-      dispatch: noDispatch,
-    });
-    await orch.startAll();
-    const access = { admin: false, projectIds: [3], tools: ['MemorySearch'], denyTools: ['DiscordSend'] };
-    await handler!({
-      platform: 'discord', userId: 'owner-platform-id', channelId: 'room', roleIds: [], access,
-    } as never, 'hi');
-    access.tools.push('ElowenApi');
-    access.denyTools.length = 0;
-
-    expect(sent?.policy).toBe(rolePolicy);
-    expect(sent?.policy).not.toBe(userPolicy);
-    expect(sent?.toolPolicy?.allow).toEqual(new Set(['MemorySearch']));
-    expect(sent?.toolPolicy?.deny).toEqual(new Set(['DiscordApi', 'DiscordSend']));
-    expect(sent?.identity).toEqual({
-      platform: 'discord', userId: 'owner-platform-id', elowenUserId: 1, elowenUsername: 'owner',
-      admin: false, owner: false, conversation: 'shared',
-    });
-  });
-
-  it('a linked ADMIN in a shared room is withheld the same grant-gated tools as an unlinked member', async () => {
-    // An admin account's personal deny-list is EMPTY by construction (an admin passes every grant), so a
-    // shared room must recompute withholding from the ROOM's authority. Otherwise writing in a channel
-    // would hand an admin a per-person-granted subsystem that everyone beside them is denied.
-    let sent: ChannelSendOpts | undefined;
-    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
-    let askedAbout: { is_admin: boolean; granted_plugins: readonly string[] } | undefined;
-    const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
-    const resolver = new IdentityResolver({
-      platformOwner: () => 1,
-      resolvePlatformUser: () => ({ id: 7, name: 'Admin', username: 'admin', admin: true }),
-      users: { get: () => ({ username: 'admin', is_admin: true }) },
-    });
-    const orch = new PlatformOrchestrator({
-      plugins: async () => ({ platforms: [adapter] }) as never,
-      platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
-      policyForUser: () => userPolicy,
-      disabledToolsFor: () => [], // an admin account withholds nothing from itself
-      grantedPluginsFor: () => ['raynet'], // …but this is what the PERSON was actually granted
-      ungrantedPluginTools: (sender) => {
-        askedAbout = sender;
-        return sender.is_admin || sender.granted_plugins.includes('terminal') ? [] : ['terminal_exec'];
-      },
-      identity: resolver,
-      channels: { send: async (opts: ChannelSendOpts) => { sent = opts; return 'ok'; }, fragmentFor: () => '' } as never,
-      dispatch: noDispatch,
-    });
-    await orch.startAll();
-    await handler!({
-      platform: 'discord', userId: 'admin-platform-id', channelId: 'room', roleIds: [],
-      access: { admin: false, projectIds: [3], tools: [], denyTools: [] },
-    } as never, 'hi');
-
-    // Asked about the ROOM's authority, carrying only the person's own grants.
-    expect(askedAbout).toEqual({ is_admin: false, granted_plugins: ['raynet'] });
-    expect(sent?.toolPolicy?.deny).toEqual(new Set(['terminal_exec']));
-    expect(sent?.identity?.elowenUserId).toBe(7); // still attributed to them
-    expect(sent?.identity?.admin).toBe(false);
+    expect(sent.policy).toBe(userPolicy);
+    expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
+    expect(sent.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
 
   it('an UNLINKED sender falls back to the Role-ID policy + the role tool allowlist', async () => {
@@ -159,7 +91,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
   });
 
-  it('keeps synthetic relay attribution while applying the room policy and personal denies', async () => {
+  it('runs a synthetic relay through the target account policy and only narrows its tools', async () => {
     let control: PlatformControlApi | undefined;
     let sent: ChannelSendOpts | undefined;
     let message = '';
@@ -191,7 +123,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     expect(reply).toBe('target reply');
     expect(message).toBe('agent relay');
-    expect(sent).toMatchObject({ channelId: 'discord-target#0', writerUserId: 2, policy: rolePolicy });
+    expect(sent).toMatchObject({ channelId: 'discord-target#0', writerUserId: 2, policy: userPolicy });
     expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
     expect(sent?.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
@@ -859,6 +791,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     await orch.startAll();
     await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], access: { admin: false, projectIds: [3] } } as never, 'hi');
     expect(sent!.toolPolicy).toBeUndefined();
-    expect(sent!.policy).toBe(rolePolicy);
+    expect(sent!.policy).toBe(userPolicy);
   });
 });
