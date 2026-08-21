@@ -8,7 +8,7 @@ import { openDb, type Db } from '../../src/store/db.js';
 
 /** A minimal fake LiveBrain — only the fields ChannelSessionService.send/abortTree touch (mirrors
  *  channelIdleRollover.test.ts's harness, plus the abort surface abortSessionWork needs). */
-function fakeBrain(sessionId: string) {
+function fakeBrain(sessionId: string, ownerUserId: number) {
   const messages: { role?: string; content?: unknown }[] = [];
   const session = {
     isStreaming: false,
@@ -24,6 +24,10 @@ function fakeBrain(sessionId: string) {
   };
   return {
     session, sessionId,
+    // A real LiveBrain always carries both: the spawner writes `ownerUserId` and `direct: opts.direct === true`.
+    // Omitting them here made send() see an ownership/classification change on every turn and respawn the
+    // pre-seeded room, which is exactly the cache-destroying behaviour the comparison exists to avoid.
+    ownerUserId, direct: false,
     model: 'kimi', thinkingLevel: undefined as string | undefined, providerId: 'moonshot',
     pluginToolNames: new Set<string>(), turnSender: undefined as number | undefined,
     interactedAt: undefined as number | undefined, listeners: new Set<(e: unknown) => void>(),
@@ -49,7 +53,7 @@ function setup() {
   const seedChannel = (channelId: string, ownerUserId: number): Brain => {
     const sessionId = channelSessionId(channelId);
     store.createSession({ id: sessionId, userId: ownerUserId, model: 'kimi' });
-    const brain = fakeBrain(sessionId);
+    const brain = fakeBrain(sessionId, ownerUserId);
     registry.channelTouch(channelId, brain);
     return brain;
   };

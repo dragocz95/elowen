@@ -3745,7 +3745,11 @@ describe('BrainService', () => {
     expect(connected).toBe(true);
 
     const mapped = await handler!({ platform: 'fake', userId: 'u1', roleIds: ['r'], channelId: 'c1', access: { projectIds: [1], prompt: 'Role dev.' } }, 'hello');
-    expect(mapped).toBe('echo:hello');
+    // A shared room reaches the model as a structured envelope: the author rides its own field and the
+    // sender's words stay clean, so the model can attribute the turn without the name being part of the text.
+    const envelope = JSON.parse(mapped!.replace(/^echo:/, '')) as { source: string; author: { name: string }; text: string };
+    expect(envelope).toMatchObject({ source: 'platform_message', untrusted: true, platform: 'fake', text: 'hello' });
+    expect(envelope.author.name).toBe('u1');
     const unmapped = await handler!({ platform: 'fake', userId: 'u2', roleIds: [], channelId: 'c1' }, 'hi');
     expect(unmapped).toBeUndefined();
   });
