@@ -101,6 +101,118 @@ function persistTools(db, spec, tools) {
   db.prepare(sql).run(...params);
 }
 
+function ownerForScope(ctx, scope) {
+  const identity = ctx.currentIdentity();
+  if (scope === 'instance') {
+    if (identity?.owner !== true) throw new Error('instance MCP servers can be managed only by the instance owner');
+    return null;
+  }
+  if (scope === 'personal') {
+    if (identity?.elowenUserId == null) throw new Error('personal MCP servers require a linked Elowen account');
+    return identity.elowenUserId;
+  }
+  throw new Error('scope must be personal or instance');
+}
+
+function specForOwner(ownerUserId, name) {
+  return state.specs.find((spec) => spec.ownerUserId === ownerUserId && spec.name === name);
+}
+
+function validateServerInput(input) {
+  const name = String(input?.name ?? '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(name)) throw new Error('server name must be 1-40 letters, numbers, underscores or dashes');
+  const transport = input?.transport ?? (input?.url ? 'http' : 'stdio');
+  if (!['stdio', 'http', 'sse'].includes(transport)) throw new Error('transport must be stdio, http or sse');
+  if (transport === 'stdio') {
+    const command = String(input?.command ?? '').trim();
+    if (!command) throw new Error('stdio MCP servers require command');
+    return {
+      name, enabled: input?.enabled !== false, transport, command,
+      args: Array.isArray(input?.args) ? input.args.map(String) : [],
+      env: input?.env && typeof input.env === 'object' && !Array.isArray(input.env)
+        ? Object.fromEntries(Object.entries(input.env).map(([key, value]) => [key, String(value)]))
+        : {},
+    };
+  }
+  const url = String(input?.url ?? '').trim();
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error(`${transport} MCP servers require a valid URL`); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('MCP server URL must use http or https');
+  return { name, enabled: input?.enabled !== false, transport, url: parsed.toString() };
+}
+
+async function closeLiveSpec(spec) {
+  const key = serverKey(spec.ownerUserId, spec.name);
+  const entries = state.live.filter((entry) => entry.key === key);
+  for (const entry of entries) {
+    entry.closing = true;
+    const at = state.live.indexOf(entry);
+    if (at >= 0) state.live.splice(at, 1);
+    try { await entry.transport?.close?.(); } catch { /* already closed */ }
+    killTree(entry.child);
+    try { await entry.client?.close?.(); } catch { /* already closed */ }
+  }
+  state.connecting.delete(key);
+}
+
+async function addMcpServerForScope(ctx, scope, input) {
+  const ownerUserId = ownerForScope(ctx, scope);
+  const spec = { ...validateServerInput(input), ownerUserId, cachedBridged: [] };
+  if (state.specs.some((candidate) => candidate.name === spec.name
+    && (candidate.ownerUserId == null || candidate.ownerUserId === ownerUserId))) {
+    throw new Error(`MCP server "${spec.name}" already exists in this account's visible scope`);
+  }
+  state.db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)')
+    .run(ownerUserId, spec.name, JSON.stringify({ ...spec, ownerUserId: undefined, cachedBridged: undefined }), '[]');
+  state.specs.push(spec);
+  setServerState(spec, { status: spec.enabled ? 'disconnected' : 'disabled', transport: transportKind(spec), lastError: null, tools: [], toolCount: 0 });
+  try {
+    if (spec.enabled) {
+      await connectServer(ctx, spec, state.live);
+      if (ownerUserId != null) await closeLiveSpec(spec);
+    }
+    ctx.requestReload();
+    return publicServerState(spec);
+  } catch (error) {
+    await closeLiveSpec(spec);
+    state.specs.splice(state.specs.indexOf(spec), 1);
+    state.servers.delete(serverKey(ownerUserId, spec.name));
+    const sql = ownerUserId == null
+      ? 'DELETE FROM p_mcp_servers WHERE owner_user_id IS NULL AND name = ?'
+      : 'DELETE FROM p_mcp_servers WHERE owner_user_id = ? AND name = ?';
+    state.db.prepare(sql).run(...(ownerUserId == null ? [spec.name] : [ownerUserId, spec.name]));
+    throw error;
+  }
+}
+
+async function removeMcpServerForScope(ctx, scope, name) {
+  const ownerUserId = ownerForScope(ctx, scope);
+  const spec = specForOwner(ownerUserId, String(name ?? '').trim());
+  if (!spec) throw new Error(`unknown ${scope} MCP server "${name}"`);
+  await closeLiveSpec(spec);
+  const sql = ownerUserId == null
+    ? 'DELETE FROM p_mcp_servers WHERE owner_user_id IS NULL AND name = ?'
+    : 'DELETE FROM p_mcp_servers WHERE owner_user_id = ? AND name = ?';
+  state.db.prepare(sql).run(...(ownerUserId == null ? [spec.name] : [ownerUserId, spec.name]));
+  state.specs.splice(state.specs.indexOf(spec), 1);
+  state.servers.delete(serverKey(ownerUserId, spec.name));
+  ctx.requestReload();
+  return { removed: true, name: spec.name, scope };
+}
+
+async function reconnectMcpServerForScope(ctx, scope, name) {
+  const ownerUserId = ownerForScope(ctx, scope);
+  const spec = specForOwner(ownerUserId, String(name ?? '').trim());
+  if (!spec) throw new Error(`unknown ${scope} MCP server "${name}"`);
+  if (!spec.enabled) throw new Error(`MCP server "${name}" is disabled`);
+  await closeLiveSpec(spec);
+  const tools = await connectServer(ctx, spec, state.live);
+  if (ownerUserId != null) await closeLiveSpec(spec);
+  if (tools.length) registerBridgedTools(ctx, ownerUserId == null ? connectedClient(state.live) : lazyClient(ctx, state.live), [{ spec, tools }]);
+  ctx.requestReload();
+  return publicServerState(spec);
+}
+
 const state = {
   ctx: null,
   db: null,
@@ -422,6 +534,71 @@ async function connectAll(ctx, specs, live) {
   registerBridgedTools(ctx, connectedClient(live), perServer);
 }
 
+function registerManagementTools(ctx) {
+  const scopeSchema = Type.Union([Type.Literal('personal'), Type.Literal('instance')], {
+    description: "Required ownership scope. 'personal' belongs to the acting Elowen account; 'instance' is shared and owner-only.",
+  });
+  const nameSchema = Type.String({ description: 'MCP server name' });
+
+  ctx.registerTool(defineTool({
+    name: 'AddMcpServer', label: 'Add MCP server',
+    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores credentials for the acting account only; instance shares them across the instance and is restricted to the instance owner. For stdio this RUNS the command and arguments supplied by the user as a local process, with the supplied environment variables, so use it only when the user explicitly asked to install that server.',
+    parameters: Type.Object({
+      scope: scopeSchema,
+      name: nameSchema,
+      transport: Type.Union([Type.Literal('stdio'), Type.Literal('http'), Type.Literal('sse')]),
+      command: Type.Optional(Type.String({ description: 'Executable for stdio transport' })),
+      args: Type.Optional(Type.Array(Type.String(), { description: 'Arguments for the stdio command' })),
+      env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: 'Environment variables for the stdio process, including any credentials the server needs' })),
+      url: Type.Optional(Type.String({ description: 'HTTP(S) URL for http or sse transport' })),
+      enabled: Type.Optional(Type.Boolean({ description: 'Whether the server is enabled (default true)' })),
+    }),
+    execute: async (_id, p) => {
+      try {
+        const server = await addMcpServerForScope(ctx, p.scope, p);
+        return ok(`Added ${p.scope} MCP server "${server.name}" with ${server.toolCount} tool(s).`, { server });
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'ListMcpServers', label: 'List MCP servers',
+    description: 'List MCP servers in one explicit ownership scope. Personal lists only the acting account\'s servers; instance is owner-only. Credentials and command environments are never returned.',
+    parameters: Type.Object({ scope: scopeSchema }),
+    execute: async (_id, p) => {
+      try {
+        const ownerUserId = ownerForScope(ctx, p.scope);
+        const servers = state.specs.filter((spec) => spec.ownerUserId === ownerUserId).map(publicServerState);
+        return ok(servers.length ? JSON.stringify(servers, null, 2) : `No ${p.scope} MCP servers configured.`, { servers });
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'RemoveMcpServer', label: 'Remove MCP server',
+    description: 'Permanently remove one MCP server from the required personal or instance scope and stop its live connection. Instance scope is owner-only.',
+    parameters: Type.Object({ scope: scopeSchema, name: nameSchema }),
+    execute: async (_id, p) => {
+      try {
+        const removed = await removeMcpServerForScope(ctx, p.scope, p.name);
+        return ok(`Removed ${p.scope} MCP server "${p.name}".`, removed);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'ReconnectMcpServer', label: 'Reconnect MCP server',
+    description: 'Reconnect and re-discover tools for one MCP server in the required personal or instance scope. Personal credentials remain account-private; instance scope is owner-only.',
+    parameters: Type.Object({ scope: scopeSchema, name: nameSchema }),
+    execute: async (_id, p) => {
+      try {
+        const server = await reconnectMcpServerForScope(ctx, p.scope, p.name);
+        return ok(`Reconnected ${p.scope} MCP server "${p.name}" with ${server.toolCount} tool(s).`, { server });
+      } catch (e) { return fail(e); }
+    },
+  }));
+}
+
 function registerResourceTools(ctx, live, snapshot, ownerUserId) {
   const allowedSpecs = () => {
     const byName = new Map();
@@ -552,7 +729,16 @@ export async function register(ctx) {
     bridgeSnapshot: mcpBridgeSnapshot,
     reconnectServer: reconnectMcpServer,
     reconnectDisconnected: reconnectMcpDisconnected,
+    listServersFor: (ownerUserId, scope) => {
+      const owner = scope === 'instance' ? null : ownerUserId;
+      if (scope === 'personal' && ownerUserId == null) return [];
+      return state.specs.filter((spec) => spec.ownerUserId === owner).map(publicServerState);
+    },
+    addServer: (scope, input) => addMcpServerForScope(ctx, scope, input),
+    removeServer: (scope, name) => removeMcpServerForScope(ctx, scope, name),
+    reconnectServerFor: (scope, name) => reconnectMcpServerForScope(ctx, scope, name),
   });
+  registerManagementTools(ctx);
 
   if (snapshot) {
     // Same registration and same ordering as the connected path — only the client resolution differs.

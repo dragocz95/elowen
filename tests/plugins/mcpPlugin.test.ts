@@ -24,7 +24,7 @@ const waitFor = async (fn: () => boolean, ms = 3000) => { const end = Date.now()
 
 /** A minimal PluginContext stand-in capturing the tools/hooks the plugin registers. `mcpBridgeSnapshot`
  *  is what a forked sub-agent runner is handed: present ⇒ declare these tools and connect nothing. */
-function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb()) {
+function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb(), identity: Record<string, unknown> | null = null) {
   const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown>; ownerUserId?: number }[] = [];
   const hooks: { name: string; run: (p: unknown) => unknown }[] = [];
   const controls = new Map<string, unknown>();
@@ -33,6 +33,8 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     ...(mcpBridgeSnapshot ? { mcpBridgeSnapshot } : {}),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     db: () => makePluginDb(db, 'mcp', { canMigrate: true }),
+    currentIdentity: () => identity,
+    requestReload: vi.fn(),
     registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
     registerControl: (name: string, control: unknown) => controls.set(name, control),
@@ -102,6 +104,67 @@ describe('mcp plugin — helpers', () => {
     expect(child.stdin.written[0]).toContain('"method":"ping"');
     expect(child.stdin.written[0]!.endsWith('\n')).toBe(true);
   });
+});
+
+describe('mcp plugin — owner-scoped management tools', () => {
+  const resultText = (result: unknown) => (result as { content: { text: string }[] }).content[0]!.text;
+
+  it('requires an explicit scope in every management tool schema', async () => {
+    const ctx = fakeCtx({});
+    await register(ctx as never);
+    for (const name of ['AddMcpServer', 'ListMcpServers', 'RemoveMcpServer', 'ReconnectMcpServer']) {
+      const tool = ctx.tools.find((candidate) => candidate.name === name) as unknown as { parameters: { required?: string[] } };
+      expect(tool.parameters.required).toContain('scope');
+    }
+    await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  });
+
+  it('refuses instance scope for a non-owner even when the account is an admin elsewhere', async () => {
+    const ctx = fakeCtx({}, undefined, openPluginTablesDb(), { elowenUserId: 4, admin: true, owner: false });
+    await register(ctx as never);
+    const add = ctx.tools.find((tool) => tool.name === 'AddMcpServer')!;
+    const result = await add.execute('1', { scope: 'instance', name: 'blocked', transport: 'stdio', command: process.execPath, enabled: false });
+    expect(resultText(result)).toContain('instance MCP servers can be managed only by the instance owner');
+    expect((ctx.rawDb.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
+    await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  });
+
+  it('does not treat a caller with no account as the owner of instance rows', async () => {
+    const ctx = fakeCtx({}, undefined, openPluginTablesDb(), { owner: false });
+    await register(ctx as never);
+    const list = ctx.tools.find((tool) => tool.name === 'ListMcpServers')!;
+    expect(resultText(await list.execute('1', { scope: 'personal' }))).toContain('personal MCP servers require a linked Elowen account');
+    await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  });
+
+  it('adds, lists and removes a personal server only for its owning account', async () => {
+    const db = openPluginTablesDb();
+    const users = new UserStore(db);
+    const amy = users.create('amy-mcp', 'pw');
+    const bob = users.create('bob-mcp', 'pw');
+    const amyCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+    await register(amyCtx as never);
+    const add = amyCtx.tools.find((tool) => tool.name === 'AddMcpServer')!;
+    const added = await add.execute('1', {
+      scope: 'personal', name: 'private', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER],
+    });
+    expect(resultText(added)).toContain('Added personal MCP server "private" with 1 tool(s)');
+    expect((db.prepare('SELECT owner_user_id FROM p_mcp_servers WHERE name = ?').get('private') as { owner_user_id: number }).owner_user_id).toBe(amy.id);
+    await amyCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+
+    const bobCtx = fakeCtx({}, undefined, db, { elowenUserId: bob.id, owner: false });
+    await register(bobCtx as never);
+    const bobList = bobCtx.tools.find((tool) => tool.name === 'ListMcpServers')!;
+    expect(resultText(await bobList.execute('2', { scope: 'personal' }))).toBe('No personal MCP servers configured.');
+    await bobCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+
+    const amyAgain = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+    await register(amyAgain as never);
+    const remove = amyAgain.tools.find((tool) => tool.name === 'RemoveMcpServer')!;
+    expect(resultText(await remove.execute('3', { scope: 'personal', name: 'private' }))).toContain('Removed personal MCP server "private"');
+    expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers WHERE name = ?').get('private') as { n: number }).n).toBe(0);
+    await amyAgain.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  }, 20000);
 });
 
 describe('mcp plugin — end-to-end connection + process-group cleanup', () => {
