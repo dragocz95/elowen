@@ -1,4 +1,4 @@
-import type { Db } from './db.js';
+import type { Db } from './dbTypes.js';
 import { BRAIN_REGISTRY_PROVIDER_PREFIX } from '../shared/execs.js';
 
 const numeric = (src: string, path: string, absent = '0'): string =>
