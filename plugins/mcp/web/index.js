@@ -323,8 +323,9 @@ function ServerForm({ draft, editing, strings, saving, error, onChange, onSave, 
   ] });
 }
 function McpServersPage({ surface }) {
-  const { PluginPageHeader, SettingsDocument, SettingsGroup, Button, LoadingState, ErrorState, EmptyState, ConfirmDialog, ManageSelectionModal } = runtime().components;
-  const strings = runtime().hooks.usePluginStrings("mcp");
+  const { components, hooks } = runtime();
+  const { PluginPageHeader, SettingsDocument, SettingsGroup, Button, LoadingState, ErrorState, EmptyState, ConfirmDialog, ManageSelectionModal } = components;
+  const strings = hooks.usePluginStrings("mcp");
   const [data, setData] = (0, import_react3.useState)();
   const [loading, setLoading] = (0, import_react3.useState)(true);
   const [loadError, setLoadError] = (0, import_react3.useState)(false);

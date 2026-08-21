@@ -149,8 +149,9 @@ function ServerForm({ draft, editing, strings, saving, error, onChange, onSave, 
 }
 
 export function McpServersPage({ surface }: { surface: 'page' | 'deck' }) {
-  const { PluginPageHeader, SettingsDocument, SettingsGroup, Button, LoadingState, ErrorState, EmptyState, ConfirmDialog, ManageSelectionModal } = runtime().components;
-  const strings = runtime().hooks.usePluginStrings('mcp');
+  const { components, hooks } = runtime();
+  const { PluginPageHeader, SettingsDocument, SettingsGroup, Button, LoadingState, ErrorState, EmptyState, ConfirmDialog, ManageSelectionModal } = components;
+  const strings = hooks.usePluginStrings('mcp');
   const [data, setData] = useState<McpServersResponse>();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);

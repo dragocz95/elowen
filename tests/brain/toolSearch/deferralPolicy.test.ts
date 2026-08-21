@@ -206,6 +206,6 @@ describe('MCP naming invariant', () => {
   it('matches the mcp plugin bridged-tool naming', () => {
     const src = readFileSync(join(__dirname, '../../../plugins/mcp/index.mjs'), 'utf-8');
     expect(MCP_TOOL_PREFIX).toBe('mcp__');
-    expect(src).toContain('`mcp__${sanitize(serverName)}__${sanitize(tool.name)}`');
+    expect(src).toContain('`mcp__${sanitize(spec.name)}__${sanitize(tool.name)}`');
   });
 });

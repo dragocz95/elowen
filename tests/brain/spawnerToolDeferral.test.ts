@@ -11,6 +11,7 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import { openDb } from '../../src/store/db.js';
+import { makePluginDb } from '../../src/store/pluginDb.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import type { RuntimeConfig } from '../../src/store/configStore.js';
 import type { ToolDeferralOverrides } from '../../src/shared/wireContract.js';
@@ -90,6 +91,7 @@ const factoryToolNames = (create: ReturnType<typeof vi.fn>): string[] => {
 describe('LiveSessionSpawner — deferred-tool policy from the runtime config', () => {
   it('flows the bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-deferral-defaults-'));
+    const db = openDb(':memory:');
     try {
       const registry = await loadPlugins({
         dirs: [join(process.cwd(), 'plugins')],
@@ -100,6 +102,7 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
         // since the loader just skips it and the assertions would quietly rest on the rest.
         enabled: ['mcp'],
         dataRoot,
+        pluginDb: (plugin) => makePluginDb(db, plugin, { canMigrate: true }),
         delegatedTurnsOutOfProcess: () => false,
         logger: { info() {}, warn() {}, error() {} },
       });
