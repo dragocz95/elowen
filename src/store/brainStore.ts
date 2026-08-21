@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import type { Db } from './db.js';
+import { withWriteLock } from './db.js';
 import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
@@ -157,7 +158,7 @@ export class BrainStore {
       : normalizeDelegatedExecutionScope(input.delegatedAccess);
     if (input.delegatedAccess !== undefined && !delegatedAccess) throw new Error('invalid delegated access');
     if (delegatedAccess && parentSessionId === null) throw new Error('delegated access requires a parent session');
-    this.db.transaction(() => {
+    withWriteLock(this.db, () => {
       if (parentSessionId !== null) {
         const parent = this.db.prepare('SELECT user_id FROM brain_sessions WHERE id = ?').get(parentSessionId) as { user_id: number } | undefined;
         if (!parent) throw new Error(`parent brain session not found: ${parentSessionId}`);
@@ -173,7 +174,7 @@ export class BrainStore {
         delegated_access: delegatedAccess ? JSON.stringify(delegatedAccess) : null,
         spill_ns: mintSpillNamespace(input.id),
       });
-    })();
+    });
     return this.getSession(input.id)!;
   }
 

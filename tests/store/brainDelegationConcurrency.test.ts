@@ -11,11 +11,10 @@ const PARENT = 'root';
 const CHILD = 'brain-ch-subagent-sub-1';
 const SCOPE = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
 
-// One iteration drives all four persisted delegation methods, so it opens FOUR write transactions.
-// Measured against the old deferred form, 80-100% of them raised SQLITE_BUSY while a second process was
-// committing — a single iteration already loses. 150 turns "very likely" into "certain" (600 chances to
-// lose the read snapshot) while the fixed IMMEDIATE+retry path still finishes the run in well under a
-// second, so the test is cheap and not flaky in either direction.
+// One iteration creates a delegated session and drives all four delegation-store methods, so it opens
+// FIVE read-then-write transactions. Against the old deferred form a single iteration already loses.
+// 150 turns "very likely" into "certain" (750 chances to lose the read snapshot), while the fixed
+// IMMEDIATE+retry path still finishes quickly, so the test is cheap and not flaky in either direction.
 const ITERATIONS = 150;
 
 let dir: string | null = null;
@@ -30,18 +29,19 @@ const settle = (p: ReturnType<typeof spawn>): Promise<{ code: number | null; err
   });
 
 /** The data-loss regression behind `withWriteLock`: a delegated sub-agent turn now runs in a FORKED
- *  RUNNER process that writes to the same database as the daemon. Every one of these four methods READS
- *  (to revalidate the parent/child relation) before it WRITES, so in a DEFERRED transaction a commit from
- *  the runner in between makes SQLite refuse to upgrade the read snapshot — SQLITE_BUSY_SNAPSHOT, which
- *  `busy_timeout` does NOT cover: it is raised instantly and the completed child's result was dropped.
+ *  RUNNER process that writes to the same database as the daemon. Session creation and each of the four
+ *  delegation-store methods read (to validate their durable relation) before they write, so in a DEFERRED
+ *  transaction a commit from the runner in between makes SQLite refuse to upgrade the read snapshot —
+ *  SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does NOT cover: it is raised instantly and the child fails.
  *
  *  Needs REAL separate processes, exactly like the migration race in db.test.ts — one thread cannot fail
  *  to upgrade a snapshot against itself, so a single-process version of this test would prove nothing. */
 describe('BrainDelegationStore under a concurrently committing process', () => {
-  it('persists every sub-agent and workflow write while another process commits to the same database', async () => {
+  it('persists delegated session and run writes while another process commits to the same database', async () => {
     const compiledDb = fileURLToPath(new URL('../../dist/store/db.js', import.meta.url));
+    const compiledBrainStore = fileURLToPath(new URL('../../dist/store/brainStore.js', import.meta.url));
     const compiledStore = fileURLToPath(new URL('../../dist/store/brainDelegationStore.js', import.meta.url));
-    if (!existsSync(compiledDb) || !existsSync(compiledStore)) return; // built artefacts only; skipped until `npm run build` has run
+    if (!existsSync(compiledDb) || !existsSync(compiledBrainStore) || !existsSync(compiledStore)) return; // built artefacts only; skipped until `npm run build` has run
     dir = mkdtempSync(join(tmpdir(), 'elowen-delegation-'));
     const path = join(dir, 'race.db');
     const doneFile = join(dir, 'daemon-done');
@@ -54,6 +54,7 @@ describe('BrainDelegationStore under a concurrently committing process', () => {
     seeded.createSession({ id: CHILD, userId: 1, model: 'm', parentSessionId: PARENT, delegatedAccess: SCOPE });
 
     const dbUrl = pathToFileURL(compiledDb).href;
+    const brainStoreUrl = pathToFileURL(compiledBrainStore).href;
     const storeUrl = pathToFileURL(compiledStore).href;
     // Both processes import first and then spin to a shared wall-clock instant, so import cost (tens of
     // uneven milliseconds) cannot stagger them past the window under test. Both open with migrate:false —
@@ -62,12 +63,17 @@ describe('BrainDelegationStore under a concurrently committing process', () => {
     const daemonSrc = `
       const fs = await import('node:fs');
       const { openDb } = await import('${dbUrl}');
+      const { BrainStore } = await import('${brainStoreUrl}');
       const { BrainDelegationStore } = await import('${storeUrl}');
-      const store = new BrainDelegationStore(openDb(process.argv[1], { migrate: false }));
+      const db = openDb(process.argv[1], { migrate: false });
+      const brainStore = new BrainStore(db);
+      const store = new BrainDelegationStore(db);
       const stop = () => { try { fs.writeFileSync(process.argv[2], 'x'); } catch {} };
       while (Date.now() < ${startAt}) {}
       for (let i = 0; i < ${ITERATIONS}; i++) {
+        let operation = 'createSession';
         try {
+          brainStore.createSession({ id: 'spawn-' + i, userId: 1, model: 'm', parentSessionId: '${PARENT}', delegatedAccess: ${JSON.stringify(SCOPE)} });
           const results = [
             ['upsertSubagentRun', store.upsertSubagentRun('${PARENT}', { id: 'call-1', sessionId: '${CHILD}', status: 'running', task: 'load', tools: i, seconds: 0 })],
             ['upsertWorkflowRun', store.upsertWorkflowRun('${PARENT}', { id: 'wf-1', toolCallId: 'call-2', title: 'iter-' + i, status: 'running', nodes: [{ id: 'n1', task: 'load', status: 'running', deps: [] }] })],
@@ -75,11 +81,12 @@ describe('BrainDelegationStore under a concurrently committing process', () => {
             ['enqueueWorkflowResult', store.enqueueWorkflowResult('${PARENT}', { id: 'wf-1', toolCallId: 'call-2', title: 'iter-' + i, status: 'done', result: 'ok' })],
           ];
           for (const [name, ok] of results) {
+            operation = name;
             if (ok !== true) { stop(); console.error(name + ' rejected the write at iteration ' + i); process.exit(2); }
           }
         } catch (e) {
           stop();
-          console.error('iteration ' + i + ' threw ' + (e.code || 'no-code') + ': ' + e.message);
+          console.error(operation + ' at iteration ' + i + ' threw ' + (e.code || 'no-code') + ': ' + e.message + '\\n' + e.stack);
           process.exit(1);
         }
       }
@@ -118,6 +125,9 @@ describe('BrainDelegationStore under a concurrently committing process', () => {
     expect(messages.n).toBeGreaterThan(100);
     // ...and the LAST write of each method is on disk, which is what "no result was lost" means: a
     // swallowed failure would leave an earlier iteration's value here.
+    const spawned = db.prepare('SELECT parent_session_id FROM brain_sessions WHERE id = ?')
+      .get(`spawn-${ITERATIONS - 1}`) as { parent_session_id: string } | undefined;
+    expect(spawned?.parent_session_id).toBe(PARENT);
     const run = db.prepare('SELECT state FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ?')
       .get(PARENT, 'call-1') as { state: string } | undefined;
     expect((JSON.parse(run?.state ?? '{}') as { tools?: number }).tools).toBe(ITERATIONS - 1);
