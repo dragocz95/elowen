@@ -20,6 +20,13 @@ export type { ToolOutputView, BrainMessageView };
 
 const TOOL_DETAIL_MAX = 60;
 
+/** Tool calls that own a delegated-child progress sidecar. DelegateContinue starts a new tracked child turn
+ *  against an existing session, so it is an anchor exactly like Delegate; every other tool is foreign even
+ *  if malformed history reuses the same call id. */
+export function isSubagentToolName(name: string): boolean {
+  return name === 'Delegate' || name === 'DelegateContinue';
+}
+
 function truncateToolDetail(value: string, max = TOOL_DETAIL_MAX): string {
   return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value;
 }
@@ -568,7 +575,7 @@ export function shapeBrainMessages(
           ...(output ? { output } : {}),
           ...(command ? { command } : {}),
           ...(plan ? { plan } : {}),
-          ...(p.id && subagents.has(p.id) ? { sub: subagents.get(p.id) } : {}),
+          ...(p.id && isSubagentToolName(p.name) && subagents.has(p.id) ? { sub: subagents.get(p.id) } : {}),
           // Gated on the tool NAME, not just the call id: workflow state must only ever ride its own
           // WorkflowStart row — on an id collision it would otherwise decorate an unrelated tool call,
           // and withWorkflowAnchors (same name gate) would suppress the real anchor's synthesis over it.
@@ -629,7 +636,7 @@ export function withSubagentAnchors(
   const anchored = new Set<string>();
   for (const view of views) {
     for (const segment of view.segments ?? []) {
-      if (segment.kind === 'tool' && segment.id && segment.sub) anchored.add(segment.id);
+      if (segment.kind === 'tool' && segment.id && segment.sub && isSubagentToolName(segment.name)) anchored.add(segment.id);
     }
   }
   const synthetic = running

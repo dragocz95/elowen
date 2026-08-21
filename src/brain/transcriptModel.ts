@@ -1,4 +1,5 @@
 import type { BrainEvent } from './events.js';
+import { isSubagentToolName } from './messageView.js';
 import {
   submittedPlanOf,
   turnsFromHistory,
@@ -374,6 +375,10 @@ export class TranscriptModel implements TranscriptRead {
   private applySubagent(event: Extract<BrainEvent, { type: 'subagent' }>): boolean {
     const location = this.toolLocations.get(event.id);
     if (!location) return false;
+    const turn = this.turns[location.turn];
+    const segment = turn?.role === 'elowen' ? turn.segments[location.segment] : undefined;
+    const item = segment?.kind === 'tools' ? segment.items[location.item] : undefined;
+    if (!item || !isSubagentToolName(item.name)) return false;
     const sub: SubagentState = {
       sessionId: event.sessionId,
       status: event.status,
@@ -402,6 +407,10 @@ export class TranscriptModel implements TranscriptRead {
   private applyWorkflow(event: Extract<BrainEvent, { type: 'workflow' }>): boolean {
     const location = this.toolLocations.get(event.toolCallId);
     if (!location) return false;
+    const turn = this.turns[location.turn];
+    const segment = turn?.role === 'elowen' ? turn.segments[location.segment] : undefined;
+    const item = segment?.kind === 'tools' ? segment.items[location.item] : undefined;
+    if (item?.name !== 'WorkflowStart') return false;
     const { type: _type, ...update } = event;
     const wf = freezeWorkflow(update);
     if (!this.patchTool(location, (item) => ({ ...item, wf }))) return false;

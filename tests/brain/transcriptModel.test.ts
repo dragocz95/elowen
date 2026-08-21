@@ -136,6 +136,14 @@ describe('TranscriptModel', () => {
       expect(model.workflows()).toEqual([]);
     });
 
+    it('does not attach a workflow snapshot to a foreign tool that reuses the call id', () => {
+      const model = new TranscriptModel([{
+        role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }],
+      }]);
+      expect(model.apply(wfEvent())).toBe(false);
+      expect(model.workflows()).toEqual([]);
+    });
+
     // The regression this whole change exists for. Every hydration — reconnect, opening the stream, even
     // closing a sub-agent view — calls replaceHistory, which wipes the derived projections. The workflow
     // used to have no durable source to be rebuilt from, so it vanished from the rail and its modal could

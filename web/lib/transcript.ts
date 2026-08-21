@@ -214,12 +214,22 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
   return { turns, thinking: false };
 }
 
-/** Tool-call ids carried by one stored assistant turn. Synthetic running-work anchors are deliberately
- *  one-tool turns, but scan the whole shape so the replacement remains correct if that representation grows. */
-function toolCallIds(turn: ChatTurn): string[] {
+/** Mirror of the daemon's typed anchor rules: Delegate and DelegateContinue share one sub-agent anchor
+ *  class, while a workflow belongs only to WorkflowStart. A foreign tool reusing an id must never evict a
+ *  synthetic anchor or receive a live sidecar update. */
+function isSubagentToolName(name: string): boolean {
+  return name === 'Delegate' || name === 'DelegateContinue';
+}
+
+function runningAnchorKeys(turn: ChatTurn): string[] {
   if (turn.role !== 'elowen') return [];
   return turn.segments.flatMap((segment) => segment.kind === 'tools'
-    ? segment.items.flatMap((item) => item.id ?? [])
+    ? segment.items.flatMap((item) => {
+        if (!item.id) return [];
+        if (isSubagentToolName(item.name)) return [`subagent:${item.id}`];
+        if (item.name === 'WorkflowStart') return [`workflow:${item.id}`];
+        return [];
+      })
     : []);
 }
 
@@ -233,10 +243,11 @@ function toolCallIds(turn: ChatTurn): string[] {
  *  event patches only one of them, leaving a phantom running row in the panel. */
 export function prependHistory(view: ChatView, older: BrainMessage[]): ChatView {
   const incoming = fromHistory(older).turns;
-  const realToolIds = new Set(incoming.flatMap((turn) => turn.role === 'elowen' && !turn.synthetic ? toolCallIds(turn) : []));
-  const withoutReplaced = realToolIds.size === 0
+  const realAnchorKeys = new Set(incoming.flatMap((turn) => turn.role === 'elowen' && !turn.synthetic ? runningAnchorKeys(turn) : []));
+  const withoutReplaced = realAnchorKeys.size === 0
     ? view.turns
-    : view.turns.filter((turn) => !(turn.role === 'elowen' && turn.synthetic && toolCallIds(turn).some((id) => realToolIds.has(id))));
+    : view.turns.filter((turn) => !(turn.role === 'elowen' && turn.synthetic
+      && runningAnchorKeys(turn).some((key) => realAnchorKeys.has(key))));
   const retained = withoutReplaced.length === view.turns.length ? view.turns : withoutReplaced;
 
   const known = new Set<string>();
@@ -346,7 +357,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
     case 'subagent': {
       // Background children can finish after the parent assistant turn is already settled. Patch that
       // historical delegate row by id; do not fabricate an empty streaming turn or re-enable thinking.
-      const patched = attachToToolInTurns(turns, e.id, (item) => ({
+      const patched = attachToToolInTurns(turns, e.id, isSubagentToolName, (item) => ({
         ...item,
         sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model, background: e.background, autoDeliver: e.autoDeliver, resultDelivery: e.resultDelivery },
       }));
@@ -359,7 +370,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
         id: e.id, toolCallId: e.toolCallId, status: e.status, nodes: e.nodes,
         ...(e.title ? { title: e.title } : {}),
       };
-      const patched = attachToToolInTurns(turns, e.toolCallId, (item) => ({ ...item, wf }));
+      const patched = attachToToolInTurns(turns, e.toolCallId, (name) => name === 'WorkflowStart', (item) => ({ ...item, wf }));
       return patched ? { ...view, turns } : view;
     }
     case 'session': {
@@ -423,14 +434,19 @@ function attachToTool(t: ElowenTurn, id: string | undefined, patch: (item: ToolI
   }
 }
 
-function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolItem) => ToolItem): boolean {
+function attachToToolInTurns(
+  turns: ChatTurn[],
+  id: string,
+  acceptsName: (name: string) => boolean,
+  patch: (item: ToolItem) => ToolItem,
+): boolean {
   for (let ti = turns.length - 1; ti >= 0; ti--) {
     const turn = turns[ti]!;
     if (turn.role !== 'elowen') continue;
     for (let si = turn.segments.length - 1; si >= 0; si--) {
       const seg = turn.segments[si]!;
       if (seg.kind !== 'tools') continue;
-      const ii = seg.items.findLastIndex((item) => item.id === id);
+      const ii = seg.items.findLastIndex((item) => item.id === id && acceptsName(item.name));
       if (ii < 0) continue;
       const items = seg.items.slice();
       items[ii] = patch(items[ii]!);

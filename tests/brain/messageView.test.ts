@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { stripInlineReasoning, extractText, toolDetail, toolDisplay, toolOutputView, isThinkingOnlyReply, shapeBrainMessages, withWorkflowAnchors, pendingSubmittedPlan, newestTurnStart, setToolOutputPolicy } from '../../src/brain/messageView.js';
+import { stripInlineReasoning, extractText, toolDetail, toolDisplay, toolOutputView, isThinkingOnlyReply, shapeBrainMessages, withSubagentAnchors, withWorkflowAnchors, pendingSubmittedPlan, newestTurnStart, setToolOutputPolicy } from '../../src/brain/messageView.js';
 import { makeToolOutputPolicy } from '../../src/brain/toolOutput.js';
 
 describe('toolDisplay: skill loads', () => {
@@ -89,6 +89,11 @@ describe('shapeBrainMessages: platform envelopes', () => {
 });
 
 describe('shapeBrainMessages: durable sub-agent state', () => {
+  const run = {
+    toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running' as const, task: 'inspect',
+    detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+  };
+
   it('keeps the tool-call id and attaches the validated sidecar snapshot for reconnect/drill-in', () => {
     const rows = [{
       role: 'assistant',
@@ -97,10 +102,7 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
         content: [{ type: 'toolCall', id: 'delegate-1', name: 'Delegate', arguments: { task: 'inspect' } }],
       }),
     }];
-    const [view] = shapeBrainMessages(rows, [{
-      toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
-      detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
-    }]);
+    const [view] = shapeBrainMessages(rows, [run]);
     expect(view?.segments?.[0]).toMatchObject({
       kind: 'tool', id: 'delegate-1', name: 'Delegate',
       sub: {
@@ -108,6 +110,30 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
         detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
       },
     });
+  });
+
+  it('accepts DelegateContinue but never attaches a sidecar to a foreign tool with the same id', () => {
+    const rows = [{
+      role: 'assistant',
+      content: JSON.stringify({
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'delegate-1', name: 'Read', arguments: { path: 'src/a.ts' } },
+          { type: 'toolCall', id: 'delegate-1', name: 'DelegateContinue', arguments: { id: 'child' } },
+        ],
+      }),
+    }];
+    const [view] = shapeBrainMessages(rows, [run]);
+    const { toolCallId: _toolCallId, ...sub } = run;
+    expect(view?.segments?.[0]).not.toHaveProperty('sub');
+    expect(view?.segments?.[1]).toMatchObject({ name: 'DelegateContinue', sub });
+  });
+
+  it('still synthesizes over a foreign id collision and recognizes a real DelegateContinue anchor', () => {
+    const foreign = [{ role: 'assistant' as const, text: '', segments: [{ kind: 'tool' as const, name: 'Read', id: 'delegate-1' }] }];
+    expect(withSubagentAnchors(foreign, [run])[0]).toMatchObject({ synthetic: true, id: 'sub-anchor-delegate-1' });
+    const real = [{ role: 'assistant' as const, text: '', segments: [{ kind: 'tool' as const, name: 'DelegateContinue', id: 'delegate-1', sub: run }] }];
+    expect(withSubagentAnchors(real, [run])).toEqual(real);
   });
 });
 

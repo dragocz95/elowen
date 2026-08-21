@@ -198,10 +198,21 @@ describe('web transcript prependHistory: lazy-load scroll-up', () => {
       { id: 'tail', role: 'user', text: 'newest q' },
     ]);
 
+    view = prependHistory(view, [{
+      id: 'colliding-read-row', role: 'assistant', text: '',
+      segments: [
+        { kind: 'tool', name: 'Read', id: 'call-sub' },
+        { kind: 'tool', name: 'Read', id: 'call-wf' },
+      ],
+    }]);
+    expect(view.turns.map((turn) => turn.id)).toEqual([
+      'colliding-read-row', 'sub-anchor-call-sub', 'wf-anchor-call-wf', 'tail',
+    ]);
+
     view = prependHistory(view, [
       {
         id: 'real-sub-row', role: 'assistant', text: '',
-        segments: [{ kind: 'tool', name: 'Delegate', id: 'call-sub', sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 2 } }],
+        segments: [{ kind: 'tool', name: 'DelegateContinue', id: 'call-sub', sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 2 } }],
       },
       {
         id: 'real-wf-row', role: 'assistant', text: '',
@@ -209,7 +220,7 @@ describe('web transcript prependHistory: lazy-load scroll-up', () => {
       },
     ]);
 
-    expect(view.turns.map((turn) => turn.id)).toEqual(['real-sub-row', 'real-wf-row', 'tail']);
+    expect(view.turns.map((turn) => turn.id)).toEqual(['real-sub-row', 'real-wf-row', 'colliding-read-row', 'tail']);
     view = reduce(view, { type: 'subagent', id: 'call-sub', sessionId: 'child', status: 'done', task: 'inspect', tools: 2, seconds: 4 });
     const subagents = view.turns.flatMap((turn) => turn.role === 'elowen'
       ? turn.segments.flatMap((segment) => segment.kind === 'tools' ? segment.items.flatMap((item) => item.sub ?? []) : [])

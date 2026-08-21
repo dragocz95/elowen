@@ -260,6 +260,17 @@ describe('TranscriptModel subagent progress', () => {
     expect(model.thinking).toBe(false);
   });
 
+  it('does not attach progress to a foreign tool that reuses the delegation id', () => {
+    const model = new TranscriptModel([{
+      role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }],
+    }]);
+    expect(model.apply({
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'running', task: 't', tools: 0, seconds: 0,
+    })).toBe(false);
+    expect(model.subagents()).toEqual([]);
+    expect(lastTool(model).sub).toBeUndefined();
+  });
+
   it('coalesces notice-only revisions with a later sparse turn patch', () => {
     const model = delegateTranscript();
     model.apply({ type: 'idle' });
