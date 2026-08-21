@@ -1,6 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, Blocks } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, Blocks, MessageSquareText } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { ProfilePatch } from '../../lib/types';
@@ -159,9 +159,11 @@ export function AccountView() {
   // cliSettings (not on the User) — seeded once, then this local state drives the picker highlight.
   const [elowenSel, setElowenSel] = useState('');
   const [elowenSeeded, setElowenSeeded] = useState(false);
-  // Discord / WhatsApp account links live in cliSettings; seeded alongside the Elowen-AI default, autosaved.
+  // Platform account links live in cliSettings; Teams is normally filled automatically from verified UPN.
   const [discordUserId, setDiscordUserId] = useState('');
   const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [msteamsUserId, setMsteamsUserId] = useState('');
+  const [linksBase, setLinksBase] = useState<{ discordUserId: string; whatsappNumber: string; msteamsUserId: string } | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -227,20 +229,35 @@ export function AccountView() {
   useEffect(() => {
     if (cli.data && !elowenSeeded) {
       setElowenSel(cli.data.model ? `${cli.data.modelProvider ?? ''}::${cli.data.model}` : '');
-      setDiscordUserId(cli.data.discordUserId ?? '');
-      setWhatsappNumber(cli.data.whatsappNumber ?? '');
+      const links = {
+        discordUserId: cli.data.discordUserId ?? '',
+        whatsappNumber: cli.data.whatsappNumber ?? '',
+        msteamsUserId: cli.data.msteamsUserId ?? '',
+      };
+      setDiscordUserId(links.discordUserId);
+      setWhatsappNumber(links.whatsappNumber);
+      setMsteamsUserId(links.msteamsUserId);
+      setLinksBase(links);
       setElowenSeeded(true);
     }
   }, [cli.data, elowenSeeded]);
-  // Autosave the Discord / WhatsApp links (cli-settings PATCH merges, so the model picks stay untouched).
-  const linksSave = useAutoSaveStatus([discordUserId, whatsappNumber], async () => {
+  // Autosave only links changed in this form. In particular, a Teams TOFU link may appear server-side
+  // while this page is open; saving an unrelated Discord field must not send the stale empty Teams value.
+  const linksPatch: { discordUserId?: string; whatsappNumber?: string; msteamsUserId?: string } = {};
+  if (linksBase) {
+    if (discordUserId !== linksBase.discordUserId) linksPatch.discordUserId = discordUserId;
+    if (whatsappNumber !== linksBase.whatsappNumber) linksPatch.whatsappNumber = whatsappNumber;
+    if (msteamsUserId !== linksBase.msteamsUserId) linksPatch.msteamsUserId = msteamsUserId;
+  }
+  const linksSave = useAutoSaveStatus([discordUserId, whatsappNumber, msteamsUserId], async () => {
     try {
-      await saveLinks.mutateAsync({ discordUserId, whatsappNumber });
+      await saveLinks.mutateAsync(linksPatch);
+      setLinksBase((current) => current ? { ...current, ...linksPatch } : current);
     } catch (error) {
       toast(t.account.saveError, 'error');
       throw error;
     }
-  }, { ready: elowenSeeded });
+  }, { ready: linksBase !== null, savable: Object.keys(linksPatch).length > 0 });
 
   // Picking an Elowen AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
   // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
@@ -471,7 +488,7 @@ export function AccountView() {
             />
           </SpatialRow>
         );
-        // Discord / WhatsApp account links — map the platform identity to this Elowen account.
+        // Platform account links map authenticated sender identities to this Elowen account.
         const rowDiscord = (
           <SpatialRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
             <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="font-mono sm:w-72" aria-label={t.account.discordId} />
@@ -480,6 +497,11 @@ export function AccountView() {
         const rowWhatsapp = (
           <SpatialRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
             <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="font-mono sm:w-72" aria-label={t.account.whatsappNumber} />
+          </SpatialRow>
+        );
+        const rowMsteams = (
+          <SpatialRow title={t.account.msteamsIdentity} icon={MessageSquareText} description={t.help.accountMsteamsIdentity}>
+            <Input value={msteamsUserId} onChange={(e) => setMsteamsUserId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className="font-mono sm:w-72" aria-label={t.account.msteamsIdentity} />
           </SpatialRow>
         );
         return (
@@ -503,7 +525,7 @@ export function AccountView() {
             </SpatialIdentity>
 
             <SpatialGroup>
-              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}
+              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}{rowMsteams}
             </SpatialGroup>
           </div>
         );

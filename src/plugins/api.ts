@@ -184,6 +184,9 @@ export interface SessionSource {
   /** The sender's display name, supplied structurally. Adapters must pass clean message text and must not
    *  interpolate this name into it; core serializes attribution only after validating the turn surface. */
   userName?: string;
+  /** E-mail / UPN verified by the platform adapter for this sender. This identity evidence MUST come from
+   *  the platform's authenticated directory or activity metadata, never from message text typed by a user. */
+  verifiedEmail?: string;
   /** True only when the adapter recognized the text as a plugin prompt-command it intentionally passes to
    *  PI for native expansion. A leading slash by itself is ordinary user text. */
   promptCommand?: boolean;

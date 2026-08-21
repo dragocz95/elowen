@@ -17,8 +17,8 @@ export function sanitizePlatformSenderName(value: unknown): string {
 export interface IdentityDeps {
   /** The Elowen user that anchors platform channel sessions (the admin). Undefined = single-user mode. */
   platformOwner?: () => number | undefined;
-  /** Resolve a platform sender (e.g. a Discord id) to the Elowen user who claimed it. */
-  resolvePlatformUser?: (platform: string, platformUserId: string) => LinkedUser | null;
+  /** Resolve a platform sender, optionally using platform-verified e-mail evidence supplied structurally. */
+  resolvePlatformUser?: (platform: string, platformUserId: string, verifiedEmail?: string) => LinkedUser | null;
   users: { get(userId: number): { username?: string; name?: string; is_admin?: boolean } | null | undefined };
 }
 
@@ -79,7 +79,7 @@ export class IdentityResolver {
    *  structured sender attribution. The attribution is serialized later as JSON for shared rooms; no
    *  attacker-controlled display name is ever interpolated into trusted prompt markup. */
   forPlatformTurn(src: SessionSource, _owner: number): { identity: TurnIdentity; sender?: PlatformSenderAttribution; accountUserId?: number; linkedUserId?: number } {
-    const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
+    const linked = this.d.resolvePlatformUser?.(src.platform, src.userId, src.verifiedEmail);
     // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
     // resolve — the plugin names the account and the host looks it up here, so the turn runs through the
     // SAME account view a linked sender gets: that account's project policy, its tool deny-list and its

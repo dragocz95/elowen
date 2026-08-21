@@ -828,8 +828,8 @@ export class MsTeamsAdapter {
     try {
       const runTurn = () => this.handler(
         {
-          platform: 'msteams', userId: String(from.aadObjectId || from.id), userName: senderName, roleIds: ids,
-          channelId: convoKey, access: turnAccess,
+          platform: 'msteams', userId: String(from.aadObjectId || from.id), userName: senderName,
+          verifiedEmail: upn || undefined, roleIds: ids, channelId: convoKey, access: turnAccess,
           ...(promptSlash ? { promptCommand: true } : {}),
           // Only an explicit Teams personal conversation is a 1:1 chat. `kind` defaults a missing
           // conversationType for history behavior, but direct-chat privileges must fail closed.

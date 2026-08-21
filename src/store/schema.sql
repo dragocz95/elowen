@@ -100,6 +100,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_whatsapp_number ON user_settings(value) WHERE key = 'whatsappNumber';
 -- Same one-owner-per-id rule for a linked Telegram numeric user id.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_telegram_id ON user_settings(value) WHERE key = 'telegramUserId';
+-- Same one-owner-per-id rule for a linked Microsoft Teams identity (Entra object id or `29:…` Teams id).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_msteams_id ON user_settings(value) WHERE key = 'msteamsUserId';
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL DEFAULT (datetime('now')),

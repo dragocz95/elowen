@@ -51,6 +51,14 @@ export interface ExternalIdentityView {
 export class ExternalIdentityConflictError extends Error {
   constructor(message: string) { super(message); this.name = 'ExternalIdentityConflictError'; }
 }
+/** Raised when a normalized, non-empty profile e-mail is already held by another account. E-mail is a
+ *  Teams bootstrap identity, so allowing duplicates would let a self-service profile squat that sender. */
+export class EmailConflictError extends Error {
+  constructor(public readonly email: string) {
+    super(`email ${email} is already used by another user`);
+    this.name = 'EmailConflictError';
+  }
+}
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
 type ExternalIdentityRow = Row & { external_provider: string; external_tenant_id: string; external_subject_id: string; external_created_at: string };
 const canonicalExec = (value: unknown): string => {
@@ -276,15 +284,44 @@ export class UserStore {
     this.db.prepare('UPDATE users SET granted_plugins = ? WHERE id = ?').run([...new Set(plugins)].join(','), id);
     return this.get(id);
   }
+  /** Resolve a normalized e-mail only when exactly one account holds it. Legacy databases may contain
+   *  duplicates and deliberately run without the unique index, so callers must never take the first row. */
+  userByUniqueEmail(email: string): User | null {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return null;
+    const rows = this.db.prepare('SELECT * FROM users WHERE lower(trim(email)) = ? LIMIT 2').all(normalized) as Row[];
+    return rows.length === 1 ? mask(rows[0]!) : null;
+  }
+
   /** Self-service profile fields (name / email / preferred default executor). Only provided keys
-   *  are written, so a partial update leaves the rest untouched. */
+   *  are written, so a partial update leaves the rest untouched. A normalized non-empty e-mail may belong
+   *  to only one account because Teams uses it solely as a guarded first-contact identity bootstrap. */
   setProfile(id: number, patch: { name?: string; email?: string; default_exec?: string }): User | null {
-    const sets: string[] = []; const p: Record<string, unknown> = { id };
-    if (typeof patch.name === 'string') { sets.push('name = @name'); p.name = patch.name; }
-    if (typeof patch.email === 'string') { sets.push('email = @email'); p.email = patch.email; }
-    if (typeof patch.default_exec === 'string') { sets.push('default_exec = @default_exec'); p.default_exec = canonicalExec(patch.default_exec); }
-    if (sets.length > 0) this.db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = @id`).run(p);
-    return this.get(id);
+    return this.db.transaction(() => {
+      const sets: string[] = []; const p: Record<string, unknown> = { id };
+      if (typeof patch.name === 'string') { sets.push('name = @name'); p.name = patch.name; }
+      if (typeof patch.email === 'string') {
+        const email = patch.email.trim();
+        const normalized = email.toLowerCase();
+        if (normalized) {
+          const claimed = this.db.prepare('SELECT id FROM users WHERE lower(trim(email)) = ? AND id <> ? LIMIT 1')
+            .get(normalized, id) as { id: number } | undefined;
+          if (claimed) throw new EmailConflictError(email);
+        }
+        sets.push('email = @email'); p.email = email;
+      }
+      if (typeof patch.default_exec === 'string') { sets.push('default_exec = @default_exec'); p.default_exec = canonicalExec(patch.default_exec); }
+      if (sets.length > 0) {
+        try { this.db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = @id`).run(p); }
+        catch (error) {
+          if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE' && typeof p.email === 'string') {
+            throw new EmailConflictError(p.email);
+          }
+          throw error;
+        }
+      }
+      return this.get(id);
+    }).immediate();
   }
   /** Remember which agent exec the user's advisor runs (chosen at first open). Empty = not set up. */
   setAdvisorExec(id: number, exec: string): User | null {

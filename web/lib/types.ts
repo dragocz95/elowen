@@ -251,7 +251,7 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
 
 /** Per-user CLI/brain settings surfaced in Account. `model` empty → the configured brain default.
  *  `userInstructions` is the semantic field; `personalityBody` is a temporary legacy-client alias. */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; discordUserId: string; whatsappNumber: string; telegramUserId?: string; msteamsUserId?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,

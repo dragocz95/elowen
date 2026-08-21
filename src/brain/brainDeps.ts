@@ -93,9 +93,9 @@ export interface BrainDeps {
    *  Read fresh so a config change applies to the next spawn without a restart. Absent (minimal/test
    *  wiring) → the deferral policy's built-in defaults. */
   runtimeConfig?: () => RuntimeConfig;
-  /** Resolve a platform sender (e.g. a Discord id) to the Elowen user who claimed it in their account
-   *  settings. Lets channel turns carry a verified identity line for registered users. */
-  resolvePlatformUser?: (platform: string, platformUserId: string) => { id: number; name: string; username?: string; admin: boolean } | null;
+  /** Resolve a platform sender to the Elowen user who claimed it. `verifiedEmail` is optional platform-
+   *  authenticated identity evidence (Teams UPN), never user-authored message content. */
+  resolvePlatformUser?: (platform: string, platformUserId: string, verifiedEmail?: string) => { id: number; name: string; username?: string; admin: boolean } | null;
   /** Per-user granular tool permissions (allow/ask/deny rules + the persisted YOLO default), read
    *  fresh each turn so an "Always allow" or a settings edit applies immediately. Absent → the
    *  execute-time permission gate stays inert (tests / minimal wiring). */

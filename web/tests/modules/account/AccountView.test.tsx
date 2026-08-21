@@ -46,6 +46,22 @@ describe('AccountView', () => {
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
   });
 
+  it('saves only the platform link edited in this form, preserving a concurrent Teams TOFU link', async () => {
+    let patched: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '', msteamsUserId: '' })),
+      http.patch('*/api/auth/me/cli-settings', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json({}); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Discord ID' }), { target: { value: '123456789012345678' } });
+    await waitFor(() => expect(patched).toEqual({ discordUserId: '123456789012345678' }));
+  });
+
   it('offers the Plugins section as soon as a plugin asks this account for details of its own', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),

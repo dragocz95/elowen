@@ -24,6 +24,23 @@ describe('openDb', () => {
     }
   });
 
+  it('boots with legacy duplicate normalized e-mails and leaves the uniqueness index disabled', () => {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'old.db');
+    const old = new Database(path);
+    old.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')), email TEXT NOT NULL DEFAULT '')`);
+    old.prepare('INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)').run('alice', 'h1', ' Owner@Example.com ');
+    old.prepare('INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)').run('bob', 'h2', 'owner@example.COM');
+    old.close();
+
+    const db = openDb(path);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 2 });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_users_email_normalized'").get()).toBeUndefined();
+    expect((db.prepare("SELECT COUNT(*) AS n FROM users WHERE lower(trim(email)) = 'owner@example.com'").get() as { n: number }).n).toBe(2);
+  });
+
   it('migrates a pre-project_id events table without throwing (adds the column + index)', () => {
     dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
     const path = join(dir, 'old.db');

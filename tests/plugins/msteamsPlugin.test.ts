@@ -446,7 +446,7 @@ describe('msteams identity + role mapping', () => {
     adapter.listen(async (src, text) => { seen.push({ src, text }); return 'brain says hi'; });
     await adapter.onActivity(activity());
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.src).toMatchObject({ platform: 'msteams', userId: 'aad-1', userName: 'Alex Rivera', channelId: 'a:conv1#0', direct: true });
+    expect(seen[0]!.src).toMatchObject({ platform: 'msteams', userId: 'aad-1', userName: 'Alex Rivera', verifiedEmail: 'alex@contoso.com', channelId: 'a:conv1#0', direct: true });
     expect(seen[0]!.text).toBe('hello there');
     const reply = calls.find((c) => c.kind === 'reply');
     expect(reply?.args[3]).toMatchObject({ type: 'message', textFormat: 'markdown', text: 'brain says hi' });

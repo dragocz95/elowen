@@ -38,13 +38,13 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
     const { app, restart, applyAutoCompactSettings, amyId, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
     // The threshold also reaches conversations that are ALREADY live — the restart above only covers this
     // user's active chat, not their other sessions or the channel sessions they own.
@@ -149,5 +149,16 @@ describe('cli-settings routes', () => {
     expect((await app.request('/auth/me/cli-settings', auth(bobTok)).then((r) => r.json())).discordUserId).toBe('');
     // Amy still owns it.
     expect((await app.request('/auth/me/cli-settings', auth(amyTok)).then((r) => r.json())).discordUserId).toBe('123456789012345678');
+  });
+
+  it('PATCH refuses a Teams identity already linked to another user (409)', async () => {
+    const { app, users, amyTok } = setup();
+    const bob = users.create('bob', 'pw');
+    const bobTok = users.issueToken(bob.id);
+    const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    expect((await app.request('/auth/me/cli-settings', patch(amyTok, { msteamsUserId: id }))).status).toBe(200);
+    const res = await app.request('/auth/me/cli-settings', patch(bobTok, { msteamsUserId: id }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('Microsoft Teams');
   });
 });

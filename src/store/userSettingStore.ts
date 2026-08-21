@@ -8,7 +8,7 @@ import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; msteamsUserId: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoLiveRecall default to true so upgrading users keep the prior always-on memory behaviour.
 // autoCompact is on because the alternative is a conversation that dies at the context limit instead of
@@ -18,7 +18,7 @@ export interface ProjectModelPreference { provider: string; model: string }
 // by REMOVING the key, so a non-empty default would make that choice unreachable — and the account UI
 // resets the level to empty whenever the active model does not offer it, which would then loop against a
 // default that model cannot honour. The level belongs per model, not in the fallback.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false };
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -44,6 +44,15 @@ export class TelegramIdConflictError extends Error {
   constructor(public readonly telegramUserId: string) {
     super(`telegram id ${telegramUserId} is already linked to another user`);
     this.name = 'TelegramIdConflictError';
+  }
+}
+
+/** Raised when a user tries to link a Microsoft Teams identity another user has already claimed. Mirrors
+ *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
+export class TeamsIdConflictError extends Error {
+  constructor(public readonly msteamsUserId: string) {
+    super(`teams id ${msteamsUserId} is already linked to another user`);
+    this.name = 'TeamsIdConflictError';
   }
 }
 
@@ -144,6 +153,7 @@ export class UserSettingStore {
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
       whatsappNumber: all.whatsappNumber ?? CLI_DEFAULTS.whatsappNumber,
       telegramUserId: all.telegramUserId ?? CLI_DEFAULTS.telegramUserId,
+      msteamsUserId: all.msteamsUserId ?? CLI_DEFAULTS.msteamsUserId,
       autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
       autoLiveRecall: all.autoLiveRecall !== undefined ? all.autoLiveRecall === 'true' : CLI_DEFAULTS.autoLiveRecall,
       autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
@@ -217,6 +227,24 @@ export class UserSettingStore {
           try { this.set(userId, 'telegramUserId', v); }
           catch (e) {
             if (isUniqueViolation(e)) throw new TelegramIdConflictError(v);
+            throw e;
+          }
+        }
+      }
+      // A Microsoft Teams identity links a Teams sender to this Elowen account. The adapter reports
+      // `from.aadObjectId || from.id`, so BOTH shapes are accepted: an Entra object id (GUID) and a
+      // Teams user id (`29:…`). Stored lower-cased because Entra returns a GUID in either case and the
+      // partial UNIQUE index compares bytes — otherwise the same person could claim two rows. Same
+      // squatter protection as Discord.
+      if (patch.msteamsUserId !== undefined) {
+        const v = String(patch.msteamsUserId).trim().toLowerCase();
+        const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
+        const teamsId = /^29:[\w-]{10,250}$/.test(v);
+        if (!guid && !teamsId) this.remove(userId, 'msteamsUserId');
+        else {
+          try { this.set(userId, 'msteamsUserId', v); }
+          catch (e) {
+            if (isUniqueViolation(e)) throw new TeamsIdConflictError(v);
             throw e;
           }
         }

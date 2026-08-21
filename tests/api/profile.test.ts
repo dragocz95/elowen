@@ -52,6 +52,14 @@ describe('PATCH /auth/me — self-service profile', () => {
     expect(u).toMatchObject({ name: 'Bob B', email: 'bob@x.io', default_exec: 'sonnet' });
   });
 
+  it('rejects a normalized duplicate e-mail with a Czech 409', async () => {
+    const { app, bobTok, adminTok } = setup();
+    expect((await app.request('/auth/me', patch(adminTok, { email: ' Owner@Example.com ' }))).status).toBe(200);
+    const res = await app.request('/auth/me', patch(bobTok, { email: 'owner@example.COM' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'Tento e-mail už používá jiný uživatel.' });
+  });
+
   it('rejects a default executor the user is not allowed to run', async () => {
     const { app, bobTok } = setup();
     expect((await app.request('/auth/me', patch(bobTok, { default_exec: 'bogus/model' }))).status).toBe(400);

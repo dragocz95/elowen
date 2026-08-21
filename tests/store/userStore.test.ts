@@ -24,6 +24,17 @@ describe('UserStore', () => {
     users.create('a', 'x');
     expect(() => users.create('a', 'y')).toThrow();
   });
+  it('matches normalized e-mail only when exactly one account holds it', () => {
+    const db = openPluginTablesDb(':memory:');
+    const store = new UserStore(db);
+    const alice = store.create('alice', 'x');
+    const bob = store.create('bob', 'y');
+    store.setProfile(alice.id, { email: ' Alice@Example.com ' });
+    expect(store.userByUniqueEmail(' alice@example.COM ')).toMatchObject({ id: alice.id });
+    db.exec('DROP INDEX idx_users_email_normalized'); // legacy degraded shape permits an existing duplicate
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run('alice@example.com', bob.id);
+    expect(store.userByUniqueEmail('ALICE@example.com')).toBeNull();
+  });
   it('issues, resolves and revokes tokens', () => {
     const u = users.create('a', 'x');
     const t = users.issueToken(u.id);

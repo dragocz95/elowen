@@ -12,10 +12,11 @@ import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
-import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError } from '../../store/userSettingStore.js';
+import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError, TeamsIdConflictError } from '../../store/userSettingStore.js';
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import { sanitizeNavSettings } from '../../store/navSettings.js';
+import { EmailConflictError } from '../../store/userStore.js';
 import type { User } from '../../store/userStore.js';
 import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -76,7 +77,15 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
         return c.json({ error: 'exec not allowed' }, 400);
       }
     }
-    return c.json(users.setProfile(u.id, { name: b.name, email: b.email, default_exec: b.default_exec }));
+    try {
+      return c.json(users.setProfile(u.id, { name: b.name, email: b.email, default_exec: b.default_exec }));
+    } catch (error) {
+      if (error instanceof EmailConflictError) {
+        console.warn(`profile: user ${u.id} tried to claim an e-mail already used by another account`);
+        return c.json({ error: 'Tento e-mail už používá jiný uživatel.' }, 409);
+      }
+      throw error;
+    }
   });
   // Self-service password change: verify the current password, then swap in the new one. A wrong
   // current password is rejected (401) so it can't be used to set a password without knowing it.
@@ -132,14 +141,14 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true };
+    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true };
     return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; compactModel?: unknown; compactModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; autoCompactAtByModel?: unknown; advisorStyle?: unknown; userInstructions?: unknown; personalityBody?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; telegramUserId?: unknown; msteamsUserId?: unknown; autoRecall?: unknown; autoLiveRecall?: unknown; autoSave?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; compactModel?: string; compactModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; autoCompactAtByModel?: Record<string, number>; advisorStyle?: string; personalityBody?: string; discordUserId?: string; whatsappNumber?: string; telegramUserId?: string; msteamsUserId?: string; autoRecall?: boolean; autoLiveRecall?: boolean; autoSave?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -159,6 +168,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.discordUserId === 'string') patch.discordUserId = b.discordUserId.trim(); // store validates the snowflake shape
     if (typeof b.whatsappNumber === 'string') patch.whatsappNumber = b.whatsappNumber.trim(); // store normalizes to digits
     if (typeof b.telegramUserId === 'string') patch.telegramUserId = b.telegramUserId.trim(); // store validates the numeric-id shape
+    if (typeof b.msteamsUserId === 'string') patch.msteamsUserId = b.msteamsUserId.trim(); // store validates the GUID / `29:…` shape
     // Communication style: only accept a known style; anything else is silently ignored.
     if (typeof b.advisorStyle === 'string' && ADVISOR_STYLES.includes(b.advisorStyle as never)) patch.advisorStyle = b.advisorStyle;
     // Global account instructions appended to the system prompt on every platform. `personalityBody` is a
@@ -200,6 +210,10 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (e instanceof TelegramIdConflictError) {
         console.warn(`cli-settings: user ${u.id} tried to link Telegram id already claimed by another user`);
         return c.json({ error: 'Toto Telegram ID už má propojené jiný uživatel.' }, 409);
+      }
+      if (e instanceof TeamsIdConflictError) {
+        console.warn(`cli-settings: user ${u.id} tried to link Teams id already claimed by another user`);
+        return c.json({ error: 'Tuto identitu Microsoft Teams už má propojenou jiný uživatel.' }, 409);
       }
       throw e;
     }

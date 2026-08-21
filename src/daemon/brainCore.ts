@@ -14,7 +14,7 @@ import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import { UserPromptStore } from '../store/userPromptStore.js';
-import { UserSettingStore } from '../store/userSettingStore.js';
+import { TeamsIdConflictError, UserSettingStore } from '../store/userSettingStore.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
@@ -679,11 +679,34 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         maxSteps: () => config.get().brain.maxSteps,
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
-        resolvePlatformUser: (platform, platformUserId) => {
+        resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {
           if (!platformUserId) return null;
-          // Discord ids are bare snowflakes; WhatsApp userIds are JIDs (e.g. "420778433908@s.whatsapp.net"
-          // or a "<id>@lid") — strip to digits so it matches the stored phone number. Telegram userIds are
-          // bare numeric ids (the plugin reports String(from.id)), stored/matched as-is.
+          const linkedUser = (id: number | null) => {
+            const u = id != null ? users.get(id) : undefined;
+            return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
+          };
+          // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins. Only when
+          // none exists may the adapter's platform-verified UPN bootstrap a unique profile-email match; the
+          // first success is persisted immediately so later e-mail edits can never move this identity.
+          if (platform === 'msteams') {
+            const value = platformUserId.trim().toLowerCase();
+            if (!value) return null;
+            const explicit = linkedUser(userSettings.userIdBySetting('msteamsUserId', value));
+            if (explicit) return explicit;
+            const email = verifiedEmail?.trim().toLowerCase() ?? '';
+            if (!email) return null;
+            const matched = users.userByUniqueEmail(email);
+            if (!matched) return null;
+            try { userSettings.setCliSettings(matched.id, { msteamsUserId: value }); }
+            catch (error) {
+              // Another account claimed this Teams id between lookup and TOFU persistence. Identity is an
+              // auth boundary: refuse the turn instead of throwing or returning the e-mail-matched account.
+              if (error instanceof TeamsIdConflictError) return null;
+              throw error;
+            }
+            return { id: matched.id, name: matched.name || matched.username, username: matched.username, admin: !!matched.is_admin };
+          }
+          // Keep every existing platform path byte-for-byte in semantics: Teams is the only e-mail bootstrap.
           let key: 'discordUserId' | 'whatsappNumber' | 'telegramUserId';
           let value: string;
           if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
@@ -691,9 +714,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           else if (platform === 'telegram') { key = 'telegramUserId'; value = platformUserId.replace(/[^\d]/g, ''); }
           else return null;
           if (!value) return null;
-          const id = userSettings.userIdBySetting(key, value);
-          const u = id != null ? users.get(id) : undefined;
-          return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
+          return linkedUser(userSettings.userIdBySetting(key, value));
         },
         // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
         // bounded by the global list AND their personal whitelist (empty personal = global only).

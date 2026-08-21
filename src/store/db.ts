@@ -20,6 +20,28 @@ function addColumn(db: Db, table: string, column: string, decl: string): void {
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 
+/** Add the normalized profile-email uniqueness guard when legacy data permits it. Some live databases
+ *  predate the guard and may already contain duplicates; refusing to boot would be worse than keeping the
+ *  old data. In that degraded shape writes still preflight conflicts and Teams matching requires exactly
+ *  one row, so identity resolution remains fail-closed without deleting or rewriting anyone's profile. */
+function ensureUniqueUserEmailIndex(db: Db): void {
+  const duplicate = db.prepare(`SELECT lower(trim(email)) AS email
+    FROM users WHERE trim(email) <> '' GROUP BY lower(trim(email)) HAVING COUNT(*) > 1 LIMIT 1`).get();
+  if (duplicate) {
+    console.warn('database migration: normalized user e-mail index not created because duplicate profile e-mails exist; Teams e-mail matching stays fail-closed');
+    return;
+  }
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_normalized ON users(lower(trim(email))) WHERE trim(email) <> ''");
+  } catch (error) {
+    if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      console.warn('database migration: normalized user e-mail index not created because duplicate profile e-mails appeared; Teams e-mail matching stays fail-closed');
+      return;
+    }
+    throw error;
+  }
+}
+
 /** Run a statement that touches a PLUGIN-OWNED table from core cleanup code, tolerating the table's
  *  absence. A fresh install with the owning plugin disabled never creates it (its DDL lives in that
  *  plugin's migrations), yet core's destructive paths — epic/project/user delete, admin cleanup — must
@@ -262,6 +284,8 @@ function applyAdditiveMigrations(db: Db): void {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId'");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_whatsapp_number ON user_settings(value) WHERE key = 'whatsappNumber'");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_telegram_id ON user_settings(value) WHERE key = 'telegramUserId'");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_msteams_id ON user_settings(value) WHERE key = 'msteamsUserId'");
+  ensureUniqueUserEmailIndex(db);
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   // Rename prompt template keys to match the elowen/elowen-platform rename (advisor → elowen, advisor-channel → elowen-platform).

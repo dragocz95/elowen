@@ -3612,58 +3612,56 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
   });
 
-  it('delivers a scheduled result into a real direct channel session without crossing owner-chat send', async () => {
+  it('classifies a linked Teams 1:1 as direct and lets a personal scheduled job bind delivery to it', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const cronCtx = reg.contextFor('cron', {}, { info() {}, warn() {}, error() {} });
-    const discordCtx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    const teamsCtx = reg.contextFor('msteams', {}, { info() {}, warn() {}, error() {} });
     (reg as unknown as { platformPromptsFor: (platform: string) => string[] }).platformPromptsFor =
-      (platform) => platform === 'discord' ? ['DIRECT SURFACE'] : [];
+      (platform) => platform === 'msteams' ? ['DIRECT SURFACE'] : [];
     let handler: ((src: unknown, text: string, onEvent?: (e: BrainEvent) => void) => Promise<string | undefined>) | null = null;
     let directHandler: ((src: unknown, text: string) => Promise<string | undefined>) | null = null;
     const outbound: { channelId?: string; text: string }[] = [];
     cronCtx.registerPlatform({ name: 'cron', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
-    discordCtx.registerPlatform({
-      name: 'discord', connect: async () => {}, listen: (h) => { directHandler = h; },
+    teamsCtx.registerPlatform({
+      name: 'msteams', connect: async () => {}, listen: (h) => { directHandler = h; },
       send: async () => {},
       notify: async (text, channelId) => { outbound.push({ channelId, text }); },
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
-    (d as unknown as { resolvePlatformUser: () => unknown }).resolvePlatformUser = () => ({ id: 1, name: 'Filip', username: 'filip', admin: true });
+    (d as unknown as { resolvePlatformUser: (platform: string, userId: string, verifiedEmail?: string) => unknown }).resolvePlatformUser =
+      (platform, userId, verifiedEmail) => platform === 'msteams' && userId === 'aad-1' && verifiedEmail === 'filip@example.com'
+        ? { id: 1, name: 'Filip', username: 'filip', admin: true }
+        : null;
     const policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
     (d as unknown as { policy: () => typeof policy }).policy = () => policy;
     let append: string[] | undefined;
     d.resourceLoaderFactory = (opts: { appendSystemPrompt?: string[] }) => { append = opts.appendSystemPrompt; return undefined; };
-    // Persisted direct row, but no live channel session: this reproduces daemon restart/LRU eviction.
-    d.store.createSession({ id: 'brain-ch-discord-dm-1', userId: 1, model: 'm' });
-    d.store.setDirect('brain-ch-discord-dm-1', true);
     const svc = new BrainService(d as never);
     await svc.startPlatforms();
+
+    const humanReply = await directHandler!({
+      platform: 'msteams', userId: 'aad-1', verifiedEmail: 'filip@example.com', roleIds: [],
+      channelId: 'dm-1', direct: true, access: { admin: true, projectIds: [] },
+    }, 'human message');
+    expect(humanReply).toContain('human message');
+    expect(d.store.getSession('brain-ch-msteams-dm-1')).toMatchObject({ user_id: 1, direct: 1 });
     d.prompts.render.mockClear();
 
     const events: BrainEvent[] = [];
     const reply = await handler!({
       platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
-      origin: { sessionId: 'brain-ch-discord-dm-1', userId: 1, deliveryTarget: 'destination:discord:dm-1' },
+      origin: { sessionId: 'brain-ch-msteams-dm-1', userId: 1, deliveryTarget: 'destination:msteams:dm-1' },
       access: { admin: true, projectIds: [], actAsUserId: 1 },
     }, 'scheduled follow-up', (event) => events.push(event));
 
     expect(reply).toBe('echo:scheduled follow-up');
     expect(outbound).toEqual([{ channelId: 'dm-1', text: 'echo:scheduled follow-up' }]);
     expect(events.some((event) => event.type === 'delivery')).toBe(true);
-    expect(d.store.getMessages('brain-ch-discord-dm-1').map((m) => JSON.parse(m.content).content)).toContain('scheduled follow-up');
+    expect(d.store.getMessages('brain-ch-msteams-dm-1').map((m) => JSON.parse(m.content).content)).toContain('scheduled follow-up');
     expect(d.prompts.render.mock.calls.map((call) => call[0])).not.toContain('scheduled');
     expect(append).toContain('DIRECT SURFACE');
-
-    // The cold wake-up left a normal direct-chat live session behind; the next human turn keeps working
-    // through the same channel composition rather than inheriting a timer-only persona.
-    const humanReply = await directHandler!({
-      platform: 'discord', userId: 'D1', roleIds: [], channelId: 'dm-1', direct: true,
-      access: { admin: true, projectIds: [] },
-    }, 'human follow-up');
-    expect(humanReply).toContain('human follow-up');
-    expect(d.prompts.render.mock.calls.map((call) => call[0])).not.toContain('scheduled');
   });
 
   it('a scheduled channel turn uses the focused scheduled system prompt, not the coding base or channel overlay', async () => {

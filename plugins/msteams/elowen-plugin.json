@@ -1,6 +1,6 @@
 {
   "name": "msteams",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "apiVersion": "1",
   "requiresCore": "0.28.7",
   "capabilities": { "reads": ["stores", "project-files"], "mutates": ["users"] },

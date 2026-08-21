@@ -906,6 +906,7 @@ export const sk = {
     sectionsNav: 'Sekcie účtu',
     discordId: 'Discord ID',
     whatsappNumber: 'WhatsApp číslo',
+    msteamsIdentity: 'Identita Microsoft Teams',
   },
   accountMemory: {
     recallTitle: 'Automatické vyhľadávanie',
@@ -1873,6 +1874,7 @@ export const sk = {
     modelProvider: "Ktorý runner agenta tento model spúšťa.",
     accountDiscordId: "Vaše Discord ID. Po vyplnení asistent spozná vaše správy na Discorde ako váš účet (pravým kliknutím na profil → Kopírovať ID používateľa).",
     accountWhatsappNumber: "Vaše WhatsApp číslo v medzinárodnom formáte, len číslice (napr. 420778433908). Po vyplnení asistent spozná vaše WhatsApp správy ako váš účet s vašimi nástrojmi a prístupom vlastníka.",
+    accountMsteamsIdentity: "Identita odosielateľa v Microsoft Teams (ID objektu Entra alebo ID 29:…). Bežne sa prepojí automaticky podľa e-mailu overeného platformou; upravujte ju len na opravu rozpoznaného prepojenia.",
     accountUiScale: "Rozhranie sa prispôsobí šírke okna. Týmto posuvníkom nastavíte jeho veľkosť oproti normálu (predvolené je 100 %) pre toto zariadenie.",
     memoryRecall: "Po odoslaní vašej správy sa automaticky prehľadá pamäť a najrelevantnejšie spomienky sa pridajú ako kontext k odpovedi.",
     memoryLiveRecall: "Asistent si spomienky vyhľadá znovu aj počas práce, podľa toho, čím sa práve zaoberá — otvorených súborov, spustených nástrojov alebo chýb. Bez toho sa pamäť riadi len vašou úvodnou správou, ktorá o ďalšom priebehu práce nemusí vypovedať.",
