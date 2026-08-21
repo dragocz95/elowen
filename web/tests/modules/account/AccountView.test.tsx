@@ -38,8 +38,6 @@ describe('AccountView', () => {
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
       'Account', 'Elowen AI', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
     ]);
-    // No plugin asks this account for details of its own, so it is not offered an empty section.
-    expect(screen.queryByRole('radio', { name: 'Plugins' })).toBeNull();
     // PROTOTYPE(constellation): the hero band is gone — the mascot lives inside the cosmos cores
     // (aria-hidden), so no accessible "Elowen" image renders on the deck itself.
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
@@ -60,21 +58,6 @@ describe('AccountView', () => {
 
     fireEvent.change(await screen.findByRole('textbox', { name: 'Discord ID' }), { target: { value: '123456789012345678' } });
     await waitFor(() => expect(patched).toEqual({ discordUserId: '123456789012345678' }));
-  });
-
-  it('offers the Plugins section as soon as a plugin asks this account for details of its own', async () => {
-    server.use(
-      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
-      http.get('*/api/brain/models', () => HttpResponse.json([])),
-      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '' })),
-      http.get('*/api/plugins/user-config', () => HttpResponse.json([
-        { name: 'crmdemo', description: 'CRM', userConfigSchema: [{ key: 'apiKey', label: 'API key', type: 'secret' }], config: {}, secretsSet: [] },
-      ])),
-    );
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
-    expect(await screen.findByRole('radio', { name: 'Plugins' })).toBeInTheDocument();
   });
 
   it('shows the user identity, and saves a default worker picked in the manage modal', async () => {
@@ -104,7 +87,7 @@ describe('AccountView', () => {
   });
 
   it('falls back to the profile section when a removed section id is persisted', async () => {
-    localStorage.setItem('elowen.account.section', 'prompts'); // the Prompts tab no longer exists
+    localStorage.setItem('elowen.account.section', 'plugins'); // the Plugins tab no longer exists
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
@@ -115,7 +98,7 @@ describe('AccountView', () => {
 
     // The stale value fails the allowed-list guard, so the default (profile) section renders.
     expect(await screen.findByText('@bob')).toBeTruthy();
-    expect(screen.queryByRole('radio', { name: 'Prompts' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Plugins' })).toBeNull();
   });
 
   it('retains a visited section\'s local controls while another account panel is active', async () => {

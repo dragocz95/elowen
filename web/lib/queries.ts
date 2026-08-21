@@ -407,11 +407,6 @@ export const usePlugins = () =>
 export const usePluginDetail = (name: string | null) =>
   useQuery({ queryKey: ['plugin', name], queryFn: () => elowenClient.pluginDetail(name as string), enabled: !!name });
 
-/** The signed-in account's own per-plugin values (Account → the plugins section). Empty for an account
- *  that reaches no plugin declaring per-account fields, which is what hides the section entirely. */
-export const useMyPluginConfigs = () =>
-  useQuery({ queryKey: ['my-plugin-config'], queryFn: () => elowenClient.myPluginConfigs() });
-
 /** Runtime contributions owned by one plugin (tools/skills/platforms/hooks/…). Powers Tools + Hooks detail. */
 export const usePluginContributions = (name: string | null) =>
   useQuery({ queryKey: ['plugin-contributions', name], queryFn: () => elowenClient.pluginContributions(name as string), enabled: !!name });

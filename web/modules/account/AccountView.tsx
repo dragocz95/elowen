@@ -1,10 +1,10 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, Blocks, MessageSquareText } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, MessageSquareText } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { ProfilePatch } from '../../lib/types';
-import { useMe, useConfig, useMyCliSettings, useBrainModels, useMyPluginConfigs } from '../../lib/queries';
+import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
@@ -39,9 +39,8 @@ import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
-import { AccountPluginsSection } from './AccountPluginsSection';
 
-type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory' | 'plugins';
+type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making sidebar switches lossless. */
@@ -122,9 +121,6 @@ function WorkerField({ value, onChange, execs, labelOf, summaryLabelOf, defaultL
 
 export function AccountView() {
   const me = useMe();
-  // Drives whether the Plugins section is offered at all — an account nothing asks anything of should not
-  // carry an empty tab.
-  const { data: myPluginConfigs } = useMyPluginConfigs();
   const { data: config } = useConfig();
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
@@ -141,11 +137,11 @@ export function AccountView() {
   const prefPct = Math.round(preference * 100);
   const appliedPct = Math.round(scale * 100);
   const [section, setSection] = usePersistentState<AccountSection>(
-    'elowen.account.section', 'profile', ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory', 'plugins']);
+    'elowen.account.section', 'profile', ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory']);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
-    if (!['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory', 'plugins'].includes(id)) return;
+    if (!['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'].includes(id)) return;
     setSectionFeedback((current) => ({ ...current, [id as AccountSection]: { status, retry } }));
   }, []);
   useEffect(() => {
@@ -364,7 +360,6 @@ export function AccountView() {
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
     { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
     { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal },
-    ...(myPluginConfigs?.length ? [{ id: 'plugins' as const, icon: Blocks, label: t.account.tabPlugins }] : []),
   ];
   const spatialSections = sections.map((item) => ({
     ...item,
@@ -374,7 +369,6 @@ export function AccountView() {
       : item.id === 'cli' ? t.account.defaultElowenAiHint
       : item.id === 'terminal' ? t.terminal.colorsHelp
       : item.id === 'memory' ? t.help.memoryRecall
-      : item.id === 'plugins' ? t.account.pluginsIntro
       : t.personality.intro,
   }));
   const profileFeedback = combineSaveFeedback(
@@ -398,9 +392,6 @@ export function AccountView() {
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
       >
-      <AccountPanel id="plugins" active={section} visited={visitedSections}>
-        <ConstellationScope core={t.account.tabPlugins}><AccountPluginsSection onSaveState={reportSaveState} /></ConstellationScope>
-      </AccountPanel>
       <AccountPanel id="memory" active={section} visited={visitedSections}>
         <ConstellationScope core={t.account.tabMemory}><AccountMemorySection onSaveState={reportSaveState} /></ConstellationScope>
       </AccountPanel>
