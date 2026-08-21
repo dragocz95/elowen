@@ -1,7 +1,8 @@
 export const SSO_FLOW_COOKIE = 'elowen_sso';
 export const SSO_FLOW_TTL_SECONDS = 600;
 
-export const SSO_ERROR_CODES = [
+// Module-local: the list only backs `SsoErrorCode` and the narrowing below. Callers take the type.
+const SSO_ERROR_CODES = [
   'no_account',
   'denied',
   'already_linked',

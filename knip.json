@@ -58,8 +58,7 @@
   "ignoreDependencies": [
     "@types/react",
     "lucide-react",
-    "jose",
-    "botframework-connector",
+        "botframework-connector",
     "grammy",
     "baileys",
     "qrcode",
