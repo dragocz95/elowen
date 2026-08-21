@@ -34,6 +34,7 @@ import { createAnthropicHostedToolReplay, type AnthropicHostedToolReplay } from 
 import type { HostedToolSearchProvider } from './hostedToolSearch.js';
 import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
+import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
 
 let missingBoundaryCompactionWarned = false;
 
@@ -475,7 +476,7 @@ export class BrainSessionFactory {
     // A few factory unit tests inject a createSession stub and deliberately omit a runtime; production
     // SessionSpec always carries one. Preserve that test seam rather than proxying an undefined sentinel.
     const captureRuntime = spec.runtime && typeof spec.runtime === 'object'
-      ? requestRecorder.wrapRuntime(spec.runtime)
+      ? requestRecorder.wrapRuntime(recoverMalformedToolCalls(spec.runtime))
       : spec.runtime;
     const remoteCompaction: RemoteCompactionV2 | undefined = spec.model.provider === 'openai-codex'
       ? createRemoteCompactionV2({
