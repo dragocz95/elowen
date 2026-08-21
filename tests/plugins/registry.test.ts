@@ -20,22 +20,6 @@ describe('PluginRegistry', () => {
     expect(ctx.config).toEqual({ k: 1 });
   });
 
-  it('exposes configured plugin membership only when the host wires it', () => {
-    const reg = new PluginRegistry();
-    const direct = reg.contextFor('demo', {}, noopLog);
-    expect(direct.isPluginEnabled).toBeUndefined();
-
-    const wired = reg.contextFor(
-      'demo', {}, noopLog,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      (name) => name === 'work',
-    );
-    expect(wired.isPluginEnabled?.('work')).toBe(true);
-    expect(wired.isPluginEnabled?.('agents')).toBe(false);
-  });
-
   describe('toolsFor (per-account tool sets)', () => {
     const accessUser = (over: Partial<{ is_admin: boolean; granted_plugins: string[] }> = {}) =>
       ({ is_admin: false, granted_plugins: [] as string[], ...over });

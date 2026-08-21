@@ -258,8 +258,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // exists. Resolving at call time — long after every plugin has merged — makes the dependency
           // work in either order, and makes a reload swap the owner underneath the caller for free.
           (name) => registry.control(name),
-          opts.deleteEvents,
-          (pluginName) => wanted.has(pluginName));
+          opts.deleteEvents);
         await mod.register(ctx);
         const registeredPlatforms = new Set(staging.platforms.map((platform) => platform.name));
         for (const fragment of loadPlatformPrompts(pluginDir, manifest, opts.logger)) {
