@@ -67,7 +67,7 @@ export function LoginGate({ children, initiallyAuthenticated = false, sessionPre
   // The login form REPLACES the shell (an unauthenticated visitor must not reach the app), but the
   // 'checking' state renders children so the shell and its query fan-out start immediately.
   if (gate === 'setup') return <SetupPending />;
-  if (gate === 'login') return <LoginForm onAuthed={() => setGate('open')} />;
+  if (gate === 'login') return <Suspense fallback={null}><LoginForm onAuthed={() => setGate('open')} /></Suspense>;
 
   return (
     <>

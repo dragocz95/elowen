@@ -13,11 +13,15 @@ const VARIANTS: Record<Variant, string> = {
   'ghost-danger': 'bg-transparent border-transparent text-text-muted hover:bg-danger/10 hover:text-danger hover:border-danger/40',
 };
 
-export function Button({ variant = 'default', icon: Icon, className = '', children, ...rest }: { variant?: Variant; icon?: LucideIcon } & ButtonHTMLAttributes<HTMLButtonElement>) {
+export function buttonClassName(variant: Variant = 'default', className = ''): string {
   const extra = className.trim();
+  return `inline-flex h-9 items-center justify-center gap-2 border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`;
+}
+
+export function Button({ variant = 'default', icon: Icon, className = '', children, ...rest }: { variant?: Variant; icon?: LucideIcon } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
-      className={`inline-flex h-9 items-center justify-center gap-2 border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`}
+      className={buttonClassName(variant, className)}
       {...rest}
     >
       {Icon ? <Icon size={14} aria-hidden /> : null}

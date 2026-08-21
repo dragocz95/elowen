@@ -27,7 +27,9 @@ let openedEventSources = 0;
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) { openedEventSources += 1; } }
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
-const server = setupServer();
+const server = setupServer(
+  http.get('*/api/auth/sso/providers', () => HttpResponse.json([])),
+);
 beforeAll(() => server.listen({ onUnhandledRequest }));
 afterEach(() => { server.resetHandlers(); openedEventSources = 0; });
 afterAll(() => server.close());
@@ -90,7 +92,7 @@ describe('LoginGate', () => {
     await waitFor(() => expect(screen.getByText('elowen setup')).toBeInTheDocument());
 
     expect(paths).toContain('/api/setup');
-    expect(paths.every((p) => p === '/api/auth/me' || p === '/api/setup')).toBe(true);
+    expect(paths.every((p) => p === '/api/auth/me' || p === '/api/setup' || p === '/api/auth/sso/providers')).toBe(true);
   });
 
   it('opens the shell when the session cookie is valid (me() 200)', async () => {

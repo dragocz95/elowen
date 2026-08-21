@@ -170,6 +170,7 @@ export const elowenClient = {
   systemSkills: () => req<SkillsInfo>('/system/skills'),
   installSkills: () => req<SkillInstallResult>('/system/skills/install', json({})),
   login: (username: string, password: string) => req<AuthResult>('/auth/login', json({ username, password })),
+  ssoProviders: () => req<{ id: string; label: string }[]>('/auth/sso/providers'),
   logout: () => req<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   me: () => req<{ user: User }>('/auth/me'),
   updateMe: (patch: ProfilePatch) => req<User>('/auth/me', json(patch, 'PATCH')),
