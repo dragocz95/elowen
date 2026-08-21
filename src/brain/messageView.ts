@@ -60,24 +60,6 @@ export function toolDetail(args: unknown, toolName?: string): string | undefined
   return `${truncateToolDetail(s, TOOL_DETAIL_MAX - suffix.length)}${suffix}`;
 }
 
-/** Loading a skill IS a Read of its file (the system prompt tells the agent to Read it), so a Read
- *  pointed at a skill displays as `Skill <name>`, not `Read <path>`. Undefined for an ordinary read. */
-function skillLoadDisplay(args: Record<string, unknown>): { name: string; detail: string } | undefined {
-  const raw = args.path;
-  if (typeof raw !== 'string') return undefined;
-  // Everything past the `/skills/` segment: a flat skill file ("email-management.md") or a plugin
-  // skill directory ("salon-operations/SKILL.md") — either way the skill's name leads.
-  const after = raw.split('/skills/')[1];
-  if (!after) return undefined;
-  const lead = after.split('/')[0] ?? '';
-  if (!lead || lead.toLowerCase() === 'skill.md') return undefined;
-  const dot = lead.lastIndexOf('.');
-  const name = dot > 0 ? lead.slice(0, dot) : lead;
-  return name ? { name: 'Skill', detail: name } : undefined;
-}
-
-/** Display name + detail for a tool call: the tool's own name with toolDetail(), except a skill-file
- *  Read, which renders as `Skill <name>` on every surface (CLI row, live platform trace, web). */
 /** The plan markdown a settled ExitPlanMode call submitted, for the client's plan panel and decision.
  *  Read from the result's `details` (client-bound metadata) rather than from its text, which is addressed
  *  to the model. Keyed on the tool name so no other tool can put a plan panel on screen by shipping a
@@ -145,10 +127,6 @@ export function pendingSubmittedPlan(rows: readonly StoredTurnRow[]): BrainPendi
 }
 
 export function toolDisplay(toolName: string, args: unknown): { name: string; detail?: string } {
-  if (toolName === 'Read' && args && typeof args === 'object') {
-    const skill = skillLoadDisplay(args as Record<string, unknown>);
-    if (skill) return skill;
-  }
   return { name: toolName, detail: toolDetail(args, toolName) };
 }
 
