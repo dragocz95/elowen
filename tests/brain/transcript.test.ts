@@ -260,14 +260,18 @@ describe('TranscriptModel subagent progress', () => {
     expect(model.thinking).toBe(false);
   });
 
-  it('does not attach progress to a foreign tool that reuses the delegation id', () => {
-    const model = new TranscriptModel([{
-      role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }],
-    }]);
+  it('skips a later foreign id collision and updates the real delegation anchor', () => {
+    const model = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Delegate' }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }] },
+    ]);
     expect(model.apply({
-      type: 'subagent', id: 'call-1', sessionId: 's', status: 'running', task: 't', tools: 0, seconds: 0,
-    })).toBe(false);
-    expect(model.subagents()).toEqual([]);
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'done', task: 't', tools: 2, seconds: 3,
+    })).toBe(true);
+    expect(model.subagents()).toEqual([expect.objectContaining({ sessionId: 's', status: 'done' })]);
+    const anchor = model.turnAt(0);
+    if (anchor?.role !== 'elowen' || anchor.segments[0]?.kind !== 'tools') throw new Error('expected delegate anchor');
+    expect(anchor.segments[0].items[0]?.sub).toMatchObject({ sessionId: 's', status: 'done' });
     expect(lastTool(model).sub).toBeUndefined();
   });
 

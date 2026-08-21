@@ -373,12 +373,8 @@ export class TranscriptModel implements TranscriptRead {
   /** Attach a sub-agent snapshot to the tool row that spawned it (by tool call id), and mirror it into the
    *  panel index. No-op when the anchoring tool row is gone (a reconnect that dropped it). */
   private applySubagent(event: Extract<BrainEvent, { type: 'subagent' }>): boolean {
-    const location = this.toolLocations.get(event.id);
+    const location = this.matchingToolLocation(event.id, isSubagentToolName);
     if (!location) return false;
-    const turn = this.turns[location.turn];
-    const segment = turn?.role === 'elowen' ? turn.segments[location.segment] : undefined;
-    const item = segment?.kind === 'tools' ? segment.items[location.item] : undefined;
-    if (!item || !isSubagentToolName(item.name)) return false;
     const sub: SubagentState = {
       sessionId: event.sessionId,
       status: event.status,
@@ -405,12 +401,8 @@ export class TranscriptModel implements TranscriptRead {
    *  from the transcript on every hydration, so a projection-only workflow was erased by any reconnect and
    *  could never be reopened. No-op when the anchoring tool row is gone. */
   private applyWorkflow(event: Extract<BrainEvent, { type: 'workflow' }>): boolean {
-    const location = this.toolLocations.get(event.toolCallId);
+    const location = this.matchingToolLocation(event.toolCallId, (name) => name === 'WorkflowStart');
     if (!location) return false;
-    const turn = this.turns[location.turn];
-    const segment = turn?.role === 'elowen' ? turn.segments[location.segment] : undefined;
-    const item = segment?.kind === 'tools' ? segment.items[location.item] : undefined;
-    if (item?.name !== 'WorkflowStart') return false;
     const { type: _type, ...update } = event;
     const wf = freezeWorkflow(update);
     if (!this.patchTool(location, (item) => ({ ...item, wf }))) return false;
@@ -554,6 +546,34 @@ export class TranscriptModel implements TranscriptRead {
     this.thinkingState = true;
     this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
     return true;
+  }
+
+  /** Resolve a live sidecar to the newest tool row of the expected class. The ordinary id index is the fast
+   *  path, but malformed/colliding history can let a later foreign tool overwrite that one map entry; scan
+   *  backward only in that exceptional case so the earlier Delegate/WorkflowStart still receives terminal
+   *  updates instead of remaining a phantom running row. */
+  private matchingToolLocation(id: string, acceptsName: (name: string) => boolean): ToolLocation | undefined {
+    const indexed = this.toolLocations.get(id);
+    if (indexed) {
+      const turn = this.turns[indexed.turn];
+      const segment = turn?.role === 'elowen' ? turn.segments[indexed.segment] : undefined;
+      const item = segment?.kind === 'tools' ? segment.items[indexed.item] : undefined;
+      if (item && acceptsName(item.name)) return indexed;
+    }
+    for (let turnIndex = this.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+      const turn = this.turns[turnIndex];
+      if (turn?.role !== 'elowen') continue;
+      for (let segmentIndex = turn.segments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
+        const segment = turn.segments[segmentIndex];
+        if (segment?.kind !== 'tools') continue;
+        for (let itemIndex = segment.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+          const item = segment.items[itemIndex];
+          if (item?.id !== id || !acceptsName(item.name)) continue;
+          return { turn: turnIndex, segment: segmentIndex, item: itemIndex, source: toolSource(id, turnIndex, segmentIndex, itemIndex) };
+        }
+      }
+    }
+    return undefined;
   }
 
   private patchTool(location: ToolLocation, patch: (item: ToolItem) => ToolItem): boolean {

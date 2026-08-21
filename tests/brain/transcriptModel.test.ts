@@ -136,12 +136,19 @@ describe('TranscriptModel', () => {
       expect(model.workflows()).toEqual([]);
     });
 
-    it('does not attach a workflow snapshot to a foreign tool that reuses the call id', () => {
-      const model = new TranscriptModel([{
-        role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }],
-      }]);
-      expect(model.apply(wfEvent())).toBe(false);
-      expect(model.workflows()).toEqual([]);
+    it('skips a later foreign id collision and updates the real WorkflowStart anchor', () => {
+      const model = new TranscriptModel([
+        { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'WorkflowStart' }] },
+        { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'Read' }] },
+      ]);
+      expect(model.apply(wfEvent({ status: 'done' }))).toBe(true);
+      expect(model.workflows()).toEqual([expect.objectContaining({ id: 'wf-1', status: 'done' })]);
+      const anchor = model.turnAt(0);
+      if (anchor?.role !== 'elowen' || anchor.segments[0]?.kind !== 'tools') throw new Error('expected workflow anchor');
+      expect(anchor.segments[0].items[0]?.wf).toMatchObject({ id: 'wf-1', status: 'done' });
+      const collision = model.turnAt(1);
+      if (collision?.role !== 'elowen' || collision.segments[0]?.kind !== 'tools') throw new Error('expected colliding tool');
+      expect(collision.segments[0].items[0]?.wf).toBeUndefined();
     });
 
     // The regression this whole change exists for. Every hydration — reconnect, opening the stream, even
