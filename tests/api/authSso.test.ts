@@ -98,6 +98,7 @@ function setup(options: SetupOptions = {}) {
     }
     return new Response('', { status: 404 });
   }) as unknown as typeof fetch;
+  const keyResolver = vi.fn(() => createLocalJWKSet(jwks));
   const microsoftSso = new MicrosoftSsoService({
     config,
     users,
@@ -109,7 +110,7 @@ function setup(options: SetupOptions = {}) {
     userProjects,
     project: { id: 1 },
     fetch: fetchImpl,
-    keyResolver: () => createLocalJWKSet(jwks),
+    keyResolver,
   });
   const app = createServer({
     tasks: new RefTaskStore(db),
@@ -130,9 +131,9 @@ function setup(options: SetupOptions = {}) {
     advisor: { ensureOnLogin } as never,
   } as never);
 
-  const signFor = async (nonce: string, claims: Record<string, unknown> = {}) => {
+  const claimsFor = (nonce: string, claims: Record<string, unknown> = {}) => {
     const now = Math.floor(clock.now() / 1000);
-    idToken = await new SignJWT({
+    return {
       iss: ISSUER,
       aud: APP_ID,
       tid: TENANT,
@@ -142,8 +143,14 @@ function setup(options: SetupOptions = {}) {
       nbf: now - 1,
       exp: now + 600,
       ...claims,
-    }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).sign(privateKey);
+    };
   };
+  const signFor = async (nonce: string, claims: Record<string, unknown> = {}) => {
+    idToken = await new SignJWT(claimsFor(nonce, claims))
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .sign(privateKey);
+  };
+  const setIdToken = (token: string) => { idToken = token; };
 
   const start = async (next?: string) => {
     const response = await app.request('/auth/sso/msteams/start', {
@@ -162,7 +169,10 @@ function setup(options: SetupOptions = {}) {
     body: JSON.stringify({ flowId, state, code: 'authorization-code' }),
   });
 
-  return { app, db, users, userSettings, userProjects, user, config, clock, events, ensureOnLogin, fetchImpl, microsoftSso, start, callback, signFor };
+  return {
+    app, db, users, userSettings, userProjects, user, config, clock, events, ensureOnLogin, fetchImpl, keyResolver,
+    microsoftSso, start, callback, claimsFor, signFor, setIdToken,
+  };
 }
 
 describe('Microsoft SSO routes', () => {
@@ -212,6 +222,14 @@ describe('Microsoft SSO routes', () => {
     expect(await replay.json()).toEqual({ error: 'state_expired' });
   });
 
+  it('rejects a valid flow id with a mismatched state', async () => {
+    const { start, callback } = setup();
+    const flow = await start();
+    const response = await callback(flow.body.flowId, `${flow.state}-wrong`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'state_expired' });
+  });
+
   it('rejects an expired flow', async () => {
     const { start, callback, clock } = setup();
     const flow = await start();
@@ -219,6 +237,48 @@ describe('Microsoft SSO routes', () => {
     const response = await callback(flow.body.flowId, flow.state);
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'state_expired' });
+  });
+
+  it.each(['none', 'HS256'] as const)('rejects an id token using %s', async (algorithm) => {
+    const { start, callback, claimsFor, setIdToken } = setup();
+    const flow = await start();
+    const claims = claimsFor(flow.nonce);
+    if (algorithm === 'none') {
+      const encodedHeader = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
+      const encodedClaims = Buffer.from(JSON.stringify(claims)).toString('base64url');
+      setIdToken(`${encodedHeader}.${encodedClaims}.`);
+    } else {
+      setIdToken(await new SignJWT(claims)
+        .setProtectedHeader({ alg: 'HS256' })
+        .sign(new TextEncoder().encode('attacker-controlled-secret')));
+    }
+
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'sso_failed' });
+  });
+
+  it('rejects an id token without exp', async () => {
+    const { start, callback, claimsFor, setIdToken } = setup();
+    const flow = await start();
+    const { exp: _exp, ...claims } = claimsFor(flow.nonce);
+    setIdToken(await new SignJWT(claims)
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .sign(privateKey));
+
+    const response = await callback(flow.body.flowId, flow.state);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'sso_failed' });
+  });
+
+  it('reuses the JWKS resolver across token verifications', async () => {
+    const { start, signFor, callback, keyResolver } = setup();
+    for (let i = 0; i < 2; i++) {
+      const flow = await start();
+      await signFor(flow.nonce);
+      expect((await callback(flow.body.flowId, flow.state)).status).toBe(200);
+    }
+    expect(keyResolver).toHaveBeenCalledTimes(1);
   });
 
   it('finds a lowercase binding for uppercase Entra ids', async () => {
@@ -244,16 +304,33 @@ describe('Microsoft SSO routes', () => {
     });
   });
 
-  it('promotes a Teams TOFU setting to a durable binding without creating an account', async () => {
+  it('promotes a Teams TOFU setting only when the token email matches the same account', async () => {
     const { start, signFor, callback, users, user } = setup({ tofu: true, bind: false });
+    users.setProfile(user!.id, { email: 'alice@example.com' });
     const before = users.count();
     const flow = await start();
-    await signFor(flow.nonce);
+    await signFor(flow.nonce, { email: 'alice@example.com', acct: 0 });
     const response = await callback(flow.body.flowId, flow.state);
     expect(response.status).toBe(200);
     expect((await response.json()).user.id).toBe(user?.id);
     expect(users.count()).toBe(before);
     expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(user?.id);
+  });
+
+  it('does not promote a self-service TOFU setting when its account email does not match', async () => {
+    const { start, signFor, callback, users, userSettings, user } = setup({ tofu: true, bind: false });
+    users.setProfile(user!.id, { email: 'attacker@example.com' });
+    const colleague = users.create('colleague', 'secret');
+    users.setProfile(colleague.id, { email: 'colleague@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'colleague@example.com', acct: 0 });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(colleague.id);
+    expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(colleague.id);
+    expect(userSettings.get(user!.id, 'msteamsUserId')).toBeNull();
   });
 
   it('denies an unknown oid and cannot create an account', async () => {
@@ -294,6 +371,46 @@ describe('Microsoft SSO routes', () => {
     expect((await response.json()).user.id).toBe(target.id);
     expect(users.count()).toBe(before);
     expect(users.externalIdentity('msteams', TENANT, OID)?.id).toBe(target.id);
+  });
+
+  it('rejects a Graph guest with no acct claim before linking by email', async () => {
+    const { start, signFor, callback, users, user, fetchImpl } = setup({
+      bind: false,
+      ssoLinkByEmail: true,
+      graphUser: { id: OID, userType: 'Guest', accountEnabled: true },
+    });
+    users.setProfile(user!.id, { email: 'guest@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'guest@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'guest' });
+    expect(users.externalIdentity('msteams', TENANT, OID)).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1.0/users/${OID}?`),
+      expect.objectContaining({ headers: { authorization: 'Bearer graph-token' } }),
+    );
+  });
+
+  it('returns already_linked when the email account has another identity in the tenant', async () => {
+    const { start, signFor, callback, users, user } = setup({ bind: false, ssoLinkByEmail: true });
+    users.setProfile(user!.id, { email: 'alice@example.com' });
+    users.linkExistingExternalIdentity({
+      provider: 'msteams',
+      tenantId: TENANT,
+      subjectId: UNKNOWN_OID,
+      userId: user!.id,
+    });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'alice@example.com', acct: 0 });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'already_linked' });
+    expect(users.externalIdentity('msteams', TENANT, OID)).toBeNull();
   });
 
   it('defaults email linking on and links one unambiguous email to an admin account by owner decision', async () => {
@@ -410,6 +527,25 @@ describe('Microsoft SSO routes', () => {
     expect(users.verify(body.user.username, '')).toBeNull();
   });
 
+  it('refuses provisioning cleanly when the email already belongs to an account', async () => {
+    const { start, signFor, callback, users, user } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoLinkByEmail: false,
+      ssoProvision: 'tenant',
+    });
+    users.setProfile(user!.id, { email: 'existing@example.com' });
+    const before = users.count();
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'existing@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
+    expect(users.count()).toBe(before);
+  });
+
   it('cannot provision on an instance that has users but no administrator', async () => {
     const { start, signFor, callback, db, users } = setup({ oid: UNKNOWN_OID, bind: false, ssoProvision: 'tenant' });
     db.prepare('UPDATE users SET is_admin = 0').run();
@@ -419,7 +555,8 @@ describe('Microsoft SSO routes', () => {
 
     const response = await callback(flow.body.flowId, flow.state);
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'no_account' });
     expect(users.count()).toBe(before);
   });
 

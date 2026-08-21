@@ -67,7 +67,7 @@ async function verify(value: string) {
 }
 
 async function expectCode(value: Promise<unknown>, code: string): Promise<void> {
-  await expect(value).rejects.toMatchObject<Partial<MicrosoftSsoError>>({ code });
+  await expect(value).rejects.toMatchObject({ code } satisfies Partial<MicrosoftSsoError>);
 }
 
 describe('MicrosoftSsoService.verifyIdToken', () => {
@@ -97,16 +97,16 @@ describe('MicrosoftSsoService.verifyIdToken', () => {
 
   it('rejects a token expired beyond clock tolerance', async () => {
     const now = Math.floor(NOW / 1000);
-    await expectCode(verify(await token({ exp: now - 301 })), 'sso_failed');
+    await expectCode(verify(await token({ exp: now - 61 })), 'sso_failed');
   });
 
   it('rejects a token not valid beyond clock tolerance', async () => {
     const now = Math.floor(NOW / 1000);
-    await expectCode(verify(await token({ nbf: now + 301 })), 'sso_failed');
+    await expectCode(verify(await token({ nbf: now + 61 })), 'sso_failed');
   });
 
-  it('rejects a missing oid', async () => {
-    await expectCode(verify(await token({ oid: undefined })), 'sso_failed');
+  it.each(['exp', 'iat', 'nbf', 'tid', 'oid'])('rejects a missing %s claim', async (claim) => {
+    await expectCode(verify(await token({ [claim]: undefined })), 'sso_failed');
   });
 
   it('rejects a guest account when acct is present', async () => {

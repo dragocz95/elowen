@@ -38,7 +38,7 @@ describe('dependencies kept for plugins that live in the registry', () => {
 
   it('exempts only dependencies without a bundled consumer from Knip', () => {
     const knip = JSON.parse(readFileSync(join(repoRoot, 'knip.json'), 'utf-8')) as { ignoreDependencies: string[] };
-    for (const pkg of ['jose', 'botframework-connector', 'grammy', 'baileys', 'qrcode']) {
+    for (const pkg of ['botframework-connector', 'grammy', 'baileys', 'qrcode']) {
       expect(knip.ignoreDependencies, `${pkg} has no bundled consumer and must stay exempt`).toContain(pkg);
     }
     expect(knip.ignoreDependencies, 'elowen-plugin-shared has no bundled consumer and must stay exempt').toContain('elowen-plugin-shared');

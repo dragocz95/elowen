@@ -234,28 +234,27 @@ export class UserStore {
       for (let suffix = 2; this.db.prepare('SELECT 1 FROM users WHERE username = ?').get(username); suffix++) {
         username = `${base.slice(0, Math.max(1, 63 - String(suffix).length))}-${suffix}`;
       }
-      const info = this.db.prepare(`INSERT INTO users
-        (username, password_hash, is_admin, name, email)
-        VALUES (?, ?, 0, ?, ?)`)
-        .run(
-          username,
-          hashPassword(randomBytes(32).toString('base64url')),
-          externalProfile(input.name, 'name', 200),
-          externalProfile(input.email, 'email', 320),
-        );
-      const user = this.get(Number(info.lastInsertRowid))!;
-
       try {
+        const info = this.db.prepare(`INSERT INTO users
+          (username, password_hash, is_admin, name, email)
+          VALUES (?, ?, 0, ?, ?)`)
+          .run(
+            username,
+            hashPassword(randomBytes(32).toString('base64url')),
+            externalProfile(input.name, 'name', 200),
+            externalProfile(input.email, 'email', 320),
+          );
+        const user = this.get(Number(info.lastInsertRowid))!;
         this.db.prepare(`INSERT INTO user_external_identities
           (provider, tenant_id, subject_id, user_id) VALUES (?, ?, ?, ?)`)
           .run(provider, tenantId, subjectId, user.id);
+        return { user, created: true };
       } catch (error) {
         if ((error as { code?: string }).code?.startsWith('SQLITE_CONSTRAINT')) {
-          throw new ExternalIdentityConflictError('external identity was linked concurrently');
+          throw new ExternalIdentityConflictError('external identity provisioning conflicts with an existing account or link');
         }
         throw error;
       }
-      return { user, created: true };
     }).immediate();
   }
 

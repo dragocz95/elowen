@@ -119,6 +119,7 @@ export class MicrosoftSsoService {
   private readonly fetchImpl: typeof fetch;
   private readonly keyResolver: (jwksUri: URL) => JWTVerifyGetKey;
   private readonly flows = new Map<string, Flow>();
+  private readonly jwksResolvers = new Map<string, JWTVerifyGetKey>();
   private discoveryCache: { tenantId: string; value: MicrosoftOidcDiscovery; expiresAt: number } | null = null;
   private readonly graph: MicrosoftGraphMembership;
   private readonly log = logger('auth');
@@ -184,6 +185,11 @@ export class MicrosoftSsoService {
 
       const subject = `${identity.objectId}@${identity.tenantId}`;
       const email = text(identity.claims.email);
+      let membershipCheck: Promise<void> | null = null;
+      const requireDirectoryMember = (): Promise<void> => {
+        membershipCheck ??= this.requireDirectoryMember(cfg, identity.objectId, subject);
+        return membershipCheck;
+      };
       let user = this.d.users.externalIdentity(PROVIDER, identity.tenantId, identity.objectId);
       if (user && email) {
         const emailUser = this.d.users.userByUniqueEmail(email);
@@ -191,9 +197,11 @@ export class MicrosoftSsoService {
           this.log.warn(`Microsoft SSO kept the existing subject binding for ${subject} despite an email match to user #${emailUser.id}`);
         }
       }
-      if (!user && GUID.test(identity.objectId)) {
+      if (!user && email && GUID.test(identity.objectId)) {
         const tofuUserId = this.d.userSettings?.userIdBySetting('msteamsUserId', identity.objectId) ?? null;
-        if (tofuUserId !== null) {
+        const emailUser = this.d.users.userByUniqueEmail(email);
+        if (tofuUserId !== null && emailUser?.id === tofuUserId) {
+          if (identity.claims.acct === undefined) await requireDirectoryMember();
           try {
             user = this.d.users.linkExistingExternalIdentity({
               provider: PROVIDER,
@@ -209,6 +217,8 @@ export class MicrosoftSsoService {
             }
             throw error;
           }
+        } else if (tofuUserId !== null) {
+          this.d.userSettings?.remove(tofuUserId, 'msteamsUserId');
         }
       }
       if (!user && email && this.d.users.hasAmbiguousEmail(email)) {
@@ -218,6 +228,7 @@ export class MicrosoftSsoService {
       if (!user && cfg.linkByEmail) {
         const emailUser = email ? this.d.users.userByUniqueEmail(email) : null;
         if (emailUser) {
+          if (identity.claims.acct === undefined) await requireDirectoryMember();
           try {
             user = this.d.users.linkExistingExternalIdentity({
               provider: PROVIDER,
@@ -236,40 +247,29 @@ export class MicrosoftSsoService {
         }
       }
       if (!user && cfg.provision === 'tenant') {
-        let membership;
+        await requireDirectoryMember();
         try {
-          membership = await this.graph.checkUser(cfg, identity.objectId);
+          const result = this.d.users.linkExternalIdentity({
+            provider: PROVIDER,
+            tenantId: identity.tenantId,
+            subjectId: identity.objectId,
+            preferredUsername: text(identity.claims.preferred_username),
+            name: text(identity.claims.name),
+            email: text(identity.claims.email),
+          });
+          user = result.user;
+          if (result.created) {
+            this.assignDefaultProjects(user.id, cfg.defaultProjects);
+            this.publish('sso.provision', subject, 'provisioned');
+          }
         } catch (error) {
-          if (error instanceof MicrosoftGraphDirectoryError) {
-            throw new MicrosoftSsoError('directory_unavailable', 'Microsoft Graph directory check failed', {
+          if (error instanceof ExternalIdentityConflictError) {
+            throw new MicrosoftSsoError('no_account', 'Microsoft account cannot be provisioned', {
               subject,
-              detail: 'directory_unavailable',
+              detail: 'provisioning_conflict',
             });
           }
           throw error;
-        }
-        if (membership === 'guest') {
-          throw new MicrosoftSsoError('guest', 'guest accounts are not allowed', { subject, detail: 'guest' });
-        }
-        if (membership !== 'member') {
-          throw new MicrosoftSsoError('no_account', 'Microsoft directory account is not an enabled member', {
-            subject,
-            detail: 'not_member',
-          });
-        }
-
-        const result = this.d.users.linkExternalIdentity({
-          provider: PROVIDER,
-          tenantId: identity.tenantId,
-          subjectId: identity.objectId,
-          preferredUsername: text(identity.claims.preferred_username),
-          name: text(identity.claims.name),
-          email: text(identity.claims.email),
-        });
-        user = result.user;
-        if (result.created) {
-          this.assignDefaultProjects(user.id, cfg.defaultProjects);
-          this.publish('sso.provision', subject, 'provisioned');
         }
       }
       if (!user) {
@@ -300,11 +300,12 @@ export class MicrosoftSsoService {
     const issuer = expected.discovery.issuer.replace(/\{tenantid\}/gi, tenantId);
     let payload: JWTPayload;
     try {
-      ({ payload } = await jwtVerify(idToken, this.keyResolver(new URL(expected.discovery.jwks_uri)), {
+      ({ payload } = await jwtVerify(idToken, this.jwksResolver(expected.discovery.jwks_uri), {
         algorithms: ['RS256'],
         issuer,
         audience: expected.appId,
-        clockTolerance: 300,
+        requiredClaims: ['exp', 'iat', 'nbf', 'tid', 'oid'],
+        clockTolerance: 60,
         currentDate: new Date(this.d.clock.now()),
       }));
     } catch {
@@ -401,6 +402,38 @@ export class MicrosoftSsoService {
     } catch {
       this.discoveryCache = null;
       throw new MicrosoftSsoError('sso_failed', 'Microsoft discovery failed');
+    }
+  }
+
+  private jwksResolver(jwksUri: string): JWTVerifyGetKey {
+    const cached = this.jwksResolvers.get(jwksUri);
+    if (cached) return cached;
+    const resolver = this.keyResolver(new URL(jwksUri));
+    this.jwksResolvers.set(jwksUri, resolver);
+    return resolver;
+  }
+
+  private async requireDirectoryMember(cfg: MicrosoftSsoConfig, objectId: string, subject: string): Promise<void> {
+    let membership;
+    try {
+      membership = await this.graph.checkUser(cfg, objectId);
+    } catch (error) {
+      if (error instanceof MicrosoftGraphDirectoryError) {
+        throw new MicrosoftSsoError('directory_unavailable', 'Microsoft Graph directory check failed', {
+          subject,
+          detail: 'directory_unavailable',
+        });
+      }
+      throw error;
+    }
+    if (membership === 'guest') {
+      throw new MicrosoftSsoError('guest', 'guest accounts are not allowed', { subject, detail: 'guest' });
+    }
+    if (membership !== 'member') {
+      throw new MicrosoftSsoError('no_account', 'Microsoft directory account is not an enabled member', {
+        subject,
+        detail: 'not_member',
+      });
     }
   }
 
