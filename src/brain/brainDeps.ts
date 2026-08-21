@@ -106,7 +106,7 @@ export interface BrainDeps {
    *  restriction (open mode / tests). Enforced on explicit picks; a saved-but-revoked default
    *  silently falls back to the server default instead of erroring. */
   execAllowed?: (userId: number, exec: string) => boolean;
-  /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
+  /** Build a Policy from an explicit project-id set captured in delegated execution scopes. */
   policyForProjects?: (projectIds: number[]) => Policy;
   /** The Elowen user that anchors platform channel sessions (their token drives the tools) — the admin. */
   platformOwner?: () => number | undefined;

@@ -26,7 +26,6 @@ async function spawn(access: Record<string, unknown>): Promise<ChannelSendOpts> 
   const orch = new PlatformOrchestrator({
     plugins: async () => ({ platforms: [adapter] }) as never,
     platformOwner: () => 1,
-    policyForProjects: () => rolePolicy,
     identity,
     agents: exploreDef,
     channels: channels as never,

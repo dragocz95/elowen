@@ -174,13 +174,15 @@ export interface PlatformHistoryMessage {
  *  but core stores it as one explicitly-untrusted history item instead of prefixing the live user prompt. */
 export type PlatformHistory = string | readonly PlatformHistoryMessage[];
 
-/** Where a channel message came from + what its sender may access. The adapter resolves `access` from
- *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
- *  (an unmapped user gets no brain). `admin: true` means all-project channel policy and may legitimately
- *  come from a foreign platform admin role; owner-only authority is represented separately by identity.owner. */
+/** Where a channel message came from and whether the adapter admitted it. A message without `access` is
+ * ignored. For human platform turns, projects, tools and account-admin identity come only from the linked
+ * Elowen account; role-derived fields remain room prompt/trust metadata and internal automation scope. */
 export interface SessionSource {
   platform: string;
   userId: string;
+  /** Other immutable platform identifiers for the same sender. The identity resolver tries these after
+   * `userId`; adapters must include only authenticated IDs for that person, never room or message IDs. */
+  accountIds?: string[];
   /** The sender's display name, supplied structurally. Adapters must pass clean message text and must not
    *  interpolate this name into it; core serializes attribution only after validating the turn surface. */
   userName?: string;
@@ -497,6 +499,9 @@ export interface PluginExternalUserBindingInput {
 }
 /** Narrow account-write seam. External access/refresh tokens are deliberately absent from this contract. */
 export interface PluginHostExternalUsers {
+  /** Resolve the same platform identity chain the brain uses before a plugin starts a turn. Optional for
+   * older/minimal hosts; callers must fall back to provider bindings only, never guess an account. */
+  resolvePlatformUser?(platform: string, platformUserId: string, verifiedEmail?: string): PluginUserView | null;
   resolve(provider: string, tenantId: string, subjectId: string): PluginUserView | null;
   describe(provider: string, tenantId: string, subjectId: string): PluginExternalUserBinding | null;
   linkOrProvision(input: PluginExternalUserInput): PluginExternalUserResult;

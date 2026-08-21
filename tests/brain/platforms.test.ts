@@ -33,7 +33,7 @@ const dispatchInto = (
 const noDispatch = { send: (): Promise<string> => Promise.reject(new Error('this test must not delegate')) };
 
 /** Drive one inbound message through the orchestrator and capture the ChannelSendOpts it produces. */
-async function runTurn(opts: { linked: boolean; access: Record<string, unknown> }): Promise<ChannelSendOpts> {
+async function runTurn(opts: { linked: boolean; access: Record<string, unknown> }): Promise<ChannelSendOpts | undefined> {
   let sent: ChannelSendOpts | undefined;
   let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
   const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {}, control: () => {} };
@@ -43,7 +43,6 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
       platformPromptsFor: (platform: string) => platform === 'discord' ? ['You are replying through Discord.'] : [],
     }) as never,
     platformOwner: () => 1,
-    policyForProjects: () => rolePolicy,
     policyForUser: () => userPolicy,
     disabledToolsFor: () => ['DiscordApi'], // Amy disabled this tool in her Elowen account
     identity: linkedResolver(opts.linked),
@@ -52,13 +51,13 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
   });
   await orch.startAll();
   await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], access: opts.access } as never, 'hi');
-  return sent!;
+  return sent;
 }
 
 describe('PlatformOrchestrator — unified per-turn access', () => {
   it('appends the platform prompt even when a personal chat has no channel name', async () => {
     const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3] } });
-    expect(sent.promptAppend).toEqual(['You are replying through Discord.']);
+    expect(sent?.promptAppend).toEqual(['You are replying through Discord.']);
   });
 
   it('a linked sender in a shared room uses their account policy and personal deny-list', async () => {
@@ -66,29 +65,17 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       linked: true,
       access: { admin: false, projectIds: [3], tools: ['MemorySearch'], denyTools: ['DiscordSend'] },
     });
-    expect(sent.policy).toBe(userPolicy);
-    expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
-    expect(sent.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
+    expect(sent?.policy).toBe(userPolicy);
+    expect(sent?.toolPolicy).toEqual({ deny: new Set(['DiscordApi', 'DiscordSend']) });
+    expect(sent?.identity).toMatchObject({ elowenUserId: 2, admin: false, owner: false, conversation: 'shared' });
   });
 
-  it('an UNLINKED sender falls back to the Role-ID policy + the role tool allowlist', async () => {
-    const sent = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
-    expect(sent.policy).toBe(rolePolicy); // the role's projects
-    expect(sent.toolPolicy).toEqual({ allow: new Set(['MemorySearch']) }); // the role's tool allowlist
-    expect(sent.identity?.elowenUserId).toBeUndefined();
-  });
-
-  it("an UNLINKED role with the '*' wildcard (or empty list) gets the FULL toolset, not an allow of literal '*'", async () => {
-    const star = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: ['*'] } });
-    expect(star.toolPolicy).toBeUndefined(); // '*' = everything → no restriction (regression guard)
-    const empty = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: [] } });
-    expect(empty.toolPolicy).toBeUndefined(); // empty list also = everything
-  });
-
-  it('an UNLINKED admin-role sender gets all-project policy and no tool restriction', async () => {
-    const sent = await runTurn({ linked: false, access: { admin: true, projectIds: [], tools: undefined } });
-    expect(sent.policy.allowedProjectIds).toBe('all');
-    expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
+  it('an UNLINKED sender gets no project access, no tools and no model turn', async () => {
+    const sent = await runTurn({
+      linked: false,
+      access: { admin: true, projectIds: [3], tools: ['MemorySearch'], denyTools: ['DiscordSend'] },
+    });
+    expect(sent).toBeUndefined();
   });
 
   it('runs a synthetic relay through the target account policy and only narrows its tools', async () => {
@@ -104,7 +91,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       policyForUser: () => userPolicy,
       disabledToolsFor: () => ['DiscordApi'],
       identity: linkedResolver(false),
@@ -141,7 +127,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -173,7 +158,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       const orch = new PlatformOrchestrator({
         plugins: async () => ({ platforms: [adapter] }) as never,
         platformOwner: () => 1,
-        policyForProjects: () => rolePolicy,
         policyForUser: () => userPolicy,
         disabledToolsFor: () => ['DiscordApi'],
         identity: linkedResolver(true), // resolves the sender to account 2
@@ -249,7 +233,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -282,7 +265,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -315,7 +297,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter], platformPromptsFor: () => ['must not reach subagents'] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -379,7 +360,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -417,7 +397,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       disabledToolsFor: () => ['terminal_exec'],
       identity: resolver,
       channels: channels as never,
@@ -457,7 +436,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -493,7 +471,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       identity: resolver,
       agents: exploreDef,
       channels: channels as never,
@@ -568,7 +545,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       identity: linkedResolver(false),
       channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '' } as never,
       dispatch: noDispatch,
-      originSend: async (userId, sessionId, text) => { originCalls.push([userId, sessionId, text]); return 'bound reply'; },
+      originSend: async (userId, sessionId, text) => { originCalls.push([userId, sessionId!, text]); return 'bound reply'; },
     });
     await orch.startAll();
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
@@ -658,6 +635,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
+      policyForUser: () => userPolicy,
       identity: linkedResolver(false),
       channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '' } as never,
       dispatch: noDispatch,
@@ -781,7 +759,6 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      policyForProjects: () => rolePolicy,
       policyForUser: () => userPolicy,
       disabledToolsFor: () => [], // nothing disabled
       identity: linkedResolver(true),

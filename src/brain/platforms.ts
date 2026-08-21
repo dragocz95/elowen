@@ -26,17 +26,12 @@ export interface PlatformOrchestratorDeps {
   /** The typed sub-agent registry, resolved when a delegate call names a `subagent_type` — turns the type
    *  into the child's role prompt, tool allow-list and (for a read-only type) a minted read-only boundary. */
   agents?: () => Map<string, AgentDef>;
-  /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
-  policyForProjects?: (projectIds: number[]) => Policy;
   /** A linked sender uses their Elowen account permissions wherever they write: this resolves that
-   *  account's own project Policy. Room roles only cover people with no linked account. */
+   *  account's own project Policy. An unlinked sender receives no project or tool access. */
   policyForUser?: (userId: number) => Policy;
   /** A linked user's own tool deny-list (their Account → disabled tools plus any per-user-granted plugin
    *  they do not hold), applied for their platform turns. */
   disabledToolsFor?: (userId: number) => string[];
-  /** The grant-gated tool names to withhold from a sender that has NO Elowen account (an unlinked channel
-   *  member), described by the access their platform role gives them. Absent → nothing is withheld. */
-  ungrantedPluginTools?: (sender: { is_admin: boolean; granted_plugins: readonly string[] }) => string[];
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
@@ -259,10 +254,11 @@ export class PlatformOrchestrator {
               ...(src.access.sessionIdleMs !== undefined ? { idleRolloverMs: src.access.sessionIdleMs } : {}),
             }, text, onEvent);
           }
-          // A linked sender uses their Elowen account policy and deny-list wherever they write. Room roles
-          // remain the fallback only for people who have not linked an account.
+          // A platform sender has only the permissions of their linked Elowen account. Room roles still
+          // decide admission and trusted-room context, but never supply projects or tools.
           const resolved = this.d.identity.forPlatformTurn(src, owner);
-          const accountUserId = resolved.accountUserId;
+          const accountUserId = resolved.accountUserId
+            ?? (src.platform === 'cron' ? src.origin?.userId : undefined);
           const linkedUserId = resolved.linkedUserId;
           // A DIRECT 1:1 chat is its sender's own conversation, not a room the operator hosts. It counts
           // only when the adapter says so AND the sender has a VERIFIED platform link — `actAsUserId` is a
@@ -287,34 +283,13 @@ export class PlatformOrchestrator {
             ...resolved.identity,
             conversation: directChat ? 'direct' : 'shared',
           };
-          let policy: Policy;
-          let toolPolicy: ToolPolicy | undefined;
+          // A room role can admit and describe the conversation, but it can never create a principal. No
+          // linked account means no policy, no tools and no model turn; adapters may answer with onboarding UI.
+          if (accountUserId == null || !this.d.policyForUser) return undefined;
+          const policy = this.d.policyForUser(accountUserId);
           const turnDenied = src.access.denyTools ?? [];
-          if (accountUserId != null && this.d.policyForUser) {
-            policy = this.d.policyForUser(accountUserId);
-            const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
-            toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
-          } else {
-            policy = src.access.admin
-              ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
-              : this.d.policyForProjects?.(src.access.projectIds)
-                ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
-            // Admin role → full plugin toolset (no allowlist). Otherwise the role's tool allowlist — but
-            // the Discord convention (plugins/discord/index.mjs) is that an empty list OR ['*'] means
-            // "everything", so it must map to NO restriction, not an allow-list of the literal "*" (which
-            // would match no real tool name and deny the whole toolset).
-            const roleTools = src.access.tools;
-            const unrestricted = !roleTools?.length || roleTools.includes('*');
-            const allow = !src.access.admin && !unrestricted ? new Set(roleTools) : undefined;
-            // A per-user-granted plugin is reached through an ACCOUNT, and this sender has none. An admin
-            // role still passes (that is what an admin role means for every other tool here); anyone else
-            // is denied, so an unlinked stranger cannot borrow a subsystem an admin hands out per person.
-            const ungranted = this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? [];
-            const denied = [...new Set([...ungranted, ...turnDenied])];
-            toolPolicy = allow || denied.length
-              ? { ...(allow ? { allow } : {}), ...(denied.length ? { deny: new Set(denied) } : {}) }
-              : undefined;
-          }
+          const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
+          const toolPolicy: ToolPolicy | undefined = denied.length ? { deny: new Set(denied) } : undefined;
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           return this.d.channels.send({
             channelId: keyOf(src),

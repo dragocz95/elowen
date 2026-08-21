@@ -50,7 +50,6 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { deniedToolsForUser } from './brainDeps.js';
-import { ungrantedPluginTools } from '../plugins/toolGrants.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
@@ -346,11 +345,9 @@ export class BrainService {
       plugins: () => this.resolvePlugins(),
       platformOwner: d.platformOwner,
       agents: d.agents,
-      policyForProjects: d.policyForProjects,
       // A linked platform sender uses the same account policy and deny-list wherever they write.
       policyForUser: d.policy,
       disabledToolsFor: (userId) => deniedToolsForUser(d, userId),
-      ungrantedPluginTools: (sender) => ungrantedPluginTools(sender, d.plugins?.peek()),
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,

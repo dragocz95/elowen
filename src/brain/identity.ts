@@ -25,8 +25,8 @@ export interface IdentityDeps {
 /** The ONE place turn identities are minted — auditable, testable, and hard to fork by accident.
  *  `owner` is stricter than `admin`: only the operator themselves (their authenticated chat, their
  *  linked platform account, or their own server-internal automation like cron/subagent) counts,
- *  NEVER a foreign platform member who merely holds an admin-mapped role. `admin` still reflects
- *  all-access policy (project power tools); the two are deliberately separate. */
+ *  NEVER a foreign platform member who merely holds an admin-mapped room role. Identity `admin` comes
+ *  from account administration or internal automation; room trust stays separate in channel options. */
 export class IdentityResolver {
   constructor(private d: IdentityDeps) {}
 
@@ -84,12 +84,15 @@ export class IdentityResolver {
    *  structured sender attribution. The attribution is serialized later as JSON for shared rooms; no
    *  attacker-controlled display name is ever interpolated into trusted prompt markup. */
   forPlatformTurn(src: SessionSource, _owner: number): { identity: TurnIdentity; sender?: PlatformSenderAttribution; accountUserId?: number; linkedUserId?: number } {
-    const linked = this.d.resolvePlatformUser?.(src.platform, src.userId, src.verifiedEmail);
+    let linked: LinkedUser | null = null;
+    for (const platformUserId of [...new Set([src.userId, ...(src.accountIds ?? [])])]) {
+      linked = this.d.resolvePlatformUser?.(src.platform, platformUserId, src.verifiedEmail) ?? null;
+      if (linked) break;
+    }
     // Server automation acting FOR one account (a cron job somebody owns). There is no platform id to
     // resolve — the plugin names the account and the host looks it up here. This supplies attribution and
     // personal deny-lists; the orchestrator still decides whether the surface is private account context or
-    // a shared room whose role policy remains authoritative. A real platform link always wins, so this can
-    // never override who a message actually came from.
+    // a shared room. A real platform link always wins, so this can never override who a message actually came from.
     const account = linked ?? this.actingUser(src.access?.actAsUserId);
     // Only real inbound platform messages carry a human sender. Server automation (cron/subagent) has no
     // display-name claim to serialize, even when it acts for an account.
@@ -107,7 +110,11 @@ export class IdentityResolver {
       userId: src.userId,
       elowenUserId: account?.id, // the Elowen account behind this turn (undefined = unlinked sender)
       elowenUsername: account?.username || account?.name,
-      admin: src.access?.admin === true || account?.admin === true,
+      // Human platform permissions come only from the linked account. `access.admin` on an ordinary room
+      // remains room metadata for trusted-channel composition; it must not mint admin-only tools.
+      admin: src.platform === 'cron' || src.platform === 'subagent'
+        ? src.access?.admin === true || account?.admin === true
+        : account?.admin === true,
       owner: (account?.id !== undefined && this.isOwner(account.id)) || automationOwner,
       // The adapter's `direct` bit is only a claim. PlatformOrchestrator validates it against the verified
       // platform link and the durable session owner, then replaces this value for the admitted turn.

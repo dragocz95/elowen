@@ -35,10 +35,17 @@ describe('IdentityResolver — owner vs admin gating', () => {
   const resolver = (linked?: { id: number; name: string; username?: string; admin: boolean } | null) =>
     new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => linked ?? null, users });
 
-  it('a foreign Discord member with an admin-mapped role is admin but NEVER owner', () => {
+  it('a room admin role grants neither account admin nor owner identity', () => {
     const { identity } = resolver(null).forPlatformTurn(src({ access: { projectIds: [], admin: true } }), 1);
-    expect(identity.admin).toBe(true);
-    expect(identity.owner).toBe(false); // admin-role stranger must not reach owner-only surfaces
+    expect(identity.admin).toBe(false);
+    expect(identity.owner).toBe(false);
+  });
+
+  it('a room admin role cannot elevate a linked non-admin account', () => {
+    const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false })
+      .forPlatformTurn(src({ access: { projectIds: [], admin: true } }), 1);
+    expect(identity.admin).toBe(false);
+    expect(identity.elowenUserId).toBe(2);
   });
 
   it('a linked NON-operator account is not owner even when its Elowen account is admin', () => {
@@ -57,6 +64,20 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(linked.linkedUserId).toBe(2); // channel memory recall/save keys on this
     const unlinked = resolver(null).forPlatformTurn(src({}), 1);
     expect(unlinked.linkedUserId).toBeUndefined(); // unlinked sender → no memory
+  });
+
+  it('tries authenticated alternate account ids when the primary platform id is not linked', () => {
+    const seen: string[] = [];
+    const identity = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: (_platform, platformUserId) => {
+        seen.push(platformUserId);
+        return platformUserId === '29:teams' ? { id: 2, name: 'Amy', username: 'amy', admin: false } : null;
+      },
+      users,
+    }).forPlatformTurn(src({ userId: 'aad-amy', accountIds: ['aad-amy', '29:teams'] }), 1);
+    expect(seen).toEqual(['aad-amy', '29:teams']);
+    expect(identity.linkedUserId).toBe(2);
   });
 
   // A scheduled job somebody owns keeps that account's attribution. The orchestrator separately decides

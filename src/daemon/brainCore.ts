@@ -289,6 +289,42 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     allowedProjectIds: new Set(ids),
     allowedPaths: () => ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p),
   });
+  const resolvePlatformUser = (platform: string, platformUserId: string, verifiedEmail?: string) => {
+    if (!platformUserId) return null;
+    const linkedUser = (id: number | null) => {
+      const u = id != null ? users.get(id) : undefined;
+      return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
+    };
+    // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins, then the OAuth
+    // binding this subject established by signing in. Only when neither exists may the adapter-verified UPN
+    // bootstrap a unique profile-email match; that final match is persisted against later e-mail changes.
+    if (platform === 'msteams') {
+      const value = platformUserId.trim().toLowerCase();
+      if (!value) return null;
+      const explicit = linkedUser(userSettings.userIdBySetting('msteamsUserId', value));
+      if (explicit) return explicit;
+      const bound = users.externalIdentityBySubject('msteams', value);
+      if (bound) return { id: bound.id, name: bound.name || bound.username, username: bound.username, admin: !!bound.is_admin };
+      const email = verifiedEmail?.trim().toLowerCase() ?? '';
+      if (!email) return null;
+      const matched = users.userByUniqueEmail(email);
+      if (!matched) return null;
+      try { userSettings.setCliSettings(matched.id, { msteamsUserId: value }); }
+      catch (error) {
+        if (error instanceof TeamsIdConflictError) return null;
+        throw error;
+      }
+      return { id: matched.id, name: matched.name || matched.username, username: matched.username, admin: !!matched.is_admin };
+    }
+    let key: 'discordUserId' | 'whatsappNumber' | 'telegramUserId';
+    let value: string;
+    if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
+    else if (platform === 'whatsapp') { key = 'whatsappNumber'; value = platformUserId.replace(/[@:].*$/, '').replace(/[^\d]/g, ''); }
+    else if (platform === 'telegram') { key = 'telegramUserId'; value = platformUserId.replace(/[^\d]/g, ''); }
+    else return null;
+    if (!value) return null;
+    return linkedUser(userSettings.userIdBySetting(key, value));
+  };
   // The brain's model runtime: a file-backed credential store (OAuth tokens persist + pi refreshes them
   // in place) plus the built-in model catalog. Elowen's OWN store rather than pi's default AuthStorage:
   // this same auth.json is shared by the daemon and every forked sub-agent runner, and AuthStorage serves
@@ -555,6 +591,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             brainStore.getMessages(taskSessionId(taskId)), brainStore.getSubagentRuns(taskSessionId(taskId))),
         },
         externalUsers: {
+          resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {
+            const user = resolvePlatformUser(platform, platformUserId, verifiedEmail);
+            return user ? { id: user.id, username: user.username || user.name, isAdmin: user.admin } : null;
+          },
           resolve: (provider, tenantId, subjectId) => {
             const user = users.externalIdentity(provider, tenantId, subjectId);
             return user ? { id: user.id, username: user.username, isAdmin: user.is_admin } : null;
@@ -679,57 +719,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         maxSteps: () => config.get().brain.maxSteps,
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
-        resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {
-          if (!platformUserId) return null;
-          const linkedUser = (id: number | null) => {
-            const u = id != null ? users.get(id) : undefined;
-            return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
-          };
-          // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins, then the
-          // OAuth binding this subject already established by signing in. Only when neither exists may the
-          // adapter's platform-verified UPN bootstrap a unique profile-email match; the first success is
-          // persisted immediately so later e-mail edits can never move this identity.
-          //
-          // The OAuth binding is the SAME row `linkOrProvision` writes when someone signs in, and reading it
-          // here is what makes sign-in actually connect an account to their channel messages. Without it the
-          // only bridge is the e-mail match, which silently misses whenever the profile mail differs from
-          // the roster UPN — common with `…onmicrosoft.com` accounts and after a name change — leaving a
-          // signed-in person unlinked and running with no projects at all.
-          if (platform === 'msteams') {
-            const value = platformUserId.trim().toLowerCase();
-            if (!value) return null;
-            const explicit = linkedUser(userSettings.userIdBySetting('msteamsUserId', value));
-            if (explicit) return explicit;
-            const bound = users.externalIdentityBySubject('msteams', value);
-            if (bound) return { id: bound.id, name: bound.name || bound.username, username: bound.username, admin: !!bound.is_admin };
-            const email = verifiedEmail?.trim().toLowerCase() ?? '';
-            if (!email) return null;
-            const matched = users.userByUniqueEmail(email);
-            if (!matched) return null;
-            try { userSettings.setCliSettings(matched.id, { msteamsUserId: value }); }
-            catch (error) {
-              // Another account claimed this Teams id between lookup and TOFU persistence. Identity is an
-              // auth boundary: refuse the turn instead of throwing or returning the e-mail-matched account.
-              if (error instanceof TeamsIdConflictError) return null;
-              throw error;
-            }
-            return { id: matched.id, name: matched.name || matched.username, username: matched.username, admin: !!matched.is_admin };
-          }
-          // Keep every existing platform path byte-for-byte in semantics: Teams is the only e-mail bootstrap.
-          let key: 'discordUserId' | 'whatsappNumber' | 'telegramUserId';
-          let value: string;
-          if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
-          else if (platform === 'whatsapp') { key = 'whatsappNumber'; value = platformUserId.replace(/[@:].*$/, '').replace(/[^\d]/g, ''); }
-          else if (platform === 'telegram') { key = 'telegramUserId'; value = platformUserId.replace(/[^\d]/g, ''); }
-          else return null;
-          if (!value) return null;
-          return linkedUser(userSettings.userIdBySetting(key, value));
-        },
+        resolvePlatformUser,
         // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
         // bounded by the global list AND their personal whitelist (empty personal = global only).
         execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, brainProviderIds(config)),
-        // Platform channels (Discord, …): role mappings resolve to project-scoped policies; the admin's
-        // token anchors the channel sessions.
+        // Delegated scopes still need explicit project-id policies; platform human turns resolve only
+        // through their linked account policy. The admin's token anchors shared channel sessions.
         policyForProjects,
         platformOwner: () => users.ownerId(),
         // Present only in the daemon: a runner builds its core without one and therefore always runs a
