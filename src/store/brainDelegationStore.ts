@@ -788,6 +788,41 @@ export class BrainDelegationStore {
     if (!cur) return []; // no boot identity (unit test store) -> nothing is ours to claim
     const now = Date.now();
     return withWriteLock(this.db, () => {
+      // Legacy rows written before the durable/display status split can claim a finished tool call as
+      // running (most notably a DelegateContinue terminal update masked for UI while its target child was
+      // still active). A SETTLED toolResult in the parent transcript is proof that this exact call already
+      // returned; recovering it would redo completed work and enqueue a synthetic answer that wakes the
+      // parent again. Heal those rows in place before claiming. `pending = 0` is load-bearing: a provisional
+      // mid-turn tool result from a crash is not proof that the parent turn completed and still needs normal
+      // recovery. This is boot-time, read-derived healing, so existing databases repair themselves without a
+      // migration or a one-shot live data write.
+      this.db.prepare(
+        `UPDATE brain_subagent_runs AS r
+            SET lifecycle = CASE WHEN EXISTS (
+                  SELECT 1 FROM brain_messages m
+                   WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
+                     AND json_extract(m.content, '$.role') = 'toolResult'
+                     AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                     AND json_extract(m.content, '$.isError') = 1
+                ) THEN 'error' ELSE 'done' END,
+                state = CASE WHEN json_valid(state) THEN json_set(
+                  state, '$.status', CASE WHEN EXISTS (
+                    SELECT 1 FROM brain_messages m
+                     WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
+                       AND json_extract(m.content, '$.role') = 'toolResult'
+                       AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                       AND json_extract(m.content, '$.isError') = 1
+                  ) THEN 'error' ELSE 'done' END
+                ) ELSE state END,
+                owner_boot_id = NULL, lease_until = NULL, updated_at = datetime('now')
+          WHERE lifecycle IN ('running', 'recovering', 'recovery_required')
+            AND EXISTS (
+              SELECT 1 FROM brain_messages m
+               WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
+                 AND json_extract(m.content, '$.role') = 'toolResult'
+                 AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+            )`
+      ).run();
       this.db.prepare(
         `UPDATE brain_subagent_runs
             SET lifecycle = 'recovering', owner_boot_id = ?, attempt = attempt + 1, lease_until = ?

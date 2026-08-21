@@ -5130,6 +5130,45 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
   });
 
+  it('heals an already-returned DelegateContinue before recovery, including a stale recovering lease', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-finished-continue';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'continue-finished', sessionId: child, status: 'running', task: 'steer completed work', tools: 0, seconds: 1,
+    });
+    // The parent turn settled with this exact tool call's result before the daemon stopped. This is durable
+    // proof that recovery has nothing new to report, even if an older boot left the run under a live lease.
+    d.store.appendMessage({
+      id: 'continue-result', sessionId, parentId: null, role: 'toolResult',
+      content: {
+        role: 'toolResult', toolCallId: 'continue-finished', toolName: 'DelegateContinue',
+        content: [{ type: 'text', text: 'the follow-up was steered' }], isError: false,
+      },
+    });
+    d.db.prepare(
+      "UPDATE brain_subagent_runs SET lifecycle = 'recovering', owner_boot_id = 'old-boot', lease_until = ? WHERE tool_call_id = 'continue-finished'"
+    ).run(Date.now() + 60_000);
+
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    await restarted.runDelegationRecovery();
+
+    const row = d.db.prepare(
+      "SELECT lifecycle, state, owner_boot_id, lease_until, attempt FROM brain_subagent_runs WHERE tool_call_id = 'continue-finished'"
+    ).get() as { lifecycle: string; state: string; owner_boot_id: string | null; lease_until: number | null; attempt: number };
+    expect(row.lifecycle).toBe('done');
+    expect(JSON.parse(row.state).status).toBe('done');
+    expect(row.owner_boot_id).toBeNull();
+    expect(row.lease_until).toBeNull();
+    expect(row.attempt).toBe(0);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.session.prompt).not.toHaveBeenCalled();
+  });
+
   it('boot recovery parks a run as recovery_required when the interrupted tail has an unanswered tool call', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
