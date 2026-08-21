@@ -178,7 +178,12 @@ export class LiveSessionSpawner {
     const memCats = this.d.memoryCategoryStore;
     const memCategorizer = this.d.memoryCategorizer;
     const memProjects = this.d.projects;
-    const pluginTools = plugins?.tools ?? [];
+    // Tools and skills use the SAME proven session owner. A delegated child inherits personal
+    // contributions only when its parent is an owner/direct conversation; shared or unknown parents
+    // fail closed to the instance set.
+    const contributionOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId, opts.direct === true);
+    const contributionOwnerUser = contributionOwnerUserId == null ? null : this.d.users.get(contributionOwnerUserId);
+    const pluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
     // Plugin hook point: after a permitted plugin tool's execute resolves, fan the call out to
     // `tools.call.after` subscribers (e.g. the formatters plugin). AWAITED by the tool gate before the
     // result returns, so a hook that rewrites the written file finishes before the transcript diff /
@@ -233,11 +238,8 @@ export class LiveSessionSpawner {
     });
     // WHOSE skills this session may see. The SAME list has to reach both the awareness block and the
     // factory's skillsOverride below: feeding the model one set and PI another would either advertise a
-    // skill `/skill:` cannot expand, or hide one it still can. A sub-agent inherits its owner's grants only
-    // when skillOwnerForSession can prove an owner-chat parent; shared/unknown parents resolve to no account.
-    const skillOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId, opts.direct === true);
-    const skillUser = skillOwnerUserId == null ? null : this.d.users.get(skillOwnerUserId);
-    const skills = plugins?.skillsFor(skillOwnerUserId, skillUser) ?? [];
+    // skill `/skill:` cannot expand, or hide one it still can.
+    const skills = plugins?.skillsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
     // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).

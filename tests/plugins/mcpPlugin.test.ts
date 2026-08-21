@@ -3,6 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
+import { makePluginDb } from '../../src/store/pluginDb.js';
+import type { Db } from '../../src/store/db.js';
+import { UserStore } from '../../src/store/userStore.js';
+import { channelSessionId, skillOwnerForSession } from '../../src/brain/sessionId.js';
 // The plugin is a plain ESM module (no build step) — import it directly.
 // @ts-expect-error - .mjs plugin has no type declarations
 import { register, killTree, sanitize, mapResult, DetachedStdioTransport, configNumber, listMcpServers, reconnectMcpServer, mcpBridgeSnapshot } from '../../plugins/mcp/index.mjs';
@@ -19,18 +24,19 @@ const waitFor = async (fn: () => boolean, ms = 3000) => { const end = Date.now()
 
 /** A minimal PluginContext stand-in capturing the tools/hooks the plugin registers. `mcpBridgeSnapshot`
  *  is what a forked sub-agent runner is handed: present ⇒ declare these tools and connect nothing. */
-function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown) {
-  const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }[] = [];
+function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb()) {
+  const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown>; ownerUserId?: number }[] = [];
   const hooks: { name: string; run: (p: unknown) => unknown }[] = [];
   const controls = new Map<string, unknown>();
   return {
     config,
     ...(mcpBridgeSnapshot ? { mcpBridgeSnapshot } : {}),
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }) => tools.push(t),
+    db: () => makePluginDb(db, 'mcp', { canMigrate: true }),
+    registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
     registerControl: (name: string, control: unknown) => controls.set(name, control),
-    tools, hooks, controls,
+    tools, hooks, controls, rawDb: db,
   };
 }
 
@@ -264,6 +270,41 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
   const teardown = async (ctx: ReturnType<typeof fakeCtx>): Promise<void> => {
     await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
   };
+
+  const visibleTools = (ctx: ReturnType<typeof fakeCtx>, ownerUserId: number | null) => {
+    const selected = new Map<string, (typeof ctx.tools)[number]>();
+    for (const tool of ctx.tools) {
+      if (tool.ownerUserId !== undefined && tool.ownerUserId !== ownerUserId) continue;
+      const prior = selected.get(tool.name);
+      if (!prior || tool.ownerUserId !== undefined) selected.set(tool.name, tool);
+    }
+    return [...selected.values()];
+  };
+
+  it('keeps another account personal server out of shared-channel sub-agents and other accounts', async () => {
+    const db = openPluginTablesDb();
+    const bootstrap = fakeCtx({}, undefined, db);
+    await register(bootstrap as never);
+    await teardown(bootstrap);
+
+    const users = new UserStore(db);
+    for (let i = 1; i <= 4; i++) users.create(`user-${i}`, 'pw');
+    const descriptor = [{ name: 'echo', description: 'Echo', inputSchema: { type: 'object' } }];
+    const insert = db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)');
+    insert.run(null, 'shared', JSON.stringify({ name: 'shared', enabled: true, command: process.execPath, args: [MOCK_SERVER] }), JSON.stringify(descriptor));
+    insert.run(4, 'private', JSON.stringify({ name: 'private', enabled: true, command: process.execPath, args: [MOCK_SERVER] }), JSON.stringify(descriptor));
+
+    const ctx = fakeCtx({}, [{ serverName: 'shared', tools: descriptor }], db);
+    await register(ctx as never);
+    expect(visibleTools(ctx, 4).map((tool) => tool.name)).toContain('mcp__private__echo');
+    expect(visibleTools(ctx, 5).map((tool) => tool.name)).not.toContain('mcp__private__echo');
+
+    const sharedChildOwner = skillOwnerForSession('brain-ch-subagent-test', 4, channelSessionId('discord-room'));
+    expect(sharedChildOwner).toBeNull();
+    expect(visibleTools(ctx, sharedChildOwner).map((tool) => tool.name)).toContain('mcp__shared__echo');
+    expect(visibleTools(ctx, sharedChildOwner).map((tool) => tool.name)).not.toContain('mcp__private__echo');
+    await teardown(ctx);
+  });
 
   it('declares the same tools as a connected load, launches nothing at boot, and connects on the first call', async () => {
     const log = join(tmpDir('mcp-snapshot'), 'starts.log');

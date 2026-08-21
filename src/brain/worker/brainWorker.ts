@@ -224,7 +224,7 @@ export class BrainWorkerService {
     // An ownerless task keeps the full set: there is no account whose grants could withhold anything.
     const denied = new Set(input.ownerId ? this.d.deniedTools?.(input.ownerId) ?? [] : []);
     const pluginTools = composeSessionTools({
-      kind: 'task-worker', pluginTools: (plugins?.tools ?? []).filter((t) => !denied.has(t.name)),
+      kind: 'task-worker', pluginTools: (plugins?.toolsFor(null) ?? []).filter((t) => !denied.has(t.name)),
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
       // Task workers take the same veto gate. Wiring only the chat path would leave every guard a user
       // installs silently unenforced for exactly the sessions that run unattended.

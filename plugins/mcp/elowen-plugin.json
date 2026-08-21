@@ -7,7 +7,7 @@
   "icons": { "mcp__*": "🧩", "ListMcpResources": "🧩", "ReadMcpResource": "🧩" },
   "provides": { "tools": ["ListMcpResources", "ReadMcpResource", "mcp__*"] },
   "deferLoading": ["ListMcpResources", "ReadMcpResource"],
-  "capabilities": {},
+  "capabilities": { "reads": ["db"] },
   "configSchema": [
     {
       "key": "servers",

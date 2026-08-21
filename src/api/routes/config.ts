@@ -182,7 +182,12 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.all('/mcp', async c => {
     const token = c.get('token');
     const registry = await d.plugins?.get().catch(() => undefined);
-    return handleMcpRequest(c.req.raw, { url: `http://localhost:${ELOWEN_PORT}`, token, pluginTools: registry?.mcpTools ?? [] });
+    const user = c.get('user');
+    return handleMcpRequest(c.req.raw, {
+      url: `http://localhost:${ELOWEN_PORT}`,
+      token,
+      pluginTools: registry?.mcpToolsFor(user ? { is_admin: user.is_admin, granted_plugins: user.granted_plugins } : null) ?? [],
+    });
   });
 
   // --- Web push: the browser's VAPID public key, plus per-user device subscribe/unsubscribe. The

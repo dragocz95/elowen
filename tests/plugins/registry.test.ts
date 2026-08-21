@@ -20,6 +20,46 @@ describe('PluginRegistry', () => {
     expect(ctx.config).toEqual({ k: 1 });
   });
 
+  describe('toolsFor (per-account tool sets)', () => {
+    const accessUser = (over: Partial<{ is_admin: boolean; granted_plugins: string[] }> = {}) =>
+      ({ is_admin: false, granted_plugins: [] as string[], ...over });
+    const tool = (name: string, marker: string) => ({ name, label: marker, description: marker } as never);
+
+    it('gives each account instance tools plus only its own, and fails closed without an account', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('mcp', {}, noopLog);
+      ctx.registerTool(tool('shared', 'shared'));
+      ctx.registerTool(tool('amy', 'amy'), { ownerUserId: 4 });
+      ctx.registerTool(tool('bob', 'bob'), { ownerUserId: 5 });
+
+      expect(reg.toolsFor(4, accessUser()).map((t) => t.name)).toEqual(['shared', 'amy']);
+      expect(reg.toolsFor(5, accessUser()).map((t) => t.name)).toEqual(['shared', 'bob']);
+      expect(reg.toolsFor(null).map((t) => t.name)).toEqual(['shared']);
+      expect(reg.toolsFor(undefined).map((t) => t.name)).toEqual(['shared']);
+    });
+
+    it('lets an owner-scoped definition override the same instance tool name only for that owner', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('mcp', {}, noopLog);
+      ctx.registerTool(tool('ListMcpResources', 'instance'));
+      ctx.registerTool(tool('ListMcpResources', 'amy'), { ownerUserId: 4 });
+
+      expect(reg.toolsFor(4, accessUser())).toHaveLength(1);
+      expect(reg.toolsFor(4, accessUser())[0]!.label).toBe('amy');
+      expect(reg.toolsFor(5, accessUser())[0]!.label).toBe('instance');
+      expect(reg.toolsFor(null)[0]!.label).toBe('instance');
+    });
+
+    it('carries tool ownership through registry merge', () => {
+      const merged = new PluginRegistry();
+      const staged = new PluginRegistry();
+      staged.contextFor('mcp', {}, noopLog).registerTool(tool('private', 'amy'), { ownerUserId: 4 });
+      merged.merge(staged);
+      expect(merged.toolsFor(4, accessUser()).map((t) => t.name)).toEqual(['private']);
+      expect(merged.toolsFor(5, accessUser())).toEqual([]);
+    });
+  });
+
   describe('skillsFor (per-account skill sets)', () => {
     const accessUser = (over: Partial<{ is_admin: boolean; granted_plugins: string[] }> = {}) =>
       ({ is_admin: false, granted_plugins: [] as string[], ...over });

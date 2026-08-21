@@ -116,6 +116,10 @@ export class PluginRegistry {
   readonly tools: ToolDefinition[] = [];
   /** Which plugin registered each tool (tool name → plugin name) — feeds per-role tool filtering. */
   readonly toolOwner = new Map<string, string>();
+  /** For each entry of `tools`, the Elowen ACCOUNT it belongs to, or null for an instance-wide tool.
+   * Index-aligned with `tools`; owner-scoped duplicate names are safe because `toolsFor` filters and
+   * de-duplicates before a session is composed. */
+  readonly toolOwnerUsers: (number | null)[] = [];
   readonly skills: PluginSkill[] = [];
   readonly promptFragments: string[] = [];
   /** Static Markdown fragments loaded from a platform plugin's `prompt/*.md` directory. Unlike global
@@ -220,13 +224,16 @@ export class PluginRegistry {
    *  plugins' registries meet (each registers into its own staging registry), so cross-plugin collisions
    *  are enforced HERE — first-writer-wins, with `warn` surfacing the drop. */
   merge(other: PluginRegistry, warn?: (msg: string) => void): void {
-    for (const t of other.tools) {
+    for (let i = 0; i < other.tools.length; i++) {
+      const t = other.tools[i]!;
       const owner = other.toolOwner.get(t.name) ?? '?';
       const prior = this.toolOwner.get(t.name);
       // A dropped tool must not be pushed either: `toolOwner` drives per-role filtering AND the
       // contribution report, so keeping the definition would attribute it to the wrong plugin.
       if (prior && prior !== owner) { warn?.(`tool "${t.name}" from "${owner}" ignored — already registered by "${prior}"`); continue; }
-      this.tools.push(t); this.toolOwner.set(t.name, owner);
+      this.tools.push(t);
+      this.toolOwnerUsers.push(other.toolOwnerUsers[i] ?? null);
+      this.toolOwner.set(t.name, owner);
     }
     this.skills.push(...other.skills);
     this.promptFragments.push(...other.promptFragments);
@@ -444,6 +451,27 @@ export class PluginRegistry {
     return new Set(this.pluginCapabilities.keys());
   }
 
+  /** The tools ONE session may see: every permitted instance-wide tool, plus permitted tools owned by
+   * `userId`. A missing account fails closed to instance-only. When an owner-scoped tool intentionally
+   * reuses an instance tool's name, the personal definition wins inside that owner's session. */
+  toolsFor(userId: number | null | undefined, user?: Partial<PluginAccessUser> | null): ToolDefinition[] {
+    const accessUser: PluginAccessUser = user
+      ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
+      : UNGRANTED_PLUGIN_USER;
+    const selected = new Map<string, { tool: ToolDefinition; personal: boolean }>();
+    for (let i = 0; i < this.tools.length; i++) {
+      const ownerUserId = this.toolOwnerUsers[i] ?? null;
+      if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) continue;
+      const plugin = this.toolOwner.get(this.tools[i]!.name)!;
+      if (!isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) })) continue;
+      const personal = ownerUserId !== null;
+      const prior = selected.get(this.tools[i]!.name);
+      if (!prior || (personal && !prior.personal)) selected.set(this.tools[i]!.name, { tool: this.tools[i]!, personal });
+    }
+    const filtered = [...selected.values()].map((entry) => entry.tool);
+    return filtered.length === this.tools.length ? this.tools : filtered;
+  }
+
   /** The skills ONE session may see: every permitted instance-wide skill, plus permitted skills owned by
    *  `userId`. Pass null for a session that serves nobody in particular (a shared channel, a task worker) —
    *  it then sees only instance-wide skills from non-grantable plugins. A missing account fails closed for
@@ -460,6 +488,17 @@ export class PluginRegistry {
       return isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) });
     });
     return filtered.length === this.skills.length ? this.skills : filtered;
+  }
+
+  /** Plugin-contributed tools visible on the daemon's `/mcp` endpoint for one authenticated account.
+   * The REST token still gates every call; this also prevents an ungranted plugin from advertising a
+   * parallel MCP surface that its normal brain tools and routes correctly withhold. */
+  mcpToolsFor(user?: Partial<PluginAccessUser> | null): { plugin: string; tool: PluginMcpTool }[] {
+    const accessUser: PluginAccessUser = user
+      ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
+      : UNGRANTED_PLUGIN_USER;
+    return this.mcpTools.filter(({ plugin }) =>
+      isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) }));
   }
 
   /** Record whether a plugin opted into per-user grants (manifest `userGrantable`). Called by the
@@ -612,12 +651,14 @@ export class PluginRegistry {
       // register ONLY those names (an undeclared tool is refused). A manifest that omits the list stays
       // unconstrained — older manifests predate this, and plugins are owner-installed (defense-in-depth,
       // not a fortress): the value is that an honest manifest can't be silently out-registered.
-      registerTool: (t) => {
+      registerTool: (t, opts) => {
         if (provides?.tools && !toolDeclared(t.name, provides.tools)) {
           scoped.warn(`registerTool('${t.name}') refused: not declared in manifest provides.tools`);
           return;
         }
-        this.tools.push(t); this.toolOwner.set(t.name, name);
+        this.tools.push(t);
+        this.toolOwnerUsers.push(opts?.ownerUserId ?? null);
+        this.toolOwner.set(t.name, name);
       },
       registerSkill: (s, opts) => {
         this.skills.push(s);

@@ -1229,7 +1229,9 @@ export interface NotificationDestinationProvider {
 
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
-  registerTool(tool: ToolDefinition): void;
+  /** Contribute a tool. `ownerUserId` scopes it to ONE Elowen account: it is then composed only into
+   * that account's own/direct/delegated sessions. Omitted → instance-wide, as before. */
+  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number }): void;
   /** Contribute a skill. `ownerUserId` scopes it to ONE Elowen account: it is then advertised (and
    *  `/skill:` expandable) only in that user's own sessions. Omitted → instance-wide, as before. */
   registerSkill(skill: PluginSkill, opts?: { ownerUserId?: number }): void;

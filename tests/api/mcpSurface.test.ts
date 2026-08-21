@@ -35,7 +35,7 @@ function fixturePluginDir(): string {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'fixture', version: '1.0.0', apiVersion: '1', description: 'contributes MCP tools',
-    entry: 'index.mjs', provides: { mcpTools: FIXTURE_TOOLS },
+    entry: 'index.mjs', userGrantable: true, provides: { mcpTools: FIXTURE_TOOLS },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
@@ -53,6 +53,9 @@ function makeApp(enabled: string[]) {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
+  const amy = users.create('amy', 'pw');
+  const bob = users.create('bob', 'pw');
+  users.setGrantedPlugins(bob.id, ['fixture']);
   const app = createServer({
     tasks: new RefTaskStore(db), missions: new RefMissions(db), bus: new EventBus(),
     tmux: new FakeTmuxDriver() as never,
@@ -61,7 +64,12 @@ function makeApp(enabled: string[]) {
     plugins: new PluginRegistryProvider(() => loadPlugins({ dirs, enabled, logger: { info() {}, warn() {}, error() {} } })),
     pluginDirs: dirs,
   });
-  return { app, token: users.issueToken(admin.id) };
+  return {
+    app,
+    token: users.issueToken(admin.id),
+    amyToken: users.issueToken(amy.id),
+    bobToken: users.issueToken(bob.id),
+  };
 }
 
 const rpc = (token: string, method: string, params: unknown) => ({
@@ -87,6 +95,16 @@ describe('/mcp surface composition (live plugin registry)', () => {
     const called = await rpcResult(await app.request('/mcp', rpc(token, 'tools/call', { name: 'fixture_probe', arguments: {} })));
     expect(called.isError).toBeFalsy();
     expect(String(called.content?.[0]?.text)).toContain('fixture_probe');
+  });
+
+  it('withholds a grantable plugin MCP surface from another account without its grant', async () => {
+    const { app, amyToken, bobToken } = makeApp(['fixture']);
+    expect(await toolNames(await app.request('/mcp', rpc(amyToken, 'tools/list', {})))).toEqual(CORE_NAMES);
+    expect(await toolNames(await app.request('/mcp', rpc(bobToken, 'tools/list', {})))).toEqual([...CORE_NAMES, ...FIXTURE_TOOLS]);
+
+    const refused = await rpcResult(await app.request('/mcp', rpc(amyToken, 'tools/call', { name: 'fixture_probe', arguments: {} })));
+    expect(refused.isError).toBe(true);
+    expect(String(refused.content?.[0]?.text)).toMatch(/Tool fixture_probe not found/);
   });
 
   it('with the plugin discovered-but-DISABLED, its tools vanish and the escape hatch stays', async () => {
