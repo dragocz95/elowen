@@ -60,10 +60,12 @@ describe('AccountPluginsSection', () => {
   });
 
   it('marks a stored secret as set without ever receiving its value', () => {
-    renderSection();
-    // The daemon sends only `secretsSet`, so the field can say "already set" while holding no value.
-    const secret = screen.getByPlaceholderText('Set — leave empty to keep') as HTMLInputElement;
-    expect(secret.value).toBe('');
+    const { container } = renderSection();
+    // The daemon sends only `secretsSet`, so the field reports the stored value without inventing one.
+    expect(screen.getByText('Stored')).toBeInTheDocument();
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    expect(container.querySelector('input[type="password"]')).toHaveValue('');
   });
 
   it('autosaves an edit to the account\'s own values, not to the instance config', async () => {

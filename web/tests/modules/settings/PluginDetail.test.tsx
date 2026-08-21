@@ -28,10 +28,10 @@ vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn
 
 import { PluginDetail } from '../../../modules/settings/PluginDetail';
 
-const detail = (configSchema: PluginConfigField[], config: Record<string, unknown>, name = 'testy'): PluginDetailData => ({
+const detail = (configSchema: PluginConfigField[], config: Record<string, unknown>, name = 'testy', secretsSet: string[] = []): PluginDetailData => ({
   name, version: '1.0.0', description: 'Test plugin', provides: { tools: [] },
   source: 'user', enabled: true, configurable: true,
-  configSchema, config, secretsSet: [],
+  configSchema, config, secretsSet,
   data: { path: '', exists: false, files: 0, bytes: 0 },
 });
 
@@ -181,6 +181,44 @@ describe('PluginDetail workspace', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior }));
     await waitFor(() => expect(allTools).toBeVisible());
+  });
+});
+
+describe('PluginDetail config field layout', () => {
+  it('gives self-contained controls the full row while keeping plain inputs compact', () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'destination', label: 'Destination', type: 'destination' },
+      { key: 'code', label: 'Code', type: 'code' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+      { key: 'name', label: 'Name', type: 'string' },
+    ], {}), isLoading: false });
+    renderDetail();
+
+    const fieldWrapper = (label: string) => screen.getAllByText(label).map((node) => node.closest('.animate-fade-up')).find(Boolean);
+    for (const label of ['Destination', 'Code', 'Notes']) {
+      expect(fieldWrapper(label)).toHaveClass('@lg:col-span-2');
+    }
+    expect(fieldWrapper('Name')).not.toHaveClass('@lg:col-span-2');
+  });
+});
+
+describe('PluginDetail secret field', () => {
+  it('shows stored status and requires an explicit replace action before editing', () => {
+    usePluginDetail.mockReturnValue({ data: detail(
+      [{ key: 'token', label: 'Token', type: 'secret' }],
+      {},
+      'testy',
+      ['token'],
+    ), isLoading: false });
+    const { container } = renderDetail();
+    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabSetup }));
+
+    expect(screen.getByText(en.pluginCfg.secretSet)).toBeInTheDocument();
+    expect(screen.getByText(en.pluginCfg.secretKeepHint)).toBeInTheDocument();
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: en.pluginCfg.secretReplace }));
+    expect(container.querySelector('input[type="password"]')).toHaveAttribute('placeholder', en.pluginCfg.secretReplacementPlaceholder);
   });
 });
 

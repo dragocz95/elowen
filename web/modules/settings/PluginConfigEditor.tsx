@@ -417,9 +417,31 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
   );
 }
 
+/** Controls with their own summary, picker, or editing surface need the row's horizontal room. */
+function controlOwnsLayout(f: PluginConfigField): boolean {
+  switch (f.type) {
+    case 'textarea':
+    case 'model':
+    case 'embeddingModel':
+    case 'provider':
+    case 'destination':
+    case 'multiSelect':
+    case 'code':
+    case 'prompt':
+    case 'json':
+    case 'rolePolicies':
+    case 'mcpServers':
+      return true;
+    case 'enum':
+      return (f.options?.length ?? 0) > 3;
+    default:
+      return false;
+  }
+}
+
 /** The schema-driven config editor: a form generated from the manifest's `configSchema`, rendered as
- *  one Config collapsible or one collapsible per declared `section`. Secrets are write-only (a
- *  placeholder shows they are set) and saving hot-reloads the brain. Also hosts the cronjob/skills
+ *  one Config collapsible or one collapsible per declared `section`. Secrets are write-only (stored
+ *  values are reported but never shown back) and saving hot-reloads the brain. Also hosts the cronjob/skills
  *  special sections, whose content is data (jobs.json / .md files), not config schema. */
 type PluginConfigMode = 'setup' | 'behavior' | 'advanced' | 'all';
 
@@ -440,6 +462,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const { t } = useTranslation();
   const { data: brainModels } = useBrainModels();
   const { values, setValue: set } = draft;
+  const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
 
   const renderField = (f: PluginConfigField) => {
     switch (f.type) {
@@ -449,16 +472,41 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         return <Input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value))} />;
       case 'textarea':
         return <textarea value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} rows={4} className={textareaClass} />;
-      case 'secret':
+      case 'secret': {
+        const stored = detail.secretsSet.includes(f.key);
+        const replacing = replacingSecrets.has(f.key);
+        if (!stored) {
+          return <Input type="password" value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} autoComplete="off" />;
+        }
         return (
-          <Input
-            type="password"
-            value={String(values[f.key] ?? '')}
-            onChange={(e) => set(f.key, e.target.value)}
-            placeholder={detail.secretsSet.includes(f.key) ? t.pluginCfg.secretSet : ''}
-            autoComplete="off"
-          />
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="success">{t.pluginCfg.secretSet}</Badge>
+              <span className="min-w-0 flex-1 text-xs text-text-muted">{t.pluginCfg.secretKeepHint}</span>
+              {!replacing ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8"
+                  onClick={() => setReplacingSecrets((current) => new Set(current).add(f.key))}
+                >
+                  {t.pluginCfg.secretReplace}
+                </Button>
+              ) : null}
+            </div>
+            {replacing ? (
+              <Input
+                type="password"
+                value={String(values[f.key] ?? '')}
+                onChange={(e) => set(f.key, e.target.value)}
+                placeholder={t.pluginCfg.secretReplacementPlaceholder}
+                autoComplete="off"
+                autoFocus
+              />
+            ) : null}
+          </div>
         );
+      }
       case 'model':
         // Brain-only picker: the shared modal/search catalog used by account and cron settings.
         return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
@@ -542,7 +590,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           return <SettingsRow key={f.key} label={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingsRow>;
         }
         return (
-          <div key={f.key} className="animate-fade-up">
+          <div key={f.key} className={`animate-fade-up${controlOwnsLayout(f) ? ' @lg:col-span-2' : ''}`}>
             <LabeledField label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
               {renderField(f)}
             </LabeledField>
