@@ -184,6 +184,38 @@ describe('web transcript prependHistory: lazy-load scroll-up', () => {
     expect(prependHistory(view, [{ id: 'm1', role: 'user', text: 'q' }])).toBe(view);
     expect(prependHistory(view, [])).toBe(view);
   });
+
+  it('replaces synthetic running-work anchors when pagination reaches their real tool rows', () => {
+    let view = fromHistory([
+      {
+        id: 'sub-anchor-call-sub', synthetic: true, role: 'assistant', text: '',
+        segments: [{ kind: 'tool', name: 'Delegate', id: 'call-sub', sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 2 } }],
+      },
+      {
+        id: 'wf-anchor-call-wf', synthetic: true, role: 'assistant', text: '',
+        segments: [{ kind: 'tool', name: 'WorkflowStart', id: 'call-wf', wf: { id: 'wf-1', toolCallId: 'call-wf', status: 'running', nodes: [] } }],
+      },
+      { id: 'tail', role: 'user', text: 'newest q' },
+    ]);
+
+    view = prependHistory(view, [
+      {
+        id: 'real-sub-row', role: 'assistant', text: '',
+        segments: [{ kind: 'tool', name: 'Delegate', id: 'call-sub', sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 2 } }],
+      },
+      {
+        id: 'real-wf-row', role: 'assistant', text: '',
+        segments: [{ kind: 'tool', name: 'WorkflowStart', id: 'call-wf', wf: { id: 'wf-1', toolCallId: 'call-wf', status: 'running', nodes: [] } }],
+      },
+    ]);
+
+    expect(view.turns.map((turn) => turn.id)).toEqual(['real-sub-row', 'real-wf-row', 'tail']);
+    view = reduce(view, { type: 'subagent', id: 'call-sub', sessionId: 'child', status: 'done', task: 'inspect', tools: 2, seconds: 4 });
+    const subagents = view.turns.flatMap((turn) => turn.role === 'elowen'
+      ? turn.segments.flatMap((segment) => segment.kind === 'tools' ? segment.items.flatMap((item) => item.sub ?? []) : [])
+      : []);
+    expect(subagents).toEqual([expect.objectContaining({ sessionId: 'child', status: 'done' })]);
+  });
 });
 
 describe('web transcript reducer', () => {

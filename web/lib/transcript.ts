@@ -155,7 +155,7 @@ function imageFromRef(ref: string): BrainMessageImage {
  *  STABLE React key (so a lazy-load prepend never remounts the live tail) and the identity `prependHistory`
  *  dedupes on — never a text fingerprint. */
 type YouTurn = { role: 'you'; text: string; id?: string; images?: BrainMessageImage[] };
-type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string };
+type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean };
 /** A context-compaction boundary: everything before it was summarized away server-side, so the dock
  *  renders a subtle "context compacted" divider in its place, followed by the kept tail. */
 type DividerTurn = { role: 'divider'; id?: string };
@@ -206,21 +206,44 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
         else segments.push({ kind: 'tools', items: [item] });
       }
     }
-    if (segments.length > 0) turns.push({ role: 'elowen', segments, streaming: false, id: m.id });
+    if (segments.length > 0) turns.push({
+      role: 'elowen', segments, streaming: false, id: m.id,
+      ...(m.synthetic ? { synthetic: true } : {}),
+    });
   }
   return { turns, thinking: false };
 }
 
+/** Tool-call ids carried by one stored assistant turn. Synthetic running-work anchors are deliberately
+ *  one-tool turns, but scan the whole shape so the replacement remains correct if that representation grows. */
+function toolCallIds(turn: ChatTurn): string[] {
+  if (turn.role !== 'elowen') return [];
+  return turn.segments.flatMap((segment) => segment.kind === 'tools'
+    ? segment.items.flatMap((item) => item.id ?? [])
+    : []);
+}
+
 /** Prepend an older page of stored history (chat lazy-load, scroll-up) in front of the current view. Turns
  *  already present are dropped by `id` so a re-fetched or overlapping page can't double a turn; the live
- *  streaming tail is never touched (older turns only ever go in front). Returns the same view unchanged when
- *  the page adds nothing, so a no-op fetch doesn't churn React state. */
+ *  streaming tail is never touched (older turns only ever go in front).
+ *
+ *  First-page snapshots may contain synthetic Delegate/WorkflowStart anchors for running work whose real
+ *  tool row sits on an older page. When pagination reaches that row, replace the synthetic turn by tool-call
+ *  id before prepending it. Otherwise both copies survive (their message ids differ), and a later terminal
+ *  event patches only one of them, leaving a phantom running row in the panel. */
 export function prependHistory(view: ChatView, older: BrainMessage[]): ChatView {
+  const incoming = fromHistory(older).turns;
+  const realToolIds = new Set(incoming.flatMap((turn) => turn.role === 'elowen' && !turn.synthetic ? toolCallIds(turn) : []));
+  const withoutReplaced = realToolIds.size === 0
+    ? view.turns
+    : view.turns.filter((turn) => !(turn.role === 'elowen' && turn.synthetic && toolCallIds(turn).some((id) => realToolIds.has(id))));
+  const retained = withoutReplaced.length === view.turns.length ? view.turns : withoutReplaced;
+
   const known = new Set<string>();
-  for (const turn of view.turns) if (turn.id) known.add(turn.id);
-  const prepend = fromHistory(older).turns.filter((turn) => !turn.id || !known.has(turn.id));
-  if (prepend.length === 0) return view;
-  return { ...view, turns: [...prepend, ...view.turns] };
+  for (const turn of retained) if (turn.id) known.add(turn.id);
+  const prepend = incoming.filter((turn) => !turn.id || !known.has(turn.id));
+  if (prepend.length === 0 && retained === view.turns) return view;
+  return { ...view, turns: [...prepend, ...retained] };
 }
 
 /** The event types {@link reduce} folds. A stream snapshot replays the WHOLE live tail, which also carries
