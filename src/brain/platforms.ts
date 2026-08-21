@@ -34,9 +34,13 @@ export interface PlatformOrchestratorDeps {
   /** A linked user's personal tool deny-list (Account → disabled tools plus any per-user-granted plugin
    *  they do not hold). It narrows both direct account policy and shared room role policy. */
   disabledToolsFor?: (userId: number) => string[];
-  /** The grant-gated tool names to withhold from a sender that has NO Elowen account (an unlinked channel
-   *  member), described by the access their platform role gives them. Absent → nothing is withheld. */
+  /** The grant-gated tool names to withhold from a sender, described by the access that applies to them
+   *  HERE — which in a shared room is the room's authority, not their account's. Absent → nothing is
+   *  withheld. */
   ungrantedPluginTools?: (sender: { is_admin: boolean; granted_plugins: readonly string[] }) => string[];
+  /** A linked account's OWN plugin grants, so a shared room can honour what its sender was personally
+   *  granted without also inheriting the account's admin bypass. */
+  grantedPluginsFor?: (userId: number) => readonly string[];
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
@@ -312,12 +316,16 @@ export class PlatformOrchestrator {
             const roleTools = src.access.tools;
             const unrestricted = !roleTools?.length || roleTools.includes('*');
             const allow = !src.access.admin && !unrestricted ? new Set(roleTools) : undefined;
-            // Per-user plugin grants are already represented in a linked account's personal deny-list. For
-            // an unlinked sender, derive the missing grants from the room role so they cannot borrow a
-            // subsystem that is granted person-by-person.
-            const ungranted = accountUserId == null
-              ? this.d.ungrantedPluginTools?.({ is_admin: src.access.admin === true, granted_plugins: [] }) ?? []
-              : [];
+            // Withholding is computed from the ROOM's authority for linked and unlinked senders alike. A
+            // linked ADMIN's personal deny-list is empty BY CONSTRUCTION — `isPluginAllowedForUser` lets an
+            // admin past every grant, since a grant list is how an admin delegates — so trusting it here
+            // would hand an admin the room's grant-gated subsystems while an unlinked member beside them is
+            // denied, which is exactly the account-power crossing this branch exists to stop. Only the
+            // sender's OWN grants carry over; the admin bypass has to be earned from the role.
+            const ungranted = this.d.ungrantedPluginTools?.({
+              is_admin: src.access.admin === true,
+              granted_plugins: accountUserId != null ? (this.d.grantedPluginsFor?.(accountUserId) ?? []) : [],
+            }) ?? [];
             const denied = [...new Set([...ungranted, ...personalDenied, ...turnDenied])];
             toolPolicy = allow || denied.length
               ? { ...(allow ? { allow } : {}), ...(denied.length ? { deny: new Set(denied) } : {}) }

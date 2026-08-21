@@ -98,6 +98,47 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     });
   });
 
+  it('a linked ADMIN in a shared room is withheld the same grant-gated tools as an unlinked member', async () => {
+    // An admin account's personal deny-list is EMPTY by construction (an admin passes every grant), so a
+    // shared room must recompute withholding from the ROOM's authority. Otherwise writing in a channel
+    // would hand an admin a per-person-granted subsystem that everyone beside them is denied.
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    let askedAbout: { is_admin: boolean; granted_plugins: readonly string[] } | undefined;
+    const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const resolver = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: () => ({ id: 7, name: 'Admin', username: 'admin', admin: true }),
+      users: { get: () => ({ username: 'admin', is_admin: true }) },
+    });
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      policyForUser: () => userPolicy,
+      disabledToolsFor: () => [], // an admin account withholds nothing from itself
+      grantedPluginsFor: () => ['raynet'], // …but this is what the PERSON was actually granted
+      ungrantedPluginTools: (sender) => {
+        askedAbout = sender;
+        return sender.is_admin || sender.granted_plugins.includes('terminal') ? [] : ['terminal_exec'];
+      },
+      identity: resolver,
+      channels: { send: async (opts: ChannelSendOpts) => { sent = opts; return 'ok'; }, fragmentFor: () => '' } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+    await handler!({
+      platform: 'discord', userId: 'admin-platform-id', channelId: 'room', roleIds: [],
+      access: { admin: false, projectIds: [3], tools: [], denyTools: [] },
+    } as never, 'hi');
+
+    // Asked about the ROOM's authority, carrying only the person's own grants.
+    expect(askedAbout).toEqual({ is_admin: false, granted_plugins: ['raynet'] });
+    expect(sent?.toolPolicy?.deny).toEqual(new Set(['terminal_exec']));
+    expect(sent?.identity?.elowenUserId).toBe(7); // still attributed to them
+    expect(sent?.identity?.admin).toBe(false);
+  });
+
   it('an UNLINKED sender falls back to the Role-ID policy + the role tool allowlist', async () => {
     const sent = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
     expect(sent.policy).toBe(rolePolicy); // the role's projects
@@ -182,9 +223,11 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     expect(sent).toMatchObject({ ownerUserId: 2, parentSessionId: 'brain-2' });
     expect(sent?.policy.allowedProjectIds).toBe('all');
-    expect(sent?.identity).toMatchObject({
-      elowenUserId: 2, admin: true, owner: false, conversation: 'delegated',
-    }); // account attribution survives; authority is the captured delegated access
+    // Authority is the captured delegated access. The child is deliberately NOT attributed to the account
+    // owning its row: memory tools treat any identity carrying `elowenUserId` as that account acting, and
+    // a child spawned from a shared room inherits the operator as row owner.
+    expect(sent?.identity).toMatchObject({ admin: true, owner: false, conversation: 'delegated' });
+    expect(sent?.identity?.elowenUserId).toBeUndefined();
   });
 
   describe('a direct 1:1 chat', () => {

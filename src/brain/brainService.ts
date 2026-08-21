@@ -347,11 +347,12 @@ export class BrainService {
       platformOwner: d.platformOwner,
       agents: d.agents,
       policyForProjects: d.policyForProjects,
-      // A linked platform sender runs fully through their Elowen account: reuse the SAME per-user policy
-      // resolver the owner web chat uses, plus their own tool deny-list.
+      // A linked platform sender in a VERIFIED DIRECT chat runs fully through their Elowen account: reuse
+      // the SAME per-user policy resolver the owner web chat uses, plus their own tool deny-list.
       policyForUser: d.policy,
       disabledToolsFor: (userId) => deniedToolsForUser(d, userId),
       ungrantedPluginTools: (sender) => ungrantedPluginTools(sender, d.plugins?.peek()),
+      grantedPluginsFor: (userId) => d.users.get(userId)?.granted_plugins ?? [],
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,

@@ -20,7 +20,6 @@ import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
 import { normalizeNotificationDestination } from './destinations.js';
-import { isPrivateAccountContext } from '../brain/identity.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -1052,13 +1051,17 @@ export class PluginRegistry {
       },
       config,
       // Per-account values resolve at CALL time, from the identity of whoever is acting right now — the
-      // same AsyncLocalStorage `currentIdentity()` reads. They are private conversation state: shared rooms
-      // and delegated children retain attribution but never expose the account's plugin credentials.
+      // same AsyncLocalStorage `currentIdentity()` reads. Capturing them at register time would freeze one
+      // account's credentials into a plugin shared by everyone.
+      //
+      // A SHARED room resolves them too, deliberately: the credential belongs to the verified sender of
+      // THIS turn, so a colleague asking in a channel reaches their own integration and never anybody
+      // else's. What must not follow an account into a room is AUTHORITY, which `platforms.ts` withholds.
+      // A delegated child has no `elowenUserId` at all, so it lands on null here without a special case.
       userConfig: () => {
-        const identity = currentIdentity();
-        const userId = identity?.elowenUserId;
+        const userId = currentIdentity()?.elowenUserId;
         const read = host?.userPluginConfig;
-        if (!isPrivateAccountContext(identity) || userId === undefined || !read) return null;
+        if (userId === undefined || !read) return null;
         return read(userId, name);
       },
       logger: scoped,

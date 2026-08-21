@@ -8,12 +8,6 @@ interface LinkedUser { id: number; name: string; username?: string; admin: boole
 
 export interface PlatformSenderAttribution { id: string; name: string }
 
-/** Whether this turn is a private conversation owned by its attributed account. Shared rooms and
- * delegated children may retain account attribution, but must not expose per-account private state. */
-export function isPrivateAccountContext(identity: TurnIdentity | null | undefined): boolean {
-  return identity?.conversation === 'own' || identity?.conversation === 'direct';
-}
-
 /** Platform display names are attacker-controlled. Keep them inert as JSON values and bound by Unicode
  *  code points so astral characters count as one visible character rather than two UTF-16 code units. */
 export function sanitizePlatformSenderName(value: unknown): string {
@@ -62,12 +56,14 @@ export class IdentityResolver {
    * the account owner merely because that account owns its SQLite row: only the captured origin-owner
    * bit survives, and even that is meaningful only for the configured instance operator. */
   forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity {
-    const row = this.d.users.get(ownerUserId);
     return {
       platform: 'subagent',
       userId: 'subagent',
-      elowenUserId: ownerUserId,
-      elowenUsername: row?.username || row?.name,
+      // Deliberately NO `elowenUserId`: the memory tools treat any identity carrying one as that account
+      // acting (`memoryTools.ts` `actingUserId`), and a child spawned from a SHARED room inherits the row
+      // owner — the instance operator. Naming the account here would let a turn steered by somebody else's
+      // channel message read, write and delete the operator's private memory. A child is attributed to its
+      // delegation, not to a person.
       admin: scope.admin,
       owner: scope.owner && this.isOwner(ownerUserId),
       conversation: 'delegated',

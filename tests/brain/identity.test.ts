@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { IdentityResolver, isPrivateAccountContext } from '../../src/brain/identity.js';
+import { IdentityResolver } from '../../src/brain/identity.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -11,17 +11,23 @@ const src = (over: Record<string, unknown>) => ({
   ...over,
 }) as never;
 
-describe('isPrivateAccountContext', () => {
-  const identity = (conversation: 'own' | 'direct' | 'shared' | 'delegated') => ({
-    platform: 'test', userId: '1', elowenUserId: 1, admin: true, owner: true, conversation,
+describe('forDelegatedTurn', () => {
+  // A child spawned from a SHARED room inherits the session row's owner — the instance operator. Naming
+  // that account on the delegated identity would make the memory tools treat the child as the operator
+  // acting (`memoryTools.ts` gates on `elowenUserId` alone), so a turn steered by somebody else's channel
+  // message could read and delete the operator's private memory.
+  it('never attributes the child to the account that owns its row', () => {
+    const resolver = new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => null, users });
+    const identity = resolver.forDelegatedTurn({ admin: false, owner: false } as never, 1);
+    expect(identity.elowenUserId).toBeUndefined();
+    expect(identity.elowenUsername).toBeUndefined();
+    expect(identity.conversation).toBe('delegated');
   });
 
-  it('accepts only own and verified direct conversations', () => {
-    expect(isPrivateAccountContext(identity('own'))).toBe(true);
-    expect(isPrivateAccountContext(identity('direct'))).toBe(true);
-    expect(isPrivateAccountContext(identity('shared'))).toBe(false);
-    expect(isPrivateAccountContext(identity('delegated'))).toBe(false);
-    expect(isPrivateAccountContext(null)).toBe(false);
+  it('keeps the captured owner bit for the configured operator', () => {
+    const resolver = new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => null, users });
+    expect(resolver.forDelegatedTurn({ admin: true, owner: true } as never, 1).owner).toBe(true);
+    expect(resolver.forDelegatedTurn({ admin: true, owner: true } as never, 2).owner).toBe(false);
   });
 });
 

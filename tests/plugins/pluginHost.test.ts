@@ -41,7 +41,10 @@ describe('ctx.userConfig()', () => {
     expect(wire(undefined, {}).userConfig()).toBeNull();
   });
 
-  it.each(['own', 'direct'] as const)('reads the acting account in a private %s conversation', (conversation) => {
+  // Including 'shared' ON PURPOSE: a credential belongs to the VERIFIED SENDER of the turn, so asking in a
+  // team channel reaches that person's own integration. What must not cross into a room is authority,
+  // which `platforms.ts` withholds — not the asker's own account.
+  it.each(['own', 'direct', 'shared'] as const)('reads the acting account in a %s conversation', (conversation) => {
     const calls: [number, string][] = [];
     const ctx = wire(undefined, reads(calls));
     const seen = runWithPolicy(null, () => ctx.userConfig(), {
@@ -52,11 +55,13 @@ describe('ctx.userConfig()', () => {
     expect(calls).toEqual([[7, 'demo']]);
   });
 
-  it.each(['shared', 'delegated'] as const)('returns null in an attributed %s context', (conversation) => {
+  // A delegated child carries no account at all (`IdentityResolver.forDelegatedTurn`), so it lands on null
+  // here without a conversation-kind special case — the reason that identity must never name an account.
+  it('returns null for a delegated child, which carries no account', () => {
     const calls: [number, string][] = [];
     const ctx = wire(undefined, reads(calls));
     const seen = runWithPolicy(null, () => ctx.userConfig(), {
-      identity: { platform: 'discord', userId: '7', elowenUserId: 7, admin: true, owner: true, conversation },
+      identity: { platform: 'subagent', userId: 'subagent', admin: true, owner: true, conversation: 'delegated' },
     });
     expect(seen).toBeNull();
     expect(calls).toEqual([]);
