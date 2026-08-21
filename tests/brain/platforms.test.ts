@@ -194,7 +194,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       expect(sent).toMatchObject({ direct: true, ownerUserId: 2 });
     });
 
-    it('does not accept actAsUserId as verification of an adapter direct claim', async () => {
+    it('rejects an unlinked human even when the adapter claims actAsUserId', async () => {
       let sent: ChannelSendOpts | undefined;
       let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
       const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
@@ -207,13 +207,12 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         dispatch: noDispatch,
       });
       await orch.startAll();
-      await handler!({
+      const reply = await handler!({
         platform: 'discord', userId: 'unverified', channelId: 'c1', roleIds: [], direct: true,
         access: { admin: false, projectIds: [], actAsUserId: 2 },
       } as never, 'relay');
-      expect(sent).toMatchObject({ direct: false, ownerUserId: 1, writerUserId: 2 });
-      expect(sent?.identity?.conversation).toBe('shared');
-      expect(sent?.deliveryTarget).toBeUndefined();
+      expect(reply).toBeUndefined();
+      expect(sent).toBeUndefined();
     });
   });
 
@@ -534,6 +533,72 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.delegatedAccess?.permissionBoundary?.unattendedAsks).toBe('deny');
   });
 
+  it('runs an instance-owned cron turn with host authority and no account or origin', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let message = '';
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: linkedResolver(false),
+      channels: {
+        send: async (opts: ChannelSendOpts, text: string) => { sent = opts; message = text; return 'instance reply'; },
+        fragmentFor: () => '',
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    const reply = await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-instance', roleIds: [],
+      access: { admin: true, projectIds: [], scheduled: true, denyTools: ['BlockedForTurn'] },
+    } as never, 'run instance maintenance');
+
+    expect(reply).toBe('instance reply');
+    expect(message).toBe('run instance maintenance');
+    expect(sent).toMatchObject({
+      channelId: 'cron-job-instance', ownerUserId: 1, writerUserId: undefined,
+      scheduled: true, trusted: true,
+    });
+    expect(sent?.policy.allowedProjectIds).toBe('all');
+    expect(sent?.toolPolicy).toEqual({ deny: new Set(['BlockedForTurn']) });
+    expect(sent?.identity).toMatchObject({ platform: 'cron', admin: true, owner: true });
+  });
+
+  it('does not widen stale owned or origin cron shapes into instance authority', async () => {
+    let sends = 0;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const identity = new IdentityResolver({
+      platformOwner: () => 1,
+      resolvePlatformUser: () => null,
+      users: { get: () => null },
+    });
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity,
+      channels: { send: async () => { sends++; return 'must not run'; }, fragmentFor: () => '' } as never,
+      dispatch: noDispatch,
+      originSend: async () => null,
+    });
+    await orch.startAll();
+
+    const staleOwner = await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'stale-owner', roleIds: [],
+      access: { admin: true, projectIds: [], actAsUserId: 99 },
+    } as never, 'stale owner');
+    const staleOrigin = await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'stale-origin', roleIds: [],
+      origin: { sessionId: 'gone', userId: 99 }, access: { admin: true, projectIds: [] },
+    } as never, 'stale origin');
+
+    expect(staleOwner).toBeUndefined();
+    expect(staleOrigin).toBeUndefined();
+    expect(sends).toBe(0);
+  });
+
   it('an origin-carrying message routes through the BOUND send (no channel session touched)', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
@@ -643,7 +708,9 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     });
     await orch.startAll();
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
-      origin: { sessionId: 'brain-1-gone', userId: 1 }, access: { admin: true, projectIds: [] } } as never, 'wake up');
+      origin: { sessionId: 'brain-1-gone', userId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1 },
+    } as never, 'wake up');
     expect(reply).toBe('channel reply');
     expect(sent?.channelId).toBe('cron-job-1'); // today's channel-keyed session
   });

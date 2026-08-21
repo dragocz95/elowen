@@ -64,6 +64,8 @@ const keyOf = (ref: ChannelRef): string => `${ref.platform}-${ref.threadId ?? re
 export class PlatformOrchestrator {
   private started: { name: string; disconnect?(): void; notify?(t: string, channelId?: string, notice?: ServiceNotice): Promise<void> }[] = [];
   private knownPlatforms = new Set<string>();
+  /** Sources entering through the host-only relay control, not through an adapter's human message listener. */
+  private hostAutomationSources = new WeakSet<object>();
 
   constructor(private d: PlatformOrchestratorDeps) {}
 
@@ -257,8 +259,7 @@ export class PlatformOrchestrator {
           // A platform sender has only the permissions of their linked Elowen account. Room roles still
           // decide admission and trusted-room context, but never supply projects or tools.
           const resolved = this.d.identity.forPlatformTurn(src, owner);
-          const accountUserId = resolved.accountUserId
-            ?? (src.platform === 'cron' ? src.origin?.userId : undefined);
+          const accountUserId = resolved.accountUserId;
           const linkedUserId = resolved.linkedUserId;
           // A DIRECT 1:1 chat is its sender's own conversation, not a room the operator hosts. It counts
           // only when the adapter says so AND the sender has a VERIFIED platform link — `actAsUserId` is a
@@ -283,13 +284,27 @@ export class PlatformOrchestrator {
             ...resolved.identity,
             conversation: directChat ? 'direct' : 'shared',
           };
-          // A room role can admit and describe the conversation, but it can never create a principal. No
-          // linked account means no policy, no tools and no model turn; adapters may answer with onboarding UI.
-          if (accountUserId == null || !this.d.policyForUser) return undefined;
-          const policy = this.d.policyForUser(accountUserId);
+          // A human platform sender needs a linked account. Host automation has no human sender attribution:
+          // it runs under the scope the host stamped into `access` instead of inventing an account principal.
+          const humanPlatformSender = resolved.sender !== undefined && !this.hostAutomationSources.has(src);
+          if (humanPlatformSender && linkedUserId == null) return undefined;
           const turnDenied = src.access.denyTools ?? [];
-          const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
-          const toolPolicy: ToolPolicy | undefined = denied.length ? { deny: new Set(denied) } : undefined;
+          let policy: Policy;
+          let toolPolicy: ToolPolicy | undefined;
+          if (accountUserId != null) {
+            if (!this.d.policyForUser) return undefined;
+            policy = this.d.policyForUser(accountUserId);
+            const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
+            toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
+          } else {
+            // Only the exact instance-cron shape is accountless: no owner claim and no originating account
+            // conversation. A stale owned/origin job must fail closed instead of widening to instance authority.
+            if (src.platform !== 'cron' || src.access.actAsUserId !== undefined || src.origin !== undefined || !identity.admin) {
+              return undefined;
+            }
+            policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+            toolPolicy = turnDenied.length ? { deny: new Set(turnDenied) } : undefined;
+          }
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           return this.d.channels.send({
             channelId: keyOf(src),
@@ -352,7 +367,8 @@ export class PlatformOrchestrator {
           },
           relay: (src, text) => {
             if (src.platform !== adapter.name) return Promise.reject(new Error('relay platform mismatch'));
-            return onMessage(src, text);
+            this.hostAutomationSources.add(src);
+            return onMessage(src, text).finally(() => this.hostAutomationSources.delete(src));
           },
         });
         await adapter.connect();

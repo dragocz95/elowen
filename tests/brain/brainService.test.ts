@@ -3348,7 +3348,7 @@ describe('BrainService', () => {
     expect(opts.customTools.filter((t) => t.name.startsWith('Elowen'))).toHaveLength(0);
   });
 
-  it('an admin-role channel session gets NO Elowen* tools, and a later non-admin in the same channel rides that clean session', async () => {
+  it('a linked room-admin sender gets NO Elowen* tools, and a later linked sender rides that clean session', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
@@ -3356,24 +3356,25 @@ describe('BrainService', () => {
     ctx.registerPlatform({ name: 'discord', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
-    (d as unknown as { policyForProjects: (ids: number[]) => unknown }).policyForProjects =
-      (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => [] });
+    (d as unknown as { resolvePlatformUser: (platform: string, userId: string) => unknown }).resolvePlatformUser =
+      (_platform, userId) => ({ id: userId === 'admin' ? 2 : 3, name: userId, username: userId, admin: false });
+    (d as unknown as { policy: (userId: number) => unknown }).policy =
+      (userId) => ({ allowedProjectIds: new Set([userId]), allowedPaths: () => [] });
     const svc = new BrainService(d as never);
     await svc.startPlatforms();
     // Every Elowen* tool composed into ANY spawned session so far — must always be empty for a channel.
     const elowenNames = () => (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } })
       .mock.calls.flatMap((c) => c[0].customTools.map((t) => t.name)).filter((n) => n.startsWith('Elowen'));
 
-    // 1) An admin-role sender opens the shared channel. Even with admin:true it must resolve to
-    //    trusted-channel, NEVER owner-chat — so the owner's Elowen* control-plane tools / API token are
-    //    never composed in.
+    // 1) A linked non-admin account enters through a room-admin role. The role makes the room trusted but
+    //    cannot elevate account identity, so owner-only Elowen* tools are never composed.
     await handler!({ platform: 'discord', userId: 'admin', roleIds: ['r-admin'], channelId: 'c-shared',
       access: { admin: true, projectIds: [1], prompt: 'Admin.' } }, 'hi');
     expect(d.createSession).toHaveBeenCalledTimes(1);
     expect(elowenNames()).toHaveLength(0);
 
-    // 2) A later NON-admin sender in the SAME channel rides the same channel-keyed session (no respawn),
-    //    which is already free of the owner toolset — the admin role can't leak Elowen* to the next sender.
+    // 2) A later linked sender in the SAME channel rides the same channel-keyed session (no respawn),
+    //    which is already free of the owner toolset — room trust cannot leak Elowen* to the next sender.
     await handler!({ platform: 'discord', userId: 'guest', roleIds: ['r-guest'], channelId: 'c-shared',
       access: { admin: false, projectIds: [2], prompt: 'Guest.' } }, 'hello');
     expect(d.createSession).toHaveBeenCalledTimes(1); // reused, not respawned
@@ -3583,6 +3584,8 @@ describe('BrainService', () => {
     ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { policy: (userId: number) => unknown }).policy =
+      (userId) => ({ allowedProjectIds: new Set([userId]), allowedPaths: () => [] });
     const svc = new BrainService(d as never);
     await svc.start(1); // the origin conversation: brain-1
     await svc.startPlatforms();
@@ -3591,7 +3594,9 @@ describe('BrainService', () => {
     //    is told via the `session` event, and NO channel session is spawned.
     const seen: { type: string; sessionId?: string }[] = [];
     const reply = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
-      origin: { sessionId: 'brain-1', userId: 1 }, access: { admin: true, projectIds: [] } }, 'wake: check deploy', (e) => seen.push(e));
+      origin: { sessionId: 'brain-1', userId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1 },
+    }, 'wake: check deploy', (e) => seen.push(e));
     expect(reply).toBe('echo:wake: check deploy');
     expect(seen.some((e) => e.type === 'session' && e.sessionId === 'brain-1')).toBe(true);
     const stored = d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content);
@@ -3600,14 +3605,18 @@ describe('BrainService', () => {
 
     // 2) Ownership mismatch (the recorded user does not own the session) → channel fallback runs.
     const fb = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
-      origin: { sessionId: 'brain-1', userId: 2 }, access: { admin: true, projectIds: [] } }, 'wake again');
+      origin: { sessionId: 'brain-1', userId: 2 },
+      access: { admin: false, projectIds: [], actAsUserId: 2 },
+    }, 'wake again');
     expect(fb).toBe('echo:wake again');
     expect(d.store.getSession('brain-ch-cron-job-1')).toBeDefined();
     expect(d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content)).not.toContain('wake again');
 
     // 3) Vanished origin session → channel fallback too.
     const gone = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
-      origin: { sessionId: 'brain-1-vanished', userId: 1 }, access: { admin: true, projectIds: [] } }, 'wake three');
+      origin: { sessionId: 'brain-1-vanished', userId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1 },
+    }, 'wake three');
     expect(gone).toBe('echo:wake three');
     expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
   });
@@ -3735,8 +3744,10 @@ describe('BrainService', () => {
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
-    (d as unknown as { policyForProjects: (ids: number[]) => unknown }).policyForProjects =
-      (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => ['/repo/x'] });
+    (d as unknown as { resolvePlatformUser: (platform: string, userId: string) => unknown }).resolvePlatformUser =
+      (_platform, userId) => userId === 'u1' ? { id: 2, name: 'u1', username: 'u1', admin: false } : null;
+    (d as unknown as { policy: (userId: number) => unknown }).policy =
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/x'] });
 
     const svc = new BrainService(d as never);
     await svc.startPlatforms();
@@ -3774,6 +3785,10 @@ describe('BrainService', () => {
     ctx.registerPlatform({ name: 'discord', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { resolvePlatformUser: () => unknown }).resolvePlatformUser =
+      () => ({ id: 2, name: 'Anička', username: 'anicka', admin: false });
+    (d as unknown as { policy: () => unknown }).policy =
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/x'] });
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
 
