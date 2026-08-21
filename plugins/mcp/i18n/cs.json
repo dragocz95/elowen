@@ -1,20 +1,60 @@
 {
   "description": "Napojí externí MCP servery (stdio, HTTP, SSE) do sady nástrojů asistenta.",
   "fields": {
-    "servers": {
-      "label": "MCP servery"
-    },
     "sec_timeouts": {
       "label": "Časové limity",
       "hint": "Globální časové limity pro připojení a volání, uplatněné na každý nakonfigurovaný server."
     },
     "connectTimeoutMs": {
       "label": "Časový limit připojení (ms)",
-      "hint": "Jak dlouho čekat na připojení serveru a výpis jeho nástrojů, než se to vzdá."
+      "hint": "Jak dlouho čekat na připojení serveru a výpis jeho nástrojů, než se pokus ukončí."
     },
     "callTimeoutMs": {
       "label": "Časový limit volání nástroje (ms)",
-      "hint": "Jak dlouho čekat na dokončení přemostěného volání nástroje, než se to vzdá."
+      "hint": "Jak dlouho čekat na dokončení přemostěného volání nástroje, než se pokus ukončí."
+    }
+  },
+  "web": {
+    "nav": { "": "MCP servery" },
+    "strings": {
+      "title": "MCP servery",
+      "description": "Připojte externí MCP servery a určete, kdo smí používat jejich nástroje.",
+      "personalTitle": "Osobní servery",
+      "personalDescription": "Jsou dostupné pouze ve vašich vlastních a přímo delegovaných konverzacích.",
+      "instanceTitle": "Servery instance",
+      "instanceDescription": "Jsou sdílené v celé instanci a spravovat je smí pouze vlastník instance.",
+      "addServer": "Přidat server",
+      "editServer": "Upravit server",
+      "removeServer": "Odebrat server",
+      "reconnectServer": "Znovu připojit",
+      "name": "Název",
+      "scope": "Vlastnictví",
+      "scopePersonal": "Osobní",
+      "scopeInstance": "Instance",
+      "scopeHelp": "Osobní přihlašovací údaje jsou uložené pouze pro váš účet. Servery instance jsou sdílené se všemi oprávněnými konverzacemi.",
+      "transport": "Přenos",
+      "command": "Příkaz",
+      "commandHelp": "Příkaz a argumenty se spustí jako místní proces. Přidejte pouze server, kterému výslovně důvěřujete.",
+      "arguments": "Argumenty",
+      "environment": "Proměnné prostředí",
+      "url": "URL",
+      "enabled": "Povoleno",
+      "statusConnected": "Připojeno",
+      "statusDisconnected": "Odpojeno",
+      "statusError": "Chyba",
+      "statusDisabled": "Zakázáno",
+      "tools": "Nástroje",
+      "toolsCount": "Počet nástrojů: {n}",
+      "viewTools": "Zobrazit nástroje",
+      "noTools": "Nebyly nalezeny žádné nástroje",
+      "emptyPersonal": "Nemáte žádné osobní MCP servery.",
+      "emptyInstance": "Nejsou nastavené žádné servery instance.",
+      "loadError": "MCP servery se nepodařilo načíst.",
+      "saveError": "MCP server se nepodařilo uložit.",
+      "removeConfirm": "Odebrat MCP server {name}?",
+      "cancel": "Zrušit",
+      "save": "Uložit",
+      "saving": "Ukládání…"
     }
   }
 }

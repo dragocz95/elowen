@@ -1,20 +1,60 @@
 {
   "description": "Napojí externé MCP servery (stdio, HTTP, SSE) do sady nástrojov asistenta.",
   "fields": {
-    "servers": {
-      "label": "MCP servery"
-    },
     "sec_timeouts": {
       "label": "Časové limity",
       "hint": "Globálne časové limity pre pripojenie a volania, uplatnené na každý nakonfigurovaný server."
     },
     "connectTimeoutMs": {
       "label": "Časový limit pripojenia (ms)",
-      "hint": "Ako dlho čakať na pripojenie servera a výpis jeho nástrojov, než sa to vzdá."
+      "hint": "Ako dlho čakať na pripojenie servera a výpis jeho nástrojov, než sa pokus ukončí."
     },
     "callTimeoutMs": {
       "label": "Časový limit volania nástroja (ms)",
-      "hint": "Ako dlho čakať na dokončenie premosteného volania nástroja, než sa to vzdá."
+      "hint": "Ako dlho čakať na dokončenie premosteného volania nástroja, než sa pokus ukončí."
+    }
+  },
+  "web": {
+    "nav": { "": "MCP servery" },
+    "strings": {
+      "title": "MCP servery",
+      "description": "Pripojte externé MCP servery a určte, kto smie používať ich nástroje.",
+      "personalTitle": "Osobné servery",
+      "personalDescription": "Sú dostupné iba vo vašich vlastných a priamo delegovaných konverzáciách.",
+      "instanceTitle": "Servery inštancie",
+      "instanceDescription": "Sú zdieľané v celej inštancii a spravovať ich smie iba vlastník inštancie.",
+      "addServer": "Pridať server",
+      "editServer": "Upraviť server",
+      "removeServer": "Odobrať server",
+      "reconnectServer": "Znova pripojiť",
+      "name": "Názov",
+      "scope": "Vlastníctvo",
+      "scopePersonal": "Osobné",
+      "scopeInstance": "Inštancia",
+      "scopeHelp": "Osobné prihlasovacie údaje sú uložené iba pre váš účet. Servery inštancie sú zdieľané so všetkými oprávnenými konverzáciami.",
+      "transport": "Prenos",
+      "command": "Príkaz",
+      "commandHelp": "Príkaz a argumenty sa spustia ako miestny proces. Pridajte iba server, ktorému výslovne dôverujete.",
+      "arguments": "Argumenty",
+      "environment": "Premenné prostredia",
+      "url": "URL",
+      "enabled": "Povolené",
+      "statusConnected": "Pripojené",
+      "statusDisconnected": "Odpojené",
+      "statusError": "Chyba",
+      "statusDisabled": "Zakázané",
+      "tools": "Nástroje",
+      "toolsCount": "Počet nástrojov: {n}",
+      "viewTools": "Zobraziť nástroje",
+      "noTools": "Neboli nájdené žiadne nástroje",
+      "emptyPersonal": "Nemáte žiadne osobné MCP servery.",
+      "emptyInstance": "Nie sú nastavené žiadne servery inštancie.",
+      "loadError": "MCP servery sa nepodarilo načítať.",
+      "saveError": "MCP server sa nepodarilo uložiť.",
+      "removeConfirm": "Odobrať MCP server {name}?",
+      "cancel": "Zrušiť",
+      "save": "Uložiť",
+      "saving": "Ukladanie…"
     }
   }
 }

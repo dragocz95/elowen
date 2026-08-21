@@ -28,6 +28,8 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
   const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown>; ownerUserId?: number }[] = [];
   const hooks: { name: string; run: (p: unknown) => unknown }[] = [];
   const controls = new Map<string, unknown>();
+  const apiRoutes: { path: string; method?: string; handler: (req: unknown) => Promise<unknown> }[] = [];
+  const userRemoved: ((userId: number) => Promise<void> | void)[] = [];
   return {
     config,
     ...(mcpBridgeSnapshot ? { mcpBridgeSnapshot } : {}),
@@ -38,7 +40,9 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
     registerControl: (name: string, control: unknown) => controls.set(name, control),
-    tools, hooks, controls, rawDb: db,
+    registerApiRoute: (route: { path: string; method?: string; handler: (req: unknown) => Promise<unknown> }) => apiRoutes.push(route),
+    registerUserRemoved: (handler: (userId: number) => Promise<void> | void) => userRemoved.push(handler),
+    tools, hooks, controls, apiRoutes, userRemoved, rawDb: db,
   };
 }
 
@@ -137,6 +141,40 @@ describe('mcp plugin — owner-scoped management tools', () => {
     await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
   });
 
+  it('settings API returns only the caller personal servers and owner-visible instance servers', async () => {
+    const db = openPluginTablesDb();
+    const users = new UserStore(db);
+    const amy = users.create('amy-api', 'pw');
+    const bob = users.create('bob-api', 'pw');
+    const bootstrap = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+    await register(bootstrap as never);
+    await bootstrap.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+    const insert = db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)');
+    const stored = (name: string) => JSON.stringify({ name, enabled: false, transport: 'stdio', command: process.execPath });
+    insert.run(amy.id, 'amy-private', stored('amy-private'), '[]');
+    insert.run(bob.id, 'bob-private', stored('bob-private'), '[]');
+    insert.run(null, 'shared', stored('shared'), '[]');
+
+    const amyCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+    await register(amyCtx as never);
+    const get = amyCtx.apiRoutes.find((route) => route.path === 'servers' && route.method === 'GET')!;
+    const amyBody = (await get.handler({})) as { body: { personal: { name: string }[]; instance: { name: string }[]; canManageInstance: boolean } };
+    expect(amyBody.body.personal.map((server) => server.name)).toEqual(['amy-private']);
+    expect(amyBody.body.instance).toEqual([]);
+    expect(amyBody.body.canManageInstance).toBe(false);
+    await amyCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+
+    const ownerCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
+    await register(ownerCtx as never);
+    const ownerGet = ownerCtx.apiRoutes.find((route) => route.path === 'servers' && route.method === 'GET')!;
+    const ownerBody = (await ownerGet.handler({})) as { body: { personal: { name: string }[]; instance: { name: string }[] } };
+    expect(ownerBody.body.personal.map((server) => server.name)).toEqual(['amy-private']);
+    expect(ownerBody.body.instance.map((server) => server.name)).toEqual(['shared']);
+    await ownerCtx.userRemoved[0]!(amy.id);
+    expect((db.prepare('SELECT name FROM p_mcp_servers ORDER BY name').all() as { name: string }[]).map((row) => row.name)).toEqual(['bob-private', 'shared']);
+    await ownerCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+  });
+
   it('adds, lists and removes a personal server only for its owning account', async () => {
     const db = openPluginTablesDb();
     const users = new UserStore(db);
@@ -150,6 +188,12 @@ describe('mcp plugin — owner-scoped management tools', () => {
     });
     expect(resultText(added)).toContain('Added personal MCP server "private" with 1 tool(s)');
     expect((db.prepare('SELECT owner_user_id FROM p_mcp_servers WHERE name = ?').get('private') as { owner_user_id: number }).owner_user_id).toBe(amy.id);
+    const patch = amyCtx.apiRoutes.find((route) => route.path === 'servers' && route.method === 'PATCH')!;
+    const updated = await patch.handler({
+      path: 'private',
+      json: async () => ({ scope: 'personal', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], enabled: false }),
+    }) as { body: { server: { status: string; enabled: boolean } } };
+    expect(updated.body.server).toMatchObject({ status: 'disabled', enabled: false });
     await amyCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
 
     const bobCtx = fakeCtx({}, undefined, db, { elowenUserId: bob.id, owner: false });

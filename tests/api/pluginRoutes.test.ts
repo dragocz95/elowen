@@ -278,6 +278,8 @@ describe('plugin routes', () => {
     const users = new UserStore(db);
     const admin = users.create('admin', 'pw');
     const amy = users.create('amy', 'pw');
+    const foreignAdmin = users.create('foreign-admin', 'pw');
+    users.setAdmin(foreignAdmin.id, true);
     const app = createServer({
       tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
       engine: null as never, spawn: null as never, tmux: null as never,
@@ -289,7 +291,9 @@ describe('plugin routes', () => {
     });
     const adminTok = users.issueToken(admin.id);
     const amyTok = users.issueToken(amy.id);
+    const foreignAdminTok = users.issueToken(foreignAdmin.id);
     expect((await app.request('/plugins/mcp/servers', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/mcp/servers', auth(foreignAdminTok))).status).toBe(403);
     const before = await (await app.request('/plugins/mcp/servers', auth(adminTok))).json() as { status: string; lastError: string | null }[];
     expect(before[0]).toMatchObject({ status: 'error', lastError: 'boom' });
     const one = await app.request('/plugins/mcp/servers/mock/reconnect', { method: 'POST', headers: { authorization: `Bearer ${adminTok}` } });

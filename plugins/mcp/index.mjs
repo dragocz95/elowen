@@ -213,6 +213,48 @@ async function reconnectMcpServerForScope(ctx, scope, name) {
   return publicServerState(spec);
 }
 
+function editableServer(spec) {
+  return {
+    ...publicServerState(spec),
+    enabled: spec.enabled,
+    ...(transportKind(spec) === 'stdio' ? { command: spec.command, args: spec.args ?? [], env: spec.env ?? {} } : { url: spec.url }),
+  };
+}
+
+async function updateMcpServerForScope(ctx, scope, name, input) {
+  const ownerUserId = ownerForScope(ctx, scope);
+  const spec = specForOwner(ownerUserId, String(name ?? '').trim());
+  if (!spec) throw new Error(`unknown ${scope} MCP server "${name}"`);
+  const previous = { ...spec, args: [...(spec.args ?? [])], env: { ...(spec.env ?? {}) }, cachedBridged: [...(spec.cachedBridged ?? [])] };
+  const next = { ...validateServerInput({ ...spec, ...input, name: spec.name }), ownerUserId, cachedBridged: [] };
+  await closeLiveSpec(spec);
+  Object.assign(spec, next);
+  const sql = ownerUserId == null
+    ? 'UPDATE p_mcp_servers SET spec_json = ?, tools_json = ?, updated_at = CURRENT_TIMESTAMP WHERE owner_user_id IS NULL AND name = ?'
+    : 'UPDATE p_mcp_servers SET spec_json = ?, tools_json = ?, updated_at = CURRENT_TIMESTAMP WHERE owner_user_id = ? AND name = ?';
+  const stored = JSON.stringify({ ...next, ownerUserId: undefined, cachedBridged: undefined });
+  state.db.prepare(sql).run(...(ownerUserId == null ? [stored, '[]', spec.name] : [stored, '[]', ownerUserId, spec.name]));
+  try {
+    if (spec.enabled) {
+      await connectServer(ctx, spec, state.live);
+      if (ownerUserId != null) await closeLiveSpec(spec);
+    } else {
+      setServerState(spec, { status: 'disabled', lastError: null, tools: [], toolCount: 0, bridged: [] });
+    }
+    ctx.requestReload();
+    return editableServer(spec);
+  } catch (error) {
+    await closeLiveSpec(spec);
+    Object.assign(spec, previous);
+    const oldStored = JSON.stringify({ ...previous, ownerUserId: undefined, cachedBridged: undefined });
+    state.db.prepare(sql).run(...(ownerUserId == null
+      ? [oldStored, JSON.stringify(previous.cachedBridged), spec.name]
+      : [oldStored, JSON.stringify(previous.cachedBridged), ownerUserId, spec.name]));
+    setServerState(spec, { status: 'disconnected', lastError: null, tools: [], toolCount: previous.cachedBridged.length, bridged: previous.cachedBridged });
+    throw error;
+  }
+}
+
 const state = {
   ctx: null,
   db: null,
@@ -599,6 +641,65 @@ function registerManagementTools(ctx) {
   }));
 }
 
+function apiError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const forbidden = /only by the instance owner|require a linked Elowen account/.test(message);
+  return { status: forbidden ? 403 : 409, body: { error: message } };
+}
+
+function registerManagementApi(ctx) {
+  ctx.registerApiRoute({
+    path: 'servers', method: 'GET', access: 'user',
+    handler: async () => {
+      const identity = ctx.currentIdentity();
+      const userId = identity?.elowenUserId;
+      if (userId == null) return { status: 403, body: { error: 'linked Elowen account required' } };
+      const personal = state.specs.filter((spec) => spec.ownerUserId === userId).map(editableServer);
+      const instance = identity.owner === true
+        ? state.specs.filter((spec) => spec.ownerUserId == null).map(editableServer)
+        : [];
+      return { body: { personal, instance, canManageInstance: identity.owner === true } };
+    },
+  });
+  ctx.registerApiRoute({
+    path: 'servers', method: 'POST', access: 'user',
+    handler: async (req) => {
+      try {
+        const body = await req.json();
+        const server = await addMcpServerForScope(ctx, body.scope, body);
+        return { status: 201, body: { server: editableServer(specForOwner(ownerForScope(ctx, body.scope), server.name)) } };
+      } catch (error) { return apiError(error); }
+    },
+  });
+  ctx.registerApiRoute({
+    path: 'servers', method: 'PATCH', access: 'user',
+    handler: async (req) => {
+      try {
+        const body = await req.json();
+        return { body: { server: await updateMcpServerForScope(ctx, body.scope, decodeURIComponent(req.path), body) } };
+      } catch (error) { return apiError(error); }
+    },
+  });
+  ctx.registerApiRoute({
+    path: 'servers', method: 'DELETE', access: 'user',
+    handler: async (req) => {
+      try {
+        const body = await req.json();
+        return { body: await removeMcpServerForScope(ctx, body.scope, decodeURIComponent(req.path)) };
+      } catch (error) { return apiError(error); }
+    },
+  });
+  ctx.registerApiRoute({
+    path: 'reconnect', method: 'POST', access: 'user',
+    handler: async (req) => {
+      try {
+        const body = await req.json();
+        return { body: { server: await reconnectMcpServerForScope(ctx, body.scope, body.name) } };
+      } catch (error) { return apiError(error); }
+    },
+  });
+}
+
 function registerResourceTools(ctx, live, snapshot, ownerUserId) {
   const allowedSpecs = () => {
     const byName = new Map();
@@ -724,6 +825,13 @@ export async function register(ctx) {
   // On plugin reload/disable/config-change the registry is rebuilt — tear down THIS load's servers first
   // so a config edit never orphans the previous process tree. Fires on the OLD registry before the swap.
   ctx.registerHook({ name: 'plugin.reload.before', run: async () => { await cleanup(); } });
+  ctx.registerUserRemoved(async (userId) => {
+    const owned = state.specs.filter((spec) => spec.ownerUserId === userId);
+    for (const spec of owned) await closeLiveSpec(spec);
+    state.specs = state.specs.filter((spec) => spec.ownerUserId !== userId);
+    for (const spec of owned) state.servers.delete(serverKey(spec.ownerUserId, spec.name));
+    state.db.prepare('DELETE FROM p_mcp_servers WHERE owner_user_id = ?').run(userId);
+  });
   ctx.registerControl('mcp', {
     listServers: listMcpServers,
     bridgeSnapshot: mcpBridgeSnapshot,
@@ -739,6 +847,7 @@ export async function register(ctx) {
     reconnectServerFor: (scope, name) => reconnectMcpServerForScope(ctx, scope, name),
   });
   registerManagementTools(ctx);
+  registerManagementApi(ctx);
 
   if (snapshot) {
     // Same registration and same ordering as the connected path — only the client resolution differs.

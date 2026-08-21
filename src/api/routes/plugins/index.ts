@@ -158,15 +158,21 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return dir;
   };
 
+  const notInstanceOwner = (c: Context): boolean => {
+    const userId = c.get('user')?.id;
+    const ownerId = d.users?.ownerId();
+    return userId == null || ownerId === undefined || userId !== ownerId;
+  };
+
   app.get('/plugins/mcp/servers', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
     const control = await mcpControl();
     if (!control?.listServers) return c.json([]);
     return c.json(control.listServers());
   });
 
   app.post('/plugins/mcp/servers/:name/reconnect', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
     const control = await mcpControl();
     if (!control?.reconnectServer) return c.json({ error: 'mcp plugin unavailable' }, 503);
     try { return c.json(await control.reconnectServer(c.req.param('name'))); }
@@ -174,7 +180,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   app.post('/plugins/mcp/reconnect', async (c) => {
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (notInstanceOwner(c)) return c.json({ error: 'forbidden' }, 403);
     const control = await mcpControl();
     if (!control?.reconnectDisconnected) return c.json({ error: 'mcp plugin unavailable' }, 503);
     try { return c.json(await control.reconnectDisconnected()); }
