@@ -135,16 +135,14 @@ var createLucideIcon = (iconName, iconNode) => {
   return Component;
 };
 
-// web/node_modules/lucide-react/dist/esm/icons/blocks.js
-var Blocks = createLucideIcon("Blocks", [
-  ["rect", { width: "7", height: "7", x: "14", y: "3", rx: "1", key: "6d4xhi" }],
-  [
-    "path",
-    {
-      d: "M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3",
-      key: "1fpvtg"
-    }
-  ]
+// web/node_modules/lucide-react/dist/esm/icons/chevron-left.js
+var ChevronLeft = createLucideIcon("ChevronLeft", [
+  ["path", { d: "m15 18-6-6 6-6", key: "1wnfg3" }]
+]);
+
+// web/node_modules/lucide-react/dist/esm/icons/chevron-right.js
+var ChevronRight = createLucideIcon("ChevronRight", [
+  ["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]
 ]);
 
 // web/node_modules/lucide-react/dist/esm/icons/plug-zap.js
@@ -173,6 +171,12 @@ var RefreshCw = createLucideIcon("RefreshCw", [
   ["path", { d: "M8 16H3v5", key: "1cv678" }]
 ]);
 
+// web/node_modules/lucide-react/dist/esm/icons/search.js
+var Search = createLucideIcon("Search", [
+  ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }],
+  ["path", { d: "m21 21-4.3-4.3", key: "1qie3q" }]
+]);
+
 // web/node_modules/lucide-react/dist/esm/icons/server.js
 var Server = createLucideIcon("Server", [
   ["rect", { width: "20", height: "8", x: "2", y: "2", rx: "2", ry: "2", key: "ngkwjq" }],
@@ -190,8 +194,33 @@ var Trash2 = createLucideIcon("Trash2", [
   ["line", { x1: "14", x2: "14", y1: "11", y2: "17", key: "xtxkd" }]
 ]);
 
+// web/node_modules/lucide-react/dist/esm/icons/triangle-alert.js
+var TriangleAlert = createLucideIcon("TriangleAlert", [
+  [
+    "path",
+    {
+      d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
+      key: "wmoenq"
+    }
+  ],
+  ["path", { d: "M12 9v4", key: "juzpu7" }],
+  ["path", { d: "M12 17h.01", key: "p32p05" }]
+]);
+
+// web/node_modules/lucide-react/dist/esm/icons/wrench.js
+var Wrench = createLucideIcon("Wrench", [
+  [
+    "path",
+    {
+      d: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+      key: "cbrjhi"
+    }
+  ]
+]);
+
 // plugins/mcp/web-src/McpServersPage.tsx
 var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+var PAGE_SIZE = 20;
 var emptyDraft = (scope) => ({
   scope,
   name: "",
@@ -231,110 +260,131 @@ function serverPayload(draft) {
     enabled: draft.enabled
   } : { scope: draft.scope, name: draft.name.trim(), transport: draft.transport, url: draft.url.trim(), enabled: draft.enabled };
 }
+function allServers(data) {
+  return [...data.personal, ...data.instance];
+}
+function serverKey(server) {
+  return `${server.scope}:${server.name}`;
+}
+function filterServers(servers, query, scope) {
+  const needle = query.trim().toLowerCase();
+  return servers.filter((server) => {
+    if (scope !== "all" && server.scope !== scope) return false;
+    if (needle === "") return true;
+    return `${server.name} ${server.transport} ${server.url ?? ""} ${server.command ?? ""}`.toLowerCase().includes(needle);
+  });
+}
 function statusLabel(server, strings) {
   if (server.status === "connected") return strings.statusConnected;
   if (server.status === "error") return strings.statusError;
   if (server.status === "disabled") return strings.statusDisabled;
   return strings.statusDisconnected;
 }
-function ServerCard({ server, strings, onEdit, onRemove, onReconnect, onTools }) {
-  const { Button, Badge, SelectionSummary } = runtime().components;
-  const samples = server.tools.slice(0, 3).map((tool) => ({ label: tool.title || tool.name }));
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-3 rounded-xl border border-border bg-surface p-4", style: { boxShadow: "var(--shadow-card)" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 items-center gap-3", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Server, { size: 17 }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "min-w-0", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { className: "truncate text-sm font-medium text-text", children: server.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Badge, { children: server.transport.toUpperCase() }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Badge, { tone: server.status === "connected" ? "accent" : "muted", children: statusLabel(server, strings) })
-          ] }),
-          server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "mt-1 text-xs text-danger", children: server.lastError }) : null
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap gap-2", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, { size: "sm", variant: "ghost", onClick: onReconnect, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RefreshCw, { size: 13 }),
-          strings.reconnectServer
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, { size: "sm", variant: "ghost", onClick: onEdit, children: strings.editServer }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, { size: "sm", variant: "ghost", onClick: onRemove, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { size: 13 }),
-          strings.removeServer
-        ] })
-      ] })
+function statusDot(server) {
+  if (server.status === "connected") return "bg-success";
+  if (server.status === "error") return "bg-danger";
+  return "bg-text-muted/50";
+}
+function scopeLabel(scope, strings) {
+  return scope === "instance" ? strings.scopeInstance : strings.scopePersonal;
+}
+function McpServerRow({ server, showScope, selected, onSelect }) {
+  const { components: C, hooks } = runtime();
+  const s = hooks.usePluginStrings("mcp");
+  const label = statusLabel(server, s);
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableRow, { interactive: true, selected, "aria-selected": selected, className: "group", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableCell, { className: "flex items-center justify-center", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `h-2 w-2 rounded-full ${statusDot(server)}`, title: label, "aria-hidden": true }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: label })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      SelectionSummary,
-      {
-        variant: "line",
-        countText: strings.toolsCount.replace("{n}", String(server.toolCount)),
-        samples,
-        moreCount: Math.max(0, server.tools.length - samples.length),
-        onManage: onTools,
-        manageLabel: strings.viewTools,
-        manageAriaLabel: `${strings.viewTools}: ${server.name}`
-      }
-    )
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { type: "button", onClick: onSelect, className: "flex w-full min-w-0 items-center gap-2 text-left", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "truncate text-sm text-text", children: server.name }),
+      !server.enabled ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: s.statusDisabled }) : null
+    ] }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "whitespace-nowrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }) }),
+    showScope ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", title: scopeLabel(server.scope, s), className: "truncate text-xs text-text-muted", children: scopeLabel(server.scope, s) }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", className: "whitespace-nowrap text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 12, "aria-hidden": true }),
+      server.toolCount
+    ] }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { priority: "wide", title: server.lastError ?? label, className: "truncate text-xs text-text-muted", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex min-w-0 items-center gap-1.5", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "shrink-0", children: server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TriangleAlert, { size: 12, "aria-hidden": true }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlugZap, { size: 12, "aria-hidden": true }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `truncate ${server.lastError ? "text-danger" : ""}`, children: server.lastError ?? label })
+    ] }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { "aria-hidden": true, className: "text-text-muted/50 transition-colors group-hover:text-text", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 15 }) })
   ] });
 }
-function ServerForm({ draft, editing, strings, saving, error, onChange, onSave, onClose, canManageInstance }) {
-  const { Modal, ModalBody, ModalFooter, Button, Input, Field, HelpTip, Toggle, SelectMenu } = runtime().components;
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Modal, { title: editing ? strings.editServer : strings.addServer, onClose, size: "md", icon: PlugZap, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ModalBody, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "grid gap-4 sm:grid-cols-2", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, { label: strings.name, htmlFor: "mcp-name", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Input, { id: "mcp-name", value: draft.name, disabled: editing, onChange: (event) => onChange({ ...draft, name: event.target.value }) }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-1.5", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted", children: [
-          strings.scope,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HelpTip, { align: "left", children: strings.scopeHelp })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectMenu, { label: strings.scope, value: draft.scope, onChange: (scope) => onChange({ ...draft, scope }), options: [
-          { value: "personal", label: strings.scopePersonal },
-          ...canManageInstance ? [{ value: "instance", label: strings.scopeInstance }] : []
-        ] })
+function ServerEditor({ server, draft, saving, busy, error, canManageInstance, onChange, onSave, onReconnect, onRemove }) {
+  const { components: C, hooks } = runtime();
+  const s = hooks.usePluginStrings("mcp");
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-3", children: [
+    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-2", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { children: server.transport.toUpperCase() }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: server.status === "connected" ? "accent" : server.status === "error" ? "danger" : "muted", children: statusLabel(server, s) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Badge, { tone: "muted", children: scopeLabel(server.scope, s) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-1.5 sm:col-span-2", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "text-xs font-medium uppercase tracking-wide text-text-muted", children: strings.transport }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SelectMenu, { label: strings.transport, value: draft.transport, onChange: (transport) => onChange({ ...draft, transport }), options: [
-          { value: "stdio", label: "stdio" },
-          { value: "http", label: "HTTP" },
-          { value: "sse", label: "SSE" }
-        ] })
-      ] }),
+      server.lastError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-danger", children: server.lastError }) : null
+    ] }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "grid grid-cols-1 gap-3 sm:grid-cols-2", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.name, htmlFor: "mcp-name", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-name", value: draft.name, disabled: Boolean(server), onChange: (event) => onChange({ ...draft, name: event.target.value }) }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.scope, hint: s.scopeHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        C.SelectMenu,
+        {
+          label: s.scope,
+          value: draft.scope,
+          onChange: (scope) => onChange({ ...draft, scope }),
+          options: [
+            { value: "personal", label: s.scopePersonal },
+            ...canManageInstance ? [{ value: "instance", label: s.scopeInstance }] : []
+          ]
+        }
+      ) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.transport, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        C.SelectMenu,
+        {
+          label: s.transport,
+          value: draft.transport,
+          onChange: (transport) => onChange({ ...draft, transport }),
+          options: [{ value: "stdio", label: "stdio" }, { value: "http", label: "HTTP" }, { value: "sse", label: "SSE" }]
+        }
+      ) }) }),
       draft.transport === "stdio" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-1.5 sm:col-span-2", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted", children: [
-            strings.command,
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HelpTip, { align: "left", children: strings.commandHelp })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Input, { value: draft.command, onChange: (event) => onChange({ ...draft, command: event.target.value }) })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, { label: strings.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.args, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, { label: strings.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.env, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, { label: strings.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: strings.enabled }) }),
-      error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-danger sm:col-span-2", role: "alert", children: error }) : null
-    ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ModalFooter, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, { variant: "ghost", onClick: onClose, children: strings.cancel }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, { onClick: onSave, disabled: saving, children: saving ? strings.saving : strings.save })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.command, hint: s.commandHelp, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: draft.command, onChange: (event) => onChange({ ...draft, command: event.target.value }) }) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.arguments, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.args, onChange: (event) => onChange({ ...draft, args: event.target.value }) }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.environment, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { className: "min-h-24 rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text", value: draft.env, onChange: (event) => onChange({ ...draft, env: event.target.value }) }) })
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: s.enabled }) })
+    ] }),
+    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-1.5", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "text-xs font-medium uppercase tracking-wide text-text-muted", children: s.toolsCount.replace("{n}", String(server.toolCount)) }),
+      server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { className: "flex flex-col gap-1", children: server.tools.map((tool) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { title: tool.description, className: "truncate font-mono text-xs text-text-muted", children: tool.title || tool.name }, tool.name)) })
+    ] }) : null,
+    error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-danger", role: "alert", children: error }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3", children: [
+      server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost-danger", icon: Trash2, onClick: onRemove, disabled: busy, children: s.removeServer }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {}),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center gap-2", children: [
+        server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: RefreshCw, onClick: onReconnect, disabled: busy, children: s.reconnectServer }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "accent", onClick: onSave, disabled: busy, children: saving ? s.saving : s.save })
+      ] })
     ] })
   ] });
 }
-function McpServersPage({ surface }) {
-  const { components, hooks } = runtime();
-  const { PluginPageHeader, SettingsDocument, SettingsGroup, Button, LoadingState, ErrorState, EmptyState, ConfirmDialog, ManageSelectionModal } = components;
-  const strings = hooks.usePluginStrings("mcp");
+function McpServersPage() {
+  const { components: C, hooks } = runtime();
+  const s = hooks.usePluginStrings("mcp");
+  const { t } = hooks.useTranslation();
   const [data, setData] = (0, import_react3.useState)();
   const [loading, setLoading] = (0, import_react3.useState)(true);
   const [loadError, setLoadError] = (0, import_react3.useState)(false);
-  const [draft, setDraft] = (0, import_react3.useState)();
-  const [editingName, setEditingName] = (0, import_react3.useState)();
+  const [query, setQuery] = (0, import_react3.useState)("");
+  const [scope, setScope] = (0, import_react3.useState)("all");
+  const [page, setPage] = (0, import_react3.useState)(0);
+  const [editor, setEditor] = (0, import_react3.useState)();
   const [saving, setSaving] = (0, import_react3.useState)(false);
+  const [busy, setBusy] = (0, import_react3.useState)(false);
   const [actionError, setActionError] = (0, import_react3.useState)();
-  const [remove, setRemove] = (0, import_react3.useState)();
-  const [tools, setTools] = (0, import_react3.useState)();
+  const [removing, setRemoving] = (0, import_react3.useState)();
   const load = (0, import_react3.useCallback)(async () => {
     setLoading(true);
     setLoadError(false);
@@ -349,75 +399,199 @@ function McpServersPage({ surface }) {
   (0, import_react3.useEffect)(() => {
     void load();
   }, [load]);
+  const canManageInstance = data?.canManageInstance === true;
+  const rows = (0, import_react3.useMemo)(() => data ? allServers(data) : [], [data]);
+  const filtered = (0, import_react3.useMemo)(() => filterServers(rows, query, scope), [rows, query, scope]);
+  (0, import_react3.useEffect)(() => {
+    setPage(0);
+  }, [query, scope]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageItems = (0, import_react3.useMemo)(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
+  const connected = rows.filter((server) => server.status === "connected").length;
+  const failing = rows.filter((server) => server.status === "error").length;
+  const bridged = rows.reduce((total, server) => total + server.toolCount, 0);
+  const selected = editor?.key != null ? rows.find((server) => serverKey(server) === editor.key) : void 0;
+  const closeEditor = () => {
+    setEditor(void 0);
+    setActionError(void 0);
+  };
   const save = async () => {
-    if (!draft) return;
+    if (!editor) return;
     setSaving(true);
+    setBusy(true);
     setActionError(void 0);
     try {
-      const path = editingName ? `/plugins/mcp/api/servers/${encodeURIComponent(editingName)}` : "/plugins/mcp/api/servers";
-      await apiJson(path, { method: editingName ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(serverPayload(draft)) });
-      setDraft(void 0);
-      setEditingName(void 0);
+      const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : "/plugins/mcp/api/servers";
+      await apiJson(path, {
+        method: selected ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(serverPayload(editor.draft))
+      });
+      setEditor(void 0);
       await load();
     } catch {
-      setActionError(strings.saveError);
+      setActionError(s.saveError);
     } finally {
       setSaving(false);
+      setBusy(false);
     }
   };
-  const reconnect = async (server) => {
-    await apiJson("/plugins/mcp/api/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: server.scope, name: server.name }) });
-    await load();
+  const reconnect = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setActionError(void 0);
+    try {
+      await apiJson("/plugins/mcp/api/reconnect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: selected.scope, name: selected.name })
+      });
+      await load();
+    } catch {
+      setActionError(s.actionError);
+    } finally {
+      setBusy(false);
+    }
   };
   const removeServer = async () => {
-    if (!remove) return;
-    await apiJson(`/plugins/mcp/api/servers/${encodeURIComponent(remove.name)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: remove.scope }) });
-    setRemove(void 0);
-    await load();
-  };
-  const openCreate = (scope) => {
-    setEditingName(void 0);
+    const target = removing;
+    setRemoving(void 0);
+    if (!target) return;
+    setBusy(true);
     setActionError(void 0);
-    setDraft(emptyDraft(scope));
+    try {
+      await apiJson(`/plugins/mcp/api/servers/${encodeURIComponent(target.name)}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: target.scope })
+      });
+      setEditor(void 0);
+      await load();
+    } catch {
+      setActionError(s.actionError);
+    } finally {
+      setBusy(false);
+    }
   };
-  const openEdit = (server) => {
-    setEditingName(server.name);
+  const openServer = (server) => {
     setActionError(void 0);
-    setDraft(serverDraft(server));
+    setEditor({ key: serverKey(server), draft: serverDraft(server) });
   };
-  const groups = (0, import_react3.useMemo)(() => [
-    { scope: "personal", title: strings.personalTitle, description: strings.personalDescription, servers: data?.personal ?? [], empty: strings.emptyPersonal },
-    ...data?.canManageInstance ? [{ scope: "instance", title: strings.instanceTitle, description: strings.instanceDescription, servers: data.instance, empty: strings.emptyInstance }] : []
-  ], [data, strings]);
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-    surface === "page" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PluginPageHeader, { title: strings.title, description: strings.description, icon: Blocks, action: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, { onClick: () => openCreate("personal"), children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { size: 14 }),
-      strings.addServer
-    ] }) }) : null,
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SettingsDocument, { children: loading ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LoadingState, { variant: "cards" }) : loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ErrorState, { message: strings.loadError, onRetry: load }) : groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SettingsGroup, { title: group.title, description: group.description, actions: surface === "deck" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, { size: "sm", onClick: () => openCreate(group.scope), children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { size: 13 }),
-      strings.addServer
-    ] }) : void 0, children: group.servers.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EmptyState, { title: group.empty, icon: Server }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "grid gap-3", children: group.servers.map((server) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ServerCard, { server, strings, onEdit: () => openEdit(server), onRemove: () => setRemove(server), onReconnect: () => void reconnect(server), onTools: () => setTools(server) }, server.name)) }) }, group.scope)) }),
-    draft ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ServerForm, { draft, editing: Boolean(editingName), strings, saving, error: actionError, onChange: setDraft, onSave: () => void save(), onClose: () => {
-      setDraft(void 0);
-      setEditingName(void 0);
-      setActionError(void 0);
-    }, canManageInstance: data?.canManageInstance === true }) : null,
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ConfirmDialog, { open: Boolean(remove), title: remove ? strings.removeConfirm.replace("{name}", remove.name) : "", confirmLabel: strings.removeServer, onClose: () => setRemove(void 0), onConfirm: () => void removeServer() }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      ManageSelectionModal,
+  const addServer = () => {
+    setActionError(void 0);
+    setEditor({ key: null, draft: emptyDraft("personal") });
+  };
+  const addButton = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "accent", icon: Plus, onClick: addServer, children: s.addServer });
+  const table = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-col gap-3", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      C.DataTable,
       {
-        open: Boolean(tools),
-        title: tools ? `${strings.tools}: ${tools.name}` : strings.tools,
-        subtitle: tools?.tools.length ? void 0 : strings.noTools,
-        onClose: () => setTools(void 0),
-        items: (tools?.tools ?? []).map((tool) => ({ id: tool.name, label: tool.title || tool.name, group: "", disabled: true, disabledHint: tool.description })),
-        selected: new Set((tools?.tools ?? []).map((tool) => tool.name)),
-        onSave: () => setTools(void 0),
-        countLabel: (n) => strings.toolsCount.replace("{n}", String(n))
+        ariaLabel: s.title,
+        columns: canManageInstance ? "2rem minmax(0,1fr) 6rem 7rem 5rem minmax(0,10rem) 1.25rem" : "2rem minmax(0,1fr) 6rem 5rem minmax(0,10rem) 1.25rem",
+        compactColumns: "2rem minmax(0,1fr) 1.25rem",
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.DataTableRow, { header: true, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "sr-only", children: s.colStatus }) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, children: s.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.transport }),
+            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.scope }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", children: s.tools }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, priority: "wide", className: "whitespace-nowrap", children: s.colStatus }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DataTableCell, { header: true, role: "presentation", "aria-hidden": true, children: null })
+          ] }),
+          pageItems.map((server) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            McpServerRow,
+            {
+              server,
+              showScope: canManageInstance,
+              selected: editor?.key === serverKey(server),
+              onSelect: () => openServer(server)
+            },
+            serverKey(server)
+          ))
+        ]
       }
-    )
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-col gap-2 border-b border-border/80 pb-3 sm:flex-row sm:items-center sm:justify-between", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "font-mono text-xs text-text-muted", children: s.pageRange.replace("{from}", String(clampedPage * PAGE_SIZE + 1)).replace("{to}", String(clampedPage * PAGE_SIZE + pageItems.length)).replace("{total}", String(filtered.length)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex items-center gap-1", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost", icon: ChevronLeft, disabled: clampedPage === 0, onClick: () => setPage(clampedPage - 1), children: s.prevPage }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "min-w-24 text-center font-mono text-xs text-text-muted", children: s.pageLabel.replace("{page}", String(clampedPage + 1)).replace("{pages}", String(pageCount)) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(C.Button, { variant: "ghost", disabled: clampedPage >= pageCount - 1, onClick: () => setPage(clampedPage + 1), children: [
+          s.nextPage,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { size: 15, className: "ml-1", "aria-hidden": true })
+        ] })
+      ] })
+    ] })
   ] });
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    C.SpatialWorkspaceLayout,
+    {
+      hero: {
+        eyebrow: t.pluginUi.eyebrow,
+        title: s.title,
+        count: rows.length,
+        description: s.description,
+        mascotState: loadError ? "error" : loading ? "saving" : "idle",
+        status: !loading && !loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "workspace-status", children: s.workspaceReady }) : void 0,
+        action: addButton,
+        metrics: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceMetric, { label: s.statusConnected, value: connected, icon: PlugZap }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceMetric, { label: s.statusError, value: failing, icon: TriangleAlert }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceMetric, { label: s.tools, value: bridged, icon: Wrench })
+        ] })
+      },
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceDocument, { children: loadError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { tone: "danger", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ErrorState, { message: s.loadError, onRetry: () => void load() }) }) : loading || !data ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceState, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.LoadingState, { variant: "cards" }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-col gap-4", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceToolbar, { className: "flex-col items-stretch", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex min-w-0 flex-wrap items-center gap-2 py-3", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "relative min-w-[15rem] flex-1", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 14, "aria-hidden": true, className: "pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { value: query, onChange: (event) => setQuery(event.target.value), placeholder: s.searchPlaceholder, className: "pl-9" })
+            ] }),
+            canManageInstance ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              C.Segmented,
+              {
+                value: scope,
+                onChange: (value) => setScope(value),
+                options: [{ value: "all", label: s.filterAll }, { value: "personal", label: s.scopePersonal }, { value: "instance", label: s.scopeInstance }],
+                "aria-label": s.scope,
+                nowrap: true
+              }
+            ) : null
+          ] }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.ControlSurfaceRegister, { className: "flex flex-col gap-4", children: rows.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.EmptyState, { title: s.empty, icon: Server, action: addButton }) : filtered.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.EmptyState, { title: s.emptySearch, icon: Search }) : table })
+        ] }) }),
+        editor ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.WorkspaceDetailRail, { label: selected ? selected.name : s.addServer, closeLabel: t.common.close, onClose: closeEditor, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          ServerEditor,
+          {
+            server: selected,
+            draft: editor.draft,
+            saving,
+            busy,
+            error: actionError,
+            canManageInstance,
+            onChange: (draft) => setEditor((current) => current ? { ...current, draft } : current),
+            onSave: () => void save(),
+            onReconnect: () => void reconnect(),
+            onRemove: () => {
+              if (selected) setRemoving(selected);
+            }
+          }
+        ) }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          C.ConfirmDialog,
+          {
+            open: Boolean(removing),
+            title: removing ? s.removeConfirm.replace("{name}", removing.name) : "",
+            confirmLabel: s.removeServer,
+            onClose: () => setRemoving(void 0),
+            onConfirm: () => void removeServer()
+          }
+        )
+      ]
+    }
+  );
 }
 
 // plugins/mcp/web-src/index.tsx

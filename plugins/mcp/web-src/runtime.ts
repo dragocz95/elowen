@@ -33,29 +33,35 @@ export interface McpServersResponse {
 
 type AnyComponent = ComponentType<any>;
 interface McpRuntime {
+  /** The host's own workspace kit — the same components the built-in pages compose, so this page is
+   *  the app's register table and detail drawer rather than a second look-alike of them. */
   components: {
-    PluginPageHeader: AnyComponent;
-    SettingsDocument: AnyComponent;
-    SettingsGroup: AnyComponent;
-    SettingsRow: AnyComponent;
+    SpatialWorkspaceLayout: AnyComponent;
+    WorkspaceMetric: AnyComponent;
+    WorkspaceDetailRail: AnyComponent;
+    ControlSurfaceDocument: AnyComponent;
+    ControlSurfaceRegister: AnyComponent;
+    ControlSurfaceState: AnyComponent;
+    ControlSurfaceToolbar: AnyComponent;
+    DataTable: AnyComponent;
+    DataTableRow: AnyComponent;
+    DataTableCell: AnyComponent;
+    Segmented: AnyComponent;
     Button: AnyComponent;
     Input: AnyComponent;
     Badge: AnyComponent;
     Field: AnyComponent;
-    HelpTip: AnyComponent;
-    Modal: AnyComponent;
-    ModalBody: AnyComponent;
-    ModalFooter: AnyComponent;
     Toggle: AnyComponent;
     SelectMenu: AnyComponent;
     LoadingState: AnyComponent;
     ErrorState: AnyComponent;
     EmptyState: AnyComponent;
     ConfirmDialog: AnyComponent;
-    ManageSelectionModal: AnyComponent;
-    SelectionSummary: AnyComponent;
   };
-  hooks: { usePluginStrings(plugin: string): Record<string, string> };
+  hooks: {
+    usePluginStrings(plugin: string): Record<string, string>;
+    useTranslation(): { t: { common: { close: string }; pluginUi: { eyebrow: string } } };
+  };
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
