@@ -45,7 +45,7 @@ export function ElowenPresence({ state, compact = false, label }: {
         @keyframes elowen-aura { 0%, 100% { opacity: .62; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.06); } }
         @keyframes elowen-orbit { from { rotate: 0deg; } to { rotate: 360deg; } }
         @keyframes elowen-particle { 0%, 100% { left: 50%; top: 58%; opacity: 0; transform: scale(.45); } 42% { opacity: .8; } 75% { left: var(--px); top: var(--py); opacity: .25; transform: scale(1); } }
-        html[data-effects='reduced'] .elowen-presence * { animation: none !important; }
+        html:is([data-effects='reduced'], [data-effects='off']) .elowen-presence * { animation: none !important; }
         @media (prefers-reduced-motion: reduce) { html[data-effects-mode='auto'] .elowen-presence * { animation: none !important; } }
       `}</style>
     </div>

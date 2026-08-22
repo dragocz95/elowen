@@ -39,31 +39,35 @@
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
 .animate-drawer-in { animation: drawer-in var(--motion-base) var(--ease-out) both; }
 
+/* Every damping rule below matches BOTH quiet modes. `off` is the stricter of the two — it also cuts
+   Motion's JS animations, which `reduced` only shortens — so a rule it did not match would leave the
+   strictest setting visibly livelier than the middle one. Written out rather than `:not([…='full'])`
+   so a future mode has to opt in deliberately instead of inheriting damping it may not want. */
 /* The spatial route rail needs a little more time than ordinary micro-interactions. */
-html[data-effects='reduced'] [data-testid='future-navigation'] [role='listitem'],
-html[data-effects='reduced'] [data-testid='future-navigation'] .orbit-node {
+html:is([data-effects='reduced'], [data-effects='off']) [data-testid='future-navigation'] [role='listitem'],
+html:is([data-effects='reduced'], [data-effects='off']) [data-testid='future-navigation'] .orbit-node {
   transition-duration: 140ms !important;
 }
 
-html[data-effects='reduced'] {
+html:is([data-effects='reduced'], [data-effects='off']) {
   --motion-fast: 80ms;
   --motion-base: 120ms;
   --motion-slow: 160ms;
   --motion-distance-md: 0px;
 }
 
-html[data-effects='reduced'] .animate-fade-up,
-html[data-effects='reduced'] .animate-pop-in,
-html[data-effects='reduced'] .animate-drawer-in { animation-name: route-fade; }
+html:is([data-effects='reduced'], [data-effects='off']) .animate-fade-up,
+html:is([data-effects='reduced'], [data-effects='off']) .animate-pop-in,
+html:is([data-effects='reduced'], [data-effects='off']) .animate-drawer-in { animation-name: route-fade; }
 
-html[data-effects='reduced'] .skeleton,
-html[data-effects='reduced'] .live-dot::after,
-html[data-effects='reduced'] .flow-active,
-html[data-effects='reduced'] .ambient-pulse { animation: none !important; }
+html:is([data-effects='reduced'], [data-effects='off']) .skeleton,
+html:is([data-effects='reduced'], [data-effects='off']) .live-dot::after,
+html:is([data-effects='reduced'], [data-effects='off']) .flow-active,
+html:is([data-effects='reduced'], [data-effects='off']) .ambient-pulse { animation: none !important; }
 
 /* Slowed rather than stopped: a spinner is the only thing telling the user that work is still running, so
-   freezing it would read as "hung". Reduced effects asks for less motion, not for less information. */
-html[data-effects='reduced'] .animate-spin { animation-duration: 2.4s !important; }
+   freezing it would read as "hung". Quiet effects ask for less motion, not for less information. */
+html:is([data-effects='reduced'], [data-effects='off']) .animate-spin { animation-duration: 2.4s !important; }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-effects-mode='auto'] .ambient-pulse { animation: none !important; }
