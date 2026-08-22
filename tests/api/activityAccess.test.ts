@@ -40,7 +40,7 @@ function setup() {
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
   });
-  return { app, events, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
+  return { app, events, db, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const targets = async (app: ReturnType<typeof setup>['app'], tok: string) =>
@@ -131,5 +131,29 @@ describe('GET /activity — the instance-wide team feed', () => {
     expect(targets).not.toContain('t2'); // foreign project
     expect(targets).not.toContain('m-e2');
     expect(targets).not.toContain('gone'); // unresolved project stays admin-only
+  });
+
+  // A plugin event-row resolver can return any `type` it likes. If the feed were recognised by type
+  // name alone, a row calling itself 'turn' would reach the whole instance past project scoping.
+  it('does not let a foreign row reach the instance by calling itself a turn', async () => {
+    const { app, db, bobTok } = setup();
+    db.prepare("UPDATE events SET type = 'turn' WHERE target = 't2'").run();
+
+    const rows = (await (await app.request('/activity', auth(bobTok))).json()) as { project_id: number | null }[];
+
+    // Project 2 is not bob's, and claiming the feed's type name must not change that. Asserted on the
+    // project rather than on `target`, which feed rows no longer carry -- that would pass either way.
+    expect(rows.map((r) => r.project_id)).not.toContain(2);
+  });
+
+  // The tile never renders it, but the JSON used to carry every account's session and channel ids.
+  it('strips the session id from feed rows it hands to the team', async () => {
+    const { app, events, bobTok } = setup();
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 1, surface: 'web', target: 'brain-1-private' });
+
+    const rows = (await (await app.request('/activity', auth(bobTok))).json()) as { type: string }[];
+
+    expect(rows.filter((r) => r.type === 'turn')).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain('brain-1-private');
   });
 });

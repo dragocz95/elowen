@@ -976,7 +976,18 @@ export class BrainService {
     clientId?: string,
     clientGeneration?: number,
     history?: MessagePageOpts,
+    opts: { anyOwner?: boolean } = {},
   ): Promise<{ off: () => void; snapshot: BrainStreamSnapshot }> {
+    // ADMIN OVERSIGHT: reading a conversation belonging to somebody else (the cross-account register).
+    // It returns the durable history and NOTHING ELSE -- no live tap. A tap would call attachments
+    // .attach(), which is a WRITE to the owner's routing state: it counts as an attachment and can
+    // re-key which session that person's CLI resumes. Reading someone's history must not move their
+    // client around. The snapshot is taken AS THE OWNER, the same way a foreign teardown runs as the
+    // session's real owner, so no ownership check is bypassed anywhere -- it is answered truthfully.
+    const foreign = opts.anyOwner ? this.d.store.getSession(sessionId) : undefined;
+    if (foreign && foreign.user_id !== userId) {
+      return { off: () => {}, snapshot: this.statusView.streamSnapshot(foreign.user_id, sessionId, history) };
+    }
     // Resolve and authorize in the daemon before crossing IPC. The runner repeats ownership validation;
     // userId and sessionId in the wire frame are routing facts, never an authority minted by the child.
     const targetSessionId = this.lifecycle.resolveStreamSession(userId, sessionId, clientId, clientGeneration);

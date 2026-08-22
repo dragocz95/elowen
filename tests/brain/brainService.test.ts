@@ -6794,3 +6794,52 @@ describe('cold-start compaction (the first turn after the prompt cache expired)'
     expect(d.session.compact).not.toHaveBeenCalled();
   });
 });
+
+// The cross-account conversation register lets an admin OPEN somebody else's conversation read-only.
+// The web client does that through the SSE snapshot, not GET /brain/messages, so this is the path that
+// actually has to allow it -- and it must allow reading WITHOUT touching the owner's routing state.
+describe('BrainService admin oversight of a foreign conversation', () => {
+  it('returns a foreign conversation\'s history to an admin without attaching a live tap', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(2);
+    d.store.appendMessage({
+      id: 'theirs-1', sessionId: 'brain-2', parentId: null, role: 'user',
+      content: { role: 'user', content: 'their private work' },
+    });
+
+    const live: unknown[] = [];
+    const attached = await svc.tapSessionSnapshot(1, 'brain-2', (e) => live.push(e), undefined, undefined, undefined, { anyOwner: true });
+
+    expect(attached.snapshot.history).toEqual([{ id: 'theirs-1', role: 'user', text: 'their private work' }]);
+    // No live tap. Attaching would be a WRITE to the owner's routing state (it counts as an attachment
+    // and can re-key which session their CLI resumes), so reading somebody's history must not do it.
+    // Proven by behaviour rather than by spying on the attachment: the owner's session emits and the
+    // admin's listener stays empty.
+    d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'live output' } });
+    expect(live).toEqual([]);
+    attached.off();
+  });
+
+  it('refuses a foreign conversation when the caller is not an admin', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(2);
+
+    // No anyOwner ⇒ the ordinary ownership check decides, and it fails closed.
+    await expect(svc.tapSessionSnapshot(1, 'brain-2', () => {})).rejects.toThrow('unknown session');
+  });
+
+  it('still gives an admin a real live tap on their OWN conversation', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    const live: string[] = [];
+    const attached = await svc.tapSessionSnapshot(1, 'brain-1', (e) => live.push(e.type), undefined, undefined, undefined, { anyOwner: true });
+    d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'mine' } });
+
+    expect(live).not.toEqual([]);
+    attached.off();
+  });
+});

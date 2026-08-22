@@ -29,7 +29,11 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // `target` scopes the feed to one task (its decisions + review verdicts), read oldest-first — the
     // detail pane's autopilot conversation. Project-scoping below still applies (fail closed for tenants).
     const target = c.req.query('target') || undefined;
-    const rows = d.events.list({ limit, type, target });
+    // The team feed answers WHO worked and FROM WHERE. `target` is the session/channel id -- an
+    // internal handle the tile does not render, and the feed is read by the whole instance, so it is
+    // dropped from feed rows here rather than shipped and ignored by the client.
+    const rows = d.events.list({ limit, type, target })
+      .map((r) => (isTeamFeedRow(r) ? { ...r, target: '' } : r));
     // Scope the timeline to the caller's projects (admin/open mode → null → unrestricted). A row with no
     // project (legacy/unresolved) is shown only to the unrestricted caller — fail closed for tenants.
     const allowed = accessibleProjects(c);

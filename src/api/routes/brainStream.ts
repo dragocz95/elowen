@@ -78,7 +78,11 @@ export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteConte
       let snapshot: Awaited<ReturnType<typeof brain.tapSessionSnapshot>>['snapshot'] | null = null;
       try {
         if (session && withSnapshot) {
-          const attached = await brain.tapSessionSnapshot(userId, session, deliver, clientId, clientGeneration, historyWindow);
+          // An admin may READ a foreign conversation (the cross-account register opens it read-only).
+          // The write paths are untouched: /brain/send keeps its own ownership check, so this can only
+          // ever show history, never post into someone else's conversation.
+          const anyOwner = !!c.get('user')?.is_admin;
+          const attached = await brain.tapSessionSnapshot(userId, session, deliver, clientId, clientGeneration, historyWindow, { anyOwner });
           off = attached.off;
           snapshot = attached.snapshot;
         } else off = session

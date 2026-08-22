@@ -17,9 +17,13 @@ export interface ActivityEvent {
 
 /** Does this persisted row belong to the instance-wide team feed? Rows are stored with the KIND as
  *  their `type`, so this is the one place that maps stored rows back to the feed vocabulary — the read
- *  route uses it to widen tenancy for exactly these and nothing else. */
-export function isTeamFeedRow(row: { type: string }): boolean {
-  return (ACTIVITY_KINDS as readonly string[]).includes(row.type);
+ *  route uses it to widen tenancy for exactly these and nothing else.
+ *
+ *  A matching `type` is NOT enough. A plugin event-row resolver may return any type it likes, and
+ *  'turn' would then buy that row instance-wide visibility past project scoping. `surface` is set by
+ *  recordActivity and by nothing else, so it is the mark that cannot be claimed from outside. */
+export function isTeamFeedRow(row: { type: string; surface?: string }): boolean {
+  return (ACTIVITY_KINDS as readonly string[]).includes(row.type) && !!row.surface;
 }
 
 /** How long identical events keep folding into one row. Long enough that a burst of turns reads as one
