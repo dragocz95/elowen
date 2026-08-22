@@ -102,13 +102,21 @@ function fakeSession(responseSse: string, requestMessages: unknown[] = []) {
 describe('Anthropic hosted tool-search replay', () => {
   it('captures the complete raw assistant content and validates the server search pair', () => {
     expect(captureAnthropicHostedReplay(sse)).toEqual(metadata());
+  });
+
+  it('gives up on a capture it cannot trust instead of failing the response', () => {
+    // These used to throw, which killed the live turn: an unpaired search call reached production and cost
+    // the user a finished answer. Capturing is an optimisation, and "no metadata" is the same safe outcome
+    // as a response that never used hosted search — nothing malformed is replayed either way.
     const incomplete = sse.replace(block(3, rawContent()[3]!), '');
-    expect(() => captureAnthropicHostedReplay(incomplete)).toThrow(/incomplete (content blocks|search pair)/);
+    expect(captureAnthropicHostedReplay(incomplete)).toBeUndefined();
     const unknownDelta = sse.replace(
       block(0, { type: 'text', text: 'Searching.' }),
       block(0, { type: 'text', text: 'Searching.' }, [{ type: 'citations_delta', citation: {} }]),
     );
-    expect(() => captureAnthropicHostedReplay(unknownDelta)).toThrow('unsupported Anthropic replay delta');
+    expect(captureAnthropicHostedReplay(unknownDelta)).toBeUndefined();
+    // A stream cut mid-frame: the tail is not parseable JSON, which is how the production crash surfaced.
+    expect(captureAnthropicHostedReplay(`${sse.slice(0, sse.length - 40)}`)).toBeUndefined();
   });
 
   it('restores the assistant turn verbatim without mutating signed thinking or the input payload', () => {
@@ -163,7 +171,11 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(fixture.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('turns malformed hosted capture into a visible error before the done event can execute its tool', async () => {
+  it('delivers the answer when the capture fails, instead of killing the response', async () => {
+    // REGRESSION (production, 22 Aug 2026): this asserted the opposite — a failed capture had to surface as
+    // an error event. It did, by calling controller.error() on the stream carrying the model's reply, so a
+    // turn on claude-opus-5 died mid-run and the user had to start the agent again. The tap is a passive
+    // observer of someone else's stream; only a broken PROVIDER stream may take that stream down.
     const fixture = fakeSession(sse.replace(block(3, rawContent()[3]!), ''));
     const events = [];
     const stream = fixture.agent.streamFunction(
@@ -173,9 +185,12 @@ describe('Anthropic hosted tool-search replay', () => {
     );
     for await (const current of stream) events.push(current);
 
-    expect(events.some((current) => current.type === 'done')).toBe(false);
-    expect(events.at(-1)?.type).toBe('error');
-    expect(events.at(-1)?.type === 'error' ? events.at(-1)?.error.content : undefined).toEqual([]);
+    const done = events.find((current) => current.type === 'done');
+    expect(done).toBeDefined();
+    expect(events.some((current) => current.type === 'error')).toBe(false);
+    // The answer survives; only the replay metadata is missing, which is what an unpaired capture means.
+    expect(done?.type === 'done' ? done.message.content : []).toEqual(fixture.final.content);
+    expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : 'unset').toBeUndefined();
   });
 
   it.each(['provider SSE error', 'request abort'])('cancels a pending capture on %s instead of hanging the terminal error', async (reason) => {

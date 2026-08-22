@@ -60,24 +60,53 @@ class AnthropicSseCapture {
   private readonly blocks = new Map<number, { block: JsonObject; partialJson: string }>();
   private readonly stopped = new Set<number>();
   private messageStopped = false;
+  private abandoned = false;
 
+  /** Capturing is BEST-EFFORT and must never fail the turn it is watching.
+   *
+   *  Everything here observes a stream the model's answer is riding on. Whatever we cannot capture — a
+   *  truncated stream, a shape this version does not model, a search call whose result never arrived
+   *  because Anthropic paused the turn — the honest outcome is "no replay metadata", which is the exact
+   *  same outcome as a response that used no hosted search at all. Throwing does NOT protect anything the
+   *  undefined does not already protect (a capture that failed replays nothing either way); it only
+   *  destroys the generated answer and forces the user to start over. */
   feed(chunk: Uint8Array): void {
-    this.buffer += this.decoder.decode(chunk, { stream: true });
-    this.drain(false);
+    if (this.abandoned) return;
+    try {
+      this.buffer += this.decoder.decode(chunk, { stream: true });
+      this.drain(false);
+    } catch (error) {
+      this.abandon(error);
+    }
   }
 
   finish(): AnthropicHostedReplayMetadata | undefined {
-    this.buffer += this.decoder.decode();
-    this.drain(true);
-    if (!this.messageStopped) throw new Error('Anthropic SSE ended before message_stop');
-    if (![...this.blocks].some(([, value]) => SERVER_BLOCK_TYPES.has(String(value.block.type)))) return undefined;
-    const indexes = [...this.blocks.keys()].sort((a, b) => a - b);
-    if (indexes.length === 0 || indexes.some((index, position) => index !== position || !this.stopped.has(index))) {
-      throw new Error('Anthropic hosted-search response contained incomplete content blocks');
+    if (this.abandoned) return undefined;
+    try {
+      this.buffer += this.decoder.decode();
+      this.drain(true);
+      if (!this.messageStopped) return this.abandon('stream ended before message_stop');
+      if (![...this.blocks].some(([, value]) => SERVER_BLOCK_TYPES.has(String(value.block.type)))) return undefined;
+      const indexes = [...this.blocks.keys()].sort((a, b) => a - b);
+      if (indexes.length === 0 || indexes.some((index, position) => index !== position || !this.stopped.has(index))) {
+        return this.abandon('response contained incomplete content blocks');
+      }
+      const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
+      // An unpaired search call is a real Anthropic state, not corruption on our side: a long-running
+      // server tool comes back across turns. Replaying half a pair would be rejected, so we replay nothing.
+      if (!validateServerPairs(content)) return this.abandon('response contained an incomplete search pair');
+      return { v: REPLAY_VERSION, content };
+    } catch (error) {
+      return this.abandon(error);
     }
-    const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
-    if (!validateServerPairs(content)) throw new Error('Anthropic hosted-search response contained an incomplete search pair');
-    return { v: REPLAY_VERSION, content };
+  }
+
+  /** Give up on this capture for good and say why once. Later chunks are ignored rather than re-reported. */
+  private abandon(reason: unknown): undefined {
+    this.abandoned = true;
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    log.warn(`hosted-search replay not captured, continuing without it: ${detail}`);
+    return undefined;
   }
 
   private drain(final: boolean): void {
@@ -303,6 +332,8 @@ function tapAnthropicResponse(response: Response): { response: Response; capture
           controller.close();
           return;
         }
+        // `feed` swallows its own failures by design, so reaching the catch below means the PROVIDER
+        // stream broke — the only kind of failure that may legitimately take the consumer's stream down.
         capture.feed(value);
         controller.enqueue(value);
       } catch (error) {
