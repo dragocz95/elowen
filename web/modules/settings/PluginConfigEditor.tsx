@@ -402,8 +402,10 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
   );
 }
 
-/** Controls with their own summary, picker, or editing surface need the row's horizontal room. */
+/** Controls with their own summary, picker, or editing surface need the row's horizontal room — and a
+ *  manifest may claim it for an ordinary input too, via `fullWidth`. */
 function controlOwnsLayout(f: PluginConfigField): boolean {
+  if (f.fullWidth) return true;
   switch (f.type) {
     case 'textarea':
     case 'model':

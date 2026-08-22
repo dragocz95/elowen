@@ -414,6 +414,9 @@ export interface PluginConfigField {
   risk?: 'low' | 'medium' | 'high';
   /** Presentational grouping only: render this field in the plugin workspace's Advanced tab. */
   advanced?: boolean;
+  /** Give this field the settings row to itself rather than sharing it with the next field. For a short
+   *  value behind a long LABEL, the shared half-row is what looks broken. Presentational only. */
+  fullWidth?: boolean;
   /** Conditional visibility: render this field only when field `key` currently equals `equals`. */
   visibleWhen?: { key: string; equals: string | number | boolean };
 }

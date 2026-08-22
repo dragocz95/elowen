@@ -65,6 +65,11 @@ export interface PluginConfigField {
   risk?: 'low' | 'medium' | 'high';
   /** Presentational grouping only; runtime config semantics are unchanged. */
   advanced?: boolean;
+  /** Give this field the settings row to itself instead of letting it share with the next one. For a
+   *  short value whose LABEL is long, the shared half-row is what looks broken — the caption wraps or
+   *  crowds its neighbour. Presentational only. Controls that need the room (pickers, editors) already
+   *  take it without asking, so this is for the ordinary inputs that otherwise cannot. */
+  fullWidth?: boolean;
   /** Conditional visibility: render this field only when field `key` currently equals `equals`. */
   visibleWhen?: { key: string; equals: string | number | boolean };
 }
@@ -189,6 +194,7 @@ const ConfigFieldSchema = Type.Object({
     Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'),
   ])),
   advanced: Type.Optional(Type.Boolean()),
+  fullWidth: Type.Optional(Type.Boolean()),
   visibleWhen: Type.Optional(Type.Object({
     key: Type.String(),
     equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
