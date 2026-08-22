@@ -130,8 +130,17 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
       es = new EventSource(`${BASE}/events`, { withCredentials: true });
       es.onopen = () => {
         reconnect.succeeded(); // a healthy stream resets the backoff
-        // Catch up on whatever happened while the stream was down. SSE has no replay here, so a laptop
-        // that slept would otherwise show a hole in the feed until the next event happened to arrive.
+        // Catch up on everything that happened while the stream was down. SSE has no replay here, so a
+        // laptop that slept would otherwise keep showing stale data until the next event happened to
+        // arrive. This covers every cache the handlers below invalidate, not just the newest one --
+        // a private recovery rule for one query is how the others quietly stay broken.
+        // Written out one call per key on purpose: the invalidation guard in tests reads these keys
+        // statically and cannot see a key held in a loop variable.
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.memories });
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.pluginUi });
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
         qc.invalidateQueries({ queryKey: ['activity'] });
         qc.invalidateQueries({ queryKey: ['activity-presence'] });
       };

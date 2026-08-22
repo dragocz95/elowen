@@ -560,7 +560,7 @@ export const sk = {
     eventStream: 'Dianie',
     eventStreamEmpty: 'Zatiaľ žiadne udalosti.',
     workingNow: 'Práve pracujú',
-    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', subagent: 'sub-agent', task: 'pracovník úlohy', unknown: 'neznámy klient' },
+    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', unknown: 'neznámy klient' },
     ev: {
       turn: 'pracuje',
       someone: 'Niekto',

@@ -560,7 +560,7 @@ export const cs = {
     eventStream: 'Dění',
     eventStreamEmpty: 'Zatím žádné události.',
     workingNow: 'Právě pracují',
-    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', subagent: 'sub-agent', task: 'pracovník úlohy', unknown: 'neznámý klient' },
+    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', unknown: 'neznámý klient' },
     ev: {
       turn: 'pracuje',
       someone: 'Někdo',

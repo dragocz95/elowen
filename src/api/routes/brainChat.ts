@@ -262,15 +262,12 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     // (folded into the current bucket) and every attached browser sees it live through the same path.
     // Nothing about the message itself is published: only actor, surface and the model.
     //
-    // Wrapped because the feed is a BY-PRODUCT of the turn and must never be able to fail one: the same
-    // rule the bus recorder already applies (installEventRecording swallows a failing record). Losing a
-    // feed line is a cosmetic loss; losing the user's turn is not.
-    try {
-      d.bus.publish({
-        type: 'activity', kind: 'turn', actorUserId: c.get('user').id, surface: surface ?? 'unknown',
-        target: targetSession, detail: brain.sessionModel(targetSession),
-      });
-    } catch { /* the activity feed never breaks a turn */ }
+    // Not wrapped: publish() isolates and logs every subscriber itself, and nothing here reads state
+    // that could throw, so a try/catch could only ever be an unreachable silent swallow.
+    d.bus.publish({
+      type: 'activity', kind: 'turn', actorUserId: c.get('user').id, surface: surface ?? 'unknown',
+      target: targetSession,
+    });
     // A model/tool turn can outlive nginx/SSH proxy request timeouts while its authoritative output is
     // already flowing over SSE. Wait only until the user row + stream echo are durable, then return 202.
     // A failure before that boundary is an HTTP error; a later failure is an ordered SSE error so an

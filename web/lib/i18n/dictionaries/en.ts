@@ -560,7 +560,7 @@ export const en = {
     eventStream: 'Activity',
     eventStreamEmpty: 'No activity yet.',
     workingNow: 'Working now',
-    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', subagent: 'sub-agent', task: 'task worker', unknown: 'unknown client' },
+    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', unknown: 'unknown client' },
     ev: {
       turn: 'is working',
       someone: 'Someone',

@@ -876,18 +876,17 @@ export class BrainService {
    *
    *  Note this deliberately does NOT report a "typing" state: Discord, Teams, Telegram and WhatsApp
    *  never tell the daemon that someone is composing. A turn running is the only thing actually known. */
-  presence(): { sessionId: string; userId: number | null }[] {
-    return this.sessions.liveEntries()
-      .filter(([, live]) => live.session.isStreaming)
-      .map(([sessionId]) => ({ sessionId, userId: this.d.store.getSession(sessionId)?.user_id ?? null }));
+  presence(): { userId: number | null }[] {
+    // Channel sessions live in their own registry, so iterating only liveEntries() would record a
+    // Discord or Teams turn into the feed while the presence line right above it showed nobody.
+    // `hasActiveChildren` matches the chat surface's own definition (statusService): a turn that has
+    // handed its work to a sub-agent is still that person working.
+    const entries = [...this.sessions.liveEntries(), ...this.sessions.channelEntries()];
+    return entries
+      .filter(([, live]) => live.session.isStreaming || this.sessions.hasActiveChildren(live.sessionId))
+      .map(([, live]) => ({ userId: this.d.store.getSession(live.sessionId)?.user_id ?? null }));
   }
 
-  /** The model a stored conversation is currently on, for labelling a feed row. Read-only and
-   *  ownership-free on purpose: it exposes nothing but the model name of a session the caller already
-   *  named, and the activity feed is instance-wide by decision. */
-  sessionModel(sessionId: string): string {
-    return this.d.store.getSession(sessionId)?.model ?? '';
-  }
 
   /** ADMIN session-management view (the sessions/ panel) — see BrainStatusService.listManagedSessions. */
   listManagedSessions(userId: number): ManagedSessionView[] {

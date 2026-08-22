@@ -10,7 +10,7 @@ const log = logger('sse');
  *  are NOT: both POST /brain/send with the same shape, so the caller has to say which it is. Never
  *  inferred from User-Agent or IP — the client writes both, and the web BFF strips headers anyway.
  *  An unattributable turn stays 'unknown' rather than being guessed into a plausible lie. */
-export const ACTIVITY_SURFACES = ['web', 'cli', 'discord', 'msteams', 'telegram', 'whatsapp', 'cron', 'subagent', 'task', 'unknown'] as const;
+export const ACTIVITY_SURFACES = ['web', 'cli', 'discord', 'msteams', 'telegram', 'whatsapp', 'cron', 'unknown'] as const;
 export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 
 /** What happened, in the vocabulary the team feed renders (each kind owns an icon in web/lib/eventMeta).
@@ -27,7 +27,7 @@ export type ElowenEvent =
   | { type: 'signal'; session: string; signal: DerivedSignal }
   // The team activity feed ("Dění"). Carries the actor as an ID ONLY: the display name is resolved by
   // JOIN at read time, so a later rename is reflected throughout the history.
-  | { type: 'activity'; kind: ActivityKind; actorUserId: number | null; surface: ActivitySurface; target: string; detail?: string; projectId?: number | null }
+  | { type: 'activity'; kind: ActivityKind; actorUserId: number | null; surface: ActivitySurface; target: string }
   | { type: 'mission'; missionId: string; state: string }
   | { type: 'task'; taskId: string; status: string }
   | { type: 'review'; missionId: string; taskId: string; approve: boolean; rationale: string }

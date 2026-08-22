@@ -171,7 +171,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               options={[{ value: 'all', label: t.sessionsPanel.viewAll }, { value: 'mine', label: t.sessionsPanel.viewMine }]}
             />
           ) : null}
-          {isAdmin && view === 'all' && visible.length > 0 ? (
+          {/* Owner-scoped by design: the endpoint deletes only the caller's conversations, so the button
+              belongs over the caller's OWN list. Above the cross-account view it would read as deleting
+              the team's history and then quietly delete six rows out of forty. */}
+          {isAdmin && view === 'mine' && visible.length > 0 ? (
             <button type="button" onClick={() => setConfirmAll(true)} className="spatial-inline-action h-9 px-2 hover:!text-danger">
               <Trash2 size={14} aria-hidden />{t.sessionsPanel.deleteAll}
             </button>

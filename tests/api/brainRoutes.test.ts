@@ -147,7 +147,6 @@ function fakeBrain() {
       if (!started.has(id)) throw new Error('brain not started for user');
       return `brain-${id}`; // the real one returns the conversation the turn will land in
     },
-    sessionModel: () => 'test-model',
     send,
     startSend: (request: TurnRequest) => {
       let resolveAdmitted!: (sessionId: string) => void;
@@ -1342,7 +1341,7 @@ describe('brain process routes', () => {
 // a feed failure can never fail a user's turn. That catch is exactly why these tests exist: without them
 // a broken emit would be indistinguishable from a working one.
 describe('/brain/send — team activity feed', () => {
-  it('publishes who acted and from where, with the model but nothing from the message', async () => {
+  it('publishes who acted and from where, but nothing from the message', async () => {
     const { app, bus, amyTok } = setup();
     await app.request('/brain/start', post(amyTok, {}));
     const seen: unknown[] = [];
@@ -1351,7 +1350,7 @@ describe('/brain/send — team activity feed', () => {
     expect((await app.request('/brain/send', post(amyTok, { text: 'hi', surface: 'web' }))).status).toBe(202);
 
     expect(seen).toEqual([{
-      type: 'activity', kind: 'turn', actorUserId: 2, surface: 'web', target: 'brain-2', detail: 'test-model',
+      type: 'activity', kind: 'turn', actorUserId: 2, surface: 'web', target: 'brain-2',
     }]);
     // The message text must never reach the feed: it is instance-wide and read by the whole team.
     expect(JSON.stringify(seen)).not.toContain('hi');

@@ -69,7 +69,7 @@ export class EventStore {
   record(e: ElowenEvent, projectId?: number | null): void {
     // The team feed has its own write path because it AGGREGATES: an identical event inside the window
     // bumps a counter instead of adding a row. It also carries an actor, which no other event shape has.
-    if (e.type === 'activity') { this.recordActivity(e, projectId); return; }
+    if (e.type === 'activity') { this.recordActivity(e, projectId ?? null); return; }
     const r = this.toRow(e);
     if (!r) return;
     // Stamp the event with its owning project so the timeline can scope it to the right repo. The bus
@@ -93,12 +93,10 @@ export class EventStore {
     this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, pid, label);
   }
   /** Write one team-feed event, folding it into an existing row when an identical one is already in
-   *  the current window. Identical means the same actor, surface, kind and project — the target and
-   *  detail may differ (a second conversation, another model), so the row keeps the FIRST one and the
-   *  count says how many followed. Aggregation is at WRITE time deliberately: the read side is a
+   *  the current window. Identical means the same actor, surface and kind — the target may differ (a
+   *  second conversation), so the row keeps the FIRST one and the count says how many followed. Aggregation is at WRITE time deliberately: the read side is a
    *  dashboard tile that must not scan and group the whole table on every poll. */
-  private recordActivity(e: Extract<ElowenEvent, { type: 'activity' }>, projectId?: number | null): void {
-    const pid = projectId === undefined ? (e.projectId ?? null) : projectId;
+  private recordActivity(e: Extract<ElowenEvent, { type: 'activity' }>, pid: number | null): void {
     const bumped = this.db.prepare(
       `UPDATE events SET count = count + 1, last_ts = datetime('now')
         WHERE id = (
@@ -110,8 +108,8 @@ export class EventStore {
     if (bumped > 0) return;
     this.db.prepare(
       `INSERT INTO events (type, target, detail, project_id, label, actor_user_id, surface, count, last_ts)
-       VALUES (@type, @target, @detail, @pid, '', @actor, @surface, 1, datetime('now'))`
-    ).run({ type: e.kind, target: e.target, detail: e.detail ?? '', pid, actor: e.actorUserId, surface: e.surface });
+       VALUES (@type, @target, '', @pid, '', @actor, @surface, 1, datetime('now'))`
+    ).run({ type: e.kind, target: e.target, pid, actor: e.actorUserId, surface: e.surface });
   }
 
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */

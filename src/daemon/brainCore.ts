@@ -707,7 +707,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         recordActivity: (e) => bus.publish({
           type: 'activity', kind: 'turn', actorUserId: e.actorUserId,
           surface: (ACTIVITY_SURFACES as readonly string[]).includes(e.surface) ? e.surface as ActivitySurface : 'unknown',
-          target: e.target, detail: e.detail,
+          target: e.target,
         }),
         plugins: pluginProvider,
         hookAudit,

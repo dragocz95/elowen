@@ -24,7 +24,7 @@ export interface PlatformOrchestratorDeps {
   /** Report a platform turn to the team activity feed. A CALLBACK rather than the event bus itself:
    *  the brain layer has no bus and should not grow a dependency on one for a single report. Absent in
    *  minimal wirings (tests), where the feed is simply not fed. */
-  recordActivity?: (e: { actorUserId: number | null; surface: string; target: string; detail: string }) => void;
+  recordActivity?: (e: { actorUserId: number | null; surface: string; target: string }) => void;
   /** The Elowen user that anchors platform channel sessions (the admin). */
   platformOwner?: () => number | undefined;
   /** The typed sub-agent registry, resolved when a delegate call names a `subagent_type` — turns the type
@@ -317,7 +317,6 @@ export class PlatformOrchestrator {
             actorUserId: accountUserId ?? null,
             surface: src.platform,
             target: keyOf(src),
-            detail: '',
           });
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           return this.d.channels.send({

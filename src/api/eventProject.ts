@@ -61,10 +61,9 @@ function coreEventProjectId(e: Exclude<ElowenEvent, { type: 'plugin' }>, d: Even
       // Authentication audit events are instance-wide and visible to admins only.
       return null;
     case 'activity':
-      // The feed event names its own project when the work had one (a turn in a project-bound
-      // conversation). Null means instance-wide, which the read side treats as visible to everyone —
-      // this feed is deliberately team-wide, unlike the project-scoped task timeline.
-      return e.projectId ?? null;
+      // Always instance-wide by decision: the team feed shows everyone the same rows, and it can afford
+      // to because a row carries no content — no message text, titles, commands or paths.
+      return null;
     case 'plugins':
       // Instance-wide and payload-free: it belongs to no project, and the SSE gate admits it for everyone
       // explicitly. Null keeps it out of the project-scoped activity log.
