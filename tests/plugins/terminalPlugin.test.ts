@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +8,8 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
-import type { PluginRegistry } from '../../src/plugins/registry.js';
+import { PluginRegistry } from '../../src/plugins/registry.js';
+import { ungrantedPluginTools } from '../../src/plugins/toolGrants.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 
 const log = { info() {}, warn() {}, error() {} };
@@ -15,9 +17,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
-const scoped: TurnIdentity = { platform: 'discord', userId: '999', admin: true, owner: false };
-/** A platform sender mapped to a real Elowen account — an admin colleague, but NOT the operator. */
-const linkedAdmin: TurnIdentity = { platform: 'msteams', userId: '29:michal', admin: true, owner: false, elowenUserId: 2 };
 
 const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
   const tool = reg.tools.find((t) => t.name === name);
@@ -105,39 +104,33 @@ describe('terminal plugin', () => {
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
-  it('refuses ALL terminal tools for an admin-scoped caller with no Elowen account behind them', async () => {
-    // The dangerous shape: a role policy may carry `admin: true` for a whole ROOM (a `*` wildcard is a
-    // normal way to serve a company), so admin scope on its own must never be enough — otherwise anyone
-    // able to type into that channel gets a shell on the host.
-    for (const [name, params] of [
-      ['Bash', { command: 'cat /etc/hostname' }],
-      ['ListProcesses', {}],
-      ['ProcessOutput', { id: 'x' }],
-      ['KillProcess', { id: 'x' }],
-    ] as const) {
-      const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), { identity: scoped });
-      expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
-    }
+  // WHO may run a shell is no longer decided inside this plugin. The tools carried their own owner gate
+  // until the permission model was unified; now the account's grant decides, exactly as it does for every
+  // other tool, and it decides BEFORE the tool is ever composed into the session.
+  //
+  // That makes one manifest line load-bearing: `userGrantable`. Without it `isPluginAllowedForUser` treats
+  // the plugin as ungated and hands a shell — the whole host, secrets included — to every account on the
+  // daemon. It is the only thing standing between "grant required" and "everyone", so pin it mechanically
+  // against the real manifest rather than a fixture.
+  it('keeps the shell behind a grant: the manifest must stay userGrantable', async () => {
+    const manifest = JSON.parse(
+      await readFile(new URL('../../plugins/terminal/elowen-plugin.json', import.meta.url), 'utf8'),
+    ) as { userGrantable?: boolean; provides?: { tools?: string[] } };
+    expect(manifest.userGrantable).toBe(true);
+    // Every tool this plugin ships rides on that one flag, so none of them may be added without it.
+    expect(manifest.provides?.tools).toEqual(['Bash', 'ListProcesses', 'ProcessOutput', 'KillProcess']);
   });
 
-  // Identifying the sender is not the same as trusting them with the host: this account is linked and its
-  // turn carries admin SCOPE from the room, but the account itself does not administer the instance, so the
-  // identity never gets the operator bit (IdentityResolver.isOwner reads `users.is_admin`, not room trust).
-  it('refuses a linked account whose admin scope comes from the room, not from the account', async () => {
-    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo linkedadmin' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
-  });
-
-  it('refuses a linked account whose turn does not carry admin scope', async () => {
-    // The other half of the pair: having an Elowen account says who you are, not that anyone trusted
-    // you with the machine.
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo nope' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
-  });
-
-  it('denies terminal tools when there is no identity (outside a turn)', async () => {
-    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo x' }));
-    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
+  it('withholds every terminal tool from an account without the grant, and hands them over with it', () => {
+    const registry = new PluginRegistry();
+    for (const tool of ['Bash', 'ListProcesses', 'ProcessOutput', 'KillProcess']) registry.toolOwner.set(tool, 'terminal');
+    registry.userGrantable.add('terminal');
+    const ungranted = { is_admin: false, granted_plugins: [] };
+    expect(ungrantedPluginTools(ungranted, registry).sort())
+      .toEqual(['Bash', 'KillProcess', 'ListProcesses', 'ProcessOutput']);
+    expect(ungrantedPluginTools({ is_admin: false, granted_plugins: ['terminal'] }, registry)).toEqual([]);
+    // An administrator needs no grant — they already reach every byte on the box through the file tools.
+    expect(ungrantedPluginTools({ is_admin: true, granted_plugins: [] }, registry)).toEqual([]);
   });
 });
 

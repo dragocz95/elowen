@@ -72,16 +72,6 @@ describe('terminal plugin background processes', () => {
     await scoped('brain-child', async () => kill.execute('kc', { id: childId }, undefined as never, undefined as never));
   });
 
-  it('Bash is refused for a shared-room administrator who is not the operator', async () => {
-    const dataRoot = freshDataRoot();
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
-    const run = reg.tools.find((t) => t.name === 'Bash')!;
-    const CHANNEL: TurnIdentity = { platform: 'discord', userId: 'disc-9', admin: true, owner: false };
-    await runWithPolicy(ADMIN, async () => {
-      const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
-      expect(out).toMatch(/available only to administrators of this instance/);
-    }, { identity: CHANNEL });
-  });
 });
 
 describe('subagent plugin', () => {

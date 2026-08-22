@@ -1,9 +1,13 @@
 // Terminal plugin: shell commands with the working directory confined to the caller's accessible
 // repos (cwd guarded via ctx.assertPathAllowed). Long-running work goes to the background: a process
 // registry keeps spawned children + their rolling output, and the
-// list/read/kill tools manage them. NOTE: cwd guarding does NOT contain a shell that reads absolute
-// paths outside the repo (e.g. the prod config DB), so ALL terminal tools are OWNER-ONLY: only the
-// verified operator may run them; role-scoped platform members (Discord) are refused (see denyNonOwner).
+// list/read/kill tools manage them.
+//
+// NOTE: cwd guarding does NOT contain a shell that reads absolute paths outside the repo (e.g. the prod
+// config DB), so holding these tools means holding the host. That is why the plugin is `userGrantable`
+// and carries NO gate of its own: an account reaches the shell only when an administrator granted it (or
+// is an administrator), which is the same decision, made in one place, that governs every other tool.
+// Granting it to somebody is granting them the machine, secrets included.
 import { defineTool, truncateTail, formatSize, createLocalBashOperations } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
@@ -243,27 +247,11 @@ export function register(ctx) {
   // re-established every run — an explicit `cwd` from one call never carries into the next.
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
-  // Who may run a shell: whoever operates this instance — the operator or an Elowen ACCOUNT holding the
-  // admin bit (the `owner` identity bit means exactly that; see IdentityResolver.isOwner in core).
-  //
-  // A room role is deliberately NOT equivalent. A role policy may carry `admin: true` for a whole ROOM — a
-  // `*` wildcard is a normal way to serve a company — and that would hand the shell to anyone able to type
-  // into that channel. The identity bit is minted from the linked ACCOUNT, never from room trust, so an
-  // unlinked sender cannot reach this gate however the room is configured.
-  //
-  // The shell runs with the daemon's own environment and reads ANY absolute path — the config DB and
-  // every secret in it included — and cwd guarding does not contain that. Tool visibility and account
-  // permission rules may narrow an operator's shell further; neither can widen anyone else into this gate.
-  const denyNonOwner = () => {
-    if (ctx.currentIdentity?.()?.owner === true) return null;
-    return ok('Error: terminal tools are available only to administrators of this instance. Ask an administrator to run the command.');
-  };
-
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
     description: [
       'Execute a shell command in a real shell and return its combined stdout and stderr with the exit code.',
-      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. It is reserved for verified administrators of this instance: any other caller, including a platform member who merely holds an admin-mapped room role, is refused outright.',
+      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. Reaching it at all means an administrator granted this account the terminal plugin, so treat that trust accordingly.',
       'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
@@ -284,8 +272,6 @@ export function register(ctx) {
       })),
     }),
     execute: async (_id, p, _signal, onUpdate) => {
-      const denied = denyNonOwner();
-      if (denied) return denied;
       try {
         const cwd = guardCwd(p.cwd);
         if (!p.background) {
@@ -377,8 +363,6 @@ export function register(ctx) {
     ].join(' '),
     parameters: Type.Object({}),
     execute: async () => {
-      const denied = denyNonOwner();
-      if (denied) return denied;
       const sessionId = currentSessionId();
       // Exclude any of the caller's own in-flight foreground commands: this tool's contract is background
       // processes, and a parallel tool call could otherwise surface the command running alongside it.
@@ -407,8 +391,6 @@ export function register(ctx) {
       timeout: Type.Optional(Type.Number({ description: `Seconds to wait when block=true (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored otherwise.` })),
     }),
     execute: async (_id, p) => {
-      const denied = denyNonOwner();
-      if (denied) return denied;
       const handle = scopedHandle(p.id);
       if (!handle) return ok(`Error: no background process ${p.id}.`);
       // Blocking read: park until the process exits (or the deadline passes) instead of making the model
@@ -445,8 +427,6 @@ export function register(ctx) {
       id: Type.String({ description: 'Process id from Bash(background=true) or ListProcesses. The process group is SIGKILLed immediately and its output buffer is discarded.' }),
     }),
     execute: async (_id, p) => {
-      const denied = denyNonOwner();
-      if (denied) return denied;
       const handle = scopedHandle(p.id);
       if (!handle) return ok(`Error: no background process ${p.id}.`);
       ctx.processes.kill(p.id); // kills the child AND drops the entry

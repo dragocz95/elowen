@@ -2,8 +2,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
-import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
+import { assertPathAllowed } from '../../plugins/pathGuard.js';
+import { currentSessionId, currentTurnToken } from '../../plugins/policyContext.js';
 import { sniffImageMime, storeImageByContent, type StoredChatImage } from '../chatImages.js';
 import type { BrainStore } from '../../store/brainStore.js';
 
@@ -87,12 +87,8 @@ function latestToolImage(store: BrainStore, sessionId: string): StoredChatImage 
  *  origin as the app, so none of them may be skipped: the path must be inside the caller's own roots, the
  *  size must be sane, and the type must come from the bytes rather than the name. */
 function fromDisk(rawPath: string, dir: string): StoredChatImage | string {
-  // An all-access turn skips path roots entirely (pathGuard), so for those the guard below is the ONLY
-  // boundary on which host file may be uploaded. `owner` covers the operator and every admin account
-  // (see IdentityResolver.isOwner). Same authority, and the same reasoning, as the terminal tools.
-  if (isAllAccess() && currentIdentity()?.owner !== true) {
-    return 'ShareImage: sharing a file by path is not available to you. Use `latest: true` for an image a tool produced in this conversation.';
-  }
+  // WHICH file may be uploaded is decided by the path guard alone, exactly as it is for Read — see the
+  // note in shareFileTool.fromDisk for why the extra owner check that used to sit here protected nothing.
   let path: string;
   try { path = assertPathAllowed(rawPath); }
   catch (e) { return `ShareImage: ${(e as Error).message}`; }

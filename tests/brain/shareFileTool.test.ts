@@ -39,11 +39,23 @@ const write = (name: string, bytes = Buffer.from('artifact')) => {
 };
 
 describe('ShareFile security boundaries', () => {
-  it('refuses an all-access turn that is not the operator', async () => {
-    const res = await call({ path: write('report.txt') }, undefined, ADMIN_STRANGER);
+  // WHICH file may be published is the path guard's decision and nothing else — the same answer Read gives
+  // for the same caller and the same path. A scoped account may share out of its own roots...
+  it('shares a file inside the caller\'s roots for a scoped, non-admin turn', async () => {
+    const scoped = { allowedProjectIds: new Set([1]), allowedPaths: () => [repo] } as Policy;
+    const res = await call({ path: write('report.txt') }, scoped, ADMIN_STRANGER);
+    expect(res.details?.sharedFile?.name).toBe('report.txt');
+  });
+
+  // ...and is refused outside them, which is the boundary that actually protects the host.
+  it('refuses a path outside the caller\'s roots', async () => {
+    const outside = join(home, 'secret.env');
+    writeFileSync(outside, Buffer.from('TOKEN=1'));
+    const scoped = { allowedProjectIds: new Set([1]), allowedPaths: () => [repo] } as Policy;
+    const res = await call({ path: outside }, scoped, ADMIN_STRANGER);
 
     expect(res.details?.sharedFile).toBeUndefined();
-    expect(res.content[0]!.text).toContain('not available to you');
+    expect(res.content[0]!.text).toMatch(/not allowed/);
     expect(existsSync(chatFilesDir(imagesDir))).toBe(false);
   });
 

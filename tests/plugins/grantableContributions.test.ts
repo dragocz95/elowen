@@ -35,13 +35,14 @@ function grantablePlugins(): string[] {
 }
 
 describe('a user-grantable plugin only contributes what the grant can withhold', () => {
-  // cronjob was the last bundled plugin to opt in, and it moved to the plugin registry — which asserts
-  // this same rule against its own copy. The loop below therefore runs over nothing today. It is kept,
-  // rather than deleted with the plugin, because the rule belongs to the GRANT mechanism, which is still
-  // here: a grant withholds a plugin's tools, routes and UI, but never its prompt fragments, slash
-  // commands or hooks. The day something bundled opts in again, it is checked from its first commit.
+  // A grant withholds a plugin's tools, routes and UI — never its prompt fragments, slash commands or
+  // hooks. A grantable plugin that registered any of those would leak the ungrantable half to everyone.
+  //
+  // `terminal` opted in when the permission model was unified: it dropped its own owner gate, so the
+  // grant is now the only thing between an account and a shell on the host. That makes this rule
+  // load-bearing for it in particular, and the case below proves it contributes tools and nothing else.
   it('reads the grantable set from the manifests on disk', () => {
-    expect(grantablePlugins()).toEqual([]);
+    expect(grantablePlugins()).toEqual(['terminal']);
   });
 
   for (const name of grantablePlugins()) {

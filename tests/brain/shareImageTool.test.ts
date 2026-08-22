@@ -119,13 +119,22 @@ describe('ShareImage from a file', () => {
     expect(res.details?.sharedImage).toBeUndefined();
   });
 
-  it('refuses a file path for an all-access turn that is not the operator', async () => {
-    // An all-access turn skips path roots entirely, and a platform member mapped to an admin role lands
-    // there too — without this gate they could have any file on the box uploaded into a shared channel.
-    const res = await call({ path: write('shot.png', PNG) }, undefined, ADMIN_STRANGER);
+  // WHICH file may be uploaded is the path guard's decision and nothing else — the same answer Read would
+  // give the same caller for the same path. A scoped account uploads from its own roots and no further.
+  it('refuses a path outside the caller\'s roots', async () => {
+    const outside = join(home, 'secret.png');
+    writeFileSync(outside, PNG);
+    const scoped = { allowedProjectIds: new Set([1]), allowedPaths: () => [repo] } as Policy;
+    const res = await call({ path: outside }, scoped, ADMIN_STRANGER);
 
     expect(res.details?.sharedImage).toBeUndefined();
-    expect(res.content[0]!.text).toContain('not available to you');
+    expect(res.content[0]!.text).toMatch(/not allowed/);
+  });
+
+  it('uploads a file inside the caller\'s roots for a scoped, non-admin turn', async () => {
+    const scoped = { allowedProjectIds: new Set([1]), allowedPaths: () => [repo] } as Policy;
+    const res = await call({ path: write('shot.png', PNG) }, scoped, ADMIN_STRANGER);
+    expect(res.details?.sharedImage).toBeDefined();
   });
 
   it('refuses a file past the size limit without reading it in', async () => {

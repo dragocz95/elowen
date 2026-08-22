@@ -1,9 +1,10 @@
 {
   "name": "terminal",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "apiVersion": "1",
-  "description": "Owner-only shell commands (foreground or background) with the working directory confined to accessible repositories. Background processes are managed with list/read/kill tools.",
+  "description": "Shell commands (foreground or background) with the working directory confined to accessible repositories. Background processes are managed with list/read/kill tools. Granting this hands the account the host itself: a shell reads and writes any absolute path, so the project boundary does not contain it.",
   "entry": "index.mjs",
+  "userGrantable": true,
   "provides": {
     "tools": [
       "Bash",

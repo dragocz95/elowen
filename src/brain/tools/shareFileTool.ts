@@ -2,8 +2,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
-import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
+import { assertPathAllowed } from '../../plugins/pathGuard.js';
+import { currentSessionId, currentTurnToken } from '../../plugins/policyContext.js';
 import { chatFilesDir, storeFileByContent, type StoredChatFile } from '../chatFiles.js';
 
 /** Large enough for normal documents, archives, and generated artifacts while staying below common chat
@@ -55,12 +55,10 @@ export function buildShareFileTool(deps: ShareFileDeps) {
 }
 
 function fromDisk(rawPath: string, dir: string): StoredChatFile | string {
-  // All-access skips path roots, so this is the only remaining boundary on WHICH host file may be published
-  // into a conversation. `owner` covers the operator and every admin account (see IdentityResolver.isOwner);
-  // an unlinked or non-admin sender is refused.
-  if (isAllAccess() && currentIdentity()?.owner !== true) {
-    return 'ShareFile: sharing a file by path is not available to you. Ask an administrator to share it.';
-  }
+  // WHICH file may be published is decided by the path guard alone, exactly as it is for Read and Write.
+  // There used to be an extra `owner` check here for all-access turns; it protected nothing, because an
+  // all-access caller can already read that byte range with Read and paste it into the same conversation —
+  // it only made sharing behave differently from reading, for the same person, on the same file.
   let path: string;
   try { path = assertPathAllowed(rawPath); }
   catch (e) { return `ShareFile: ${(e as Error).message}`; }
