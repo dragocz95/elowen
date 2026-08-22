@@ -153,11 +153,24 @@ export interface SlashCommandDef {
   requiresPlugin?: string;
 }
 
+/** Which approval choice an option IS, independent of the English label carried beside it. The label stays
+ *  the wire value a client posts back (`approvalDecision` matches on it), so a surface that wants to show
+ *  the choice in the user's own language keys its wording on this instead of parsing the label text.
+ *  Present only on an approval prompt; ordinary AskUserQuestion options have no fixed identity. */
+export type ApprovalOptionId = 'once' | 'always' | 'deny';
+
 /** One option of an `AskUserQuestion` choice, as it rides the `ask` SSE event. Referenced only through
  *  `AskQuestion`, so it stays unexported — both former copies were file-local too. */
-interface AskOption { label: string; description?: string; preview?: string }
+interface AskOption { label: string; description?: string; preview?: string; id?: ApprovalOptionId }
+
+/** The facts an approval prompt is composed FROM, carried alongside the rendered English question so a
+ *  client can compose its own wording without taking the English apart. Without it the only way to
+ *  localize "always allow \"git status*\"" would be to regex the pattern back out of a sentence this
+ *  repo also owns — which works right up until the sentence changes. */
+export interface ApprovalPrompt { tool: string; command?: string; alwaysPattern?: string }
+
 /** One question of a parked `AskUserQuestion`. Clients POST the picked labels back to `/brain/answer`. */
-export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[] }
+export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[]; approval?: ApprovalPrompt }
 
 /** Authoritative control state of the tapped conversation, carried on the snapshot frame and read on the
  *  same event-loop tick as the run journal. The journal alone cannot answer either question: it is cleared

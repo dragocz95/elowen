@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Input } from '../../components/ui/Input';
 import { useTranslation } from '../../lib/i18n';
+import { interpolate } from '../../lib/i18n/interpolate';
 
 /** Presentational radio dot for single-select questions — the row button owns the click,
  *  mirroring the Checkbox primitive's pattern. */
@@ -80,6 +81,24 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
         {approval ? t.brainChat.approvalWaiting : t.brainChat.askWaiting}
       </p>
       {questions.map((q, qi) => {
+        // An approval arrives with English wire text AND the facts it was composed from. The labels are the
+        // decision contract the daemon matches on (`approvalDecision`), so they are what we post back —
+        // only the WORDING is swapped for the reader's language, composed from `q.approval` rather than
+        // taken apart from the English sentence.
+        const wording = q.approval;
+        const optionText = (op: typeof q.options[number]): { label: string; description?: string } => {
+          if (!wording) return { label: op.label, description: op.description };
+          switch (op.id) {
+            case 'once': return { label: t.brainChat.approvalOnce, description: t.brainChat.approvalOnceHint };
+            case 'always': return {
+              label: t.brainChat.approvalAlways,
+              description: interpolate(t.brainChat.approvalAlwaysHint, { pattern: wording.alwaysPattern ?? '' }),
+            };
+            case 'deny': return { label: t.brainChat.approvalDeny, description: t.brainChat.approvalDenyHint };
+            // An option the daemon did not tag stays exactly as it arrived rather than guessing at it.
+            default: return { label: op.label, description: op.description };
+          }
+        };
         // A preview is a pane for ONE focused option, which multi-select has no notion of — so previews
         // only ever drive the layout for a single-select question (the tool drops them otherwise).
         const hasPreview = !q.multiSelect && q.options.some((op) => op.preview);
@@ -88,6 +107,7 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
           <div className="flex flex-col gap-0.5" role={q.multiSelect ? 'group' : 'radiogroup'}>
             {q.options.map((op, oi) => {
               const on = (picked[qi] ?? []).includes(op.label);
+              const shown = optionText(op);
               return (
                 <button
                   key={oi}
@@ -102,8 +122,8 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                 >
                   {q.multiSelect ? <Checkbox checked={on} className="mt-0.5" /> : <Radio checked={on} />}
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-sm text-text">{op.label}</span>
-                    {op.description ? <span className="text-tiny text-text-muted">{op.description}</span> : null}
+                    <span className="text-sm text-text">{shown.label}</span>
+                    {shown.description ? <span className="text-tiny text-text-muted">{shown.description}</span> : null}
                   </span>
                 </button>
               );
@@ -124,8 +144,16 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
         return (
           <div key={qi} className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2">
-              <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny font-medium text-text-muted">{q.header}</span>
-              <span className="text-sm text-text">{q.question}</span>
+              <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny font-medium text-text-muted">
+                {wording ? t.brainChat.approvalHeader : q.header}
+              </span>
+              <span className="text-sm text-text">
+                {wording
+                  ? (wording.command
+                    ? `${t.brainChat.approvalRunCommand}\n$ ${wording.command}`
+                    : interpolate(t.brainChat.approvalRunTool, { tool: wording.tool }))
+                  : q.question}
+              </span>
             </div>
             {hasPreview ? (
               // Side by side on a wide viewport; the preview stacks under the list on a narrow one, where

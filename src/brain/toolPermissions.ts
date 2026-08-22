@@ -668,15 +668,22 @@ export function approvalQuestion(req: ApprovalRequest): AskQuestion {
   const shownCmd = cmd.length > 200 ? `${cmd.slice(0, 199)}…` : cmd;
   // "Always allow" is offered only when there IS a safe pattern to persist — never for an empty command
   // (its pattern would be an allow-all `*`).
-  const options: AskQuestion['options'] = [{ label: APPROVAL_LABELS.once, description: 'run it this time only' }];
-  if (req.alwaysPattern) options.push({ label: APPROVAL_LABELS.always, description: `always allow "${req.alwaysPattern}"` });
-  options.push({ label: APPROVAL_LABELS.deny, description: 'skip this call' });
+  const options: AskQuestion['options'] = [{ label: APPROVAL_LABELS.once, description: 'run it this time only', id: 'once' }];
+  if (req.alwaysPattern) options.push({ label: APPROVAL_LABELS.always, description: `always allow "${req.alwaysPattern}"`, id: 'always' });
+  options.push({ label: APPROVAL_LABELS.deny, description: 'skip this call', id: 'deny' });
   return {
     header: 'Approval',
     question: shownCmd ? `Run this command?\n$ ${shownCmd}` : `Allow the "${req.tool}" tool to run?`,
     multiSelect: false,
     custom: false,
     options,
+    // The same facts the English above was built from. A surface that renders in another language composes
+    // its own sentence from these; the labels it posts back stay the English wire values either way.
+    approval: {
+      tool: req.tool,
+      ...(shownCmd ? { command: shownCmd } : {}),
+      ...(req.alwaysPattern ? { alwaysPattern: req.alwaysPattern } : {}),
+    },
   };
 }
 
