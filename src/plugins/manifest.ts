@@ -29,13 +29,20 @@ export const PLUGIN_API_VERSION = '1';
  *  - `risk` — a per-field risk label (`low`/`medium`/`high`) surfaced in the UI.
  *  - `advanced` — keeps expert-only controls in the plugin workspace's Advanced tab.
  *  - `visibleWhen` — conditional visibility: show only when field `key` equals `equals`. */
+/** Every config field type THIS build can render. It is the one list: the manifest schema validates
+ *  against it and `PluginConfigField['type']` is derived from it, so the two cannot drift apart. */
+export const CONFIG_FIELD_TYPES = [
+  'string', 'secret', 'boolean', 'number', 'textarea', 'rolePolicies', 'model', 'provider',
+  'section', 'enum', 'multiSelect', 'code', 'prompt', 'json', 'embeddingModel', 'mcpServers', 'destination',
+  'projects', 'plugins', 'tools', 'models',
+] as const;
+
+export type PluginConfigFieldType = (typeof CONFIG_FIELD_TYPES)[number];
+
 export interface PluginConfigField {
   key: string;
   label: string;
-  type:
-    | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination'
-    | 'projects' | 'plugins' | 'tools' | 'models';
+  type: PluginConfigFieldType;
   hint?: string;
   required?: boolean;
   /** For `number` fields: the input bounds and step; `placeholder` typically shows the default value. */
@@ -163,15 +170,7 @@ export interface PluginManifest {
 const ConfigFieldSchema = Type.Object({
   key: Type.String({ minLength: 1 }),
   label: Type.String({ minLength: 1 }),
-  type: Type.Union([
-    Type.Literal('string'), Type.Literal('secret'), Type.Literal('boolean'),
-    Type.Literal('number'), Type.Literal('textarea'), Type.Literal('rolePolicies'),
-    Type.Literal('model'), Type.Literal('provider'),
-    Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
-    Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
-    Type.Literal('embeddingModel'), Type.Literal('mcpServers'), Type.Literal('destination'),
-    Type.Literal('projects'), Type.Literal('plugins'), Type.Literal('tools'), Type.Literal('models'),
-  ]),
+  type: Type.Union(CONFIG_FIELD_TYPES.map((name) => Type.Literal(name))),
   hint: Type.Optional(Type.String()),
   required: Type.Optional(Type.Boolean()),
   min: Type.Optional(Type.Number()),
@@ -253,14 +252,48 @@ const ManifestSchema = Type.Object({
   })),
 });
 
+/** Drop config fields whose `type` this build cannot draw, rather than failing the manifest over them.
+ *
+ *  A field type is added by a newer core, so a plugin published against it names types an older daemon has
+ *  never heard of. Rejecting the manifest for that reason takes the WHOLE plugin down — its platform,
+ *  tools and routes with it — which is how a routine plugin update makes an integration disappear. One
+ *  control this build cannot render is not a reason to lose the integration behind it.
+ *
+ *  The field is dropped from the FORM only; its stored value is never touched, so it starts working again
+ *  after an upgrade instead of being silently cleared. It is deliberately not rendered as a text input
+ *  either: this daemon does not know the value's shape, and letting an admin edit it blind would write
+ *  back the wrong one. Every other manifest problem still fails loudly. */
+function dropUnrenderableFields(raw: unknown, onWarn?: (message: string) => void): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const known = new Set<string>(CONFIG_FIELD_TYPES);
+  const source = raw as Record<string, unknown>;
+  let sanitized: Record<string, unknown> | undefined;
+  for (const schemaKey of ['configSchema', 'userConfigSchema'] as const) {
+    const fields = source[schemaKey];
+    if (!Array.isArray(fields)) continue;
+    const kept = fields.filter((field) => {
+      const type = (field as { type?: unknown } | null)?.type;
+      if (typeof type !== 'string' || known.has(type)) return true;
+      const key = (field as { key?: unknown }).key;
+      onWarn?.(`ignoring config field "${typeof key === 'string' ? key : '?'}": unknown type "${type}" (needs a newer core)`);
+      return false;
+    });
+    if (kept.length === fields.length) continue;
+    sanitized ??= { ...source };
+    sanitized[schemaKey] = kept;
+  }
+  return sanitized ?? raw;
+}
+
 /** Validate a raw parsed `elowen-plugin.json`. Throws a descriptive Error on any problem (bad shape or an
  *  apiVersion the daemon doesn't support), so the loader can skip the plugin and log why. */
-export function parseManifest(raw: unknown): PluginManifest {
-  if (!Check(ManifestSchema, raw)) {
-    const first = [...Errors(ManifestSchema, raw)][0];
+export function parseManifest(raw: unknown, onWarn?: (message: string) => void): PluginManifest {
+  const candidate = dropUnrenderableFields(raw, onWarn);
+  if (!Check(ManifestSchema, candidate)) {
+    const first = [...Errors(ManifestSchema, candidate)][0];
     throw new Error(`invalid plugin manifest: ${first ? `${first.instancePath || '/'} ${first.message}` : 'shape mismatch'}`);
   }
-  const m = raw as PluginManifest;
+  const m = candidate as PluginManifest;
   if (m.apiVersion !== PLUGIN_API_VERSION) {
     throw new Error(`unsupported plugin apiVersion "${m.apiVersion}" (need "${PLUGIN_API_VERSION}")`);
   }

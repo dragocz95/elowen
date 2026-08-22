@@ -28,6 +28,38 @@ describe('parseManifest', () => {
     expect(() => parseManifest({ ...good, deferLoading: 'ScanCode' })).toThrow();
     expect(() => parseManifest({ ...good, deferLoading: ['ScanCode', 42] })).toThrow();
   });
+  it('keeps a plugin loadable when a config field names a type this build cannot render', () => {
+    // A field type gets added by a newer core, so a plugin published against it names types this daemon has
+    // never heard of. Failing the manifest over one unrenderable control takes the WHOLE plugin down —
+    // platform, tools and routes with it. Regression: msteams declared `projects` and vanished entirely
+    // from an older daemon, which reads to the user as "Teams stopped working after a plugin update".
+    const warnings: string[] = [];
+    const m = parseManifest({
+      ...good,
+      configSchema: [
+        { key: 'token', label: 'Token', type: 'secret' },
+        { key: 'defaults', label: 'Defaults', type: 'fromTheFuture' },
+      ],
+    }, (message) => warnings.push(message));
+    expect(m.configSchema?.map((f) => f.key)).toEqual(['token']);
+    expect(warnings).toEqual([expect.stringContaining('fromTheFuture')]);
+  });
+  it('drops an unrenderable per-account field and keeps the valid ones', () => {
+    const m = parseManifest({
+      ...good,
+      userConfigSchema: [
+        { key: 'mine', label: 'Mine', type: 'fromTheFuture' },
+        { key: 'yours', label: 'Yours', type: 'string' },
+      ],
+    });
+    expect(m.userConfigSchema?.map((f) => f.key)).toEqual(['yours']);
+  });
+  it('still rejects a manifest broken in any way other than an unknown field type', () => {
+    // The tolerance is scoped to unknown TYPES. A field missing its label, or a schema that is not a list,
+    // is a real defect and must stay loud.
+    expect(() => parseManifest({ ...good, configSchema: [{ key: 'a', type: 'string' }] })).toThrow();
+    expect(() => parseManifest({ ...good, configSchema: 'nope' })).toThrow();
+  });
   it('accepts every declared config field type, including the model picker', () => {
     const m = parseManifest({
       ...good,
@@ -93,8 +125,15 @@ describe('parseManifest', () => {
   it('rejects an invalid mutates literal', () => {
     expect(() => parseManifest({ ...good, capabilities: { mutates: ['filesystem'] } })).toThrow();
   });
-  it('rejects an unknown config field type', () => {
-    expect(() => parseManifest({ ...good, configSchema: [{ key: 'k', label: 'L', type: 'wat' }] })).toThrow();
+  it('reports an unknown config field type instead of rejecting the plugin over it', () => {
+    // This used to throw. It was changed deliberately: an unknown type means "published against a newer
+    // core", and losing an entire integration over one control nobody can draw is the worse outcome. The
+    // signal is NOT lost — the field is dropped and the reason is warned about, so a typo like this still
+    // shows up in the log rather than silently rendering a broken control.
+    const warnings: string[] = [];
+    const m = parseManifest({ ...good, configSchema: [{ key: 'k', label: 'L', type: 'wat' }] }, (w) => warnings.push(w));
+    expect(m.configSchema).toEqual([]);
+    expect(warnings).toEqual([expect.stringContaining('"wat"')]);
   });
   it('rejects a missing required field', () => {
     expect(() => parseManifest({ ...good, name: undefined })).toThrow();

@@ -218,7 +218,10 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // that IS a plugin but is broken (unreadable or invalid manifest, name mismatch) still fails
         // loudly, and an enabled plugin that no dir provides is reported once at the end.
         if (!existsSync(join(pluginDir, 'elowen-plugin.json'))) continue;
-        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'elowen-plugin.json'), 'utf-8')));
+        const manifest = parseManifest(
+          JSON.parse(readFileSync(join(pluginDir, 'elowen-plugin.json'), 'utf-8')),
+          (message) => opts.logger.warn(`[plugin:${name}] ${message}`),
+        );
         if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != folder "${name}"`);
         // Resolve the entry inside the plugin dir and refuse one that escapes it (e.g. `../../x.mjs`) —
         // resolve() would otherwise import an arbitrary file. Cheap belt-and-suspenders, and load-bearing
