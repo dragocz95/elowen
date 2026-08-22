@@ -30,7 +30,10 @@ export async function generateMetadata() {
   const appName = theme.text.en?.appName ?? theme.brand.productName;
   // The apple-touch icon is composited onto a home screen at ~180px, so it prefers the large artwork
   // and falls back to the tab mark only when a theme ships nothing else.
-  const favicon = themeIcon(theme, 'icon');
+  // The tab takes the dedicated favicon slot, or the static mascot when a theme ships no separate
+  // mark. It must NOT be the other way round: `icon` is also the agent avatar, so a theme that wants a
+  // distinct tab mark supplies favicon.png and leaves the mascot where the rest of the UI expects it.
+  const favicon = themeIcon(theme, 'favicon') ?? themeIcon(theme, 'icon');
   const touchIcon = themeIcon(theme, 'icon192') ?? favicon;
   return {
     title: appName,

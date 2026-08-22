@@ -10,12 +10,13 @@ import {
   sessionCookie,
 } from '../../../../../../lib/proxy';
 
+// A RELATIVE Location, like the success path already uses for `next`. An absolute one built from
+// `req.url` resolves to the server's own listen address behind a proxy, so a failed sign-in landed the
+// user on `localhost:4500` — a URL that exists only inside the VM, and one that hid the actual error
+// code from the login screen that was supposed to show it.
 function redirectWithError(req: Request, code: unknown): Response {
-  const secure = isHttps(req);
-  const url = new URL('/', req.url);
-  url.searchParams.set('sso_error', ssoErrorCode(code));
-  const headers = new Headers({ location: url.toString() });
-  headers.append('set-cookie', namedCookie(SSO_FLOW_COOKIE, '', secure, 0));
+  const headers = new Headers({ location: `/?sso_error=${encodeURIComponent(ssoErrorCode(code))}` });
+  headers.append('set-cookie', namedCookie(SSO_FLOW_COOKIE, '', isHttps(req), 0));
   return new Response(null, { status: 302, headers });
 }
 

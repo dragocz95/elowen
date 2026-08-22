@@ -11,8 +11,11 @@ export interface ThemePayload {
   fonts: { sans?: string; mono?: string };
   /** Per-locale shallow UI text overrides (documented key: `appName`). */
   text: Record<string, Record<string, string>>;
-  /** Daemon asset paths (`/public/theme/assets/…?v=…`) — prefix with `/api` for the browser. */
-  assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>>;
+  /** Daemon asset paths (`/public/theme/assets/…?v=…`) — prefix with `/api` for the browser.
+   *  `icon` is the STATIC MASCOT (agent avatar, spatial-scene texture); `favicon` is the browser tab
+   *  alone. Keeping them apart is what lets a brand put a compact mark in the tab without it turning
+   *  up on the avatar. */
+  assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>>;
   v: string;
 }
 

@@ -1,10 +1,15 @@
 import { safeSsoNext, SSO_FLOW_COOKIE, SSO_FLOW_TTL_SECONDS, ssoErrorCode } from '../../../../../../lib/authSso';
 import { daemonUrl, forwardHeaders, isHttps, namedCookie } from '../../../../../../lib/proxy';
 
-function errorRedirect(req: Request, code: unknown): Response {
-  const url = new URL('/', req.url);
-  url.searchParams.set('sso_error', ssoErrorCode(code));
-  return Response.redirect(url, 302);
+// A RELATIVE Location, resolved by the browser against the address it actually asked for. Building an
+// absolute one from `req.url` sent the user to the server's own listen address instead: behind a proxy
+// Next resolves that to `localhost:4500`, so every SSO failure bounced the operator off the site
+// entirely — and onto a URL that only exists inside the VM.
+function errorRedirect(code: unknown): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { location: `/?sso_error=${encodeURIComponent(ssoErrorCode(code))}` },
+  });
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -20,13 +25,13 @@ export async function GET(req: Request): Promise<Response> {
       body: JSON.stringify({ next }),
     });
   } catch {
-    return errorRedirect(req, 'sso_failed');
+    return errorRedirect('sso_failed');
   }
 
   if (!upstream.ok) {
     let code: unknown;
     try { code = ((await upstream.json()) as { error?: unknown }).error; } catch { /* invalid daemon body */ }
-    return errorRedirect(req, code);
+    return errorRedirect(code);
   }
 
   let flowId: string;
@@ -36,7 +41,7 @@ export async function GET(req: Request): Promise<Response> {
     const destination = new URL(authorizationUrl);
     if (!flowId || destination.protocol !== 'https:') throw new Error('invalid SSO start response');
   } catch {
-    return errorRedirect(req, 'sso_failed');
+    return errorRedirect('sso_failed');
   }
 
   const responseHeaders = new Headers({ location: authorizationUrl });

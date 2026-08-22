@@ -216,16 +216,17 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     colors: Record<string, string>;
     fonts: { sans?: string; mono?: string };
     text: Record<string, Record<string, string>>;
-    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>>;
+    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>>;
     v: string;
   } => {
     const active = activeThemeName();
     const theme = active ? d.themes?.get(active) ?? null : null;
     const brand = resolveBrand(d.config.get(), theme?.manifest.brand ?? null, active);
-    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot'> = {
-      'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512', 'mascot.svg': 'mascot',
+    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot'> = {
+      'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512',
+      'favicon.png': 'favicon', 'mascot.svg': 'mascot',
     };
-    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'mascot', string>> = {};
+    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>> = {};
     for (const file of theme?.assets ?? []) {
       assets[assetKey[file]] = `/public/theme/assets/${file}?v=${theme!.version}`;
     }
@@ -249,7 +250,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
   // Unauthenticated route serving up-to-2 MiB files: the bytes are cached in memory keyed by the asset's
   // mtime so a request flood cannot grind the event loop with repeated disk reads. Bounded by the fixed
-  // whitelist (4 entries max); a swapped file changes the mtime and naturally evicts its stale bytes.
+  // whitelist (THEME_ASSET_FILES); a swapped file changes the mtime and naturally evicts its stale bytes.
   const assetBytesCache = new Map<string, { mtimeMs: number; bytes: Uint8Array<ArrayBuffer> }>();
   app.get('/public/theme/assets/:file', (c) => {
     const active = activeThemeName();

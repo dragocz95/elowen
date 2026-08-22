@@ -97,7 +97,7 @@ describe('GET /public/theme', () => {
   // otherwise be accidental — extract the web regex from source and hold both sides together.
   it('every emitted asset URL matches the web client re-validation shape', async () => {
     writeTheme('acme');
-    for (const f of ['icon.png', 'icon-192.png', 'icon-512.png']) writeFileSync(join(dir, 'acme', f), Buffer.from('png'));
+    for (const f of ['icon.png', 'icon-192.png', 'icon-512.png', 'favicon.png']) writeFileSync(join(dir, 'acme', f), Buffer.from('png'));
     writeFileSync(join(dir, 'acme', 'mascot.svg'), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
     activate('acme');
     const { app } = await makeApp();
@@ -107,8 +107,23 @@ describe('GET /public/theme', () => {
     const webRe = new RegExp(shape!.replace(/\\\//g, '/'));
     const body = await (await app.request('/public/theme')).json() as { assets: Record<string, string> };
     const urls = Object.values(body.assets);
-    expect(urls).toHaveLength(5);
+    expect(urls).toHaveLength(6);
     for (const url of urls) expect(url, `web boundary would reject "${url}"`).toMatch(webRe);
+  });
+
+  // The tab mark is its own slot precisely so it does NOT land on the agent avatar, which renders
+  // `icon`. Publishing them under one key would put a favicon-sized logo on the mascot.
+  it('publishes the favicon under its own key, separate from the static mascot', async () => {
+    writeTheme('acme');
+    writeFileSync(join(dir, 'acme', 'icon.png'), Buffer.from('mascot'));
+    writeFileSync(join(dir, 'acme', 'favicon.png'), Buffer.from('mark'));
+    activate('acme');
+    const { app } = await makeApp();
+    const body = await (await app.request('/public/theme')).json() as { assets: Record<string, string> };
+    expect(body.assets.icon).toMatch(/\/public\/theme\/assets\/icon\.png\?v=/);
+    expect(body.assets.favicon).toMatch(/\/public\/theme\/assets\/favicon\.png\?v=/);
+    expect(body.assets.favicon).not.toBe(body.assets.icon);
+    expect((await app.request('/public/theme/assets/favicon.png')).status).toBe(200);
   });
 });
 

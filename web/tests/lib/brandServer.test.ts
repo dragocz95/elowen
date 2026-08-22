@@ -60,17 +60,19 @@ describe('themeIcon', () => {
     expect(themeIcon(BUILTIN_THEME, 'icon192')).toBeNull();
   });
 
-  // The tab favicon is its own slot: a theme may ship a compact mark for the tab and the full mascot
-  // for the home screen, and the root layout resolves the two independently.
-  it('resolves the favicon slot separately from the home-screen artwork', () => {
-    const both = theme({ assets: {
+  // Four raster slots that are NOT interchangeable: `favicon` is the tab, `icon` the static mascot the
+  // avatar and the spatial scene render, `icon192`/`icon512` the installed-app and notification art.
+  it('resolves each artwork slot independently', () => {
+    const all = theme({ assets: {
+      favicon: '/public/theme/assets/favicon.png?v=0123456789abcdef',
       icon: '/public/theme/assets/icon.png?v=0123456789abcdef',
       icon192: '/public/theme/assets/icon-192.png?v=0123456789abcdef',
     } });
-    expect(themeIcon(both, 'icon')).toBe('/api/public/theme/assets/icon.png?v=0123456789abcdef');
-    expect(themeIcon(both, 'icon192')).toBe('/api/public/theme/assets/icon-192.png?v=0123456789abcdef');
-    // A theme carrying only home-screen artwork leaves the favicon to the bundled file convention.
-    expect(themeIcon(theme({ assets: { icon192: '/public/theme/assets/icon-192.png?v=0123456789abcdef' } }), 'icon')).toBeNull();
+    expect(themeIcon(all, 'favicon')).toBe('/api/public/theme/assets/favicon.png?v=0123456789abcdef');
+    expect(themeIcon(all, 'icon')).toBe('/api/public/theme/assets/icon.png?v=0123456789abcdef');
+    expect(themeIcon(all, 'icon192')).toBe('/api/public/theme/assets/icon-192.png?v=0123456789abcdef');
+    // A theme shipping only a mascot has no separate tab mark; the layout then falls back to `icon`.
+    expect(themeIcon(theme({ assets: { icon: '/public/theme/assets/icon.png?v=0123456789abcdef' } }), 'favicon')).toBeNull();
   });
 });
 

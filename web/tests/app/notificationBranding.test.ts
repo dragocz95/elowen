@@ -47,7 +47,9 @@ describe('push notification branding', () => {
 describe('favicon follows the theme', () => {
   it('declares icons only when the theme carries them', () => {
     const layout = source('app', 'layout.tsx');
-    expect(layout).toContain("const favicon = themeIcon(theme, 'icon');");
+    // The dedicated slot first, the static mascot only as the fallback — never the reverse, since
+    // `icon` is also the agent avatar and a tab-sized mark there looks like a bug.
+    expect(layout).toContain("themeIcon(theme, 'favicon') ?? themeIcon(theme, 'icon')");
     expect(layout).toContain('...(favicon || touchIcon');
     expect(layout).toMatch(/\.\.\.\(favicon \? \{ icon: \[\{ url: favicon \}\] \} : \{\}\)/);
     expect(layout).toMatch(/\.\.\.\(touchIcon \? \{ apple: \[\{ url: touchIcon \}\] \} : \{\}\)/);

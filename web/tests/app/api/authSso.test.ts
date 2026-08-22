@@ -63,7 +63,7 @@ describe('Microsoft SSO callback route', () => {
   it('refuses to mint a session without the flow cookie', async () => {
     const res = await callback(request('/api/auth/sso/microsoft/callback?code=code&state=state'));
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('https://web.test/?sso_error=state_expired');
+    expect(res.headers.get('location')).toBe('/?sso_error=state_expired');
     expect(res.headers.get('set-cookie')).toContain('elowen_sso=;');
     expect(res.headers.get('set-cookie')).not.toContain('elowen_session=');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -104,8 +104,25 @@ describe('Microsoft SSO callback route', () => {
     ));
     const cookies = res.headers.get('set-cookie') ?? '';
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('https://web.test/?sso_error=already_linked');
+    expect(res.headers.get('location')).toBe('/?sso_error=already_linked');
     expect(cookies).toContain('elowen_sso=;');
     expect(cookies).not.toContain('elowen_session=');
+  });
+
+  // Behind a reverse proxy Next resolves `req.url` to the server's own listen address, so an error
+  // redirect built from it pointed the browser at `localhost:4500` — off the site, onto a host that
+  // exists only inside the VM, and with the error code the login screen was meant to render lost on
+  // the way. Every redirect this pair emits must therefore stay relative to the requested origin.
+  it('keeps every error redirect relative so it lands on the host the user is actually on', async () => {
+    const local = new Request('https://web.test/api/auth/sso/microsoft/callback?code=c&state=s', {
+      headers: { 'x-forwarded-proto': 'https', host: 'localhost:4500' },
+    });
+    const fromCallback = await callback(local);
+    expect(fromCallback.headers.get('location')).toBe('/?sso_error=state_expired');
+
+    fetchMock.mockResolvedValue(new Response('nope', { status: 500 }));
+    const fromStart = await start(request('/api/auth/sso/microsoft/start?next=%2F'));
+    expect(fromStart.status).toBe(302);
+    expect(fromStart.headers.get('location')).toBe('/?sso_error=sso_failed');
   });
 });
