@@ -268,7 +268,7 @@ describe('TranscriptModel', () => {
     model.apply({ type: 'tool', id: 'list-1', name: 'ListDir' });
 
     expect(model.turnAt(0)).toMatchObject({
-      role: 'elowen', streaming: false, joinNextToolOnly: 'thoughts-hidden',
+      role: 'elowen', streaming: false, joinNextToolRun: 'thoughts-hidden',
     });
   });
 

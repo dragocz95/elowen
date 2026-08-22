@@ -3,6 +3,7 @@ import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works
 import { CURSOR_MARKER, getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import type { TUI } from '@earendil-works/pi-tui';
 import type { HistoryMessage } from '../../../src/brain/transcript.js';
+import type { ToolOutputView } from '../../../src/shared/wireContract.js';
 import { TranscriptModel, type TranscriptModelOptions } from '../../../src/brain/transcriptModel.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
 import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, type ChatViewportState } from '../../../src/cli/chat/chatViewport.js';
@@ -148,7 +149,7 @@ describe('chat layout components', () => {
 
       const first = transcript.turnAt(0)!;
       const second = transcript.turnAt(1)!;
-      expect(first).toMatchObject({ role: 'elowen', streaming: false, joinNextToolOnly: true });
+      expect(first).toMatchObject({ role: 'elowen', streaming: false, joinNextToolRun: true });
       const lines = [...renderLines(first, 0), ...renderLines(second, 1)];
       expect(lines.some((line) => line.trim() === '…')).toBe(false);
       expect(lines.slice(0, -1).every((line) => line !== '')).toBe(true);
@@ -179,7 +180,46 @@ describe('chat layout components', () => {
       ]);
     });
 
-    it('restores the step separator when a tool-only step later gains assistant text', () => {
+    it('keeps a tool run gapless when the step that opened it also spoke', () => {
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'text', delta: 'Turning provisioning on.' });
+      transcript.apply({ type: 'tool', name: 'TaskCreate', id: 'create-1' });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'Read', id: 'read-1', detail: 'msSso.ts' });
+
+      // Markdown pads its rows to the full width; the seam under test is about blank rows, not padding.
+      const lines = [0, 1].flatMap((index) => renderLines(transcript.turnAt(index)!, index).map((line) => line.replace(/\s+$/, '')));
+      expect(lines).toEqual([
+        '  Turning provisioning on.',
+        `${TOOL_INDENT}← TaskCreate`,
+        `${TOOL_INDENT}→ Read msSso.ts`,
+        '',
+      ]);
+    });
+
+    it('keeps consecutive shell runs in one block after a step that also spoke', () => {
+      const consoleOutput = (command: string, text: string): ToolOutputView =>
+        ({ title: 'Bash', kind: 'console', command, text });
+      const transcript = new TranscriptModel();
+      transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
+      transcript.apply({ type: 'text', delta: 'Checking the imports.' });
+      transcript.apply({ type: 'tool', name: 'Bash', id: 'b1', command: 'echo one' });
+      transcript.apply({ type: 'tool_output', id: 'b1', output: consoleOutput('echo one', 'one') });
+      transcript.apply({ type: 'step', step: 2, maxSteps: 0 });
+      transcript.apply({ type: 'tool', name: 'Bash', id: 'b2', command: 'echo two' });
+      transcript.apply({ type: 'tool_output', id: 'b2', output: consoleOutput('echo two', 'two') });
+
+      const first = renderLines(transcript.turnAt(0)!, 0);
+      const second = renderLines(transcript.turnAt(1)!, 1);
+      // The seam between two shell runs is the defect: the first block must not end on a blank row, so the
+      // second `← Bash` frame starts on the very next line and the run reads as one stretch of activity.
+      expect(first.at(-1)).not.toBe('');
+      expect(second.at(-1)).toBe('');
+      expect(second[0]).toContain('Bash');
+    });
+
+    it('separates a tool run from the prose that follows it, not from its own next tool row', () => {
       const transcript = new TranscriptModel();
       transcript.apply({ type: 'step', step: 1, maxSteps: 0 });
       transcript.apply({ type: 'tool', name: 'Read', id: 'r1' });
@@ -187,9 +227,16 @@ describe('chat layout components', () => {
       transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1' });
       transcript.apply({ type: 'text', delta: 'I found it.' });
 
-      const first = transcript.turnAt(0)!;
-      expect(first).not.toHaveProperty('joinNextToolOnly');
-      expect(renderLines(first, 0).at(-1)).toBe('');
+      // Text arriving AFTER the second step's tool row moves that step's own prose seam; it says nothing
+      // about the seam between the two tool rows, which stays closed.
+      const lines = [0, 1].flatMap((index) => renderLines(transcript.turnAt(index)!, index).map((line) => line.replace(/\s+$/, '')));
+      expect(lines).toEqual([
+        `${TOOL_INDENT}→ Read`,
+        `${TOOL_INDENT}→ ListDir`,
+        '',
+        '  I found it.',
+        '',
+      ]);
     });
 
     it('keeps the step separator when reasoning rows are visible', () => {
@@ -201,7 +248,7 @@ describe('chat layout components', () => {
       transcript.apply({ type: 'tool', name: 'ListDir', id: 'l1' });
 
       const first = transcript.turnAt(0)!;
-      expect(first).toMatchObject({ role: 'elowen', joinNextToolOnly: 'thoughts-hidden' });
+      expect(first).toMatchObject({ role: 'elowen', joinNextToolRun: 'thoughts-hidden' });
       expect(renderLines(first, 0).at(-1)).toBe('');
     });
   });

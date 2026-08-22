@@ -133,10 +133,11 @@ export function groupToolItems(items: ToolItem[]): ToolGroup[] {
 
 type YouTurn = { role: 'you'; text: string; id?: string };
 export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; createdAt?: string; durationMs?: number;
-  /** The next step also renders as tool-only, so the CLI may omit this turn's separator while preserving
-   *  both independent step blocks. `thoughts-hidden` keeps the separator when reasoning rows are enabled.
-   *  Display-only and derived again on history hydration. */
-  joinNextToolOnly?: true | 'thoughts-hidden';
+  /** This step ends in tool rows and the next one opens with them, so the CLI may omit this turn's
+   *  separator and let the two read as one run while preserving both independent step blocks.
+   *  `thoughts-hidden` keeps the separator when reasoning rows are enabled. Display-only and derived again
+   *  on history hydration. */
+  joinNextToolRun?: true | 'thoughts-hidden';
   /** True while the model is writing a tool call whose marker has not yet rendered — a live-only hint set
    *  by `tool_authoring` and cleared by the first `tool` of the turn. Never persisted (history turns are
    *  never streaming). */
@@ -185,36 +186,44 @@ export interface HistoryMessage {
   durationMs?: number;
 }
 
-/** How an assistant step renders when deciding whether adjacent tool rows need a separator. Empty text
- *  renders no rows and reasoning is conditional on the CLI's thought setting, so neither may classify the
- *  turn from storage shape alone. A real text row always keeps the normal inter-step separation. */
-function toolOnlyVisibility(turn: ChatTurn | undefined): true | 'thoughts-hidden' | undefined {
-  if (turn?.role !== 'elowen' || turn.segments.length === 0) return undefined;
-  let hasTools = false;
-  let hasReasoning = false;
-  for (const segment of turn.segments) {
-    if (segment.kind === 'tools') {
-      if (segment.items.length === 0) return undefined;
-      hasTools = true;
-    } else if (segment.kind === 'reasoning') {
-      hasReasoning = true;
-    } else if (segment.text.trim()) {
-      return undefined;
-    }
-  }
-  if (!hasTools) return undefined;
-  return hasReasoning ? 'thoughts-hidden' : true;
+/** Whether a segment puts any row on screen. Empty text and an item-less tool segment render nothing at
+ *  all; reasoning renders only while the CLI shows thought rows, so it cannot be judged from storage shape
+ *  alone. */
+function segmentVisibility(segment: Segment): 'always' | 'thoughts-only' | 'never' {
+  if (segment.kind === 'tools') return segment.items.length > 0 ? 'always' : 'never';
+  if (segment.kind === 'reasoning') return 'thoughts-only';
+  return segment.text.trim() ? 'always' : 'never';
 }
 
-/** The separator mode shared by history hydration and the live fold. */
-export function toolOnlyJoinMode(
+/** Whether the given EDGE of a step — the first rows it paints, or the last ones — is tool rows.
+ *
+ *  This is deliberately an edge test, not a whole-turn test. The separator under question sits between the
+ *  LAST row of one step and the FIRST row of the next, so only those two edges can touch it. Prose earlier
+ *  in a step is irrelevant to its trailing seam: it already got its own separator from the in-turn segment
+ *  break, and counting it again is what put a blank line between a step's closing tool row and the next
+ *  step's opening one. */
+function toolEdge(turn: ChatTurn | undefined, side: 'head' | 'tail'): true | 'thoughts-hidden' | undefined {
+  if (turn?.role !== 'elowen') return undefined;
+  const segments = side === 'head' ? turn.segments : [...turn.segments].reverse();
+  // The edge segment differs by thought setting, so resolve it for both: hidden thoughts skip reasoning,
+  // shown thoughts do not. A reasoning row (with its own surrounding blanks) is a real boundary.
+  const whenShown = segments.find((segment) => segmentVisibility(segment) !== 'never');
+  const whenHidden = segments.find((segment) => segmentVisibility(segment) === 'always');
+  if (whenHidden?.kind !== 'tools') return undefined;
+  return whenShown?.kind === 'tools' ? true : 'thoughts-hidden';
+}
+
+/** The separator mode for the seam between two adjacent steps, shared by history hydration and the live
+ *  fold. Tool rows on both sides of the seam are one continuous run of machine activity and take no blank
+ *  line; anything else there is a real boundary and keeps its separator. */
+export function toolRunJoinMode(
   previous: ChatTurn | undefined,
   next: ChatTurn | undefined,
 ): true | 'thoughts-hidden' | undefined {
-  const previousVisibility = toolOnlyVisibility(previous);
-  const nextVisibility = toolOnlyVisibility(next);
-  if (!previousVisibility || !nextVisibility) return undefined;
-  return previousVisibility === true && nextVisibility === true ? true : 'thoughts-hidden';
+  const before = toolEdge(previous, 'tail');
+  const after = toolEdge(next, 'head');
+  if (!before || !after) return undefined;
+  return before === true && after === true ? true : 'thoughts-hidden';
 }
 
 /** Parse the durable wire/storage transcript into render turns without adding runtime bookkeeping. */
@@ -259,8 +268,8 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
   for (let index = 0; index + 1 < turns.length; index += 1) {
     const turn = turns[index];
     if (turn?.role !== 'elowen') continue;
-    const join = toolOnlyJoinMode(turn, turns[index + 1]);
-    if (join) turn.joinNextToolOnly = join;
+    const join = toolRunJoinMode(turn, turns[index + 1]);
+    if (join) turn.joinNextToolRun = join;
   }
   return turns;
 }

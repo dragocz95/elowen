@@ -123,8 +123,8 @@ describe('durable transcript parsing', () => {
       ] },
       { role: 'assistant', text: 'done', segments: [{ kind: 'text', text: 'done' }] },
     ]);
-    expect(turns[0]).toMatchObject({ role: 'elowen', joinNextToolOnly: true });
-    expect(turns[1]).not.toHaveProperty('joinNextToolOnly');
+    expect(turns[0]).toMatchObject({ role: 'elowen', joinNextToolRun: true });
+    expect(turns[1]).not.toHaveProperty('joinNextToolRun');
   });
 
   it('rehydrates a durable running child with its drill-in session id', () => {

@@ -2,7 +2,7 @@ import type { BrainEvent } from './events.js';
 import { isSubagentToolName } from './messageView.js';
 import {
   submittedPlanOf,
-  toolOnlyJoinMode,
+  toolRunJoinMode,
   turnsFromHistory,
   type ChatTurn,
   type ElowenTurn,
@@ -175,7 +175,7 @@ export class TranscriptModel implements TranscriptRead {
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + event.delta;
         this.thinkingState = true;
         this.noticeState = undefined;
-        this.syncPreviousToolOnlyJoin(index);
+        this.syncPreviousToolRunJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -186,7 +186,7 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         const name = event.ref.slice(event.ref.lastIndexOf('/') + 1);
         appendSegmentText(turn, 'text', `\n🖼 ${event.caption?.trim() || `shared ${name}`}\n`);
-        this.syncPreviousToolOnlyJoin(index);
+        this.syncPreviousToolRunJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -194,7 +194,7 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'reasoning', event.delta);
         this.thinkingState = true;
-        this.syncPreviousToolOnlyJoin(index);
+        this.syncPreviousToolRunJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -342,7 +342,7 @@ export class TranscriptModel implements TranscriptRead {
         this.activityStartedAtState = undefined;
         this.compactionActive = false;
         this.noticeState = undefined;
-        this.syncPreviousToolOnlyJoin(index);
+        this.syncPreviousToolRunJoin(index);
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -384,7 +384,7 @@ export class TranscriptModel implements TranscriptRead {
     this.lastToolLocation = location;
     if (event.id) this.toolLocations.set(event.id, location);
     this.thinkingState = true;
-    this.syncPreviousToolOnlyJoin(index);
+    this.syncPreviousToolRunJoin(index);
     this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
     return true;
   }
@@ -536,18 +536,18 @@ export class TranscriptModel implements TranscriptRead {
   }
 
   /** Keep the previous step's visual join marker aligned with the CURRENT step's rendered content. A fresh
-   *  tool call may establish the join; later visible prose removes it, while reasoning makes it conditional
-   *  on whether thought rows are shown. Publishing the previous index separately lets the viewport patch both
-   *  cached step blocks without merging them. */
-  private syncPreviousToolOnlyJoin(index: number): void {
+   *  tool call at the head of this step may establish the join; visible prose arriving before any tool row
+   *  removes it, while reasoning makes it conditional on whether thought rows are shown. Publishing the
+   *  previous index separately lets the viewport patch both cached step blocks without merging them. */
+  private syncPreviousToolRunJoin(index: number): void {
     if (index <= 0) return;
     const previous = this.turns[index - 1];
     if (previous?.role !== 'elowen') return;
-    const join = toolOnlyJoinMode(previous, this.turns[index]);
-    if (previous.joinNextToolOnly === join) return;
-    if (join) this.turns[index - 1] = { ...previous, joinNextToolOnly: join };
+    const join = toolRunJoinMode(previous, this.turns[index]);
+    if (previous.joinNextToolRun === join) return;
+    if (join) this.turns[index - 1] = { ...previous, joinNextToolRun: join };
     else {
-      const { joinNextToolOnly: _drop, ...rest } = previous;
+      const { joinNextToolRun: _drop, ...rest } = previous;
       this.turns[index - 1] = rest;
     }
     this.publish({ kind: 'turn', index: index - 1 });
