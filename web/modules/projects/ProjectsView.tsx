@@ -1,7 +1,7 @@
 'use client';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, Github, FileText, Layers3 } from 'lucide-react';
-import { useProjects, useProjectGit, useEditorPlugin } from '../../lib/queries';
+import { useProjects, useProjectGit, useEditorPlugin, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
@@ -33,6 +33,11 @@ const PROJECT_FILTERS: readonly ProjectFilter[] = ['all', 'inherit', 'override']
 export function ProjectsView() {
   const projects = useProjects();
   const editorEnabled = useEditorPlugin();
+  // Registering, editing and removing a project is admin-only on the daemon (notAdmin guards POST,
+  // PATCH and DELETE /projects). Offering those actions to a member produced a button that could only
+  // ever answer 403, and implied members hand themselves new roots -- a project IS the path boundary
+  // for a non-admin, so it is an admin who assigns them.
+  const isAdmin = useMe().data?.user?.is_admin ?? false;
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   // Search is transient (an immediate intent); the bucket filter is a view setting and survives a reload.
@@ -98,10 +103,10 @@ export function ProjectsView() {
   const projectActionGroups = (p: Project): ActionMenuItem[][] => [
     [
       ...(editorEnabled ? [{ label: t.projects.ctxOpenEditor, icon: Code2, onSelect: () => openProjectEditor(p.id, null) }] : []),
-      { label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } },
+      ...(isAdmin ? [{ label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } }] : []),
     ],
     [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
-    [{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger', onSelect: () => setRemoving(p) }],
+    ...(isAdmin ? [[{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger' as const, onSelect: () => setRemoving(p) }]] : []),
   ];
   const projectActions = (p: Project): ActionMenuItem[] => projectActionGroups(p).flat();
   // Project whose icon is being chosen (drives the icon-picker modal, stacked over the edit modal).
@@ -195,7 +200,7 @@ export function ProjectsView() {
           description: t.projects.workspaceIntro,
           mascotState: projects.isLoading ? 'saving' : projects.isError ? 'error' : 'idle',
           status: !projects.isLoading && !projects.isError ? <span className="workspace-status">{t.projects.registryReady}</span> : undefined,
-          action: <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>,
+          action: isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined,
           metrics: <>
             <WorkspaceMetric label={t.projects.metricProjects} value={projects.data?.length ?? 0} icon={FolderGit2} />
             <WorkspaceMetric label={t.projects.metricOverrides} value={summary.overrides} icon={GitBranch} />
@@ -215,7 +220,7 @@ export function ProjectsView() {
 
           {projects.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
             : projects.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} /></ControlSurfaceState>
-            : !projects.data || projects.data.length === 0 ? <ControlSurfaceState><EmptyState title={t.projects.empty} icon={FolderGit2} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>} /></ControlSurfaceState>
+            : !projects.data || projects.data.length === 0 ? <ControlSurfaceState><EmptyState title={t.projects.empty} icon={FolderGit2} action={isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined} /></ControlSurfaceState>
             : (
               <ControlSurfaceRegister className="workspace-master-detail" data-detail={selectedProject != null}>
                 <div className="min-w-0">
@@ -294,7 +299,7 @@ export function ProjectsView() {
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-text"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
-                      <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button>
+                      {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
                     </div>
 
                     {git.isLoading ? <LoadingLine /> : null}

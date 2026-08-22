@@ -13,6 +13,7 @@ const server = setupServer(
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
   http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([])),
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -66,6 +67,29 @@ describe('ProjectsView', () => {
 
     expect(hoverActions).toEqual(['Edit project', 'Copy path', 'Remove project']);
     expect(contextActions).toEqual(hoverActions);
+  });
+
+  // Registering, editing and removing a project are admin-only on the daemon. A member used to be shown
+  // all three, so every one of them could only answer 403 -- and a project is precisely the path boundary
+  // a non-admin is confined to, so it must be an admin who hands one out.
+  it('withholds project registration and editing from a member', async () => {
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, username: 'member', is_admin: false } })));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    const row = (await screen.findByText('elowen')).closest('[role="row"]');
+    if (!row) throw new Error('project row not rendered');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'New project' })).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'elowen: Actions' }));
+    const actions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
+    expect(actions).toEqual(['Copy path']);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryAllByRole('menuitem')).toHaveLength(0));
+    fireEvent.click(screen.getByText('elowen'));
+    expect(await screen.findByText('master')).toBeInTheDocument();
+    expect(screen.queryByText('Edit project')).toBeNull();
   });
 
   it('filters the project register without losing the workspace layout', async () => {
