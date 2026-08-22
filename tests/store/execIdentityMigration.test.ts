@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +103,27 @@ describe('exec identity persistence migration', () => {
     db = openDb(path);
     expect(snapshot()).toEqual(before);
     expect(db.pragma('user_version', { simple: true })).toBe(14);
+    db.close();
+  });
+
+  it('opens a database whose plugin tables predate the columns the plugin now adds', () => {
+    // The agents tables left core in August: `missions` still exists in an older database, but
+    // `pilot_exec`/`overseer_exec` are added by the PLUGIN, which runs long after openDb(). The migration
+    // guarded only on the TABLE existing, so it read columns that were not there yet and threw — taking
+    // the whole daemon start with it, because openDb() is the first thing boot does. Every install
+    // carrying a pre-August database would simply fail to come up.
+    dir = mkdtempSync(join(tmpdir(), 'elowen-exec-ancient-'));
+    const path = join(dir, 'elowen.db');
+    const ancient = new Database(path);
+    ancient.exec('CREATE TABLE missions (id TEXT PRIMARY KEY, epic_id TEXT, autonomy TEXT, state TEXT)');
+    ancient.prepare("INSERT INTO missions (id, epic_id, state) VALUES ('m1', 'e1', 'open')").run();
+    ancient.pragma('user_version = 11');
+    ancient.close();
+
+    const db = openDb(path);
+    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    // The row survives untouched: an exec value cannot need rewriting in a column that does not exist.
+    expect(db.prepare('SELECT id FROM missions').all()).toEqual([{ id: 'm1' }]);
     db.close();
   });
 

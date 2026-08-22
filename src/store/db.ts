@@ -636,17 +636,23 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
         db.prepare('UPDATE users SET allowed_execs = ?, default_exec = ?, advisor_exec = ? WHERE id = ?').run(allowed, defaultExec, advisorExec, user.id);
       }
     }
+    // These three tables belong to PLUGINS (tasks/task_usage to work, missions to agents), so core knows
+    // that they may exist but not what shape they are in: the plugin adds its columns from its own
+    // migrations, which run long after openDb(). `tableExists` alone was therefore not enough — an older
+    // database still carries `missions` from the days it lived in core, without the `pilot_exec` the
+    // plugin adds today, and reading it threw out of openDb() and took the entire daemon start with it.
+    // A column that is not there holds no exec value to rewrite, so skipping is also the correct answer.
     if (tableExists('tasks')) {
       // Every `exec:` label, not just the prefixed ones: v13 also has to reach values that carry no
       // prefix at all, and a narrower LIKE would skip exactly those.
-      const rows = db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:%'").all() as Array<{ id: string; labels: string }>;
+      const rows = tolerateMissingPluginTables(() => db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:%'").all() as Array<{ id: string; labels: string }>, []);
       for (const row of rows) {
         const labels = row.labels.split(',').map(label => label.startsWith('exec:') ? `exec:${canonical(label.slice('exec:'.length)) as string}` : label).join(',');
         if (labels !== row.labels) db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels, row.id);
       }
     }
     if (tableExists('missions')) {
-      const rows = db.prepare('SELECT id, pilot_exec, overseer_exec FROM missions').all() as Array<{ id: string; pilot_exec: string; overseer_exec: string }>;
+      const rows = tolerateMissingPluginTables(() => db.prepare('SELECT id, pilot_exec, overseer_exec FROM missions').all() as Array<{ id: string; pilot_exec: string; overseer_exec: string }>, []);
       for (const row of rows) {
         const pilot = canonical(row.pilot_exec) as string;
         const overseer = canonical(row.overseer_exec) as string;
@@ -654,7 +660,7 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
       }
     }
     if (tableExists('task_usage')) {
-      const rows = db.prepare("SELECT task_id, exec FROM task_usage WHERE exec != ''").all() as Array<{ task_id: string; exec: string }>;
+      const rows = tolerateMissingPluginTables(() => db.prepare("SELECT task_id, exec FROM task_usage WHERE exec != ''").all() as Array<{ task_id: string; exec: string }>, []);
       for (const row of rows) {
         const next = canonical(row.exec) as string;
         if (next !== row.exec) db.prepare('UPDATE task_usage SET exec = ? WHERE task_id = ?').run(next, row.task_id);
