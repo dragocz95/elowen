@@ -5,6 +5,16 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.11] - 2026-08-22
+
+The agent can hand you a file to download. Until now it could only write a link to one, which a browser
+will not follow from a web page, so the link rendered and the click did nothing; chat platforms had their
+own way to send a file and the web had none.
+
+The file is always delivered as a download and never rendered in place. An image is safe for a browser to
+display, but an arbitrary file produced by an agent is not — the case that prompted this was an HTML
+document, which shown inside the application's own page would have been free to act as part of it.
+
 ## [0.28.10] - 2026-08-22
 
 A daemon whose database predates the move of the agents tables out of core failed to start at all. The
