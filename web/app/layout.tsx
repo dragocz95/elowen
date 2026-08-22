@@ -5,7 +5,7 @@ import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
-import { fetchThemePayload, buildThemeStyle } from '../lib/brandServer';
+import { fetchThemePayload, buildThemeStyle, themeIcon } from '../lib/brandServer';
 import { fetchPluginUiListing, fetchMe, hasSessionCookie, readLocale } from '../lib/serverPrefetch';
 import { activeSkin } from '../lib/skins';
 
@@ -16,18 +16,34 @@ import { activeSkin } from '../lib/skins';
 // (exactly what happened when `next build` ran while the daemon was down).
 export const dynamic = 'force-dynamic';
 
-// Icons come from Next file conventions: app/icon.png → <link rel="icon"> and app/apple-icon.png →
-// <link rel="apple-touch-icon">. Do NOT set metadata.icons here — declaring it overrides the file
-// convention and drops the auto-generated favicon link.
-// Title and PWA name follow the instance brand (white-label theme), resolved per request so a theme
-// switch lands on the next reload without a rebuild.
+// Title, PWA name and icons follow the instance brand (white-label theme), resolved per request so a
+// theme switch lands on the next reload without a rebuild.
+//
+// Icons otherwise come from Next file conventions: app/icon.png → <link rel="icon"> and
+// app/apple-icon.png → <link rel="apple-touch-icon">. Declaring `metadata.icons` REPLACES that
+// convention wholesale, so it is declared only when the theme actually carries artwork — a themeless
+// install keeps the auto-generated links and renders exactly as before. When the theme does carry
+// icons, the same replacement is the point: leaving the convention in place would emit the bundled
+// Elowen favicon alongside the instance's own and let the browser pick either one.
 export async function generateMetadata() {
   const theme = await fetchThemePayload();
   const appName = theme.text.en?.appName ?? theme.brand.productName;
+  // The apple-touch icon is composited onto a home screen at ~180px, so it prefers the large artwork
+  // and falls back to the tab mark only when a theme ships nothing else.
+  const favicon = themeIcon(theme, 'icon');
+  const touchIcon = themeIcon(theme, 'icon192') ?? favicon;
   return {
     title: appName,
     manifest: '/manifest.webmanifest',
     appleWebApp: { capable: true, title: appName, statusBarStyle: 'black' as const },
+    ...(favicon || touchIcon
+      ? {
+        icons: {
+          ...(favicon ? { icon: [{ url: favicon }] } : {}),
+          ...(touchIcon ? { apple: [{ url: touchIcon }] } : {}),
+        },
+      }
+      : {}),
   };
 }
 

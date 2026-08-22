@@ -51,8 +51,11 @@ const quotesBalanced = (v: string): boolean =>
 
 const validFont = (v: string): boolean => FONT_STACK_RE.test(v) && quotesBalanced(v);
 
-/** A theme icon's browser URL (through the BFF proxy), or null when the theme does not carry it. */
-export function themeIcon(theme: ThemePayload, slot: 'icon192' | 'icon512'): string | null {
+/** A theme icon's browser URL (through the BFF proxy), or null when the theme does not carry it.
+ *  `icon` is the tab favicon; `icon192`/`icon512` are the installed-app and notification artwork. They
+ *  are separate slots because a theme may well want a compact mark in the tab and its full mascot on a
+ *  home screen. */
+export function themeIcon(theme: ThemePayload, slot: 'icon' | 'icon192' | 'icon512'): string | null {
   const path = theme.assets[slot];
   return path && THEME_ASSET_PATH_RE.test(path) ? themeAssetUrl(path) : null;
 }

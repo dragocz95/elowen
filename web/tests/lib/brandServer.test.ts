@@ -59,6 +59,19 @@ describe('themeIcon', () => {
     expect(themeIcon(theme({ assets: { icon512: 'https://evil.example/x.png' } }), 'icon512')).toBeNull();
     expect(themeIcon(BUILTIN_THEME, 'icon192')).toBeNull();
   });
+
+  // The tab favicon is its own slot: a theme may ship a compact mark for the tab and the full mascot
+  // for the home screen, and the root layout resolves the two independently.
+  it('resolves the favicon slot separately from the home-screen artwork', () => {
+    const both = theme({ assets: {
+      icon: '/public/theme/assets/icon.png?v=0123456789abcdef',
+      icon192: '/public/theme/assets/icon-192.png?v=0123456789abcdef',
+    } });
+    expect(themeIcon(both, 'icon')).toBe('/api/public/theme/assets/icon.png?v=0123456789abcdef');
+    expect(themeIcon(both, 'icon192')).toBe('/api/public/theme/assets/icon-192.png?v=0123456789abcdef');
+    // A theme carrying only home-screen artwork leaves the favicon to the bundled file convention.
+    expect(themeIcon(theme({ assets: { icon192: '/public/theme/assets/icon-192.png?v=0123456789abcdef' } }), 'icon')).toBeNull();
+  });
 });
 
 // fetchThemePayload holds module state (last-known-good + failure backoff), so each test imports a
