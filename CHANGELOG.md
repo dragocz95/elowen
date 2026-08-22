@@ -5,6 +5,46 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.9] - 2026-08-22
+
+People can sign in to the web UI with their Microsoft account. An instance handed to a team should not
+ask its members to keep a second password, so the sign-in button federates against the tenant the Teams
+integration is already configured for and reuses its credentials rather than asking for a second app
+registration.
+
+An account is recognised by its durable directory object id, stored in the same table the Teams
+integration already fills, so somebody who arrived through a chat and somebody who arrived through the
+browser are the same person without either path knowing about the other. Matching on the e-mail address
+is available as well, and an empty profile e-mail is filled in from the verified claim — but a
+non-empty one is never overwritten, because it may differ from the sign-in address deliberately and it
+also drives identity matching in chat, so silently repointing it is not this code's decision.
+
+An administrator can decide what a newly provisioned account starts with: its projects, the models it
+may use, its preferred model, the plugins granted to it, and the tools denied to it. Those defaults
+apply only when the account is created, so signing in never overwrites permissions that were tuned by
+hand afterwards, and an entry naming something that no longer exists is skipped rather than failing the
+sign-in. Guests of the directory are refused, and provisioning stays off unless it is turned on.
+
+Configuring any of that needed plugin settings to offer a picker over live instance data, so a manifest
+can now declare a field over projects, plugins, tools or models and get the same selection surface the
+user administration uses, instead of asking somebody to type identifiers into a text box.
+
+A plugin naming a field type this build does not know is no longer rejected outright. Field types arrive
+with new releases, so an older daemon would refuse the whole plugin — losing its platform, tools and
+routes — over a single control it could not draw. The unknown field is dropped from the form with a
+warning and the plugin keeps working; the stored value is left untouched and returns once the daemon is
+upgraded.
+
+A turn on Anthropic models could die in the middle of its work. The stream carrying the model's reply is
+observed to capture server-side search blocks for replay, and when that observer failed it tore down the
+stream it was only supposed to watch, destroying an answer that had already been generated. Capturing is
+now best-effort: a capture that cannot be trusted is abandoned with a logged reason, which is the same
+safe outcome as a reply that used no server-side search at all.
+
+The transcript reads as what actually happened. A run of tool calls is no longer broken apart by blank
+lines that made one reply look like several, and the web chat stamps the time once at the end of a turn
+instead of above every tool call inside it.
+
 ## [0.28.4] - 2026-08-17
 
 An administrator can now see who is consuming the instance, and from where. The question matters the
