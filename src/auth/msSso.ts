@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from 'jose';
-import { ExternalIdentityConflictError, type User, type UserStore } from '../store/userStore.js';
+import { EmailConflictError, ExternalIdentityConflictError, type User, type UserStore } from '../store/userStore.js';
 import type { UserSettingStore } from '../store/userSettingStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
@@ -275,6 +275,19 @@ export class MicrosoftSsoService {
       if (!user) {
         this.publish('sso.denied', subject, 'no_account');
         throw new MicrosoftSsoError('no_account');
+      }
+
+      // Backfill an EMPTY profile e-mail from the verified claim: a signed token from our own tenant is a
+      // better source than the self-service field. A non-empty one is never touched, because it may differ
+      // from the UPN deliberately and it also drives Teams identity matching — silently repointing that is
+      // not this code's call. An address another account already holds is left alone, not resolved by guesswork.
+      if (email && !user.email.trim()) {
+        try {
+          user = this.d.users.setProfile(user.id, { email }) ?? user;
+        } catch (error) {
+          if (!(error instanceof EmailConflictError)) throw error;
+          this.log.warn(`Microsoft SSO left user #${user.id} without an e-mail: ${email} already belongs to another account`);
+        }
       }
 
       const token = this.d.users.issueToken(user.id);

@@ -290,6 +290,46 @@ describe('Microsoft SSO routes', () => {
     expect((await response.json()).user.id).toBe(user?.id);
   });
 
+  it('backfills an empty profile email from the verified claim', async () => {
+    const { start, signFor, callback, users, user } = setup();
+    expect(users.get(user!.id)?.email).toBe('');
+    const flow = await start();
+    await signFor(flow.nonce, { email: ' Alice@Example.com ' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect(users.get(user!.id)?.email).toBe('Alice@Example.com');
+  });
+
+  it('never overwrites an email the account already has', async () => {
+    const { start, signFor, callback, users, user } = setup();
+    // A profile address may differ from the UPN on purpose, and it drives Teams identity matching too.
+    users.setProfile(user!.id, { email: 'chosen@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'upn@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect(users.get(user!.id)?.email).toBe('chosen@example.com');
+  });
+
+  it('signs in without an email when the claimed address belongs to another account', async () => {
+    const { start, signFor, callback, users, user } = setup();
+    const other = users.create('carol', 'secret');
+    users.setProfile(other.id, { email: 'taken@example.com' });
+    const flow = await start();
+    await signFor(flow.nonce, { email: 'taken@example.com' });
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).user.id).toBe(user?.id);
+    expect(users.get(user!.id)?.email).toBe('');
+    expect(users.get(other.id)?.email).toBe('taken@example.com');
+  });
+
   it('records a sanitized denial event for a guest token', async () => {
     const { start, signFor, callback, events } = setup();
     const flow = await start();
