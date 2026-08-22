@@ -10,7 +10,7 @@ import type { LocaleDict } from '../../lib/i18n/types';
 /** A short human verb for an event, from its type + status detail (moved here from the old EventStream).
  *  The detail is a status string ('open'/'closed'/'complete'/'active'/'paused'…) or a review verdict
  *  ('approved: …'/'escalated: …'). */
-function eventVerb(t: LocaleDict, type: string, detail: string): string {
+export function eventVerb(t: LocaleDict, type: string, detail: string): string {
   const e = t.dashboard.ev;
   if (type === 'review') return detail.startsWith('escalated') ? e.reviewEscalated : e.reviewApproved;
   if (type === 'mission') {
@@ -22,11 +22,22 @@ function eventVerb(t: LocaleDict, type: string, detail: string): string {
   if (type === 'message') return e.message;
   if (type === 'decision' || type === 'ask') return e.decision;
   if (type === 'signal') return detail === 'needs_input' ? e.needsInput : e.signal;
-  if (detail === 'open') return e.taskOpen;
-  if (detail === 'working' || detail === 'in_progress') return e.taskWorking;
-  if (detail === 'blocked') return e.taskBlocked;
-  if (detail === 'cancelled') return e.taskCancelled;
-  return e.taskDone;
+  if (type === 'sso.denied') return e.signInDenied;
+  if (type === 'sso.provision') return e.accountProvisioned;
+  if (type === 'sso.link') return e.accountLinked;
+  if (type === 'sso.login') return e.signedIn;
+  // The task ladder is reachable ONLY for a task row. It used to be the fallback for every type this
+  // function did not recognise, so a sign-in — and any `plugin:<name>` row — rendered as "task
+  // completed" beside a raw object id: the timeline confidently describing something that never
+  // happened. An unrecognised row now says only that something happened, which is all it knows.
+  if (type === 'task') {
+    if (detail === 'open') return e.taskOpen;
+    if (detail === 'working' || detail === 'in_progress') return e.taskWorking;
+    if (detail === 'blocked') return e.taskBlocked;
+    if (detail === 'cancelled') return e.taskCancelled;
+    return e.taskDone;
+  }
+  return e.activity;
 }
 
 function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {

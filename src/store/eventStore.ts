@@ -18,7 +18,10 @@ function coreToRow(e: ElowenEvent): EventPersistenceRow | null {
     case 'plan': return null; // transient job-status ping — not part of the persistent timeline
     // transient "your memory counters moved" nudge — memory_events is the durable record for memories
     case 'memory': return null;
-    case 'auth': return { type: e.kind, target: e.subject, detail: e.detail };
+    // The target stays the external identity, because that is what an audit trail has to pin down. The
+    // label carries the account name when one was resolved — a denied sign-in has no account yet, and
+    // then the identity IS the only honest thing to show.
+    case 'auth': return { type: e.kind, target: e.subject, detail: e.detail, label: e.label };
     // A plugin event lands in the timeline as `plugin:<name>` so the feed can filter per plugin; the
     // payload is the plugin's own JSON (rendered by its UI, opaque to the core).
     case 'plugin': return { type: `plugin:${e.plugin}`, target: e.kind, detail: JSON.stringify(e.data ?? null) };
@@ -61,7 +64,8 @@ export class EventStore {
     // Snapshot a human label now so the event still reads as a name after its task/epic is deleted
     // (events outlive tasks). The row names the task whose title labels it (task/review → the task,
     // mission → its epic); signal/plan rows carry no title id — the target already reads as a name.
-    const label = task?.title ?? '';
+    // A row that set `label` itself has no task behind it at all and wins outright.
+    const label = r.label ?? task?.title ?? '';
     this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, pid, label);
   }
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */

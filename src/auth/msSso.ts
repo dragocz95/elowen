@@ -239,7 +239,7 @@ export class MicrosoftSsoService {
               subjectId: identity.objectId,
               userId: tofuUserId,
             }).user;
-            this.publish('sso.link', subject, 'linked');
+            this.publish('sso.link', subject, 'linked', user.username);
           } catch (error) {
             if (error instanceof ExternalIdentityConflictError) {
               this.publish('sso.denied', subject, 'already_linked');
@@ -266,7 +266,7 @@ export class MicrosoftSsoService {
               subjectId: identity.objectId,
               userId: emailUser.id,
             }).user;
-            this.publish('sso.link', subject, 'linked');
+            this.publish('sso.link', subject, 'linked', user.username);
           } catch (error) {
             if (error instanceof ExternalIdentityConflictError) {
               this.publish('sso.denied', subject, 'already_linked');
@@ -292,7 +292,7 @@ export class MicrosoftSsoService {
           if (result.created) {
             this.assignDefaultProjects(user.id, cfg.defaultProjects);
             this.applyProvisioningDefaults(user.id, defaults);
-            this.publish('sso.provision', subject, 'provisioned');
+            this.publish('sso.provision', subject, 'provisioned', user.username);
           }
         } catch (error) {
           if (error instanceof ExternalIdentityConflictError) {
@@ -324,7 +324,7 @@ export class MicrosoftSsoService {
 
       const token = this.d.users.issueToken(user.id);
       void this.d.advisor?.()?.ensureOnLogin(user.id);
-      this.publish('sso.login', subject, 'linked');
+      this.publish('sso.login', subject, 'linked', user.username);
       return { token, user, tokenTtlDays: this.d.config.get().security.tokenTtlDays, next: flow.next };
     } catch (error) {
       if (error instanceof MicrosoftSsoError) {
@@ -575,7 +575,13 @@ export class MicrosoftSsoService {
     }
   }
 
-  private publish(kind: 'sso.login' | 'sso.provision' | 'sso.link' | 'sso.denied', subject: string, detail: string): void {
-    this.d.bus.publish({ type: 'auth', kind, subject, detail });
+  /** `label` is the account name, passed wherever one has already been resolved so the activity feed
+   *  names a person. A DENIAL deliberately passes none: there is no account behind it, and the external
+   *  identity is exactly what an operator needs to see in that case. */
+  private publish(
+    kind: 'sso.login' | 'sso.provision' | 'sso.link' | 'sso.denied',
+    subject: string, detail: string, label?: string,
+  ): void {
+    this.d.bus.publish({ type: 'auth', kind, subject, detail, label });
   }
 }

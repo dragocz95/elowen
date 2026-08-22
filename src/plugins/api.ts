@@ -723,12 +723,15 @@ export interface PluginReadinessCheck {
 /** One persisted activity-log row (see PluginContext.registerEventRowResolver). `labelTitleId`
  *  optionally names the TASK whose title should be snapshotted as the row's human label (and used as
  *  the project fallback for a direct record() call) — events outlive tasks, so the label is copied at
- *  write time. */
+ *  write time. `label` sets that human label DIRECTLY, for rows whose subject is not a task at all:
+ *  without it such a row falls back to printing its raw `target`, which for an identity event is an
+ *  object id nobody can read. It wins over `labelTitleId`; supplying both is pointless, not an error. */
 export interface EventPersistenceRow {
   type: string;
   target: string;
   detail: string;
   labelTitleId?: string | null;
+  label?: string;
 }
 
 /** Send-only view of the core PushSender (see PluginHost.push). */

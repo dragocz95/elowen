@@ -52,6 +52,17 @@ describe('EventStore', () => {
     expect(review!.label).toBe('Rewrite docs');
     expect(mission!.label).toBe('Docs autopilot');
   });
+  // An identity event has no task to borrow a label from, so without one the feed renders its target —
+  // an `<objectId>@<tenantId>` nobody can read. A denial deliberately keeps that raw identity: there is
+  // no account behind it yet, and the identity is the whole point of the audit row.
+  it('labels an auth event with the account name and leaves a denial to its raw identity', () => {
+    const subject = '383a727f-8742-4f0d-98ec-09ef10eb2eb4@5d321ea3-359c-40a8-b0c6-2314101886df';
+    events.record({ type: 'auth', kind: 'sso.login', subject, detail: 'linked', label: 'filip' });
+    events.record({ type: 'auth', kind: 'sso.denied', subject, detail: 'no_account' });
+    const [denied, login] = events.list(); // newest-first
+    expect([login!.type, login!.target, login!.label]).toEqual(['sso.login', subject, 'filip']);
+    expect([denied!.type, denied!.target, denied!.label]).toEqual(['sso.denied', subject, '']);
+  });
   it('leaves the label empty for signals and unknown tasks', () => {
     events.record({ type: 'signal', session: 'elowen-Juno', signal: { type: 'working' } });
     events.record({ type: 'task', taskId: 'ghost', status: 'open' });
