@@ -49,6 +49,23 @@ interface MicrosoftSsoConfig {
   linkByEmail: boolean;
   provision: 'off' | 'tenant';
   defaultProjects: number[];
+  defaultModels: string[];
+  defaultModel: string;
+  defaultPlugins: string[];
+  disabledTools: string[];
+}
+
+interface MicrosoftSsoCatalogs {
+  models(): Promise<readonly string[]>;
+  plugins(): Promise<readonly string[]>;
+  tools(): Promise<readonly string[]>;
+}
+
+interface ResolvedProvisioningDefaults {
+  allowedModels: string[];
+  defaultModel: string;
+  plugins: string[];
+  disabledTools: string[];
 }
 
 export interface MicrosoftOidcDiscovery {
@@ -80,6 +97,7 @@ export interface MicrosoftSsoDependencies {
   projects?: ProjectStore;
   userProjects?: UserProjectStore;
   project?: { id: number };
+  catalogs?: MicrosoftSsoCatalogs;
   clock: Clock;
   bus: EventBus;
   advisor?: () => AgentsAdvisorHooks | undefined;
@@ -89,6 +107,18 @@ export interface MicrosoftSsoDependencies {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(text).filter(Boolean))];
+}
+
+function projectIds(value: unknown): number[] {
+  const values = Array.isArray(value) ? value : text(value).split(',');
+  return [...new Set(values
+    .map((entry) => Number(text(entry)))
+    .filter((entry) => Number.isSafeInteger(entry) && entry > 0))];
 }
 
 function normalizedKey(value: unknown): string {
@@ -248,6 +278,7 @@ export class MicrosoftSsoService {
       }
       if (!user && cfg.provision === 'tenant') {
         await requireDirectoryMember();
+        const defaults = await this.resolveProvisioningDefaults(cfg);
         try {
           const result = this.d.users.linkExternalIdentity({
             provider: PROVIDER,
@@ -260,6 +291,7 @@ export class MicrosoftSsoService {
           user = result.user;
           if (result.created) {
             this.assignDefaultProjects(user.id, cfg.defaultProjects);
+            this.applyProvisioningDefaults(user.id, defaults);
             this.publish('sso.provision', subject, 'provisioned');
           }
         } catch (error) {
@@ -353,9 +385,6 @@ export class MicrosoftSsoService {
       if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('invalid');
       const base = url.toString().replace(/\/$/, '');
       const provision = raw.ssoProvision === 'tenant' ? 'tenant' : 'off';
-      const defaultProjects = [...new Set(text(raw.ssoDefaultProjects).split(',')
-        .map((value) => Number(value.trim()))
-        .filter((value) => Number.isSafeInteger(value) && value > 0))];
       return {
         appId,
         appPassword,
@@ -363,7 +392,11 @@ export class MicrosoftSsoService {
         redirectUri: `${base}/api/auth/sso/microsoft/callback`,
         linkByEmail: raw.ssoLinkByEmail !== false,
         provision,
-        defaultProjects,
+        defaultProjects: projectIds(raw.ssoDefaultProjects),
+        defaultModels: stringList(raw.ssoDefaultModels),
+        defaultModel: text(raw.ssoDefaultModel),
+        defaultPlugins: stringList(raw.ssoDefaultPlugins),
+        disabledTools: stringList(raw.ssoDisabledTools),
       };
     } catch {
       this.log.warn('Microsoft SSO disabled: ssoRedirectBase must be an absolute HTTPS URL');
@@ -459,6 +492,62 @@ export class MicrosoftSsoService {
       }
       this.d.userProjects.assign(userId, projectId);
     }
+  }
+
+  private async resolveProvisioningDefaults(cfg: MicrosoftSsoConfig): Promise<ResolvedProvisioningDefaults> {
+    let allowedModels: string[] = [];
+    let defaultModel = '';
+    const requestedModels = [...new Set([...cfg.defaultModels, cfg.defaultModel].filter(Boolean))];
+    if (requestedModels.length > 0) {
+      const knownModels = await this.knownDefaults('model', requestedModels, this.d.catalogs?.models);
+      allowedModels = cfg.defaultModels.filter((value) => knownModels.has(value));
+      if (cfg.defaultModel && knownModels.has(cfg.defaultModel)) {
+        if (cfg.defaultModels.length === 0 || allowedModels.includes(cfg.defaultModel)) defaultModel = cfg.defaultModel;
+        else this.log.warn(`Microsoft SSO ignored default model ${cfg.defaultModel}: it is not in the configured model allow-list`);
+      }
+    }
+
+    let plugins: string[] = [];
+    if (cfg.defaultPlugins.length > 0) {
+      const knownPlugins = await this.knownDefaults('plugin', cfg.defaultPlugins, this.d.catalogs?.plugins);
+      plugins = cfg.defaultPlugins.filter((value) => knownPlugins.has(value));
+    }
+
+    let disabledTools: string[] = [];
+    if (cfg.disabledTools.length > 0) {
+      const knownTools = await this.knownDefaults('tool', cfg.disabledTools, this.d.catalogs?.tools);
+      disabledTools = cfg.disabledTools.filter((value) => knownTools.has(value));
+    }
+    return { allowedModels, defaultModel, plugins, disabledTools };
+  }
+
+  private applyProvisioningDefaults(userId: number, defaults: ResolvedProvisioningDefaults): void {
+    if (defaults.allowedModels.length > 0) this.d.users.setAllowedExecs(userId, defaults.allowedModels);
+    if (defaults.defaultModel) this.d.users.setProfile(userId, { default_exec: defaults.defaultModel });
+    if (defaults.plugins.length > 0) this.d.users.setGrantedPlugins(userId, defaults.plugins);
+    if (defaults.disabledTools.length > 0) this.d.users.setDisabledTools(userId, defaults.disabledTools);
+  }
+
+  private async knownDefaults(
+    kind: 'model' | 'plugin' | 'tool',
+    requested: string[],
+    load: (() => Promise<readonly string[]>) | undefined,
+  ): Promise<Set<string>> {
+    if (!load) {
+      this.log.warn(`Microsoft SSO ignored configured default ${kind}s: the live catalog is unavailable`);
+      return new Set();
+    }
+    let known: Set<string>;
+    try {
+      known = new Set(await load());
+    } catch (error) {
+      this.log.warn(`Microsoft SSO ignored configured default ${kind}s: catalog lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      return new Set();
+    }
+    for (const value of requested) {
+      if (!known.has(value)) this.log.warn(`Microsoft SSO ignored unknown default ${kind} ${value}`);
+    }
+    return known;
   }
 
   private async exchangeCode(tokenEndpoint: string, cfg: MicrosoftSsoConfig, flow: Flow, code: string): Promise<string> {

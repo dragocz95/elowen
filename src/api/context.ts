@@ -1,5 +1,11 @@
 import { logger } from '../shared/logger.js';
 import { MemoryService } from '../brain/memoryService.js';
+import { brainConfigFromElowen } from '../brain/config.js';
+import { listBrainModels } from '../brain/models.js';
+import { builtinToolMetas } from '../brain/tools/index.js';
+import { discoverPlugins } from '../plugins/loader.js';
+import { elowenExec } from '../shared/execs.js';
+import { grantablePluginNames } from '../shared/pluginAccess.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import type { EventProjectDeps } from './eventProject.js';
 import type { Context, Hono } from 'hono';
@@ -75,6 +81,23 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     projects: d.projects,
     userProjects: d.userProjects,
     project: d.project,
+    catalogs: {
+      models: async () => {
+        const cfg = brainConfigFromElowen(d.config, d.brainAuth);
+        if (!cfg) return [];
+        return (await listBrainModels(cfg)).map((model) => elowenExec(model.provider, model.model));
+      },
+      plugins: async () => {
+        const removed = new Set(d.config.get().plugins.removed);
+        return grantablePluginNames(discoverPlugins(d.pluginDirs ?? [])
+          .map((plugin) => plugin.manifest)
+          .filter((manifest) => !removed.has(manifest.name)));
+      },
+      tools: async () => {
+        const registry = await d.plugins?.get();
+        return [...builtinToolMetas().map((tool) => tool.name), ...(registry?.tools ?? []).map((tool) => tool.name)];
+      },
+    },
     clock: d.clock,
     bus: d.bus,
     advisor: () => d.advisor,

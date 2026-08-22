@@ -43,7 +43,15 @@ interface SetupOptions {
   bind?: boolean;
   ssoLinkByEmail?: boolean;
   ssoProvision?: 'off' | 'tenant';
-  ssoDefaultProjects?: string;
+  ssoDefaultProjects?: string | string[];
+  ssoDefaultModels?: string[];
+  ssoDefaultModel?: string;
+  ssoDefaultPlugins?: string[];
+  ssoDisabledTools?: string[];
+  knownModels?: string[];
+  knownPlugins?: string[];
+  knownTools?: string[];
+  modelCatalog?: () => Promise<readonly string[]>;
   graphStatus?: number;
   graphUser?: { id?: string; userType?: string; accountEnabled?: boolean };
   graphFailure?: Error;
@@ -71,6 +79,10 @@ function setup(options: SetupOptions = {}) {
           ssoLinkByEmail: options.ssoLinkByEmail,
           ssoProvision: options.ssoProvision ?? 'off',
           ssoDefaultProjects: options.ssoDefaultProjects ?? '',
+          ssoDefaultModels: options.ssoDefaultModels,
+          ssoDefaultModel: options.ssoDefaultModel,
+          ssoDefaultPlugins: options.ssoDefaultPlugins,
+          ssoDisabledTools: options.ssoDisabledTools,
         },
       },
     },
@@ -109,6 +121,11 @@ function setup(options: SetupOptions = {}) {
     projects,
     userProjects,
     project: { id: 1 },
+    catalogs: {
+      models: options.modelCatalog ?? (async () => options.knownModels ?? []),
+      plugins: async () => options.knownPlugins ?? [],
+      tools: async () => options.knownTools ?? [],
+    },
     fetch: fetchImpl,
     keyResolver,
   });
@@ -540,12 +557,22 @@ describe('Microsoft SSO routes', () => {
     expect(users.count()).toBe(before);
   });
 
-  it('provisions a passwordless non-admin and grants only configured existing projects', async () => {
+  it.each([
+    ['legacy CSV', '1, 999, invalid'],
+    ['selection array', ['1', '999', 'invalid']],
+  ])('provisions a passwordless non-admin with defaults from the %s project shape', async (_shape, ssoDefaultProjects) => {
     const { start, signFor, callback, db, users, userProjects } = setup({
       oid: UNKNOWN_OID,
       bind: false,
       ssoProvision: 'tenant',
-      ssoDefaultProjects: '1, 999, invalid',
+      ssoDefaultProjects,
+      ssoDefaultModels: ['relay/gpt-5', 'elowen:removed/model'],
+      ssoDefaultModel: 'relay/gpt-5',
+      ssoDefaultPlugins: ['agents', 'removed-plugin'],
+      ssoDisabledTools: ['Bash', 'RemovedTool'],
+      knownModels: ['relay/gpt-5'],
+      knownPlugins: ['agents'],
+      knownTools: ['Bash'],
     });
     const before = users.count();
     const flow = await start();
@@ -557,14 +584,110 @@ describe('Microsoft SSO routes', () => {
 
     const response = await callback(flow.body.flowId, flow.state);
     const body = await response.json() as { user: { id: number; username: string; is_admin: boolean; name: string; email: string } };
+    const provisioned = users.get(body.user.id);
 
     expect(response.status).toBe(200);
     expect(users.count()).toBe(before + 1);
     expect(body.user).toMatchObject({ is_admin: false, name: 'New User', email: 'new.user@example.com' });
+    expect(provisioned).toMatchObject({
+      allowed_execs: ['relay/gpt-5'],
+      default_exec: 'relay/gpt-5',
+      granted_plugins: ['agents'],
+      disabled_tools: ['Bash'],
+    });
     expect(userProjects.forUser(body.user.id)).toEqual([1]);
     expect(db.prepare('SELECT 1 FROM user_projects WHERE project_id = 999').get()).toBeUndefined();
     expect(users.verify(body.user.username, 'new.user@example.com')).toBeNull();
     expect(users.verify(body.user.username, '')).toBeNull();
+  });
+
+  it('resolves defaults before creating the account so concurrent callbacks cannot observe unrestricted permissions', async () => {
+    let releaseCatalog!: () => void;
+    let firstCatalogStarted!: () => void;
+    let secondCatalogStarted!: () => void;
+    const catalogGate = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { firstCatalogStarted = resolve; });
+    const secondStarted = new Promise<void>((resolve) => { secondCatalogStarted = resolve; });
+    let catalogCalls = 0;
+    const { start, signFor, callback, users } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoProvision: 'tenant',
+      ssoDefaultModels: ['relay/gpt-5'],
+      modelCatalog: async () => {
+        catalogCalls += 1;
+        if (catalogCalls === 1) firstCatalogStarted();
+        if (catalogCalls === 2) secondCatalogStarted();
+        await catalogGate;
+        return ['relay/gpt-5'];
+      },
+    });
+    const firstFlow = await start();
+    await signFor(firstFlow.nonce);
+    const firstCallback = callback(firstFlow.body.flowId, firstFlow.state);
+    await firstStarted;
+    expect(users.count()).toBe(1);
+
+    const secondFlow = await start();
+    await signFor(secondFlow.nonce);
+    const secondCallback = callback(secondFlow.body.flowId, secondFlow.state);
+    await secondStarted;
+    expect(users.count()).toBe(1);
+
+    releaseCatalog();
+    const responses = await Promise.all([firstCallback, secondCallback]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(users.count()).toBe(2);
+    expect(users.externalIdentity('msteams', TENANT, UNKNOWN_OID)?.allowed_execs).toEqual(['relay/gpt-5']);
+  });
+
+  it('skips a preferred model outside the configured model allow-list', async () => {
+    const { start, signFor, callback, users } = setup({
+      oid: UNKNOWN_OID,
+      bind: false,
+      ssoProvision: 'tenant',
+      ssoDefaultModels: ['relay/gpt-5'],
+      ssoDefaultModel: 'relay/other',
+      knownModels: ['relay/gpt-5', 'relay/other'],
+    });
+    const flow = await start();
+    await signFor(flow.nonce);
+
+    const response = await callback(flow.body.flowId, flow.state);
+    const body = await response.json() as { user: { id: number } };
+
+    expect(response.status).toBe(200);
+    expect(users.get(body.user.id)).toMatchObject({ allowed_execs: ['relay/gpt-5'], default_exec: '' });
+  });
+
+  it('never applies provisioning defaults to an existing account', async () => {
+    const { start, signFor, callback, users, user } = setup({
+      ssoProvision: 'tenant',
+      ssoDefaultProjects: ['1'],
+      ssoDefaultModels: ['relay/gpt-5'],
+      ssoDefaultModel: 'relay/gpt-5',
+      ssoDefaultPlugins: ['agents'],
+      ssoDisabledTools: ['Bash'],
+      knownModels: ['relay/gpt-5'],
+      knownPlugins: ['agents'],
+      knownTools: ['Bash'],
+    });
+    users.setAllowedExecs(user!.id, ['sonnet']);
+    users.setDisabledTools(user!.id, ['Read']);
+    users.setGrantedPlugins(user!.id, ['work']);
+    users.setProfile(user!.id, { default_exec: 'opus' });
+    const flow = await start();
+    await signFor(flow.nonce);
+
+    const response = await callback(flow.body.flowId, flow.state);
+
+    expect(response.status).toBe(200);
+    expect(users.get(user!.id)).toMatchObject({
+      allowed_execs: ['sonnet'],
+      disabled_tools: ['Read'],
+      granted_plugins: ['work'],
+      default_exec: 'opus',
+    });
   });
 
   it('refuses provisioning cleanly when the email already belongs to an account', async () => {
