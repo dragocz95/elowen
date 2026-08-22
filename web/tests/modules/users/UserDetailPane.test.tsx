@@ -113,3 +113,51 @@ describe('UserDetailPane', () => {
     await waitFor(() => expect(unassigned).toEqual([1]));
   });
 });
+
+describe('UserDetailPane — editing name and username', () => {
+  it('sends both fields and shows the new identity', async () => {
+    server.use(http.get('*/api/users/2/projects', () => HttpResponse.json([])));
+    let sent: unknown = null;
+    server.use(http.patch('*/api/users/2', async ({ request }) => {
+      sent = await request.json();
+      return HttpResponse.json({ ...user(), name: 'Bob Novák', username: 'bob.novak' });
+    }));
+    mount(user());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit name' }));
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: '  Bob Novák  ' } });
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'bob.novak' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    // Whitespace is trimmed before it becomes a login credential.
+    await waitFor(() => expect(sent).toEqual({ name: 'Bob Novák', username: 'bob.novak' }));
+    await screen.findByText('Name saved');
+  });
+
+  it('names a taken username instead of the generic save error', async () => {
+    server.use(http.get('*/api/users/2/projects', () => HttpResponse.json([])));
+    server.use(http.patch('*/api/users/2', () => HttpResponse.json({ error: 'username taken' }, { status: 409 })));
+    mount(user());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit name' }));
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('That username is already taken')).toBeTruthy();
+    // The form stays open on a refusal so the admin can correct the name instead of retyping it.
+    expect(screen.getByLabelText('Username')).toBeTruthy();
+  });
+
+  it('will not submit an empty login name', async () => {
+    server.use(http.get('*/api/users/2/projects', () => HttpResponse.json([])));
+    let called = false;
+    server.use(http.patch('*/api/users/2', () => { called = true; return HttpResponse.json(user()); }));
+    mount(user());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit name' }));
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(called).toBe(false));
+  });
+});

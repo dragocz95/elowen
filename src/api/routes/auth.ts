@@ -17,7 +17,7 @@ import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflict
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import { sanitizeNavSettings } from '../../store/navSettings.js';
-import { EmailConflictError } from '../../store/userStore.js';
+import { EmailConflictError, UsernameConflictError } from '../../store/userStore.js';
 import type { User } from '../../store/userStore.js';
 import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -408,6 +408,16 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const target = users.get(id);
     if (!target) return c.json({ error: 'user not found' }, 404);
     const b = await parseBody(c, userPermissionsSchema);
+    // Identity first: a taken username aborts the whole patch with a 409 before anything else is written,
+    // so a rejected rename can never leave the other fields half-applied.
+    if (typeof b.username === 'string' && b.username.trim() !== target.username) {
+      try { users.setUsername(id, b.username); }
+      catch (e) {
+        if (e instanceof UsernameConflictError) return c.json({ error: 'username taken' }, 409);
+        throw e;
+      }
+    }
+    if (typeof b.name === 'string') users.setProfile(id, { name: b.name.trim() });
     if (typeof b.is_admin === 'boolean') {
       // Refuse to demote the last admin — it would lock out role/assignment management.
       if (!b.is_admin && target.is_admin && users.adminCount() <= 1) return c.json({ error: 'cannot demote the last admin' }, 400);

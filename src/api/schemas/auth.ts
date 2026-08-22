@@ -21,10 +21,18 @@ export const passwordChangeSchema = z.object({
   newPassword: z.string().min(8, 'new password too short (min 8)'),
 });
 
+/** A username is a login credential and must stay comparable, so creation and renaming share one rule
+ *  rather than drifting apart. The 64-char ceiling is well above `usernameStem`'s own 48. */
+export const usernameField = z.string().trim().min(1, 'username required').max(64, 'username too long');
+
 /** Admin edit of another user's role + model allow-list. Both optional; the handler applies each only
  *  when present and enforces the last-admin / global-allow-list rules. */
 export const userPermissionsSchema = z.object({
   is_admin: z.boolean().optional(),
+  /** Display name. Free text — it identifies nothing, so it carries no uniqueness rule. */
+  name: z.string().max(200, 'name too long').optional(),
+  /** Login name. Unique across accounts; the handler answers a collision with a 409. */
+  username: usernameField.optional(),
   allowed_execs: z.array(z.string()).optional(),
   /** Per-user tool deny-list: plugin tool names disabled for this user's own brain sessions. */
   disabled_tools: z.array(z.string()).optional(),
@@ -36,7 +44,7 @@ export const userPermissionsSchema = z.object({
  *  passwordChangeSchema) — so an admin-created account, and the bootstrap admin itself, can never ship
  *  with an empty or trivially weak password. Malformed/empty bodies surface as a 400 via parseBody. */
 export const userCreateSchema = z.object({
-  username: z.string().trim().min(1, 'username required'),
+  username: usernameField,
   password: z.string().min(8, 'password too short (min 8)'),
 });
 

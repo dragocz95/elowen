@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { FolderGit2, Cpu, Wrench, ShieldCheck, Puzzle } from 'lucide-react';
+import { FolderGit2, Cpu, Wrench, ShieldCheck, Puzzle, Pencil } from 'lucide-react';
 import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
@@ -8,6 +8,9 @@ import { allModels } from '../../lib/execPresets';
 import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { PROVIDERS, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
+import { ElowenApiError } from '../../lib/elowenClient';
+import { Input } from '../../components/ui/Input';
+import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -235,6 +238,57 @@ function PluginGrantChips({ user }: { user: ElowenUser }) {
   );
 }
 
+/** The identity line, editable in place. UsersView stops a non-admin before this ever renders and the
+ *  daemon 403s the route as well, so the control carries no gate of its own. A username is a login
+ *  credential: the daemon answers a collision with a 409 and writes nothing, which is surfaced here as a
+ *  named message rather than the generic save error, because it is the one failure an admin can act on. */
+function IdentityHeader({ user }: { user: ElowenUser }) {
+  const { t, locale } = useTranslation();
+  const { toast } = useToast();
+  const update = useUpdateUser();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(user.name);
+  const [username, setUsername] = useState(user.username);
+
+  function startEditing() {
+    // Seed from the user currently shown, not from whatever a previous edit left behind.
+    setName(user.name);
+    setUsername(user.username);
+    setEditing(true);
+  }
+
+  function save() {
+    const nextUsername = username.trim();
+    if (!nextUsername) return; // an empty login name is refused by the daemon too; don't even ask
+    update.mutate({ id: user.id, patch: { name: name.trim(), username: nextUsername } }, {
+      onSuccess: () => { setEditing(false); toast(t.users.identityUpdated); },
+      onError: (e) => toast(e instanceof ElowenApiError && e.status === 409 ? t.users.usernameTaken : String(e) || t.users.updateError, 'error'),
+    });
+  }
+
+  if (editing) return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+      <Input aria-label={t.users.fieldName} value={name} onChange={(e) => setName(e.target.value)} placeholder={t.users.fieldName} className="max-w-56" autoFocus />
+      <Input aria-label={t.users.fieldUsername} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t.users.fieldUsername} className="max-w-56" />
+      <Button onClick={save} disabled={update.isPending || !username.trim()}>{t.common.save}</Button>
+      <Button variant="ghost" onClick={() => setEditing(false)} disabled={update.isPending}>{t.common.cancel}</Button>
+    </div>
+  );
+
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex items-center gap-2">
+        <span className="truncate text-base font-semibold text-text">{user.name || user.username}</span>
+        {user.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
+        <button type="button" onClick={startEditing} aria-label={t.users.editIdentity} className="shrink-0 rounded-md p-1 text-text-muted opacity-60 hover:bg-elevated hover:text-text hover:opacity-100">
+          <Pencil size={13} aria-hidden />
+        </button>
+      </span>
+      <span className="truncate font-mono text-xs text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
+    </div>
+  );
+}
+
 /** The detail for a selected user: an identity header carrying a compact overview strip (memories /
  *  sessions / top model) beside the name, then full-width admin access controls — projects, allowed
  *  models, and the effective tool set (whose plugin tools toggle on/off per user). */
@@ -244,18 +298,12 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
   globalExecs: string[];
   customModels: { label: string; exec: string }[];
 }) {
-  const { t, locale } = useTranslation();
+  const { t } = useTranslation();
   return (
     <div>
       <header className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-border pb-4">
         <Avatar user={user} size={52} />
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-base font-semibold text-text">{user.name || user.username}</span>
-            {user.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
-          </span>
-          <span className="truncate font-mono text-xs text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
-        </div>
+        <IdentityHeader user={user} />
         {/* Overview stats sit inline beside the identity, pushed to the right on wide layouts. */}
         <div className="ml-auto"><UserStatsInline userId={user.id} /></div>
       </header>

@@ -137,3 +137,43 @@ describe('POST /admin/cleanup — the daemon-owned operational wipe', () => {
     expect(cleanup).toHaveBeenCalledWith('m-elowen-paused-ep');
   });
 });
+
+describe('PATCH /users/:id — admin edits name and username', () => {
+  it('renames the account: the login name follows, the session and the id do not', async () => {
+    const { app, users, bob, bobTok, adminTok } = await setup();
+
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, { name: 'Bob Novák', username: 'bob.novak' }));
+    expect(res.status).toBe(200);
+
+    const after = users.get(bob.id)!;
+    expect(after.username).toBe('bob.novak');
+    expect(after.name).toBe('Bob Novák');
+    // A username is a login credential, so the rename must move it -- and nothing else.
+    expect(users.verify('bob.novak', 'pw')?.id).toBe(bob.id);
+    expect(users.verify('bob', 'pw')).toBeNull();
+    // The session keys on the user id, so an admin rename must not sign the person out.
+    const me = await app.request('/auth/me', auth(bobTok));
+    expect(me.status).toBe(200);
+  });
+
+  it('refuses a username another account already holds, and writes NOTHING when it does', async () => {
+    const { app, users, admin, bob, adminTok } = await setup();
+
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, { username: admin.username, name: 'Should Not Land', is_admin: true }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'username taken' });
+
+    // The rejected rename is checked first precisely so the rest of the patch cannot half-apply.
+    const after = users.get(bob.id)!;
+    expect(after.username).toBe('bob');
+    expect(after.name).toBe('');
+    expect(after.is_admin).toBe(false);
+  });
+
+  it('rejects an empty username instead of storing a blank login name', async () => {
+    const { app, users, bob, adminTok } = await setup();
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, { username: '   ' }));
+    expect(res.status).toBe(400);
+    expect(users.get(bob.id)!.username).toBe('bob');
+  });
+});

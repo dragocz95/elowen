@@ -69,6 +69,14 @@ export class EmailConflictError extends Error {
     this.name = 'EmailConflictError';
   }
 }
+/** Raised when a username is already held by another account. Unlike e-mail this is a LOGIN credential,
+ *  so a duplicate would not just confuse attribution — it would make `verify` ambiguous. */
+export class UsernameConflictError extends Error {
+  constructor(public readonly username: string) {
+    super(`username ${username} is already taken`);
+    this.name = 'UsernameConflictError';
+  }
+}
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
 type ExternalIdentityRow = Row & { external_provider: string; external_tenant_id: string; external_subject_id: string; external_created_at: string };
 const canonicalExec = (value: unknown): string => {
@@ -327,6 +335,24 @@ export class UserStore {
   /** Self-service profile fields (name / email / preferred default executor). Only provided keys
    *  are written, so a partial update leaves the rest untouched. A normalized non-empty e-mail may belong
    *  to only one account because Teams uses it solely as a guarded first-contact identity bootstrap. */
+  /** Rename an account's login name. Deliberately separate from `setProfile`, which is self-service:
+   *  a username is what `verify` matches on, so only an admin route may reach this. Nothing else in the
+   *  schema references a username — sessions, SSO bindings and every other row key on `users.id` — so a
+   *  rename changes what the person types at the login form and nothing more. */
+  setUsername(id: number, username: string): User | null {
+    const next = username.trim();
+    if (!next) throw new Error('username required');
+    return this.db.transaction(() => {
+      if (!this.get(id)) return null;
+      try { this.db.prepare('UPDATE users SET username = ? WHERE id = ?').run(next, id); }
+      catch (error) {
+        if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') throw new UsernameConflictError(next);
+        throw error;
+      }
+      return this.get(id);
+    }).immediate();
+  }
+
   setProfile(id: number, patch: { name?: string; email?: string; default_exec?: string }): User | null {
     return this.db.transaction(() => {
       const sets: string[] = []; const p: Record<string, unknown> = { id };
