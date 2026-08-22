@@ -101,6 +101,11 @@ function persistTools(db, spec, tools) {
   db.prepare(sql).run(...params);
 }
 
+// An INSTANCE server is not a tool the caller may be granted — it is an ownerless shared resource that
+// runs for everybody at instance authority. A plugin grant cannot express that, and if it tried, any
+// granted account could create something running beyond its own permissions. So this stays an
+// administrator decision on purpose: it is an invariant about ownerless objects, not a leftover gate
+// from before permissions were unified. A PERSONAL server needs only an account, and runs as that account.
 function ownerForScope(ctx, scope) {
   const identity = ctx.currentIdentity();
   if (scope === 'instance') {
@@ -120,7 +125,13 @@ function specForOwner(ownerUserId, name) {
 
 /** A stdio server is arbitrary local process execution, regardless of whether its row is labelled
  * personal or instance. Only an administrator of this instance may create or start one. Remote HTTP/SSE
- * servers do not execute a caller-supplied command on this host, so a linked account may keep those personal. */
+ * servers do not execute a caller-supplied command on this host, so a linked account may keep those personal.
+ *
+ * This is the same authority a shell needs, and the shell is now handed out by granting `terminal`. The
+ * obvious next step — accept a terminal grant here too — is deliberately NOT taken: a plugin cannot read
+ * another plugin's grant, and inventing a cross-plugin grant API for one gate would buy a coupling far
+ * more expensive than the gate. An administrator who wants to give somebody local process execution
+ * grants them `terminal`, which is a strictly more capable and more visible way to say the same thing. */
 function assertTransportAuthority(ctx, spec) {
   if (transportKind(spec) === 'stdio' && ctx.currentIdentity()?.owner !== true) {
     throw new Error('local-process MCP servers can be managed only by administrators of this instance');
