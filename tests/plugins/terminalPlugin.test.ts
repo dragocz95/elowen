@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -632,4 +632,76 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     await read;
     expect(Date.now() - started).toBeLessThan(10_000); // released on the kill, not after 120s
   }, 20_000);
+});
+
+// The shell used to honour the project boundary only for the directory a command STARTED in: once running,
+// it read and wrote any absolute path, so a non-admin granted `terminal` could read the daemon's own config
+// database (provider keys live there in plaintext) or another account's project. These run the sandbox for
+// real rather than asserting on the argv, because the argv being right is not the property that matters.
+//
+// Skipped where bubblewrap is absent: the sandbox is refused rather than bypassed there (the plugin fails
+// closed), so there is nothing to observe.
+describe.skipIf(!existsSync('/usr/bin/bwrap'))('terminal plugin — sandboxing a non-admin shell', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  let outside: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    dir = tmpDir('term-sbx');
+    outside = tmpDir('term-sbx-other');
+    await writeFile(join(outside, 'secret.txt'), 'another-accounts-data');
+  });
+
+  it('cannot read a path outside its own projects, including the daemon checkout', async () => {
+    const res = await runWithPolicy(
+      userPolicy([dir]),
+      () => runTool(reg, 'Bash', { command: `cat ${join(outside, 'secret.txt')}; ls ${repoRoot}` }),
+      { identity: owner },
+    );
+    expect(res.content[0].text).not.toContain('another-accounts-data');
+    expect(res.content[0].text).not.toContain('package.json');
+  });
+
+  it('works normally inside its own project', async () => {
+    const res = await runWithPolicy(
+      userPolicy([dir]),
+      () => runTool(reg, 'Bash', { command: 'echo written > f.txt && cat f.txt && node -e "console.log(1+1)"' }),
+      { identity: owner },
+    );
+    expect(res.content[0].text).toContain('written');
+    expect(res.content[0].text).toContain('2');
+  });
+
+  it('closes privilege escalation regardless of the host sudoers file', async () => {
+    const res = await runWithPolicy(
+      userPolicy([dir]),
+      () => runTool(reg, 'Bash', { command: 'grep NoNewPrivs /proc/self/status' }),
+      { identity: owner },
+    );
+    expect(res.content[0].text).toContain('NoNewPrivs:\t1');
+  });
+
+  // The counterpart that proves the tests above measure the sandbox and not some unrelated failure: the
+  // same command, same file, unconfined.
+  it('leaves an admin shell unconfined', async () => {
+    const res = await runWithPolicy(
+      adminPolicy,
+      () => runTool(reg, 'Bash', { command: `cat ${join(outside, 'secret.txt')}` }),
+      { identity: owner },
+    );
+    expect(res.content[0].text).toContain('another-accounts-data');
+  });
+
+  it('honours the administrator turning the sandbox off', async () => {
+    const off = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { sandboxNonAdmins: false } },
+    });
+    const res = await runWithPolicy(
+      userPolicy([dir]),
+      () => runTool(off, 'Bash', { command: `cat ${join(outside, 'secret.txt')}` }),
+      { identity: owner },
+    );
+    expect(res.content[0].text).toContain('another-accounts-data');
+  });
 });

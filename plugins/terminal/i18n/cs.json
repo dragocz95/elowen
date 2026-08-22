@@ -1,6 +1,14 @@
 {
-  "description": "Spouštění shellových příkazů (na popředí i na pozadí) s pracovním adresářem omezeným na repozitáře, ke kterým má uživatel přístup. Procesy na pozadí se spravují nástroji list/read/kill.",
+  "description": "Spouštění shellových příkazů (na popředí i na pozadí) s pracovním adresářem omezeným na repozitáře, ke kterým má uživatel přístup. Procesy na pozadí se spravují nástroji list/read/kill. Je-li izolace zapnutá, běží příkazy účtů bez oprávnění správce v odděleném prostředí obsahujícím pouze projekty přiřazené danému účtu, takže shell ctí stejnou hranici jako nástroje pro práci se soubory. Shell správce se neomezuje nikdy.",
   "fields": {
+    "sec_isolation": {
+      "label": "Izolace",
+      "hint": "Jak jsou omezeny příkazy účtů bez oprávnění správce."
+    },
+    "sandboxNonAdmins": {
+      "label": "Izolovat příkazy účtů bez oprávnění správce",
+      "hint": "Spouštět shellové příkazy uživatele bez oprávnění správce v odděleném prostředí, které obsahuje pouze projekty přiřazené danému účtu, takže shell nemůže číst ani zapisovat na zbytek stroje. Zároveň je znemožněno zvýšení oprávnění: programy se setuid pozbývají účinku, takže sudo je odmítnuto. Vývojové nástroje, síť i vlastní projekty účtu zůstávají plně dostupné. Shell správce se neizoluje nikdy. Vyžaduje na serveru nástroj bubblewrap; bez něj je shell uživateli bez oprávnění správce odepřen, místo aby běžel neomezeně."
+    },
     "sec_limits": {
       "label": "Limity",
       "hint": "Limity velikosti výstupu a časového limitu pro shellové příkazy."

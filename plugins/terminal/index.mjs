@@ -3,15 +3,20 @@
 // registry keeps spawned children + their rolling output, and the
 // list/read/kill tools manage them.
 //
-// NOTE: cwd guarding does NOT contain a shell that reads absolute paths outside the repo (e.g. the prod
-// config DB), so holding these tools means holding the host. That is why the plugin is `userGrantable`
-// and carries NO gate of its own: an account reaches the shell only when an administrator granted it (or
-// is an administrator), which is the same decision, made in one place, that governs every other tool.
-// Granting it to somebody is granting them the machine, secrets included.
+// The plugin is `userGrantable` and carries NO gate of its own: an account reaches the shell only when an
+// administrator granted it (or is an administrator), which is the same decision, made in one place, that
+// governs every other tool.
+//
+// cwd guarding alone does NOT contain a shell — the command reads and writes any absolute path once it is
+// running. For a NON-ADMIN that gap is closed by sandbox.mjs, which runs the command inside a mount
+// namespace holding only that account's own projects, so the shell and the file tools enforce the same
+// boundary. An ADMIN shell stays bare on purpose: an admin already has all-access file tools and can edit
+// the daemon's own source, so confining their shell buys nothing and breaks operator work.
 import { defineTool, truncateTail, formatSize, createLocalBashOperations } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { sandboxRun, sandboxAvailable } from './sandbox.mjs';
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
 const DEFAULT_TIMEOUT_MS = 120_000;      // foreground runs get killed after this
@@ -50,8 +55,11 @@ const bashOps = createLocalBashOperations();
 
 /** One background child: rolling output buffer + exit state, addressable by a short id. */
 class BgProcess {
-  constructor(id, command, cwd, outputCap, onClose) {
+  constructor(id, command, cwd, outputCap, onClose, launch) {
     this.id = id;
+    // What the caller asked for — shown in listings and cards. `launch` is what is actually spawned, which
+    // for a sandboxed account is the bwrap invocation wrapping it. They must stay separate: the model and
+    // the process card should read the command as written, not the wrapper.
     this.command = command;
     this.cwd = cwd;
     this.output = '';
@@ -62,7 +70,7 @@ class BgProcess {
     // daemon's. Without it, `shell: true` runs `/bin/sh -c "<cmd>"` and kill() would only reap the shell —
     // any grandchild (e.g. the `sleep`/dev-server the shell forked) is orphaned to init and keeps running.
     // With its own group we can signal the whole tree via `process.kill(-pid)` in kill().
-    this.child = spawn(command, { cwd, shell: true, env: process.env, detached: true });
+    this.child = spawn(launch.command, { cwd, shell: true, env: launch.env, detached: true });
     // Streaming UTF-8 decoders: a multibyte character delivered across two `data` events is held until
     // complete, so the rolling buffer never contains a U+FFFD from a chunk boundary (a plain per-chunk
     // `d.toString()` would corrupt it). stdout and stderr are TWO independent pipes that interleave at
@@ -99,9 +107,10 @@ class BgProcess {
  *  leave the process running. Its field shape matches BgProcess so `handleFor` registers it unchanged;
  *  on detach the plugin flips the handle's completionMode to 'job' and it becomes an ordinary process. */
 class ForegroundRun {
-  constructor(id, command, cwd, outputCap, timeoutMs) {
+  constructor(id, command, cwd, outputCap, timeoutMs, launch) {
     this.id = id;
-    this.command = command;
+    this.command = command;   // as written by the caller; `launch` is what actually runs (see BgProcess)
+    this.launch = launch;
     this.cwd = cwd;
     this.startedAt = new Date().toISOString();
     this.output = '';
@@ -162,7 +171,7 @@ class ForegroundRun {
     // built-in timeout had.
     this._timer = setTimeout(() => { this.timedOut = true; this.controller.abort(); }, this.timeoutMs);
     try {
-      const res = await bashOps.exec(this.command, this.cwd, { onData, env: process.env, signal: this.controller.signal, timeout: undefined });
+      const res = await bashOps.exec(this.launch.command, this.cwd, { onData, env: this.launch.env, signal: this.controller.signal, timeout: undefined });
       this.exitCode = res.exitCode;
     } catch (e) {
       // An abort (deadline OR registry kill) surfaces as a throw; exitCode stays null so the run reads as
@@ -247,11 +256,33 @@ export function register(ctx) {
   // re-established every run — an explicit `cwd` from one call never carries into the next.
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
+  const sandboxEnabled = ctx.config.sandboxNonAdmins !== false;
+
+  /** Decide how a command is actually launched. Admins run bare; everyone else runs confined to their own
+   *  projects. The admin test is `isAdminSession()` and never "has no roots": allowedRoots() is empty for
+   *  an admin AND for a non-admin with no project assigned, so treating an empty list as admin would hand
+   *  the unconfined host to exactly the account with the least access. */
+  const prepareLaunch = (command, cwd) => {
+    if (!sandboxEnabled || ctx.isAdminSession()) return { command, env: process.env };
+    // Fail closed. The sandbox depends on a distro-provided AppArmor profile for unprivileged bubblewrap;
+    // if that ever goes away the shell must break loudly rather than quietly run unconfined.
+    if (!sandboxAvailable()) {
+      throw new Error('the shell is unavailable: this host cannot sandbox commands (bubblewrap is missing), and running unconfined is not permitted for a non-administrator');
+    }
+    return sandboxRun({
+      command,
+      cwd,
+      roots: ctx.allowedRoots(),
+      dataDir: ctx.dataDir(),
+      userId: ctx.currentIdentity?.()?.elowenUserId ?? null,
+    });
+  };
+
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
     description: [
       'Execute a shell command in a real shell and return its combined stdout and stderr with the exit code.',
-      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. Reaching it at all means an administrator granted this account the terminal plugin, so treat that trust accordingly.',
+      'Treat it as the most dangerous tool available: nothing here asks for confirmation, so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. Reaching it at all means an administrator granted this account the terminal plugin, so treat that trust accordingly.',
       'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
@@ -286,7 +317,7 @@ export function register(ctx) {
           // that don't stream (background path never uses it — it has ProcessOutput instead).
           const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
           const id = newProcessId();
-          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs);
+          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs, prepareLaunch(p.command, cwd));
           // Register the run as `foreground` so Ctrl+B (which reads the live process list) can detach it,
           // and so a detach flips the SAME handle to `job` — an ordinary background process from then on,
           // with no further special-casing. A sessionless (worker/cron) run stays plain and non-detachable:
@@ -346,7 +377,7 @@ export function register(ctx) {
         // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
         // which is undefined → the wake never fired).
         const userId = ctx.currentIdentity?.()?.elowenUserId ?? null;
-        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId); ctx.processes.markExited(id); });
+        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId); ctx.processes.markExited(id); }, prepareLaunch(p.command, cwd));
         ctx.processes.register(handleFor(id, bg, userId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
         emitProcCard();
         return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse ProcessOutput("${id}") to check on it.`);
