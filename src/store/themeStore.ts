@@ -87,6 +87,10 @@ const NAME_MAX = 60;
 export interface ThemeManifest {
   displayName: string;
   brand: ThemeBrand;
+  /** Whether the workspace hero may render its WebGL mascot scene (default true). A brand whose mascot
+   *  is a flat illustration usually reads better as a plain image than as a sprite in a particle field,
+   *  and until this flag the only way to suppress the scene was shipping a `mascot.svg` it did not want. */
+  mascotScene: boolean;
   colors: Record<string, string>;
   fonts: { sans?: string; mono?: string };
   /** Per-locale shallow UI text overrides (documented key: `appName`). */
@@ -139,6 +143,9 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
   if (agentName) brand.agentName = agentName;
   if (productName) brand.productName = productName;
 
+  if (raw.mascotScene !== undefined && typeof raw.mascotScene !== 'boolean') throw new Error('mascotScene must be a boolean');
+  const mascotScene = raw.mascotScene === undefined ? true : raw.mascotScene;
+
   const colors: Record<string, string> = {};
   if (raw.colors !== undefined) {
     if (!isRecord(raw.colors)) throw new Error('colors must be an object');
@@ -180,7 +187,7 @@ export function sanitizeThemeManifest(raw: unknown): ThemeManifest {
     }
   }
 
-  return { displayName, brand, colors, fonts, text };
+  return { displayName, brand, mascotScene, colors, fonts, text };
 }
 
 interface CacheEntry {

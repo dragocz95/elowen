@@ -26,7 +26,10 @@ export const fetchThemePayload = cache(async (): Promise<ThemePayload> => {
     const payload: ThemePayload = {
       brand: { agentName: body.brand.agentName, productName: body.brand.productName },
       colors: body.colors ?? {}, fonts: body.fonts ?? {}, text: body.text ?? {},
-      assets: body.assets ?? {}, v: typeof body.v === 'string' ? body.v : 'builtin',
+      assets: body.assets ?? {},
+      // A daemon older than the flag simply omits it, and the scene is the historical default.
+      mascotScene: body.mascotScene !== false,
+      v: typeof body.v === 'string' ? body.v : 'builtin',
     };
     failedAt = 0;
     lastKnown = payload;

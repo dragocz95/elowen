@@ -12,7 +12,7 @@ export function BrandProvider({ theme, children }: { theme: ThemePayload; childr
 
 /** The resolved brand for the CURRENT locale: display names plus the mascot/logo sources every
  *  component should render instead of the hardcoded Elowen assets. */
-export function useBrand(): { appName: string; agentName: string; iconSrc: string; logoSrc: string; mascotSrc: string; mascotAnimated: boolean } {
+export function useBrand(): { appName: string; agentName: string; iconSrc: string; logoSrc: string; mascotSrc: string; mascotAnimated: boolean; mascotScene: boolean } {
   const theme = useBrandTheme();
   const locale = useLocaleSafe();
   const appName = theme.text[locale]?.appName ?? theme.brand.productName;
@@ -31,5 +31,7 @@ export function useBrand(): { appName: string; agentName: string; iconSrc: strin
     // itself then, since a texture snapshot would freeze the very animation the asset exists for.
     mascotSrc: asset(theme.assets.mascot, iconSrc),
     mascotAnimated: !!theme.assets.mascot && THEME_ASSET_PATH_RE.test(theme.assets.mascot),
+    // Independent of the assets: a theme may keep the static mascot and still refuse the 3D scene.
+    mascotScene: theme.mascotScene !== false,
   };
 }

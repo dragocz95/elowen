@@ -16,12 +16,15 @@ export interface ThemePayload {
    *  alone. Keeping them apart is what lets a brand put a compact mark in the tab without it turning
    *  up on the avatar. */
   assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>>;
+  /** Whether the workspace hero may render its WebGL mascot scene. False keeps the mascot a plain
+   *  image — for a brand whose artwork is a flat illustration rather than a sprite. */
+  mascotScene: boolean;
   v: string;
 }
 
 export const BUILTIN_THEME: ThemePayload = {
   brand: { agentName: 'Elowen', productName: 'Elowen' },
-  colors: {}, fonts: {}, text: {}, assets: {}, v: 'builtin',
+  colors: {}, fonts: {}, text: {}, assets: {}, mascotScene: true, v: 'builtin',
 };
 
 /** The browser reaches daemon paths through the same-origin BFF proxy. */

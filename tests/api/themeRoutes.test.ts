@@ -53,6 +53,21 @@ describe('GET /public/theme', () => {
     expect(body.v).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  // The flag is worthless unless it survives the whole way to the browser, and this route is the only
+  // place it crosses out of the daemon. Both directions pinned: the default must reach a theme that
+  // never mentions it, and an explicit false must not be dropped as "just a default".
+  it('carries mascotScene, defaulting to true and honouring an explicit false', async () => {
+    const read = async () => ((await (await (await makeApp()).app.request('/public/theme')).json()) as { mascotScene: boolean }).mascotScene;
+    expect(await read()).toBe(true); // no theme active at all
+    writeTheme('acme');
+    activate('acme');
+    expect(await read()).toBe(true); // theme.json says nothing about it
+    writeFileSync(join(dir, 'acme', 'theme.json'), JSON.stringify({
+      displayName: 'Acme', brand: { agentName: 'Acme Bot', productName: 'Acme' }, mascotScene: false,
+    }));
+    expect(await read()).toBe(false);
+  });
+
   it('an explicit configured agentName still wins over the theme in the public payload', async () => {
     writeTheme('acme');
     activate('acme');

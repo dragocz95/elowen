@@ -41,6 +41,15 @@ describe('sanitizeThemeManifest', () => {
     expect(() => sanitizeThemeManifest({ ...valid, version: 2 })).toThrow(/version/);
   });
 
+  // The hero's WebGL mascot scene is on unless a theme opts out. Pinned because the default has to hold
+  // for every theme written before the flag existed, and a typo'd value must fail loudly instead of
+  // reading as falsy and silently stripping the scene from an instance that wanted it.
+  it('defaults mascotScene to true, accepts false and rejects a non-boolean', () => {
+    expect(sanitizeThemeManifest(valid).mascotScene).toBe(true);
+    expect(sanitizeThemeManifest({ ...valid, mascotScene: false }).mascotScene).toBe(false);
+    expect(() => sanitizeThemeManifest({ ...valid, mascotScene: 'no' })).toThrow(/mascotScene/);
+  });
+
   it('rejects malformed text overrides (locale and key grammar)', () => {
     expect(() => sanitizeThemeManifest({ ...valid, text: { CZE: {} } })).toThrow(/locale/);
     expect(() => sanitizeThemeManifest({ ...valid, text: { cs: { '<img>': 'x' } } })).toThrow(/dictionary key/);

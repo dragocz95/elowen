@@ -217,6 +217,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     fonts: { sans?: string; mono?: string };
     text: Record<string, Record<string, string>>;
     assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>>;
+    mascotScene: boolean;
     v: string;
   } => {
     const active = activeThemeName();
@@ -236,6 +237,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       fonts: theme?.manifest.fonts ?? {},
       text: theme?.manifest.text ?? {},
       assets,
+      mascotScene: theme?.manifest.mascotScene ?? true,
       v: theme ? theme.version : 'builtin',
     };
   };

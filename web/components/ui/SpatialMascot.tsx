@@ -60,12 +60,14 @@ const SpatialMascotScene = dynamic(
 let sceneWarmedUp = false;
 
 /** Lazy WebGL identity scene with the original mascot visible as an immediate static fallback.
- *  A theme carrying an ANIMATED mascot (mascot.svg) skips the WebGL layer entirely: the scene would
- *  snapshot the SVG into a static texture, freezing the very animation the asset exists for, while
- *  the <img> path keeps its CSS animations (blinking etc.) running. */
+ *  Two ways a theme opts out, and the layer must never mount in either: a theme carrying an ANIMATED
+ *  mascot (mascot.svg) would have its animation frozen into a static texture by the scene, and a theme
+ *  can also switch the scene off outright (`mascotScene: false`) to show its artwork as a plain image.
+ *  Hiding the canvas in CSS is NOT equivalent — the scene still runs, and once it reports ready the
+ *  static fallback unmounts, leaving an empty hero. */
 export function SpatialMascot({ state = 'idle' }: { state?: SpatialMascotState }) {
-  const { appName, mascotSrc, mascotAnimated } = useBrand();
-  const renderWebGl = process.env.NODE_ENV !== 'test' && !mascotAnimated;
+  const { appName, mascotSrc, mascotAnimated, mascotScene } = useBrand();
+  const renderWebGl = process.env.NODE_ENV !== 'test' && mascotScene && !mascotAnimated;
   // On a warm navigation the scene is already primed, so start ready with no fallback: show the WebGL layer
   // straight away and let it repaint (fast when warm) instead of flashing the plain static icon + crossfade.
   const warm = sceneWarmedUp && renderWebGl;
