@@ -95,18 +95,23 @@ Roles are the coarse layer. The powerful part is what sits underneath them:
 Beyond the admin/member role, an admin controls two allow-lists **per user** on
 the [Users](web-ui) page:
 
+- **Plugin grants (`granted_plugins`)** — a plugin marked `userGrantable` reaches
+  nobody until an admin grants it to that account (admins have them all). This is
+  how a shell is handed out: `terminal` is grant-gated, so an account without the
+  grant has no `Bash` at all. Granting it means granting the host — a shell reads
+  and writes any absolute path, so projects do not contain it.
 - **Per-user tools (`disabled_tools`)** — turn individual brain tools off for a
-  specific person. Every capability in Elowen is a tool ([Plugins](plugins)
-  register them): grant one user `terminal` + `files` and give another only
-  chat. Disable `terminal` for a junior member and they simply won't have shell
-  access, no matter what they ask the agent to do.
+  specific person. This SUBTRACTS from what the account already has; it cannot add
+  a tool from a plugin that was never granted, and such a tool shows as
+  *unavailable* in the modal rather than as something to switch on.
 - **Per-user models (`allowed_execs`)** — restrict which executors that user may
   run, narrower than the global `allowedExecs` in [Settings](configuration). An
   empty list means "unrestricted within the global list" — adding entries
   NARROWS the user to just those, it does not widen anything.
 
 The Users detail pane renders each user's live tool access as pills, so you see
-the real, computed result of role + disabled tools without reasoning it out.
+the real, computed result of role + plugin grants + disabled tools without
+reasoning it out.
 Give one teammate a full engineering toolkit, another a chat-only account, all
 from one pane, all auto-saved.
 

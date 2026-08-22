@@ -47,9 +47,11 @@ export interface TurnIdentity {
   /** Full-access (all-access policy) turn — unlocks project-scoped power tools. NOT sufficient for
    *  owner-only surfaces: a foreign platform member mapped to an admin role also lands here. */
   admin: boolean;
-  /** The turn is genuinely the instance OPERATOR — their own chat, their linked platform account, or
-   *  their own automation (cron). Owner-only surfaces (private long-term memory, the raw Discord API)
-   *  gate on THIS, never on `admin`, so an admin-role stranger can't reach the operator's private state. */
+  /** The turn belongs to an account that ADMINISTERS this instance — the configured operator or any
+   *  account with `users.is_admin` — through their own chat, their linked platform account, or their own
+   *  automation (cron). Surfaces that need instance authority (the raw Discord API, MCP instance and
+   *  stdio servers) gate on THIS, never on `admin`, so an admin-role stranger cannot reach them. The bit
+   *  is minted from the linked ACCOUNT, never from a room role. See src/shared/instanceOperator.ts. */
   owner: boolean;
   /** WHERE this turn is happening, as one value a plugin can branch on without re-deriving it from a
    *  session id (which cannot distinguish a private DM from a shared room):

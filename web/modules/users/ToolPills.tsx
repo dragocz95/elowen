@@ -35,16 +35,28 @@ export function ToolPills({ userId }: { userId: number }) {
 
   const groupLabelOf = (x: UserToolPill) =>
     x.plugin ?? (x.group === 'memory' ? t.managePicker.toolGroupMemory : t.managePicker.toolGroupElowen);
-  const items: ManageSelectionItem[] = all.map((x) => ({
-    id: x.name,
-    label: x.name,
-    group: x.plugin ?? x.group,
-    groupLabel: groupLabelOf(x),
-    icon: <Icon tool={x} />,
-    badges: x.toggleable ? undefined : [{ text: t.managePicker.builtIn, tone: 'muted' as const }],
-    disabled: !x.toggleable,
-    disabledHint: x.toggleable ? undefined : t.managePicker.builtInHint,
-  }));
+  // Two different reasons a row cannot be toggled, and they must not look alike: `inherited` is a
+  // built-in everyone has, while `unavailable` is a plugin tool this account was never granted. Showing
+  // the latter as "built-in" told the admin the user HAD a tool they cannot run.
+  const items: ManageSelectionItem[] = all.map((x) => {
+    const ungranted = x.state === 'unavailable';
+    const badge = ungranted ? t.managePicker.notGranted : t.managePicker.builtIn;
+    const hint = ungranted ? t.managePicker.notGrantedHint : t.managePicker.builtInHint;
+    return {
+      id: x.name,
+      label: x.name,
+      group: x.plugin ?? x.group,
+      groupLabel: groupLabelOf(x),
+      icon: <Icon tool={x} />,
+      badges: x.toggleable ? undefined : [{ text: badge, tone: 'muted' as const }],
+      disabled: !x.toggleable,
+      disabledHint: x.toggleable ? undefined : hint,
+    };
+  });
+
+  // ONE definition of "checked", used both to seed the modal and to read a save back. When these two
+  // drifted apart, an untouched row looked changed and silently entered the deny-list.
+  const isChecked = (x: UserToolPill) => x.state !== 'disabled' && x.state !== 'unavailable';
 
   // The PATCH replaces the deny-list wholesale. Start from the current deny-set (exactly the
   // toggleable tools reported `disabled`) and apply only the CHANGED toggles, so tools the admin
@@ -53,9 +65,8 @@ export function ToolPills({ userId }: { userId: number }) {
     const deny = new Set(all.filter((x) => x.toggleable && x.state === 'disabled').map((x) => x.name));
     for (const x of all) {
       if (!x.toggleable) continue;
-      const wasOn = x.state !== 'disabled';
       const isOn = next.has(x.name);
-      if (isOn === wasOn) continue;
+      if (isOn === isChecked(x)) continue;
       if (isOn) deny.delete(x.name); else deny.add(x.name);
     }
     try {
@@ -85,9 +96,9 @@ export function ToolPills({ userId }: { userId: number }) {
         open={open}
         onClose={() => setOpen(false)}
         items={items}
-        // Checked = "not in the deny-list" (state !== disabled), mirroring what a save computes —
-        // so an untouched `unavailable` tool round-trips without silently entering the deny-list.
-        selected={new Set(all.filter((x) => x.state !== 'disabled').map((x) => x.name))}
+        // Checked = the account can actually run it. `disabled` is the admin's explicit no; `unavailable`
+        // means the plugin was never granted, so a checked box would claim access that does not exist.
+        selected={new Set(all.filter(isChecked).map((x) => x.name))}
         onSave={handleSave}
         saving={update.isPending}
         countLabel={(n) => t.managePicker.toolsSelected.replace('{n}', String(n))}

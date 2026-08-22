@@ -87,10 +87,16 @@ symlinks and checks the path is within the user's allowed project roots.
 The web plugin checks DNS resolution against private IP ranges before
 fetching URLs. Rate-limited to prevent abuse.
 
-### Owner-only tools
+### Tools that need more than a room role
 
-Certain tools (`DiscordApi`, `Bash` in shared channels) are gated
-to the true owner (`identity.owner === true`), not merely admin roles.
+`identity.owner === true` means the account administers this instance — the platform
+owner or any account with `users.is_admin`. It is derived from the linked Elowen
+ACCOUNT, never from an admin-mapped role in a chat room, so being a moderator of a
+shared channel grants nothing here.
+
+`DiscordApi` and the MCP instance/stdio gates still require it. `Bash` does NOT: the
+terminal plugin is `userGrantable`, so an administrator hands it to a specific account
+in the users modal, and that grant is what a shell now depends on.
 
 ### Secrets handling
 

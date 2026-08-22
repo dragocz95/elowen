@@ -610,7 +610,7 @@ function registerManagementTools(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'AddMcpServer', label: 'Add MCP server',
-    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores remote HTTP/SSE servers for the acting account only; instance shares them across the instance and is restricted to the instance owner. A stdio server RUNS the supplied command as a local process and is therefore restricted to the instance owner regardless of scope.',
+    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores remote HTTP/SSE servers for the acting account only; instance shares them across the instance and is restricted to administrators. A stdio server RUNS the supplied command as a local process and is therefore restricted to administrators regardless of scope.',
     parameters: Type.Object({
       scope: scopeSchema,
       name: nameSchema,

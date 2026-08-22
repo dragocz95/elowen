@@ -875,6 +875,8 @@ export const en = {
     toolsSubtitle: 'Enable or disable plugin tools for this user.',
     builtIn: 'built-in',
     builtInHint: 'Built-in tool — cannot be toggled.',
+    notGranted: 'not granted',
+    notGrantedHint: 'This user has not been granted the plugin that provides this tool, so they cannot run it. Grant the plugin to make it available.',
     toolGroupElowen: '{productName}',
     toolGroupMemory: 'Memory',
     groupChannels: 'Channels',

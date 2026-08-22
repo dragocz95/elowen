@@ -875,6 +875,8 @@ export const cs = {
     toolsSubtitle: 'Zapněte nebo vypněte plugin nástroje pro tohoto uživatele.',
     builtIn: 'vestavěný',
     builtInHint: 'Vestavěný nástroj — nelze vypnout.',
+    notGranted: 'nepřiděleno',
+    notGrantedHint: 'Uživateli nebyl přidělen plugin, který tento nástroj poskytuje, takže jej nemůže spustit. Zpřístupníte jej přidělením pluginu.',
     toolGroupElowen: '{productName}',
     toolGroupMemory: 'Paměť',
     groupChannels: 'Kanály',

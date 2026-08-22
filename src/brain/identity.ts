@@ -56,7 +56,7 @@ export class IdentityResolver {
 
   /** Rehydrate the original identity of an idle delegated child. The child is never reinterpreted as
    * the account owner merely because that account owns its SQLite row: only the captured origin-owner
-   * bit survives, and even that is meaningful only for the configured instance operator. */
+   * bit survives, and even that is meaningful only for an account administering the instance. */
   forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity {
     return {
       platform: 'subagent',

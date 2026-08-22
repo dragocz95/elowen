@@ -229,8 +229,9 @@ export interface SessionSource {
      *  node's dependency results as one string meant the per-chunk bound applied to all of them joined,
      *  and a wide fan-in lost most of its input to the clip. */
     context?: string | string[];
-    /** True only when the ORIGINAL delegating turn belongs to the instance operator. `admin` is project
-     *  scope and is deliberately insufficient: a foreign platform role may be admin without being owner. */
+    /** True only when the ORIGINAL delegating turn belongs to an account administering this instance.
+     *  `admin` is project scope and is deliberately insufficient: a foreign platform role may be admin
+     *  without administering anything. */
     owner?: boolean;
     /** The Elowen account this automation turn acts FOR (a scheduled job somebody owns). The host uses
      *  it for account attribution and personal deny-lists; shared/delegated authority still comes from

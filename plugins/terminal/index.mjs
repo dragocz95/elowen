@@ -297,8 +297,8 @@ export function register(ctx) {
             const userId = ctx.currentIdentity?.()?.elowenUserId ?? null;
             handle = handleFor(id, run, userId, fgSession, 'foreground');
             ctx.processes.register(handle);
-            // Terminal tools are owner-only, so the principal is always the operator — match what
-            // BrainService sends on the detach control (`elowen:<userId>`).
+            // The principal is the account actually running the turn — match what BrainService sends
+            // on the detach control (`elowen:<userId>`).
             foregroundRuns.set(id, { run, sessionId: fgSession, principal: userId !== null ? `elowen:${userId}` : null });
           }
           const execPromise = run.run(onProgress);
@@ -359,7 +359,7 @@ export function register(ctx) {
     description: [
       'List the background shell processes of THIS conversation — the ones started with Bash(background=true) or moved to the background with Ctrl+B — with each process id, whether it is still RUNNING or has exited (and with which code), when it started and the command line.',
       'Use it to recover a process id you no longer have, to check what is still running before starting another dev server or watcher, and before KillProcess so you kill the right one. It takes no arguments and cannot be pointed at another conversation or at arbitrary system processes: a command still running in the FOREGROUND is deliberately not listed, and neither is anything you did not start here.',
-      'It reports state only — read a process\'s output with ProcessOutput and stop one with KillProcess. Like every terminal tool it is available to the verified operator only, and a background sub-agent is a different thing entirely (see DelegateList).',
+      'It reports state only — read a process\'s output with ProcessOutput and stop one with KillProcess. A background sub-agent is a different thing entirely (see DelegateList).',
     ].join(' '),
     parameters: Type.Object({}),
     execute: async () => {
@@ -382,7 +382,7 @@ export function register(ctx) {
       'Pass all=true for the whole buffer from process start.',
       `Pass block=true to WAIT for the process to finish instead of polling: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running. Use it whenever you need a finite command's result — never call this in a polling loop.`,
       'The process id comes from the Bash call that started it; use ListProcesses if you no longer have it. Only processes of THIS conversation are readable, and the buffer keeps the last part of the output — an extremely chatty process loses its earliest lines.',
-      'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult — and, like every terminal tool, it is available to the verified operator only.',
+      'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
     ].join(' '),
     parameters: Type.Object({
       id: Type.String({ description: 'Process id returned by Bash(background=true)' }),
@@ -421,7 +421,7 @@ export function register(ctx) {
       'Stop a background shell process of this conversation by id — a dev server, watcher or build you no longer need, or one that is stuck.',
       'The process id comes from the Bash(background=true) call that started it, or from ListProcesses when you no longer have it; only processes started in THIS conversation can be killed, and an unknown id is reported back as an error rather than killing anything.',
       'This is IRREVERSIBLE and abrupt: the whole process group is SIGKILLed, so the shell and everything it forked die immediately with no chance to shut down cleanly or flush — a killed build or migration can leave partial state behind. Read what it has produced with ProcessOutput first if the output still matters, because the entry is dropped afterwards and its buffer is gone.',
-      'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput block=true), and never to kill processes you did not start. Terminal tools are available to the verified operator only.',
+      'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput block=true), and never to kill processes you did not start.',
     ].join(' '),
     parameters: Type.Object({
       id: Type.String({ description: 'Process id from Bash(background=true) or ListProcesses. The process group is SIGKILLed immediately and its output buffer is discarded.' }),

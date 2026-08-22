@@ -461,18 +461,35 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     for (const m of builtinToolMetas()) {
       pills.push({ name: m.name, label: m.label, icon: iconOf(m.name) ?? null, plugin: null, group: m.group, state: 'inherited', toggleable: false });
     }
-    for (const t of registry?.tools ?? []) {
-      // Plugin tools are toggleable per-user: allowed unless the admin disabled them for this user.
+    // Mirror what PluginRegistry.toolsFor composes for THIS account: an instance-wide tool, or a personal
+    // one this account owns. Another account's personal tool (a personal MCP server's bridged tools) must
+    // not be listed here at all — it can never reach this user's session, and listing it also duplicated
+    // any name a personal tool deliberately shadows.
+    const chosen = new Map<string, { tool: { name: string; label?: string }; personal: boolean }>();
+    for (let i = 0; i < (registry?.tools.length ?? 0); i++) {
+      const tool = registry!.tools[i]!;
+      const ownerUserId = registry!.toolOwnerUsers[i] ?? null;
+      if (ownerUserId !== null && ownerUserId !== id) continue;
+      const personal = ownerUserId !== null;
+      const prior = chosen.get(tool.name);
+      if (!prior || (personal && !prior.personal)) chosen.set(tool.name, { tool, personal });
+    }
+    for (const { tool: t } of chosen.values()) {
+      // Two independent inputs decide a plugin tool, and the account must be able to see both:
       //
-      // A grant-gated plugin comes FIRST though, because it decides whether the tool exists for this
-      // account at all: without the grant the tool never reaches their session, so calling it "allowed"
-      // here described a permission they do not have. That is `unavailable` — the state this list has
-      // always been able to express — and there is nothing to toggle, since the deny-list cannot subtract
-      // from something already withheld. Granting the plugin is what changes it, in the panel next door.
+      // `disabled` is the admin's own choice for this user and is reported FIRST, even when the grant is
+      // missing. It has to be: this list is the editor for that choice, and the PATCH it drives replaces
+      // the deny-list wholesale — so a tool reported as anything but `disabled` silently drops OUT of the
+      // deny-list on the next save. Hiding an existing "no" behind a missing grant would quietly re-enable
+      // the tool the moment the grant came back.
+      //
+      // `unavailable` is the other input: the plugin was never granted, so the tool cannot reach this
+      // account's session whatever the deny-list says. Nothing to toggle there — granting the plugin in
+      // the panel next door is what changes it.
       const plugin = registry?.toolOwner.get(t.name) ?? null;
       const granted = !plugin || isPluginAllowedForUser(target, { name: plugin, userGrantable: registry?.userGrantable.has(plugin) });
-      const state: ToolState = !granted ? 'unavailable' : disabled.has(t.name) ? 'disabled' : 'allowed';
-      pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin, group: 'plugin', state, toggleable: granted });
+      const state: ToolState = disabled.has(t.name) ? 'disabled' : !granted ? 'unavailable' : 'allowed';
+      pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin, group: 'plugin', state, toggleable: state !== 'unavailable' });
     }
     // Allowed first, then inherited, then disabled/unavailable; alphabetical within each band.
     const rank: Record<ToolState, number> = { allowed: 0, inherited: 1, disabled: 2, unavailable: 3 };

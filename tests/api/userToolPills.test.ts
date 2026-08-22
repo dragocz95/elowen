@@ -9,7 +9,8 @@ import { PluginRegistry } from '../../src/plugins/registry.js';
  *  It matters most for `terminal`, which is grant-gated precisely because a shell is the whole host. */
 type Pill = { name: string; plugin: string | null; state: string; toggleable: boolean };
 
-function registryWith(): PluginRegistry {
+/** `strangerId` owns a personal tool: index-parallel to `tools`, exactly as the loader builds it. */
+function registryWith(strangerId: number | null): PluginRegistry {
   const reg = new PluginRegistry();
   reg.tools.push({ name: 'Bash', label: 'Run command' } as unknown as PluginRegistry['tools'][number]);
   reg.tools.push({ name: 'OpenTool', label: 'Open' } as unknown as PluginRegistry['tools'][number]);
@@ -17,11 +18,18 @@ function registryWith(): PluginRegistry {
   reg.toolOwner.set('Bash', 'terminal');
   reg.toolOwner.set('OpenTool', 'open');
   reg.userGrantable.add('terminal');
+  if (strangerId !== null) {
+    reg.tools.push({ name: 'SomeonesPersonalTool', label: 'Theirs' } as unknown as PluginRegistry['tools'][number]);
+    reg.toolOwnerUsers.push(strangerId);
+    reg.toolOwner.set('SomeonesPersonalTool', 'open');
+  }
   return reg;
 }
 
-async function pillsFor(grants: string[], isAdmin = false): Promise<Map<string, Pill>> {
-  const reg = registryWith();
+async function pillsFor(
+  grants: string[], isAdmin = false, denied: string[] = [], strangerId: number | null = null,
+): Promise<Map<string, Pill>> {
+  const reg = registryWith(strangerId);
   const { app, deps } = await makeTestApp({
     userProjects: true,
     extra: { plugins: { get: async () => reg, peek: () => reg } as never },
@@ -31,6 +39,7 @@ async function pillsFor(grants: string[], isAdmin = false): Promise<Map<string, 
   const target = deps.users.create('josef', 'pw');
   if (grants.length) deps.users.setGrantedPlugins(target.id, grants);
   if (isAdmin) deps.users.setAdmin(target.id, true);
+  if (denied.length) deps.users.setDisabledTools(target.id, denied);
   const res = await app.request(`/users/${target.id}/tools`, {
     headers: { authorization: `Bearer ${deps.users.issueToken(admin.id)}` },
   });
@@ -58,5 +67,22 @@ describe('the tool list an admin sees for one account', () => {
   it('needs no grant for an administrator, who reaches the host anyway', async () => {
     const pills = await pillsFor([], true);
     expect(pills.get('Bash')?.state).toBe('allowed');
+  });
+
+  // The admin's explicit "no" outranks a missing grant in this list, and it has to: the PATCH this list
+  // drives replaces the deny-list wholesale, so a denied tool reported as anything else would silently
+  // drop out of the deny-list on the next save — and come back enabled the moment the grant returned.
+  it('keeps reporting an explicit deny even when the grant is gone', async () => {
+    const pills = await pillsFor([], false, ['Bash']);
+    expect(pills.get('Bash')?.state).toBe('disabled');
+    expect(pills.get('Bash')?.toggleable).toBe(true);
+  });
+
+  // Another account's personal tool can never reach this user's session, so it must not be listed as
+  // something they hold — PluginRegistry.toolsFor filters it out and this list has to agree.
+  it('never lists a personal tool belonging to somebody else', async () => {
+    const pills = await pillsFor([], false, [], 4242);
+    expect(pills.has('SomeonesPersonalTool')).toBe(false);
+    expect(pills.has('OpenTool')).toBe(true);
   });
 });

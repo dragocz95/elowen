@@ -34,6 +34,26 @@ describe('ToolPills', () => {
     expect(screen.queryByText('discord_read')).toBeNull();
   });
 
+  // An ungranted plugin tool cannot be run by this account. Showing it checked, with the same "built-in"
+  // badge an inherited memory tool gets, told the admin the user HELD a tool they cannot invoke — the
+  // exact lie the API stopped telling, moved one layer up.
+  it('shows an ungranted tool as unavailable, not as a checked built-in', async () => {
+    mountWith([
+      tool({ name: 'Bash', plugin: 'terminal', state: 'unavailable', toggleable: false }),
+      tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
+    ]);
+    expect(await screen.findByText('1 of 2 tools enabled · 1 plugins')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /manage/i }));
+
+    const bash = await screen.findByRole('button', { name: /Bash/ });
+    // aria-pressed also drives the accent highlight, so a wrong value both misreports and mis-styles it.
+    expect(bash.getAttribute('aria-pressed')).toBe('false');
+    expect(bash.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('not granted')).toBeTruthy();
+    // The inherited built-in keeps its own wording; the two reasons must not look alike.
+    expect(screen.getByText('built-in')).toBeTruthy();
+  });
+
   it('renders a sample chip with the manifest emoji icon', async () => {
     mountWith([tool({ name: 'discord_send', label: 'Send', icon: '💬', plugin: 'discord' })]);
     expect(await screen.findByText('discord_send')).toBeTruthy();

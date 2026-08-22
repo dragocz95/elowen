@@ -766,8 +766,8 @@ export interface ModelUsage {
 
 /** Whether a user can reach a tool. `allowed` = they can invoke it; `inherited` = granted by session
  *  role (e.g. memory tools every session gets), not a per-user grant; `disabled` = an admin switched
- *  this plugin tool off for the user; `unavailable` = out of reach (e.g. the operator-only Elowen*
- *  control plane for a non-admin). */
+ *  this plugin tool off for the user; `unavailable` = the plugin providing it was never granted to
+ *  this user, so it cannot reach their session at all and there is nothing to toggle. */
 type UserToolState = 'allowed' | 'inherited' | 'disabled' | 'unavailable';
 
 /** One tool on the users-panel access overview. `icon` is a manifest/built-in emoji, or null → the

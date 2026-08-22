@@ -869,6 +869,8 @@ export const sk = {
     toolsSubtitle: 'Zapnite alebo vypnite nástroje pluginu pre tohto používateľa.',
     builtIn: 'vstavaný',
     builtInHint: 'Vstavaný nástroj — nemožno vypnúť.',
+    notGranted: 'nepridelené',
+    notGrantedHint: 'Používateľovi nebol pridelený plugin, ktorý tento nástroj poskytuje, takže ho nemôže spustiť. Sprístupníte ho pridelením pluginu.',
     toolGroupElowen: '{productName}',
     toolGroupMemory: 'Pamäť',
     groupChannels: 'Kanály',
