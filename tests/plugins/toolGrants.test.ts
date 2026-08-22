@@ -54,4 +54,37 @@ describe('per-user plugin grants on brain tools', () => {
     // A deleted or unknown account must fail closed: "no row" is not "no restrictions".
     expect(deniedToolsForUser(deps(undefined, registry()), 999)).toEqual(['GatedRead', 'GatedWrite']);
   });
+
+  // A grant is enforced TWICE by design: `toolsFor` keeps the tool out of the session, and the deny-list
+  // refuses it at execute time for any set composed another way (a delegated child, a channel turn). That
+  // is defense in depth over ONE fact — both ask `isPluginAllowedForUser` — but two enforcement points can
+  // still be edited apart, and then a tool would be composed in while the deny-list called it forbidden,
+  // or worse, composed in with nothing denying it. Pin the agreement rather than the implementations.
+  describe('the two enforcement points agree', () => {
+    const withTools = (): PluginRegistry => {
+      const r = registry();
+      for (const name of ['GatedRead', 'GatedWrite', 'OpenTool']) {
+        r.tools.push({ name } as unknown as PluginRegistry['tools'][number]);
+        r.toolOwnerUsers.push(null); // instance-wide, so only the GRANT decides
+      }
+      return r;
+    };
+
+    it('composes exactly the tools the deny-list does not withhold', () => {
+      for (const u of [
+        { is_admin: false, granted_plugins: [] },
+        { is_admin: false, granted_plugins: ['gated'] },
+        { is_admin: true, granted_plugins: [] },
+      ]) {
+        const r = withTools();
+        const composed = r.toolsFor(5, u).map((t) => t.name);
+        const denied = ungrantedPluginTools(u, r);
+        // Nothing may be both composed and denied for the same reason...
+        expect(composed.filter((n) => denied.includes(n)), JSON.stringify(u)).toEqual([]);
+        // ...and nothing grant-gated may slip through both.
+        expect([...composed, ...denied].sort(), JSON.stringify(u))
+          .toEqual(['GatedRead', 'GatedWrite', 'OpenTool']);
+      }
+    });
+  });
 });
