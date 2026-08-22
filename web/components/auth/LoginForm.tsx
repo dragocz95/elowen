@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLogin } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
@@ -27,7 +26,21 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const login = useLogin();
-  const providers = useQuery({ queryKey: ['sso-providers'], queryFn: elowenClient.ssoProviders });
+  // The provider list is PUBLIC instance metadata, not session data, so it deliberately does not live in
+  // the react-query cache: any 401 calls clearToken(), and LoginGate's AUTH_CLEARED_EVENT handler answers
+  // with qc.clear(), wiping the cache wholesale. The login screen provokes those 401s itself (/auth/me,
+  // /config) while this list is in flight, so it was a race the list usually LOST — measured live, clear
+  // ran at 160ms and 168ms against a response at 178ms. A cached list is dropped on arrival when its
+  // query is already gone, and nothing refetches it, so the button silently never appeared.
+  const [ssoProviders, setSsoProviders] = useState<{ id: string; label: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void elowenClient.ssoProviders()
+      .then((list) => { if (!cancelled) setSsoProviders(list); })
+      // No reachable provider list means SSO is simply not offered; the password form stands on its own.
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
   const { toast } = useToast();
   const { t } = useTranslation();
   const brand = useBrand();
@@ -66,7 +79,7 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
   const currentTarget = typeof window === 'undefined'
     ? '/'
     : safeSsoNext(`${window.location.pathname}${window.location.search}`);
-  const showMicrosoft = (providers.data?.length ?? 0) > 0;
+  const showMicrosoft = ssoProviders.length > 0;
 
   return (
     <div className="flex h-screen items-center justify-center bg-bg">

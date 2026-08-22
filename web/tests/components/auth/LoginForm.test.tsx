@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { LoginForm } from '../../../components/auth/LoginForm';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
@@ -22,8 +22,8 @@ afterEach(() => {
 afterAll(() => server.close());
 
 function renderLoginForm(onAuthed = () => {}) {
-  const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><LoginForm onAuthed={onAuthed} /></ToastProvider></Wrapper>);
+  const { client, wrapper: Wrapper } = createWrapper();
+  return { client, ...render(<Wrapper><ToastProvider><LoginForm onAuthed={onAuthed} /></ToastProvider></Wrapper>) };
 }
 
 describe('LoginForm', () => {
@@ -59,5 +59,19 @@ describe('LoginForm', () => {
     renderLoginForm();
     const link = await screen.findByRole('link', { name: /Microsoft/i });
     expect(link).toHaveAttribute('href', '/api/auth/sso/microsoft/start?next=%2Fdash%3Ftab%3Done');
+  });
+
+  // The login screen provokes its own 401s (/auth/me, /config), and each one ends in LoginGate calling
+  // qc.clear(). Measured against the live instance, both landed BEFORE the provider list did: clear at
+  // 160ms and 168ms, response at 178ms. A cache-backed list is discarded on arrival because the query
+  // holding it no longer exists, and nothing refetches it — so the button never appears at all.
+  it('shows the Microsoft button when a 401 elsewhere clears the cache mid-flight', async () => {
+    server.use(http.get('*/api/auth/sso/providers', async () => {
+      await delay(50);
+      return HttpResponse.json([{ id: 'msteams', label: 'Microsoft' }]);
+    }));
+    const { client } = renderLoginForm();
+    await act(async () => { client.clear(); });
+    expect(await screen.findByRole('link', { name: /Microsoft/i })).toBeTruthy();
   });
 });
