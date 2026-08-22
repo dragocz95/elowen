@@ -2,6 +2,7 @@ import { writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { stripControlChars } from '../../shared/text.js';
+import { parseMascotArt } from './mascotArt.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
@@ -61,9 +62,11 @@ export function workModeNotice(mode: BrainWorkMode, agentName = 'Elowen'): strin
 }
 
 /** The instance's user-facing brand from the unauthenticated GET /public/theme. `themed` distinguishes
- *  a white-labeled daemon (the CLI then drops the built-in flame art) from the stock Elowen brand. */
-export interface PublicBrand { agentName: string; productName: string; themed: boolean }
-export const DEFAULT_PUBLIC_BRAND: PublicBrand = { agentName: 'Elowen', productName: 'Elowen', themed: false };
+ *  a white-labeled daemon (whose rebrand the built-in flame art would contradict) from the stock Elowen
+ *  brand, and `mascotArt` carries that instance's own art when its theme ships one — already parsed and
+ *  re-emitted by {@link parseMascotArt}, so it is safe to write to a terminal. */
+export interface PublicBrand { agentName: string; productName: string; themed: boolean; mascotArt: string[] | null }
+export const DEFAULT_PUBLIC_BRAND: PublicBrand = { agentName: 'Elowen', productName: 'Elowen', themed: false, mascotArt: null };
 export interface BrainRateLimitWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 export interface BrainRateLimits {
   provider: string;
@@ -461,14 +464,37 @@ export class BrainClient {
         signal: this.lifetimeSignal ? AbortSignal.any([timeout, this.lifetimeSignal]) : timeout,
       });
       if (!res.ok) return DEFAULT_PUBLIC_BRAND;
-      const body = (await res.json()) as { brand?: { agentName?: unknown; productName?: unknown } };
+      const body = (await res.json()) as {
+        brand?: { agentName?: unknown; productName?: unknown };
+        assets?: { cliMascot?: unknown };
+      };
       const agentName = clean(body.brand?.agentName) || 'Elowen';
       const productName = clean(body.brand?.productName) || 'Elowen';
       // The flame art is the ELOWEN PRODUCT mascot — suppress it only when the product is actually
       // rebranded. A theme that changes colors alone (brand left at Elowen) keeps the mascot; keying
       // this off "any theme active" would also permanently disable /maskot for such an install.
-      return { agentName, productName, themed: productName !== 'Elowen' };
+      const themed = productName !== 'Elowen';
+      return { agentName, productName, themed, mascotArt: await this.mascotArt(body.assets?.cliMascot) };
     } catch { return DEFAULT_PUBLIC_BRAND; }
+  }
+
+  /** The path shape the daemon emits for a theme asset. Re-checked here for the same reason the web
+   *  re-checks its own copy: the payload must not be able to steer this fetch at an arbitrary daemon
+   *  route. Kept narrow rather than shared because the CLI cannot import the web's module. */
+  private static readonly CLI_MASCOT_PATH_RE = /^\/public\/theme\/assets\/mascot\.ans\?v=[0-9a-f]{16}$/;
+
+  /** Fetch and parse the theme's CLI art. Every failure returns null — the art is decoration, so a slow
+   *  or hostile daemon must cost the boot batch one short timeout and nothing else. */
+  private async mascotArt(path: unknown): Promise<string[] | null> {
+    if (typeof path !== 'string' || !BrainClient.CLI_MASCOT_PATH_RE.test(path)) return null;
+    try {
+      const timeout = AbortSignal.timeout(2000);
+      const res = await this.f(`${this.o.base}${path}`, {
+        signal: this.lifetimeSignal ? AbortSignal.any([timeout, this.lifetimeSignal]) : timeout,
+      });
+      if (!res.ok) return null;
+      return parseMascotArt(await res.text());
+    } catch { return null; }
   }
 
   /** Save the statusline display toggles (admin-only; the `/statusline` modal). Applies live via the

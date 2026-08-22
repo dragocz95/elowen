@@ -9,6 +9,7 @@ import type { SlashCommandDef } from '../../shared/wireContract.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { ChatApplicationLifetime } from './applicationLifetime.js';
 import { BrainClient } from './brainClient.js';
+import { MASCOT_ART } from './mascot.js';
 import type { BrainStatus } from './brainClient.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import { ChatState } from './chatState.js';
@@ -248,7 +249,11 @@ export class ChatApplication {
       queued: boot?.queued ?? [],
       processes,
       showThoughts,
-      showMascot: mascotPref && !brand.themed,
+      // A white-labeled instance shows ITS mascot when its theme ships one (mascot.ans) and nothing at
+      // all when it does not — painting the Elowen flame over someone else's rebrand is the one outcome
+      // that is always wrong. The stock brand keeps the built-in art.
+      mascotArt: brand.themed ? brand.mascotArt : MASCOT_ART,
+      showMascot: mascotPref && (brand.themed ? brand.mascotArt !== null : true),
       brand,
       locale,
       mentionFrecency: loadMentionFrecency(process.cwd()),

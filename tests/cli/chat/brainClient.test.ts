@@ -566,7 +566,7 @@ describe('publicBrand', () => {
   it('parses a themed payload and derives themed from the PRODUCT actually being rebranded', async () => {
     const f = vi.fn(async () => brandResponse()) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
-    expect(await c.publicBrand()).toEqual({ agentName: 'Acme Bot', productName: 'Acme', themed: true });
+    expect(await c.publicBrand()).toEqual({ agentName: 'Acme Bot', productName: 'Acme', themed: true, mascotArt: null });
   });
 
   it('a colors-only theme (brand left at Elowen) must NOT suppress the mascot', async () => {
@@ -594,10 +594,51 @@ describe('publicBrand', () => {
   it('falls back to the built-in brand on a non-OK answer and on a network failure', async () => {
     const notFound = vi.fn(async () => j(404, {})) as unknown as typeof fetch;
     expect(await new BrainClient({ base: 'http://x', token: 't', fetchImpl: notFound }).publicBrand())
-      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false });
+      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false, mascotArt: null });
     const down = vi.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
     expect(await new BrainClient({ base: 'http://x', token: 't', fetchImpl: down }).publicBrand())
-      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false });
+      .toEqual({ agentName: 'Elowen', productName: 'Elowen', themed: false, mascotArt: null });
+  });
+
+  // The CLI art travels on the same boot budget as the brand and is the one payload field that lands in
+  // the terminal as commands rather than as text, so both its fetch and its rejection are pinned here.
+  describe('mascot art', () => {
+    const ART = '\x1b[38;2;1;2;3m▀\x1b[0m';
+    const artUrl = `/public/theme/assets/mascot.ans?v=${'a'.repeat(16)}`;
+    const serving = (assets: Record<string, unknown>, art = ART) => vi.fn(async (url: unknown) =>
+      String(url).includes('mascot.ans')
+        ? new Response(art, { status: 200 })
+        : brandResponse({ assets })) as unknown as typeof fetch;
+
+    it('fetches and parses the art a themed instance advertises', async () => {
+      const f = serving({ cliMascot: artUrl });
+      const brand = await new BrainClient({ base: 'http://x', token: 't', fetchImpl: f }).publicBrand();
+      expect(brand.mascotArt).toHaveLength(1);
+      expect(brand.mascotArt![0]).toContain('▀');
+    });
+
+    it('ignores a payload path pointing anywhere but the art asset', async () => {
+      // The payload must not be able to steer this fetch at another daemon route.
+      for (const path of ['/config', `/public/theme/assets/icon.png?v=${'a'.repeat(16)}`, 'http://evil/x.ans', artUrl.replace('?v=aaaaaaaaaaaaaaaa', '')]) {
+        const f = serving({ cliMascot: path });
+        expect((await new BrainClient({ base: 'http://x', token: 't', fetchImpl: f }).publicBrand()).mascotArt).toBeNull();
+      }
+    });
+
+    it('drops art that violates the grammar instead of writing it to the terminal', async () => {
+      const f = serving({ cliMascot: artUrl }, '\x1b]52;c;cHduZWQ=\x07');
+      expect((await new BrainClient({ base: 'http://x', token: 't', fetchImpl: f }).publicBrand()).mascotArt).toBeNull();
+    });
+
+    it('survives an art fetch that fails, keeping the brand it already resolved', async () => {
+      const f = vi.fn(async (url: unknown) => {
+        if (String(url).includes('mascot.ans')) throw new Error('ECONNRESET');
+        return brandResponse({ assets: { cliMascot: artUrl } });
+      }) as unknown as typeof fetch;
+      const brand = await new BrainClient({ base: 'http://x', token: 't', fetchImpl: f }).publicBrand();
+      expect(brand.productName).toBe('Acme');
+      expect(brand.mascotArt).toBeNull();
+    });
   });
 
   it('carries a hard timeout so a hanging daemon cannot hold the boot batch', async () => {

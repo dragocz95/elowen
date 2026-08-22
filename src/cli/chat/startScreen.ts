@@ -1,6 +1,6 @@
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
-import { MASCOT_ART } from './mascot.js';
+import { MASCOT_ART, resolveMascotArt } from './mascot.js';
 import { chatTheme, color, glyph, paintRow } from './theme.js';
 import { padAnsi, terminalInlineText } from '../ui/text.js';
 
@@ -68,9 +68,12 @@ export interface StartScreenState {
   /** Product label preceding the version ('elowen' when unthemed) — the corner is user-visible brand,
    *  not technical identity, so a white-labeled instance shows its own name there. */
   productLabel?: string;
-  /** User's `/maskot` preference. When false the flame wordmark is dropped and the layout centers
-   *  without it. Optional so structural callers default to shown (the product default). */
+  /** User's `/maskot` preference. When false the mascot is dropped and the layout centers without it.
+   *  Optional so structural callers default to shown (the product default). */
   showMascot?: boolean;
+  /** The art to draw — the theme's own on a white-labeled instance, null when it ships none. Undefined
+   *  keeps the built-in flame, so structural callers need not know about theming at all. */
+  mascotArt?: string[] | null;
 }
 
 /** The centered input box geometry of the start screen — shared with overlay anchoring (the slash
@@ -83,9 +86,10 @@ export function startScreenBox(width: number): { boxWidth: number; leftPad: numb
 
 /** Row (0-based, within the start screen's rows) where the input box starts — mirror of the vertical
  *  centering in {@link StartScreen.render}, kept here so overlay anchoring can never drift from it. */
-export function startScreenInputTop(rows: number, inputRows: number, noticeRows: number, showMascot = true): number {
-  // The mascot art plus the single spacer row beneath it — both drop together when the flame is hidden.
-  const banner = showMascot ? BANNER_ROWS + 1 : 0;
+export function startScreenInputTop(rows: number, inputRows: number, noticeRows: number, mascotRows = BANNER_ROWS): number {
+  // The mascot art plus the single spacer row beneath it — both drop together when it is hidden. A row
+  // COUNT rather than a boolean: a themed instance supplies its own art, of its own height.
+  const banner = mascotRows ? mascotRows + 1 : 0;
   const bodyLength = banner + inputRows + 2 + 2 + 1 + (noticeRows ? 1 + noticeRows : 0);
   if (bodyLength > rows - 1) {
     let room = Math.max(0, rows - 1);
@@ -147,9 +151,11 @@ export class StartScreen implements Component {
     const boxLine = (line: string): string => `${indent}${truncateToWidth(line, boxWidth, '…')}`;
     const hint = truncateToWidth(st.hints, boxWidth, '…');
     const hintLine = `${' '.repeat(Math.max(0, leftPad + boxWidth - visibleWidth(hint)))}${hint}`;
-    // `/maskot` off drops the flame wordmark and its spacer; the vertical centering below follows suit.
-    const showMascot = st.showMascot !== false;
-    const mascotBlock = showMascot ? [...MASCOT_ART.map((line) => center(line)), ''] : [];
+    // `/maskot` off drops the mascot and its spacer; the vertical centering below follows suit. So does
+    // a rebranded instance shipping no art of its own, which arrives here as an empty block.
+    const art = resolveMascotArt(st.mascotArt);
+    const showMascot = st.showMascot !== false && art.length > 0;
+    const mascotBlock = showMascot ? [...art.map((line) => center(line)), ''] : [];
     const body = [
       ...mascotBlock,
       ...inputLines.map(boxLine),
@@ -192,8 +198,9 @@ export class StartScreen implements Component {
     }
     // Center the block vertically, biased slightly upward (startScreenInputTop mirrors this math);
     // the status row is pinned to the last line.
-    const banner = showMascot ? BANNER_ROWS + 1 : 0;
-    const topPad = Math.max(0, startScreenInputTop(rows, inputLines.length, noticeLines.length, showMascot) - banner);
+    const mascotRows = showMascot ? art.length : 0;
+    const banner = mascotRows ? mascotRows + 1 : 0;
+    const topPad = Math.max(0, startScreenInputTop(rows, inputLines.length, noticeLines.length, mascotRows) - banner);
     const lines: string[] = Array.from({ length: topPad }, () => '');
     lines.push(...body);
     while (lines.length < rows - 1) lines.push('');

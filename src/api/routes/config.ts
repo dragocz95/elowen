@@ -3,7 +3,7 @@ import { accessSync, constants, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { resolveBrand } from '../../shared/brand.js';
-import { THEME_ASSET_FILES, ASSET_MAX_BYTES, activeThemeName, type ThemeAssetFile } from '../../store/themeStore.js';
+import { THEME_ASSET_FILES, ASSET_MAX_BYTES, activeThemeName, type ThemeAssetFile, type ThemeAssetSlot } from '../../store/themeStore.js';
 import { isNewer } from '../../cli/version.js';
 import { handleMcpRequest } from '../../mcp/server.js';
 import { eventProjectId } from '../eventProject.js';
@@ -216,18 +216,18 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     colors: Record<string, string>;
     fonts: { sans?: string; mono?: string };
     text: Record<string, Record<string, string>>;
-    assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>>;
+    assets: Partial<Record<ThemeAssetSlot, string>>;
     mascotScene: boolean;
     v: string;
   } => {
     const active = activeThemeName();
     const theme = active ? d.themes?.get(active) ?? null : null;
     const brand = resolveBrand(d.config.get(), theme?.manifest.brand ?? null, active);
-    const assetKey: Record<ThemeAssetFile, 'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot'> = {
+    const assetKey: Record<ThemeAssetFile, ThemeAssetSlot> = {
       'logo.png': 'logo', 'icon.png': 'icon', 'icon-192.png': 'icon192', 'icon-512.png': 'icon512',
-      'favicon.png': 'favicon', 'mascot.svg': 'mascot',
+      'favicon.png': 'favicon', 'mascot.svg': 'mascot', 'mascot.ans': 'cliMascot',
     };
-    const assets: Partial<Record<'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot', string>> = {};
+    const assets: Partial<Record<ThemeAssetSlot, string>> = {};
     for (const file of theme?.assets ?? []) {
       assets[assetKey[file]] = `/public/theme/assets/${file}?v=${theme!.version}`;
     }
@@ -283,9 +283,14 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       // arrive under a new URL. `nosniff` because the bytes are operator-supplied. The SVG mascot gets
       // a no-script CSP on top: from <img> scripts never run anyway, but a direct navigation to the
       // asset URL must not execute operator-supplied markup either — inline style stays allowed so the
-      // CSS animations that make the mascot blink keep working.
+      // CSS animations that make the mascot blink keep working. The CLI art is served as plain text —
+      // it is escape sequences, so letting a browser interpret it as anything would be a mistake, and
+      // the CLI re-parses it regardless of what this header claims.
+      const contentType = file.endsWith('.svg') ? 'image/svg+xml'
+        : file.endsWith('.ans') ? 'text/plain; charset=utf-8'
+        : 'image/png';
       return c.body(cached.bytes, 200, {
-        'content-type': file.endsWith('.svg') ? 'image/svg+xml' : 'image/png',
+        'content-type': contentType,
         ...(file.endsWith('.svg') ? { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } : {}),
         'cache-control': 'public, max-age=31536000, immutable',
         'x-content-type-options': 'nosniff',

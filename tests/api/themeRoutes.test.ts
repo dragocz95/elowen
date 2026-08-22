@@ -173,6 +173,22 @@ describe('GET /public/theme/assets/:file', () => {
     expect(png.headers.get('content-security-policy')).toBeNull();
   });
 
+  // The CLI art is the whitelist's one non-image: it is escape sequences, so nothing downstream may be
+  // invited to interpret it as markup or as an image.
+  it('serves the CLI mascot art as plain text and advertises it in the payload', async () => {
+    writeTheme('acme');
+    writeFileSync(join(dir, 'acme', 'mascot.ans'), '\x1b[38;2;1;2;3m\u2580\x1b[0m');
+    activate('acme');
+    const { app } = await makeApp();
+    const body = await (await app.request('/public/theme')).json() as { assets: Record<string, string> };
+    expect(body.assets.cliMascot).toMatch(/^\/public\/theme\/assets\/mascot\.ans\?v=[0-9a-f]{16}$/);
+    const res = await app.request('/public/theme/assets/mascot.ans');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.text()).toContain('\u2580');
+  });
+
   it('404s on a non-whitelisted file, with no active theme, and for an absent asset', async () => {
     writeTheme('acme');
     activate('acme');

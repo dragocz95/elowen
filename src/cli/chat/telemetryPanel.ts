@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
-import { MASCOT_ART } from './mascot.js';
+import { resolveMascotArt } from './mascot.js';
 import { FLOAT_BAND } from './mascotFloat.js';
 import { ProcessPanel, SubagentPanel, WorkflowPanel, sectionHeaderContent, sectionHeaderRow } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
@@ -37,9 +37,12 @@ export interface TelemetryState {
   /** Eased vertical drift of the flame (in panel rows) while the transcript is being scrolled; 0 at
    *  rest. The flame floats within a reserved ±{@link FLOAT_BAND} band so the Context section never moves. */
   floatOffset: number;
-  /** User's `/maskot` preference. When false the flame is hidden and its animation timer never arms.
+  /** User's `/maskot` preference. When false the mascot is hidden and its animation timer never arms.
    *  Optional so structural callers/tests default to shown (the product default). */
   showMascot?: boolean;
+  /** The art to draw — the theme's own on a white-labeled instance, null when it ships none. Undefined
+   *  keeps the built-in flame, so structural callers need not know about theming at all. */
+  mascotArt?: string[] | null;
 }
 
 const PANEL_BAR_MARGIN = 2;
@@ -87,10 +90,12 @@ export class TelemetryPanel implements Component {
   /** Cheap panel-local capability check used by the animation owner. Decorative movement is allowed
    * only when the complete current functional rail and the full fixed mascot band both fit. */
   canRenderMascot(width: number): boolean {
-    if (this.getState().showMascot === false) return false;
+    const state = this.getState();
+    const art = resolveMascotArt(state.mascotArt);
+    if (state.showMascot === false || art.length === 0) return false;
     if (this.maxRows === 0) return false;
     const functional = this.composeSections(this.sections(this.getState(), width));
-    return this.maxRows == null || panelLogo(width).length + 2 + functional.rows.length <= this.maxRows;
+    return this.maxRows == null || panelLogo(art, width).length + 2 + functional.rows.length <= this.maxRows;
   }
   isProcessHeaderRow(row: number): boolean {
     return this.processTop >= 0 && this.processPanel.isHeaderRow(row - this.processTop);
@@ -148,8 +153,10 @@ export class TelemetryPanel implements Component {
     const sections = this.sections(st, width);
     const full = this.composeSections(sections);
     // A hidden mascot contributes no rows AND never lets the animation timer arm (canRenderMascot).
-    const mascotEnabled = st.showMascot !== false;
-    const mascotRows = mascotEnabled ? ['', ...panelLogo(width, st.floatOffset), ''] : [];
+    // A rebranded instance with no art of its own reads the same way as an explicitly hidden one.
+    const art = resolveMascotArt(st.mascotArt);
+    const mascotEnabled = st.showMascot !== false && art.length > 0;
+    const mascotRows = mascotEnabled ? ['', ...panelLogo(art, width, st.floatOffset), ''] : [];
     const showMascot = mascotEnabled && (this.maxRows == null || mascotRows.length + full.rows.length <= this.maxRows);
     const functional = showMascot ? full : this.compactSections(sections, this.maxRows ?? full.rows.length, width);
     const rows = showMascot ? [...mascotRows, ...functional.rows] : [...functional.rows];
@@ -444,10 +451,10 @@ export class TelemetryPanel implements Component {
   }
 }
 
-function panelLogo(width: number, offset = 0): string[] {
-  // The flame mascot, centered in the panel. Its truecolor lines already carry their own colors, so
-  // the panel just pads them; wider than the panel (never, at the 36-col minimum) it clips gracefully.
-  const art = MASCOT_ART.map((line) => {
+function panelLogo(source: string[], width: number, offset = 0): string[] {
+  // The mascot, centered in the panel. Its truecolor lines already carry their own colors, so the panel
+  // just pads them; wider than the panel (never, at the 36-col minimum) it clips gracefully.
+  const art = source.map((line) => {
     const pad = Math.max(0, Math.floor((width - visibleWidth(line)) / 2));
     return `${' '.repeat(pad)}${line}`;
   });

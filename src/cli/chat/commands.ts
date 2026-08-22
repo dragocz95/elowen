@@ -402,9 +402,10 @@ export function wireSubmit(
           // mascot is purely local chrome and a server mirror would fight the web dock.
           const arg = command.arg?.trim().toLowerCase();
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /maskot · /maskot on · /maskot off'); render(); return; }
-          // A white-labeled instance has no Elowen flame to show — turning it "on" would paint the
-          // wrong product's mascot over the rebrand, so the toggle is a no-op there.
-          if (rt.brand.themed) { rt.notice = color.dim('Mascot unavailable — this instance runs a custom theme'); render(); return; }
+          // A rebranded instance with no art of its own has nothing to toggle: turning it "on" would
+          // paint the Elowen flame over someone else's product. One that DOES ship art (theme asset
+          // `mascot.ans`) toggles exactly like a stock install.
+          if (rt.mascotArt === null) { rt.notice = color.dim('Mascot unavailable — this instance ships no mascot art'); render(); return; }
           rt.showMascot = arg === 'on' ? true : arg === 'off' ? false : !rt.showMascot;
           savePrefs({ showMascot: rt.showMascot });
           rt.notice = color.dim(rt.showMascot ? 'Mascot shown' : 'Mascot hidden — /maskot brings it back');

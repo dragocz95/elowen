@@ -3,6 +3,7 @@ import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
 import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView, PublicBrand } from './brainClient.js';
 import { DEFAULT_PUBLIC_BRAND } from './brainClient.js';
+import { MASCOT_ART } from './mascot.js';
 import type { FrecencyMap, PendingImage } from './mentions.js';
 import type { ComposeLocale } from './composeLabels.js';
 
@@ -28,6 +29,7 @@ export interface ChatStateSeed {
   goal?: GoalView | null;
   showThoughts?: boolean;
   showMascot?: boolean;
+  mascotArt?: string[] | null;
   brand?: PublicBrand;
   mentionFrecency?: FrecencyMap;
   /** Locale for localized action labels (the composing-tool hint). Defaults to English. */
@@ -78,14 +80,24 @@ export class ChatState {
   private goalCommandRevision = 0;
   listed: { id: string; title: string }[] = [];
   showThoughts: boolean;
-  /** Show the flame mascot (start screen + rail). Local CLI-only chrome, toggled by `/maskot`. */
+  /** Show the mascot (start screen + rail). Local CLI-only chrome, toggled by `/maskot`. */
   showMascot: boolean;
+  /** The art to draw: the built-in flame on a stock instance, the theme's own `mascot.ans` on a
+   *  white-labeled one, and null when a rebranded instance ships none — the flame must not stand in
+   *  for another product's mascot. Resolved once at boot; `/maskot` only toggles visibility. */
+  readonly mascotArt: string[] | null;
   /** The instance's white-label brand (GET /public/theme); the built-in Elowen brand when unthemed. */
   readonly brand: PublicBrand;
   /** Locale for localized CLI action labels — resolved once at startup, read by the render frame loop. */
   readonly locale: ComposeLocale;
   pendingImages: PendingImage[] = [];
   mentionFrecency: FrecencyMap;
+
+  /** Rows the mascot actually occupies right now — 0 when hidden or when this instance has no art.
+   *  Layout math reads this rather than a boolean because the art's height is the theme's choice. */
+  get mascotRows(): number {
+    return this.showMascot && this.mascotArt ? this.mascotArt.length : 0;
+  }
 
   constructor(seed: ChatStateSeed) {
     this.transcript = seed.transcript;
@@ -109,6 +121,7 @@ export class ChatState {
     this.currentGoal = seed.goal ?? null;
     this.showThoughts = seed.showThoughts ?? true;
     this.showMascot = seed.showMascot ?? true;
+    this.mascotArt = seed.mascotArt === undefined ? MASCOT_ART : seed.mascotArt;
     this.brand = seed.brand ?? DEFAULT_PUBLIC_BRAND;
     this.locale = seed.locale ?? 'en';
     this.mentionFrecency = seed.mentionFrecency ?? {};

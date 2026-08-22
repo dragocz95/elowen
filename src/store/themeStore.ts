@@ -46,8 +46,17 @@ export function activeThemeName(env: NodeJS.ProcessEnv = process.env): string | 
  *  notification artwork, and `favicon.png` is the browser tab alone. A brand that wants a compact mark
  *  in the tab and its mascot everywhere else needs them separate; reusing `icon.png` for the tab puts
  *  that mark on the avatar. */
-export const THEME_ASSET_FILES = ['logo.png', 'icon.png', 'icon-192.png', 'icon-512.png', 'favicon.png', 'mascot.svg'] as const;
+/** `mascot.ans` is the CLI's counterpart: truecolor half-block art for the chat start screen and the
+ *  telemetry rail, which cannot use any of the images above because the terminal has no decoder and the
+ *  CLI must not grow one. Precomputed art keeps startup free of image work, exactly like the built-in
+ *  flame it replaces. The CLI parses it against a narrow grammar and re-emits it — the file reaches a
+ *  terminal as escape sequences, and the CLI may be pointed at a daemon it does not own. */
+export const THEME_ASSET_FILES = ['logo.png', 'icon.png', 'icon-192.png', 'icon-512.png', 'favicon.png', 'mascot.svg', 'mascot.ans'] as const;
 export type ThemeAssetFile = (typeof THEME_ASSET_FILES)[number];
+
+/** The public payload's name for each asset file. Separate from the filename because the payload is a
+ *  wire contract: renaming a file on disk would otherwise silently rename a field every client reads. */
+export type ThemeAssetSlot = 'logo' | 'icon' | 'icon192' | 'icon512' | 'favicon' | 'mascot' | 'cliMascot';
 
 /** The design-token suffixes a theme may override — exactly the `--color-*` names in the web's
  *  tokens.css `@theme` block, plus `accent-rgb` (the `R G B` triple the shadow/glow tokens compose

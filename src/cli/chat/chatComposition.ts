@@ -310,7 +310,7 @@ export function createChatComposition(
       const screenRows = Math.max(1, term.rows - TOP_RULE_ROWS);
       const inputRows = Math.min(startInput.render(boxWidth).length, Math.max(0, screenRows - 1));
       const noticeRows = rt.notice ? rt.notice.split('\n').length : 0;
-      return [...base, boxWidth, leftPad, inputRows, noticeRows, rt.showMascot ? 1 : 0].join(':');
+      return [...base, boxWidth, leftPad, inputRows, noticeRows, rt.mascotRows].join(':');
     }
     const budget = rowBudget();
     const bottom = budget.sections.queue + budget.sections.attachments + budget.sections.editor
@@ -397,6 +397,7 @@ export function createChatComposition(
     goal: rt.goal,
     floatOffset: animations.mascotOffset,
     showMascot: rt.showMascot,
+    mascotArt: rt.mascotArt,
   }));
   const startScreen = new StartScreen(
     startInput,
@@ -410,6 +411,7 @@ export function createChatComposition(
       version: ELOWEN_CLI_VERSION,
       productLabel: rt.brand.productName.toLowerCase(),
       showMascot: rt.showMascot,
+      mascotArt: rt.mascotArt,
     }),
   );
   const compactNotice: Component = {
@@ -747,7 +749,7 @@ export function createChatComposition(
       input: startInput,
       notice: rt.notice,
       budget: hasMessages() ? rowBudget() : null,
-      showMascot: rt.showMascot,
+      mascotRows: rt.mascotRows,
     }));
   };
 

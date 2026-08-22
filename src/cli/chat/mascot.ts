@@ -1,7 +1,10 @@
 /** The Elowen flame mascot as truecolor half-block art (▀ packs two pixel rows: foreground = top
   pixel, background = bottom). Precomputed at 28 columns so the CLI renders it with zero runtime image
   decoding; every line is exactly 28 visible columns wide. Shown centered above the ELOWEN wordmark on the
-  chat welcome screen. Regenerate from docs/brand/elowen-mascot.png if the logo changes. */
+  chat welcome screen. Regenerate from docs/brand/elowen-mascot.png if the logo changes.
+
+  A white-labeled instance supplies its OWN art through its theme (`mascot.ans`); see resolveMascotArt
+  below for why the two cases must not collapse. */
 export const MASCOT_ART: string[] = [
   "           \u001b[38;2;174;21;18m▀\u001b[0m\u001b[38;2;204;37;24m\u001b[48;2;218;35;24m▀\u001b[0m\u001b[38;2;199;35;24m\u001b[48;2;255;67;37m▀\u001b[0m\u001b[38;2;179;23;18m\u001b[48;2;255;80;43m▀\u001b[0m\u001b[38;2;235;57;31m▄\u001b[0m\u001b[38;2;187;29;20m▄\u001b[0m           ",
   "             \u001b[38;2;247;46;25m\u001b[48;2;251;63;28m▀\u001b[0m\u001b[38;2;255;115;50m\u001b[48;2;255;93;35m▀\u001b[0m\u001b[38;2;255;147;69m\u001b[48;2;252;171;79m▀\u001b[0m\u001b[38;2;255;97;47m\u001b[48;2;253;198;99m▀\u001b[0m\u001b[38;2;216;45;24m\u001b[48;2;255;130;63m▀\u001b[0m\u001b[38;2;229;56;28m▄\u001b[0m         ",
@@ -16,3 +19,13 @@ export const MASCOT_ART: string[] = [
   "     \u001b[38;2;184;12;13m▀\u001b[0m\u001b[38;2;233;15;14m\u001b[48;2;178;10;11m▀\u001b[0m\u001b[38;2;225;13;10m\u001b[48;2;228;15;15m▀\u001b[0m\u001b[38;2;236;26;13m\u001b[48;2;229;13;12m▀\u001b[0m\u001b[38;2;247;35;14m\u001b[48;2;231;16;11m▀\u001b[0m\u001b[38;2;250;40;16m\u001b[48;2;237;23;11m▀\u001b[0m\u001b[38;2;251;45;17m\u001b[48;2;241;28;12m▀\u001b[0m\u001b[38;2;252;50;19m\u001b[48;2;244;34;14m▀\u001b[0m\u001b[38;2;252;52;20m\u001b[48;2;245;36;15m▀\u001b[0m\u001b[38;2;253;52;20m\u001b[48;2;246;36;15m▀\u001b[0m\u001b[38;2;251;49;19m\u001b[48;2;244;31;14m▀\u001b[0m\u001b[38;2;250;43;17m\u001b[48;2;239;25;13m▀\u001b[0m\u001b[38;2;248;36;15m\u001b[48;2;233;18;11m▀\u001b[0m\u001b[38;2;242;28;13m\u001b[48;2;226;12;11m▀\u001b[0m\u001b[38;2;228;17;12m\u001b[48;2;224;11;13m▀\u001b[0m\u001b[38;2;217;10;10m\u001b[48;2;225;12;17m▀\u001b[0m\u001b[38;2;227;12;17m\u001b[48;2;174;7;12m▀\u001b[0m\u001b[38;2;180;8;14m▀\u001b[0m     ",
   "       \u001b[38;2;155;7;8m▀\u001b[0m\u001b[38;2;187;10;10m▀\u001b[0m\u001b[38;2;213;11;12m▀\u001b[0m\u001b[38;2;229;12;12m\u001b[48;2;161;6;8m▀\u001b[0m\u001b[38;2;234;13;12m\u001b[48;2;171;7;9m▀\u001b[0m\u001b[38;2;234;15;12m\u001b[48;2;180;8;10m▀\u001b[0m\u001b[38;2;233;15;12m\u001b[48;2;174;8;9m▀\u001b[0m\u001b[38;2;233;15;12m\u001b[48;2;173;7;9m▀\u001b[0m\u001b[38;2;232;13;12m\u001b[48;2;178;8;10m▀\u001b[0m\u001b[38;2;230;11;12m\u001b[48;2;171;7;10m▀\u001b[0m\u001b[38;2;229;11;14m\u001b[48;2;161;6;9m▀\u001b[0m\u001b[38;2;215;11;14m▀\u001b[0m\u001b[38;2;188;9;13m▀\u001b[0m\u001b[38;2;155;4;9m▀\u001b[0m       ",
 ];
+
+/** Resolve a component's optional mascot-art field.
+ *
+ *  UNDEFINED means the caller does not participate in theming and gets the built-in flame — structural
+ *  callers and tests. NULL is an explicit "this instance has no mascot of its own" and must stay empty.
+ *  The distinction is the whole point: `??` collapses the two and paints Elowen's flame over somebody
+ *  else's rebrand, which is the one outcome that is always wrong. */
+export function resolveMascotArt(art: string[] | null | undefined): string[] {
+  return art === undefined ? MASCOT_ART : art ?? [];
+}
