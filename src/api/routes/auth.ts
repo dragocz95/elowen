@@ -9,6 +9,7 @@ import { brainProviderIds } from '../../store/configStore.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
+import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
@@ -462,8 +463,16 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
     for (const t of registry?.tools ?? []) {
       // Plugin tools are toggleable per-user: allowed unless the admin disabled them for this user.
-      const state: ToolState = disabled.has(t.name) ? 'disabled' : 'allowed';
-      pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin: registry?.toolOwner.get(t.name) ?? null, group: 'plugin', state, toggleable: true });
+      //
+      // A grant-gated plugin comes FIRST though, because it decides whether the tool exists for this
+      // account at all: without the grant the tool never reaches their session, so calling it "allowed"
+      // here described a permission they do not have. That is `unavailable` — the state this list has
+      // always been able to express — and there is nothing to toggle, since the deny-list cannot subtract
+      // from something already withheld. Granting the plugin is what changes it, in the panel next door.
+      const plugin = registry?.toolOwner.get(t.name) ?? null;
+      const granted = !plugin || isPluginAllowedForUser(target, { name: plugin, userGrantable: registry?.userGrantable.has(plugin) });
+      const state: ToolState = !granted ? 'unavailable' : disabled.has(t.name) ? 'disabled' : 'allowed';
+      pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin, group: 'plugin', state, toggleable: granted });
     }
     // Allowed first, then inherited, then disabled/unavailable; alphabetical within each band.
     const rank: Record<ToolState, number> = { allowed: 0, inherited: 1, disabled: 2, unavailable: 3 };

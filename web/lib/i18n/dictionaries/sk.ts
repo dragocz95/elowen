@@ -839,7 +839,7 @@ export const sk = {
     grantedPluginsUpdated: 'Povolené pluginy uložené',
     grantedPluginsEmpty: 'Žiadny plugin sa nepovoľuje jednotlivým používateľom.',
     tools: 'Nástroje',
-    toolsHint: 'Nástroje, ku ktorým má používateľ prístup vo vlastnom chate. Kliknutím na nástroj pluginu ho pre tohto používateľa zapnete alebo vypnete; vstavané nástroje (pamäť, control-plane) sú pevné. Zdieľané Discord kanály riadi rolová politika pluginu, nie tento zoznam.',
+    toolsHint: 'Nástroje, ku ktorým má používateľ prístup vo vlastnom chate. Kliknutím na nástroj pluginu ho pre tohto používateľa zapnete alebo vypnete; nástroje pamäte a obrázkov sú zdedené a nedajú sa tu vypnúť. Nástroj z pluginu, ktorý používateľovi nebol pridelený, je uvedený ako nedostupný — zmeníte to pridelením pluginu. Zdieľané kanály na Discorde riadi rolová politika pluginu, nie tento zoznam.',
     toolsEmpty: 'Žiadne nástroje k dispozícii',
     overview: 'Prehľad',
     statMemories: 'Pamäte',
