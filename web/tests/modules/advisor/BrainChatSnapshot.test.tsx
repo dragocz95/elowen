@@ -74,6 +74,27 @@ describe('BrainChat snapshot hydration', () => {
     expect(historyPageRequests).toBe(0);
   });
 
+  it('opens and renders the history snapshot while the independent status read is still pending', async () => {
+    let resolveStatus!: () => void;
+    server.use(http.get('*/api/brain/status', async () => {
+      await new Promise<void>((resolve) => { resolveStatus = resolve; });
+      return HttpResponse.json({
+        running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [],
+        queued: [{ id: 'q1', text: 'queued while away' }],
+      });
+    }));
+
+    const es = await renderChat();
+    es.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null,
+      history: [{ role: 'user', text: 'visible before status', id: 'm1' }], events: [],
+      session: { model: 'm', provider: 'test' }, cards: [],
+    });
+    await screen.findByText('visible before status');
+    await act(async () => resolveStatus());
+    await screen.findByText('queued while away');
+  });
+
   it('replaces the transcript from the frame, so a repeated snapshot cannot double a rendered turn', async () => {
     const es = await renderChat();
     const frame = {

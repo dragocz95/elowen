@@ -468,12 +468,10 @@ export class BrainUsageStore {
       input: number; output: number; cache_read: number; cache_write: number;
       total: number; reasoning: number; cost: number;
     }
-    // `usage_rows` materializes the whole normalized view before the join can discard it, so this query
-    // costs a full `brain_messages` scan with per-row json_extract — measured at 0.7-1.8 s on the live
-    // database — no matter how small the tree is. It runs SYNCHRONOUSLY on the daemon event loop from
-    // every idle/status emit, including the reconnect handshake a phone waits through. Only 3.3% of
-    // sessions have a child at all, and this indexed existence check costs 4 microseconds, so the
-    // overwhelming majority now pay that instead of a second of stalled event loop for a row of zeros.
+    // A childless session needs no usage read at all. For a real tree, the query below drives from the
+    // recursive descendant ids into the session index on brain_messages; it must never materialize the
+    // global normalized usage view, which scans every message with per-row JSON work on the synchronous
+    // daemon event loop. CROSS JOIN fixes that join order explicitly instead of trusting SQLite to infer it.
     const hasChild = this.db.prepare(
       'SELECT 1 AS present FROM brain_sessions WHERE parent_session_id = ? LIMIT 1',
     ).get(sessionId) as { present: number } | undefined;
@@ -488,15 +486,36 @@ export class BrainUsageStore {
          SELECT child.id, child.user_id
            FROM brain_sessions child JOIN descendants parent ON child.parent_session_id = parent.id
           WHERE child.user_id = parent.user_id
-       ), ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})
-       SELECT COALESCE(SUM(u.input), 0) AS input,
-              COALESCE(SUM(u.output), 0) AS output,
-              COALESCE(SUM(u.cache_read), 0) AS cache_read,
-              COALESCE(SUM(u.cache_write), 0) AS cache_write,
-              COALESCE(SUM(u.total), 0) AS total,
-              COALESCE(SUM(u.reasoning), 0) AS reasoning,
-              COALESCE(SUM(u.cost), 0) AS cost
-         FROM usage_rows u JOIN descendants d ON d.id = u.session_id`
+       ), usage_rows AS (
+         SELECT ${numeric('m.content', '$.usage.input')} AS input,
+                ${numeric('m.content', '$.usage.output')} AS output,
+                ${numeric('m.content', '$.usage.cacheRead')} AS cache_read,
+                ${numeric('m.content', '$.usage.cacheWrite')} AS cache_write,
+                ${numeric('m.content', '$.usage.totalTokens')} AS total,
+                ${numeric('m.content', '$.usage.reasoning')} AS reasoning,
+                ${numeric('m.content', '$.usage.cost.total')} AS cost
+           FROM descendants d CROSS JOIN brain_messages m
+          WHERE m.session_id = d.id AND m.role = 'assistant'
+            AND json_valid(m.content) AND json_type(m.content) = 'object'
+         UNION ALL
+         SELECT ${numeric('je.value', '$.input')}, ${numeric('je.value', '$.output')},
+                ${numeric('je.value', '$.cacheRead')}, ${numeric('je.value', '$.cacheWrite')},
+                ${numeric('je.value', '$.totalTokens')}, ${numeric('je.value', '$.reasoning')},
+                ${numeric('je.value', '$.cost.total')}
+           FROM descendants d CROSS JOIN brain_messages m,
+                json_each(CASE WHEN json_valid(m.content)
+                               THEN CASE WHEN json_type(m.content, '$.usageRollup') = 'array'
+                                         THEN json_extract(m.content, '$.usageRollup') END END) je
+          WHERE m.session_id = d.id AND m.role = 'compaction' AND je.type = 'object'
+       )
+       SELECT COALESCE(SUM(input), 0) AS input,
+              COALESCE(SUM(output), 0) AS output,
+              COALESCE(SUM(cache_read), 0) AS cache_read,
+              COALESCE(SUM(cache_write), 0) AS cache_write,
+              COALESCE(SUM(total), 0) AS total,
+              COALESCE(SUM(reasoning), 0) AS reasoning,
+              COALESCE(SUM(cost), 0) AS cost
+         FROM usage_rows`
     ).get(sessionId) as Row;
     return {
       input: row.input, output: row.output, cacheRead: row.cache_read, cacheWrite: row.cache_write,

@@ -47,13 +47,16 @@ describe('descendantUsage skips the message scan for a childless session', () =>
     expect(joined).toMatch(/brain_sessions/);
   });
 
-  it('still scans the tree when the session actually has a delegate', () => {
+  it('drives a real tree through the session index instead of materializing every message', () => {
     const plans = plansOf((store) => {
       store.createSession({ id: 'root', userId: 1, model: 'm' });
       store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
       store.descendantUsage('root');
     });
-    // The guard must not turn into "always return zeros": a real tree is still summed from the messages.
-    expect(plans.join('\n')).toMatch(/brain_messages/);
+    const joined = plans.join('\n');
+    // A real tree is still read, but descendant ids must be the outer loop. The old normalized usage CTE
+    // materialized all brain_messages first, blocking every status/reconnect request on the live database.
+    expect(joined).toMatch(/SEARCH m USING INDEX idx_brain_messages_session \(session_id=\?\)/);
+    expect(joined).not.toMatch(/MATERIALIZE usage_rows|SCAN a/);
   });
 });

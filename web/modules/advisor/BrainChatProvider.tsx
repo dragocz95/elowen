@@ -349,6 +349,9 @@ function useBrainChatController(): BrainChatValue {
    *  the bounded buffer. Durable history only becomes authoritative once the turn settles, so the refetch
    *  waits for the terminal event rather than replacing a live turn with a half-written one. */
   const truncatedPendingRef = useRef(false);
+  /** Per-field stream freshness. Status starts before the stream, so any overlapping frame that lands first
+   *  is newer truth for that field and must not be overwritten by the older read. */
+  const hydrationStampRef = useRef({ session: 0, model: 0, control: 0, cards: 0, queue: 0 });
   /** How long the stream may stay silent before it counts as dead, in either phase — operator-tunable
    *  (`runtime.limits`), floored at the heartbeat interval, and falling back to the built-in defaults until
    *  the config arrives, so a daemon that never answers behaves exactly as before. */
@@ -397,17 +400,18 @@ function useBrainChatController(): BrainChatValue {
     // Commit the binding only when still current (out-of-order A/B switch guard, mirror BrainClient :168).
     boundSessionRef.current = started.sessionId;
     boundGenRef.current = generation;
+    setActiveSessionId(started.sessionId);
     // The stream's snapshot frame hydrates the transcript (see the `snapshot` listener), so there is no
     // history fetch here. The view is cleared up front only when what it currently shows does NOT belong to
     // the conversation being connected — another conversation, or a read-only preview of a foreign session.
     // A plain reconnect keeps its turns on screen until the frame replaces them, with no blank flash.
     if (readOnly || (previousSession && previousSession !== started.sessionId)) setView(emptyView());
-    const st = await elowenClient.brainStatus(boundSessionRef.current).catch(() => null);
-    if (generation !== genRef.current) return;
-    // Every field here is hydration from the server, so each one is applied UNCONDITIONALLY: a
-    // `if (st.x) setX(st.x)` can only ever set, which leaves a question the daemon already settled on
-    // screen (and unanswerable) instead of clearing it.
-    if (st) { setUsage(st.usage); setTelemetry(telemetryOf(st)); setLineCfg(st.statusline); setActiveSessionId(st.sessionId); setCurrentModel(st.model); setProvider(st.provider ?? ''); setAsk(st.pendingAsk ?? null); setDaemonMode(st.workMode ?? 'build'); setPendingPlan(st.pendingPlan ?? null); setCards(st.cards ?? []); setQueued(st.queued ?? []); }
+    // Status and the atomic history snapshot are independent reads. Start status now, but open the stream
+    // immediately: status includes cumulative descendant usage and used to hold the transcript empty for
+    // seconds before the browser was even allowed to request its first history frame.
+    const statusHydrationStamp = { ...hydrationStampRef.current };
+    const statusUsageStamp = usageStampRef.current;
+    const status = elowenClient.brainStatus(boundSessionRef.current).catch(() => null);
     stream.openLive({
       generation,
       session: boundSessionRef.current,
@@ -421,6 +425,7 @@ function useBrainChatController(): BrainChatValue {
           // An idle rollover this stream never saw retargeted the binding server-side. Follow it so lazy-load
           // and every later send name the replacement conversation.
           if (snap.sessionId && snap.sessionId !== boundSessionRef.current) {
+            hydrationStampRef.current.session += 1;
             boundSessionRef.current = snap.sessionId;
             setActiveSessionId(snap.sessionId);
           }
@@ -432,8 +437,18 @@ function useBrainChatController(): BrainChatValue {
           const control = snap.control;
           const streaming = control ? control.streaming : folded.thinking;
           setView({ ...folded, thinking: streaming });
+          if (snap.session) {
+            hydrationStampRef.current.model += 1;
+            setCurrentModel(snap.session.model);
+            setProvider(snap.session.provider);
+          }
+          if (Object.prototype.hasOwnProperty.call(snap, 'cards')) {
+            hydrationStampRef.current.cards += 1;
+            setCards(snap.cards ?? []);
+          }
           // Explicit nulls matter here: the snapshot can clear a question or plan that another surface settled.
           if (control) {
+            hydrationStampRef.current.control += 1;
             setAsk(control.pendingAsk);
             setDaemonMode(control.workMode);
             setPendingPlan(control.pendingPlan);
@@ -453,6 +468,8 @@ function useBrainChatController(): BrainChatValue {
         },
         session: (sessionId) => {
           // Rebind without changing generation. The fresh conversation is rebuilt solely from stream events.
+          hydrationStampRef.current.session += 1;
+          hydrationStampRef.current.cards += 1;
           boundSessionRef.current = sessionId;
           setActiveSessionId(sessionId);
           setCards([]);
@@ -484,10 +501,15 @@ function useBrainChatController(): BrainChatValue {
         card: (card) => {
           // The background-process card is rendered by ProcessPanel; use it only as a refresh signal.
           if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
+          hydrationStampRef.current.cards += 1;
           setCards((cur) => upsertCard(cur, card));
         },
         // A queue frame supersedes every optimistic removal still in flight.
-        queue: (items) => { setRemovingQueue(new Set()); setQueued(items); },
+        queue: (items) => {
+          hydrationStampRef.current.queue += 1;
+          setRemovingQueue(new Set());
+          setQueued(items);
+        },
         user: ({ text, durableId, images }) => applyEvent({
           type: 'user', text, ...(durableId ? { durableId } : {}), ...(images?.length ? { images } : {}),
         }),
@@ -510,6 +532,7 @@ function useBrainChatController(): BrainChatValue {
               setUsageIfFresh(status.usage, stamp);
               setTelemetry(telemetryOf(status));
               setLineCfg(status.statusline);
+              hydrationStampRef.current.model += 1;
               setCurrentModel(status.model);
               setProvider(status.provider ?? '');
             })
@@ -520,8 +543,14 @@ function useBrainChatController(): BrainChatValue {
         toolEnd: ({ id, plan }) => applyEvent({ type: 'tool_end', id, plan }),
         image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
         // Ask stays visible until the daemon resolves this exact id; idle alone cannot prove it is settled.
-        ask: ({ id, questions, kind }) => setAsk({ id, questions, kind }),
-        askResolved: (id) => setAsk((cur) => (cur && cur.id === id ? null : cur)),
+        ask: ({ id, questions, kind }) => {
+          hydrationStampRef.current.control += 1;
+          setAsk({ id, questions, kind });
+        },
+        askResolved: (id) => {
+          hydrationStampRef.current.control += 1;
+          setAsk((cur) => (cur && cur.id === id ? null : cur));
+        },
         step: (nextUsage) => { if (nextUsage) setUsage(nextUsage); },
         idle: (nextUsage) => {
           setNotice('');
@@ -533,6 +562,26 @@ function useBrainChatController(): BrainChatValue {
         },
       },
     });
+    const st = await status;
+    if (generation !== genRef.current || !st) return;
+    const fresh = hydrationStampRef.current;
+    // A rollover retargeted the stream while this explicit-session status read was in flight; every field in
+    // that response belongs to the conversation we already left.
+    if (fresh.session !== statusHydrationStamp.session) return;
+    setUsageIfFresh(st.usage, statusUsageStamp);
+    setTelemetry(telemetryOf(st));
+    setLineCfg(st.statusline);
+    if (fresh.model === statusHydrationStamp.model) {
+      setCurrentModel(st.model);
+      setProvider(st.provider ?? '');
+    }
+    if (fresh.control === statusHydrationStamp.control) {
+      setAsk(st.pendingAsk ?? null);
+      setDaemonMode(st.workMode ?? 'build');
+      setPendingPlan(st.pendingPlan ?? null);
+    }
+    if (fresh.cards === statusHydrationStamp.cards) setCards(st.cards ?? []);
+    if (fresh.queue === statusHydrationStamp.queue) setQueued(st.queued ?? []);
   };
 
   // Route a "open this session" request: a continuable one (own web/CLI conversation) is resumed live;
