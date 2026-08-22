@@ -19,7 +19,7 @@ function apiPluginProvider(): PluginRegistryProvider {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'demo', version: '1.0.0', apiVersion: '1', description: 'demo', entry: 'index.mjs',
-    provides: { apiRoutes: ['ping', 'admin-only', 'agent-work', 'items', 'echo'] },
+    provides: { apiRoutes: ['ping', 'admin-only', 'agent-work', 'items', 'echo', 'whoami'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     export function register(ctx){
@@ -29,6 +29,8 @@ function apiPluginProvider(): PluginRegistryProvider {
       ctx.registerApiRoute({ path: 'items', method: 'POST', access: 'user', handler: async (req) => ({ status: 201, body: { created: await req.json() } }) });
       ctx.registerApiRoute({ path: 'items', access: 'user', handler: async (req) => ({ body: { listed: true, remainder: req.path } }) });
       ctx.registerApiRoute({ path: 'echo', access: 'user', handler: async (req) => ({ body: { q: req.query } }) });
+      // What a plugin sees when it gates an owner-only capability the way core tells it to.
+      ctx.registerApiRoute({ path: 'whoami', access: 'user', handler: async () => ({ body: { identity: ctx.currentIdentity() } }) });
       // Undeclared path — the registry must refuse it at register time.
       ctx.registerApiRoute({ path: 'sneaky', access: 'user', handler: async () => ({ body: {} }) });
     }
@@ -53,6 +55,30 @@ describe('authenticated plugin API routes (/plugins/:name/api/*)', () => {
     expect(body.auth.tokenScope).toBe('user');
     expect(body.auth.agentTask).toBeNull();
     expect(body.auth.accessibleProjects).toBeNull(); // admin = unrestricted
+  });
+
+  // A plugin gates its owner-only capabilities on `ctx.currentIdentity().owner`, so this bit has to mean
+  // the same thing here as it does inside a turn. It did not: HTTP compared the caller against the FIRST
+  // admin by creation order, so a SECOND admin passed the gate in a tool and was refused on a route.
+  it('grants the owner bit to every admin ACCOUNT, not just the first-created one', async () => {
+    const { app, deps } = await makeApp();
+    const second = deps.users.create('michal', 'pw');
+    deps.users.setAdmin(second.id, true);
+    const res = await app.request('/plugins/demo/api/whoami', auth(deps.users.issueToken(second.id)));
+    const body = await res.json() as { identity: { owner: boolean; admin: boolean; elowenUserId: number } };
+    expect(body.identity.elowenUserId).toBe(second.id);
+    expect(body.identity.owner).toBe(true);
+  });
+
+  // The other half: widening the bit to admins must not widen it to everyone. (`admin` is deliberately not
+  // asserted here — this app has no user/project store, so it runs open and reports every caller as admin.)
+  it('withholds the owner bit from an ordinary account', async () => {
+    const { app, deps } = await makeApp();
+    const plain = deps.users.create('josef', 'pw');
+    const res = await app.request('/plugins/demo/api/whoami', auth(deps.users.issueToken(plain.id)));
+    const body = await res.json() as { identity: { owner: boolean; elowenUserId: number } };
+    expect(body.identity.elowenUserId).toBe(plain.id);
+    expect(body.identity.owner).toBe(false);
   });
 
   it('404s an unknown plugin, an unknown path and an UNDECLARED path (deny-by-default)', async () => {

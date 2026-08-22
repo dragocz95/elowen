@@ -1,3 +1,4 @@
+import { operatesInstance } from '../shared/instanceOperator.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { Policy } from '../plugins/policy.js';
 import type { SessionSource } from '../plugins/api.js';
@@ -30,24 +31,14 @@ export interface IdentityDeps {
 export class IdentityResolver {
   constructor(private d: IdentityDeps) {}
 
-  /** Whether `userId` operates this instance — THE gate behind every owner-only surface (the shell and its
-   *  background processes, sharing a host path into a conversation, instance MCP servers, raw platform APIs,
-   *  the operator's long-term memory).
-   *
-   *  An ADMIN ACCOUNT counts as an operator. Admins already hold all-access policy, which makes `pathGuard`
-   *  skip path roots entirely, so they read and write every byte on the box through the ordinary file tools;
-   *  withholding the shell from them denied convenience rather than capability, and made a second admin's own
-   *  authenticated chat behave as if they were a stranger. Operator and admin are deliberately ONE authority
-   *  here — grant the admin bit only to people trusted with the host itself, including its secrets.
-   *
-   *  The admin bit is read from the ACCOUNT, so a room role mapped to admin still cannot reach this: an
-   *  unlinked platform sender resolves to no account at all. With no platform owner configured (single-user /
-   *  tests) every user is the owner, preserving the pre-identity behaviour. */
+  /** Whether `userId` administers this instance — the turn-side half of `operatesInstance`, which carries
+   *  the rule and the reasoning. The admin bit is read from the ACCOUNT here, never from a room role. */
   isOwner(userId: number | undefined): boolean {
-    if (userId === undefined) return false;
-    const owner = this.d.platformOwner?.();
-    if (owner === undefined) return true;
-    return userId === owner || this.d.users.get(userId)?.is_admin === true;
+    return operatesInstance({
+      userId,
+      ownerId: this.d.platformOwner?.(),
+      isAdmin: userId === undefined ? false : this.d.users.get(userId)?.is_admin === true,
+    });
   }
 
   /** The identity of a user driving their OWN authenticated Elowen chat (web dock / CLI). */

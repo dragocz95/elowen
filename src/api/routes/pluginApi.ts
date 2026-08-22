@@ -5,6 +5,7 @@ import { discoverPlugins } from '../../plugins/loader.js';
 import { bodyLimitBytes, formatZodError, readBoundedBody } from '../validation.js';
 import { runWithIdentity } from '../../plugins/policyContext.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
+import { operatesInstance } from '../../shared/instanceOperator.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 import type { TurnIdentity } from '../../plugins/policyContext.js';
@@ -70,7 +71,6 @@ async function dispatchPluginApi(
   // same way it does in a tool — a plugin that owns per-user data needs one way to ask "whose request is
   // this?", not two. It is explicitly not a turn scope: no Policy, no tool policy, no session id, so
   // `isAdminSession()` stays false and the path guard keeps refusing.
-  const ownerId = ctx.d.users?.ownerId();
   // An AGENT token carries no account: it is issued to the daemon's service principal, so `auth.userId`
   // names the operator rather than anyone the request is for. Handing that on as the acting account would
   // make `ctx.userConfig()` inside an agent-scope route read the OPERATOR's per-account values (their
@@ -83,7 +83,14 @@ async function dispatchPluginApi(
     ...(actingUserId !== null ? { elowenUserId: actingUserId } : {}),
     ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
     admin: request.auth.admin,
-    owner: request.auth.userId !== null && ownerId !== undefined && request.auth.userId === ownerId,
+    // Same rule as inside a turn (see `operatesInstance`), not a second opinion: this used to compare the
+    // caller against `users.ownerId()` — the FIRST admin by creation order — so a second admin passed every
+    // owner gate in a tool and was refused the identical gate on a plugin route.
+    owner: operatesInstance({
+      userId: request.auth.userId ?? undefined,
+      ownerId: ctx.d.users?.ownerId(),
+      isAdmin: request.auth.userId !== null ? ctx.d.users?.get(request.auth.userId)?.is_admin === true : false,
+    }),
     // An authenticated HTTP call acts for exactly one account, like that account's own chat — there is no
     // room full of other senders here, so per-account state is the right default for a plugin route.
     conversation: 'own',
