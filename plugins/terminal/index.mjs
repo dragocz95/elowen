@@ -16,6 +16,8 @@ import { defineTool, truncateTail, formatSize, createLocalBashOperations } from 
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { sandboxRun, sandboxAvailable } from './sandbox.mjs';
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
@@ -28,6 +30,10 @@ const MIN_TIMEOUT_S = 1;
 // Blocking `ProcessOutput` — wait for a background process to finish instead of polling it. Capped
 // well under the foreground ceiling: a blocked read holds the agent's turn open, and the process keeps
 // running after a timeout, so the caller can simply block again.
+//
+// NOTE on background lifetime: a background process outlives the TURN, but not the daemon. A sandboxed
+// one is torn down with the daemon by `--die-with-parent`, and an unsandboxed one is killed with the
+// service cgroup on restart anyway — the in-memory registry that addresses it does not survive either.
 const DEFAULT_BLOCK_S = 30;
 const MAX_BLOCK_S = 120;
 const DEFAULT_MAX_BG = 16;       // default concurrent background processes per session (cfg: maxBackgroundProcesses)
@@ -275,8 +281,16 @@ export function register(ctx) {
       roots: ctx.allowedRoots(),
       dataDir: ctx.dataDir(),
       userId: ctx.currentIdentity?.()?.elowenUserId ?? null,
+      sessionId: currentSessionId(),
     });
   };
+
+  // The sandbox keeps a writable HOME per account (npm cache, .gitconfig). It is per-account state, so it
+  // has to go when the account does — otherwise a deleted user's caches and credentials sit there forever.
+  // A session-keyed home has no account to hang off and is left to the data dir's own lifecycle.
+  ctx.registerUserRemoved?.((userId) => {
+    rmSync(join(ctx.dataDir(), 'sandbox-home', `user-${userId}`), { recursive: true, force: true });
+  });
 
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
@@ -287,7 +301,7 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `Foreground runs are killed after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)} s; raise it with \`timeout\` (seconds, max ${MAX_TIMEOUT_S}) for a slow but finite command such as an install or a full build.`,
-      'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no time limit. Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
+      'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no command timeout (it does not outlive a daemon restart). Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
       `Output is capped: only the LAST ~${Math.round(outputCap / 1000)} kB is returned and the result says so when it was truncated, so redirect a long build or test run to a file and grep it instead of re-running it.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
