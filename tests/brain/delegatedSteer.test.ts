@@ -189,6 +189,7 @@ describe('DelegatedSessionService.continueSubagent — mid-turn children are ste
   function setupDelegated(opts: {
     localSteer?: 'delivered' | 'idle' | Error | (() => 'delivered' | 'idle');
     remote?: 'delivered' | 'idle' | 'aborted';
+    remoteBusy?: boolean;
     wireRemote?: boolean;
   } = {}) {
     const store = new BrainStore(openDb(':memory:'));
@@ -202,15 +203,41 @@ describe('DelegatedSessionService.continueSubagent — mid-turn children are ste
       return typeof v === 'function' ? v() : v;
     });
     const steerRemote = vi.fn(async () => ({ outcome: opts.remote ?? 'idle' as const }));
+    const releaseRemote = vi.fn(async () => ({ busy: opts.remoteBusy === true }));
     const svc = new DelegatedSessionService({
-      store, sessions,
+      store, sessions: sessions as never,
       channelService: { send, steerDelegatedTurn: steerLocal } as never,
       identity: { forDelegatedTurn: () => ({ platform: 'subagent', userId: 'subagent', admin: true, owner: true }) } as never,
       users: { get: () => ({}) } as never,
+      releaseRemote,
       ...(opts.wireRemote === false ? {} : { steerRemote }),
     });
-    return { store, sessions, svc, send, steerLocal, steerRemote };
+    return { store, sessions, svc, send, steerLocal, steerRemote, releaseRemote };
   }
+
+  it('steers a hidden result into a parent RUNNING in the sub-agent runner', async () => {
+    const { svc, send, steerRemote, releaseRemote } = setupDelegated({ remoteBusy: true, remote: 'delivered' });
+    const result = '<system-reminder><subagent-result id="res-1">done</subagent-result></system-reminder>';
+
+    await expect(svc.sendDelegated(1, CHILD, result, {
+      internalSystem: { customType: 'subagent-result', resultId: 'res-1' },
+    })).resolves.toBe('');
+
+    expect(releaseRemote).toHaveBeenCalledWith(CHANNEL);
+    expect(steerRemote).toHaveBeenCalledWith(CHANNEL, result);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a hidden result while the remote parent is busy but not steerable', async () => {
+    const { svc, send, steerRemote } = setupDelegated({ remoteBusy: true, remote: 'idle' });
+
+    await expect(svc.sendDelegated(1, CHILD, 'result', {
+      internalSystem: { customType: 'subagent-result', resultId: 'res-1' },
+    })).rejects.toThrow(/running in the sub-agent runner/);
+
+    expect(steerRemote).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+  });
 
   it('runs an idle child as its own turn and returns the reply', async () => {
     const { svc, send, steerLocal, steerRemote } = setupDelegated();

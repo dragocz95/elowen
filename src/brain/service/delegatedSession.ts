@@ -432,8 +432,20 @@ export class DelegatedSessionService {
     // channelService.send synchronously by design.
     const release = this.d.releaseRemote;
     if (release) {
-      const { busy } = await release(channelIdOf(sessionId));
-      if (busy) throw new Error('that sub-agent is running in the sub-agent runner — wait for it to finish before sending it more');
+      const channelId = channelIdOf(sessionId);
+      const { busy } = await release(channelId);
+      if (busy) {
+        // A hidden durable result is not a new continuation that needs this process to reclaim the child.
+        // Route it through the runner's existing confirmed-steer seam: that process owns the live PI queue,
+        // and `delivered` means the message reached the running turn's context. Ordinary drill-ins still
+        // refuse here because they have their own user-visible continuation semantics.
+        if (opts?.internalSystem) {
+          const remote = await this.d.steerRemote?.(channelId, content) ?? { outcome: 'idle' as const };
+          if (remote.outcome === 'delivered') return '';
+          if (remote.outcome === 'aborted') throw new Error('delegation aborted');
+        }
+        throw new Error('that sub-agent is running in the sub-agent runner — wait for it to finish before sending it more');
+      }
     }
     const policy = scope.admin
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
