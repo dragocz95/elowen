@@ -329,11 +329,18 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const body = new Uint8Array(readFileSync(path)).buffer;
     return c.body(body, 200, { 'content-type': AVATAR_MIME[ext] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
   });
+  /** The ONE admin check the account-administration routes below share. It reads the admin bit through
+   *  `users`, the same store every other API gate now reads, so this file cannot drift from them — the
+   *  project-assignment routes used to ask `userProjects` instead, a second implementation of one fact. */
+  const denyNonAdmin = (c: { get: (k: 'user') => User | undefined }): boolean => {
+    const u = c.get('user');
+    return !u || !users.isAdmin(u.id);
+  };
+
   app.get('/users', (c) => {
     // Admin-only directory, but stay open during setup (no users yet) so onboarding can read it.
     if (users.count() > 0) {
-      const actor = c.get('user');
-      if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     }
     return c.json(users.list());
   });
@@ -341,8 +348,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = await parseBody(c, userCreateSchema); // 400 on empty/malformed body or a sub-8-char password
     // Allow creation during setup (no users yet), otherwise admin only
     if (users.count() > 0) {
-      const actor = c.get('user');
-      if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     }
     try { return c.json(users.create(b.username, b.password), 201); }
     catch (e) {
@@ -354,8 +360,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.delete('/users/:id', async (c) => {
     // Admin-only — mirrors POST/PATCH /users. Without this a non-admin could delete other users
     // and cascade-wipe their settings/personality/memory.
-    const actor = c.get('user');
-    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id)) return c.json({ error: 'invalid user id' }, 400); // a non-numeric id must 400, not silently no-op
     if (users.count() <= 1) return c.json({ error: 'cannot delete the last user' }, 400);
@@ -397,8 +402,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // Admin edits another user's permissions: role (is_admin) and per-user model allow-list.
   app.patch('/users/:id', async (c) => {
-    const actor = c.get('user');
-    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     const target = users.get(id);
     if (!target) return c.json({ error: 'user not found' }, 404);
@@ -438,8 +442,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // session (per-user scoped); plugin tools ride along for the user's sessions (path-level access is
   // still enforced at execute). `icon` is the manifest/built-in emoji, or null → the client's fallback.
   app.get('/users/:id/tools', async (c) => {
-    const actor = c.get('user');
-    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     const target = users.get(id);
     if (!target) return c.json({ error: 'user not found' }, 404);
@@ -471,8 +474,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // Admin: compact per-user overview stats for the users panel (memory count, brain-session count, and
   // the model used in the most sessions over the whole history). Cheap aggregates on indexed columns.
   app.get('/users/:id/stats', (c) => {
-    const actor = c.get('user');
-    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     if (!users.get(id)) return c.json({ error: 'user not found' }, 404);
     const memoryCount = d.memoryStore?.count(id) ?? 0;
@@ -485,8 +487,8 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // and stashes the admin's own token so it can restore. The returned token is a normal token (revoked
   // when the admin ends the impersonation via logout).
   app.post('/users/:id/impersonate', (c) => {
-    const actor = c.get('user');
-    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const actor = c.get('user')!; // present: denyNonAdmin above rejects a request without one
     const id = Number(c.req.param('id'));
     if (id === actor.id) return c.json({ error: 'cannot impersonate yourself' }, 400);
     const target = users.get(id);
@@ -499,13 +501,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // User ↔ project assignments. Only the bootstrap admin may view/manage them.
   if (d.userProjects) {
     const up = d.userProjects;
-    const adminOnly = (c: { get: (k: 'user') => User | undefined }) => { const u = c.get('user'); return !!u && up.isAdmin(u.id); };
     app.get('/users/:id/projects', (c) => {
-      if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
       return c.json(up.forUser(Number(c.req.param('id'))));
     });
     app.post('/users/:id/projects', async (c) => {
-      if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
       const { projectId } = await parseBody(c, projectAssignSchema);
       const userId = Number(c.req.param('id'));
       const pid = Number(projectId);
@@ -520,7 +521,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json({ ok: true });
     });
     app.delete('/users/:id/projects/:pid', (c) => {
-      if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
       up.unassign(Number(c.req.param('id')), Number(c.req.param('pid')));
       return c.json({ ok: true });
     });

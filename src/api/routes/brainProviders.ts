@@ -9,7 +9,7 @@ import type { ElowenApp } from '../context.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
 
 export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden } = route;
+  const { d, forbidden, notAdminUnlessSetup } = route;
 
   // The pickable models across every configured brain provider — dedicated entries, connected OAuth
   // accounts, or the relay fallback (feeds the Account → CLI dropdown and the CLI /model picker).
@@ -41,8 +41,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   // clicks models instead of typing them. `apiKey` may be omitted when editing (`id` resolves the
   // stored key). Admin-only: it can exercise arbitrary stored credentials.
   app.post('/brain/providers/probe', async c => {
-    const u = d.users ? c.get('user') : undefined;
-    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const b = (await c.req.json().catch(() => ({}))) as { baseUrl?: unknown; apiKey?: unknown; id?: unknown };
     const baseUrl = typeof b.baseUrl === 'string' ? b.baseUrl.trim() : '';
     if (!baseUrl) return c.json({ error: 'baseUrl required' }, 400);
@@ -53,8 +52,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   });
 
   app.get('/brain/providers/hosted-tool-search/status', c => {
-    const u = d.users ? c.get('user') : undefined;
-    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const capabilities = d.config.get().runtime.hostedToolSearch;
     return c.json({ providers: d.config.brainProviders()
       .filter(isAzureOpenAIResponsesProvider)
@@ -77,8 +75,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   // Admin-only: it exercises the stored provider key. Provider errors stay structured and never expose raw
   // response bodies (which can include request metadata or echoed prompt content).
   app.post('/brain/providers/hosted-tool-search/probe', async c => {
-    const u = d.users ? c.get('user') : undefined;
-    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     const body = (await c.req.json().catch(() => ({}))) as { providerId?: unknown; modelId?: unknown };
     const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : '';
     const modelId = typeof body.modelId === 'string' ? body.modelId.trim() : '';
@@ -104,8 +101,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   // answers. Admin-only (it exercises stored provider credentials, like providers/probe). Always 200 with
   // a structured result — a provider failure is reported as { ok:false, error }, never a 500.
   app.post('/brain/test', async c => {
-    const u = d.users ? c.get('user') : undefined; // setup/open mode: no user store or zero users → skip the admin gate (matches providers/probe)
-    if (d.users && d.users.count() > 0 && (!u || !u.is_admin)) return c.json({ error: 'forbidden' }, 403);
+    if (notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.brain) return c.json({ ok: false, error: 'brain unavailable' });
     const b = (await c.req.json().catch(() => ({}))) as { providerId?: unknown; model?: unknown };
     const sel = {

@@ -148,12 +148,19 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     return !!u && d.userProjects.canAccess(u.id, id);
   };
 
+  // Is the CALLER an admin account? The two gates below differ only in when they stay OPEN, never in how
+  // they answer this — they used to reach it through two different stores (`userProjects.isAdmin` vs
+  // `users.isAdmin`), which is a drift waiting to happen rather than a distinction.
+  const callerIsAdmin = (c: UserCtx): boolean => {
+    const u = c.get('user');
+    return !!u && !!d.users?.isAdmin(u.id);
+  };
+
   // Admin gate for daemon-wide, project-agnostic routes (integrations, etc.). Open/single-user mode
-  // (no userProjects store) passes; otherwise only the admin clears it.
+  // (no userProjects store) passes; otherwise only an admin clears it.
   const notAdmin = (c: UserCtx): boolean => {
     if (!d.userProjects || !d.users) return false;
-    const u = c.get('user');
-    return !u || !d.userProjects.isAdmin(u.id);
+    return !callerIsAdmin(c);
   };
 
   // Setup-tolerant admin gate: identical to notAdmin once any user exists, but OPEN during first-run
@@ -161,8 +168,7 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   // before the first admin is created. The ONE place this weaker rule lives.
   const notAdminUnlessSetup = (c: UserCtx): boolean => {
     if (!d.users || d.users.count() === 0) return false;
-    const u = c.get('user');
-    return !u || !d.users.isAdmin(u.id);
+    return !callerIsAdmin(c);
   };
 
   // The set of project ids the caller may see, or null for unrestricted (open mode / admin).

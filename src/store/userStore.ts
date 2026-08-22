@@ -13,6 +13,16 @@ const ttlDays = (days?: number): number =>
 // The user shape is the daemon↔web wire contract (served by /auth/me etc.) — defined once in
 // src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
 export type { User };
+
+/** THE read of the admin bit. Both `UserStore` and `UserProjectStore` expose an `isAdmin`, and until this
+ *  existed each ran its own copy of the same SELECT — two implementations of one fact, reachable from
+ *  different API gates (`notAdminUnlessSetup` went through one, `notAdmin` through the other), which is
+ *  precisely how two gates protecting comparable routes come to disagree. Reads the explicit
+ *  `users.is_admin` column, never a mutable MIN(id) heuristic, so deleting a user cannot transfer it. */
+export function readIsAdmin(db: Db, userId: number): boolean {
+  const r = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as { is_admin: number } | undefined;
+  return !!r?.is_admin;
+}
 /** What a token may do. 'full' = an interactive user session (the user's own rights). 'agent' = a
  *  spawned worker/overseer/pilot, restricted to its task-close / plan-submit / overseer verbs.
  *  'advisor' is stored in the DB for the per-user advisor session; it grants full access (mapped to
@@ -258,10 +268,9 @@ export class UserStore {
     }).immediate();
   }
 
-  /** Whether the user is the bootstrap admin (full access + manages project assignments). */
+  /** Whether the user is an admin (full access + manages project assignments). */
   isAdmin(id: number): boolean {
-    const r = this.db.prepare('SELECT is_admin FROM users WHERE id = ?').get(id) as { is_admin: number } | undefined;
-    return !!r?.is_admin;
+    return readIsAdmin(this.db, id);
   }
   /** The instance OPERATOR: the first admin by creation order. One definition shared by the brain's
    *  `platformOwner` (which anchors channel sessions) and the API's identity minting, so "owner" cannot

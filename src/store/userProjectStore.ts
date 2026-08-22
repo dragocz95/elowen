@@ -1,3 +1,4 @@
+import { readIsAdmin } from './userStore.js';
 import type { Db } from './db.js';
 
 /** Assignments of users to projects (many-to-many). The bootstrap admin (users.is_admin) always
@@ -19,11 +20,10 @@ export class UserProjectStore {
     this.db.prepare('DELETE FROM user_projects WHERE user_id = ? AND project_id = ?').run(userId, projectId);
   }
 
-  /** True for the bootstrap admin (full visibility + may manage assignments). Reads the explicit
-   *  users.is_admin flag — never a mutable MIN(id) heuristic, so deleting a user can't transfer it. */
+  /** True for an admin account (full visibility + may manage assignments). Delegates to the one reader
+   *  in `userStore` so this store and `UserStore.isAdmin` can never answer the same question differently. */
   isAdmin(userId: number): boolean {
-    const r = this.db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as { is_admin: number } | undefined;
-    return !!r?.is_admin;
+    return readIsAdmin(this.db, userId);
   }
 
   /** True when the user may see/operate the project: the admin always can; otherwise only when

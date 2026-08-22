@@ -6,6 +6,9 @@ export type BrainService = NonNullable<RouteContext['d']['brain']>;
 export interface BrainRouteContext {
   d: RouteContext['d'];
   forbidden: (c: { get: (k: 'tokenScope') => string }) => boolean;
+  /** The API-wide setup-tolerant admin gate, passed through so a brain route uses the SAME predicate as
+   *  every other route instead of re-deriving one from `d.users.count()` and `user.is_admin` by hand. */
+  notAdminUnlessSetup: RouteContext['notAdminUnlessSetup'];
   pinOrigin: (c: ElowenContext, sessionId: string) => void;
   withBrain: (
     handler: (c: ElowenContext, brain: BrainService) => Response | Promise<Response>,
@@ -43,7 +46,7 @@ export function createBrainRouteContext(ctx: RouteContext): BrainRouteContext {
     return handler(c, d.brain);
   };
 
-  return { d, forbidden, pinOrigin, withBrain };
+  return { d, forbidden, pinOrigin, withBrain, notAdminUnlessSetup: ctx.notAdminUnlessSetup };
 }
 
 /** Opt-in backwards pagination for the message history (the chat's lazy-load): undefined when `?limit` is
