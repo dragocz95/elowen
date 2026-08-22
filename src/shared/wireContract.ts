@@ -82,12 +82,19 @@ export type BrainSegment =
   /** An image the agent shared on purpose (`ShareImage`). Its own segment rather than a field on the tool
    *  row, because the picture IS the message here — a reader wants to see it, not a pill saying a tool
    *  ran. A failed share stays an ordinary tool row so the error is still visible. */
-  | { kind: 'image'; image: BrainMessageImage; caption?: string };
+  | { kind: 'image'; image: BrainMessageImage; caption?: string }
+  /** A durable artifact shared on purpose (`ShareFile`). The web renders a download affordance rather than
+   *  the tool pill; a failed share remains an ordinary tool row with its refusal visible. */
+  | { kind: 'file'; file: BrainMessageFile; caption?: string };
 
 /** An image in a conversation, kept next to the database so it still shows after a reload — a user's
  *  attachment or one the agent shared. `url` is a daemon path (`/brain/chat-images/<file>`) a browser
  *  loads directly: through the web proxy it carries the session cookie, so no signed link is involved. */
 export interface BrainMessageImage { url: string; mimeType: string }
+
+/** A general file the agent shared. The URL is an authenticated daemon download route; `name` is the
+ *  original basename the browser should save and `size` lets clients explain the download before fetching. */
+export interface BrainMessageFile { url: string; name: string; size: number }
 
 /** A durable display row (the `GET /brain/messages` payload). `id` is the SQLite message UUID when the
  *  source is a real store row; structural callers may omit it. The only non-row views served over HTTP are

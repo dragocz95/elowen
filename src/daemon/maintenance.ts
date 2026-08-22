@@ -1,5 +1,6 @@
 import type { BrainService } from '../brain/brainService.js';
 import { sweepChatImages } from '../brain/chatImages.js';
+import { chatFilesDir, sweepChatFiles } from '../brain/chatFiles.js';
 import { isEvictable, vitality, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 import type { BrainTerminalService } from '../brain/terminalService.js';
 import type { BrainWorkerService } from '../brain/worker/brainWorker.js';
@@ -172,7 +173,9 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
         for (const file of deps.brain?.pendingChatImageFiles() ?? []) referenced.add(file);
         const removed = sweepChatImages(deps.chatImagesDir, referenced, 3_600_000, clock.now());
         if (removed > 0) deps.log.info(`chat images: removed ${removed} unreferenced attachment(s)`);
-      } catch (e) { deps.log.error('chat image sweep failed', e); }
+        const removedFiles = sweepChatFiles(chatFilesDir(deps.chatImagesDir), deps.brainStore.referencedChatFiles(), 3_600_000, clock.now());
+        if (removedFiles > 0) deps.log.info(`chat files: removed ${removedFiles} unreferenced attachment(s)`);
+      } catch (e) { deps.log.error('chat attachment sweep failed', e); }
     };
     sweepChatAttachments();
     const stopChatImageSweep = clock.setInterval(sweepChatAttachments, 86_400_000);

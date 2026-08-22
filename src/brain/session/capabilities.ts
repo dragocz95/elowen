@@ -76,8 +76,8 @@ export interface CapabilitySpec {
   /** The `ToolSearch` built-in, composed for every INTERACTIVE session that actually defers tools. The
    *  deferred set is handed to the factory so it can close over the same handle the session receives. */
   toolSearch?: (deferred: Set<string>) => ToolDefinition[];
-  /** `ShareImage` — the one way the agent can put a picture in front of the user. Interactive sessions
-   *  only: a task worker has no one watching to show it to. */
+  /** Core sharing tools (`ShareImage` and `ShareFile`). Interactive sessions only: a task worker has no
+   *  person-facing surface to receive them. */
   shareImage?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
   /** Observer fired after a PERMITTED plugin tool's execute resolves (never for a policy-denied call or

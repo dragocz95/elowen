@@ -542,6 +542,7 @@ function useBrainChatController(): BrainChatValue {
         toolOutput: ({ output, id, plan }) => applyEvent({ type: 'tool_output', output, id, plan }),
         toolEnd: ({ id, plan }) => applyEvent({ type: 'tool_end', id, plan }),
         image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
+        file: ({ ref, name, size, id, caption }) => applyEvent({ type: 'file', ref, name, size, id, caption }),
         // Ask stays visible until the daemon resolves this exact id; idle alone cannot prove it is settled.
         ask: ({ id, questions, kind }) => {
           hydrationStampRef.current.control += 1;

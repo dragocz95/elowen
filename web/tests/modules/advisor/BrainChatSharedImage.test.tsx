@@ -147,3 +147,32 @@ describe('an image the agent shares', () => {
     expect(await screen.findByText('tady je ten graf')).toBeTruthy();
   });
 });
+
+describe('a file the agent shares', () => {
+  const hash = `${'a'.repeat(64)}.bin`;
+  const ref = `/api/brain/chat-files/${hash}`;
+  const file = { url: `/brain/chat-files/${hash}`, name: 'jednatele-chetty-webhouse.htm', size: 1536 };
+
+  it('appears live as a named download with its size', async () => {
+    const es = await renderSurface();
+    es.emit('file', { type: 'file', ref, name: file.name, size: file.size, caption: 'Dokument k archivaci' });
+
+    const action = await screen.findByRole('link', { name: new RegExp(file.name) });
+    expect(action.getAttribute('href')).toBe(ref);
+    expect(action.getAttribute('download')).toBe(file.name);
+    expect(await screen.findByText('1.5 KB')).toBeTruthy();
+    expect(await screen.findByText('Dokument k archivaci')).toBeTruthy();
+  });
+
+  it('is rebuilt as the same download after a reload', async () => {
+    const es = await renderSurface();
+    es.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null, events: [],
+      history: [{ id: 'm1', role: 'assistant', text: '', segments: [{ kind: 'file', file }] }],
+    });
+
+    const action = await screen.findByRole('link', { name: new RegExp(file.name) });
+    expect(action.getAttribute('href')).toBe(ref);
+    expect(action.getAttribute('download')).toBe(file.name);
+  });
+});

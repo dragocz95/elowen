@@ -1,4 +1,5 @@
 import { buildMemoryTools } from './memoryTools.js';
+import { buildShareFileTool } from './shareFileTool.js';
 import { buildShareImageTool } from './shareImageTool.js';
 export type BuiltinToolGroup = 'memory' | 'image';
 
@@ -15,6 +16,7 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'Memory*': '🧠',
   'ToolSearch': '🧭',
   'ShareImage': '🖼',
+  'ShareFile': '📎',
   'ExitPlanMode': '📋',
 };
 
@@ -51,7 +53,7 @@ export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
   // composed plan-mode set is unchanged while the plugin is enabled.
   // Showing the user a screenshot is exactly what planning a UI change needs, and it mutates nothing: the
   // file is copied into the conversation's own image store, nothing the user owns is touched.
-  'ShareImage',
+  'ShareImage', 'ShareFile',
   // NOTE: ToolSearch is deliberately NOT plan-safe. In plan mode the deferred tools it would fetch are
   // external MCP tools — presumed mutating and refused by the plan-safe boundary anyway — so activating
   // them buys nothing and would only spend tokens on schemas the turn cannot call. Deferred MCP tools
@@ -67,6 +69,7 @@ export function builtinToolMetas(): { name: string; label: string; group: Builti
   const memory = buildMemoryTools(undefined as never).map(meta('memory'));
   // Its own group because neither of the others describes it: the control plane is admin-only, memory is
   // per-user, and sharing an image is simply something every interactive session can do.
-  const share = [buildShareImageTool(undefined as never)].map(meta('image'));
-  return [...memory, ...share];
+  const images = [buildShareImageTool(undefined as never)].map(meta('image'));
+  const files = [buildShareFileTool(undefined as never)].map(meta('image'));
+  return [...memory, ...images, ...files];
 }

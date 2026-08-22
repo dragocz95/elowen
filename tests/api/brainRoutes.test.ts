@@ -17,6 +17,8 @@ import type { BrainEvent } from '../../src/brain/events.js';
 import type { ProcessInfo } from '../../src/brain/processRegistry.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { RefMissions, RefReadiness, RefTaskStore } from '../helpers/refStores.js';
+import { BrainStore } from '../../src/store/brainStore.js';
+import { chatFilesDir, storeFileByContent } from '../../src/brain/chatFiles.js';
 
 const proc = (id: string, sessionId: string | null): ProcessInfo => ({
   id, command: `sleep ${id}`, cwd: '/w', startedAt: '2026-01-01T00:00:00Z', sessionId, running: true, exitCode: null,
@@ -356,7 +358,7 @@ function lspPluginProvider(diagnosticsEnabled: boolean): PluginRegistryProvider 
   }));
 }
 
-function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegistryProvider } = {}) {
+function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegistryProvider; chatImagesDir?: string } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
@@ -364,12 +366,14 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
   const brain = fakeBrain();
+  const brainStore = new BrainStore(db);
   const app = createServer({
     tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, brainAuth: opts.brainAuth, plugins: opts.plugins,
+    brainStore, chatImagesDir: opts.chatImagesDir,
   });
   return {
     app,
@@ -378,6 +382,7 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
     amyTok: users.issueToken(amy.id),
     agentTok: users.issueToken(amy.id, 'agent'),
     brain,
+    brainStore,
     config,
   };
 }
@@ -386,6 +391,43 @@ const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authori
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
+  it('serves an owned .htm only as an opaque attachment and 404s the same file for another user', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'brain-chat-files-'));
+    pluginRoots.push(root);
+    const imagesDir = join(root, 'chat-images');
+    const { app, adminTok, amyTok, brainStore } = setup({ chatImagesDir: imagesDir });
+    brainStore.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const bytes = Buffer.from('<script>document.body.dataset.pwned = "yes"</script>');
+    const stored = storeFileByContent(chatFilesDir(imagesDir), bytes, 'jednatele-chetty-webhouse.htm')!;
+    brainStore.appendMessage({
+      id: 'file-result', sessionId: 'brain-1', parentId: null, role: 'toolResult',
+      content: { role: 'toolResult', toolCallId: 'share-1', toolName: 'ShareFile', isError: false, details: { sharedFile: stored } },
+    });
+
+    const owner = await app.request(`/brain/chat-files/${stored.file}`, auth(adminTok));
+    expect(owner.status).toBe(200);
+    expect(Buffer.from(await owner.arrayBuffer())).toEqual(bytes);
+    expect(owner.headers.get('content-disposition')).toContain('attachment');
+    expect(owner.headers.get('content-disposition')).toContain('jednatele-chetty-webhouse.htm');
+    expect(owner.headers.get('content-type')).toBe('application/octet-stream');
+    expect(owner.headers.get('content-type')).not.toBe('text/html');
+    expect(owner.headers.get('x-content-type-options')).toBe('nosniff');
+
+    const stranger = await app.request(`/brain/chat-files/${stored.file}`, auth(amyTok));
+    expect(stranger.status).toBe(404);
+  });
+
+  it('rejects malformed chat-file names before the ownership database scan', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'brain-chat-files-shape-'));
+    pluginRoots.push(root);
+    const { app, adminTok, brainStore } = setup({ chatImagesDir: join(root, 'chat-images') });
+    const lookup = vi.spyOn(brainStore, 'chatFileForUser');
+
+    const res = await app.request('/brain/chat-files/%25', auth(adminTok));
+    expect(res.status).toBe(404);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
   it('protects the request-debug namespace and marks every response private no-store', async () => {
     const { app, adminTok, adminAgentTok, amyTok } = setup();
     for (const token of [amyTok, adminAgentTok]) {

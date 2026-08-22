@@ -12,6 +12,7 @@ import { parseDbTs } from '../shared/time.js';
 import { EXIT_PLAN_MODE_TOOL } from '../shared/planTool.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import { parseStoredChatImages, stripAttachmentMarker, toMessageImages } from './chatImages.js';
+import { collectChatFiles, toMessageFile } from './chatFiles.js';
 import { collapseWhitespace } from '../shared/text.js';
 // Only these two have daemon consumers that import them from here; BrainSubagentView/BrainWorkflowView/
 // BrainSegment are used internally by the shaping code below, and anything else that needs them imports
@@ -233,6 +234,15 @@ function sharedImageOf(result: unknown): { kind: 'image'; image: BrainMessageIma
   const [image] = toMessageImages([{ file, mimeType }]);
   if (!image) return undefined;
   return { kind: 'image', image, ...(typeof caption === 'string' && caption ? { caption } : {}) };
+}
+
+/** The download segment a stored `ShareFile` result rebuilds. The strict shared parser validates the stored
+ *  reference before its metadata becomes part of the client wire contract. */
+function sharedFileOf(result: unknown): Extract<BrainSegment, { kind: 'file' }> | undefined {
+  const [stored] = collectChatFiles(result);
+  if (!stored) return undefined;
+  const caption = ((result as { details?: { sharedFile?: { caption?: unknown } } }).details?.sharedFile?.caption);
+  return { kind: 'file', file: toMessageFile(stored), ...(typeof caption === 'string' && caption ? { caption } : {}) };
 }
 
 /** Hook-appended annotations riding a tool result (`details.notes` — the `tools.call.after` contract),
@@ -538,10 +548,9 @@ export function shapeBrainMessages(
         // Build the output preview here (not in the toolResult loop) so the toolCall's `arguments` — the
         // only place the verbatim shell command survives — reaches the console renderer.
         const res = p.id ? results.get(p.id) : undefined;
-        // A successful share becomes the picture itself — the "ShareImage" pill next to it would say
-        // nothing the image does not. A FAILED one falls through to the normal tool row, so the reason it
-        // did not appear stays readable.
-        const shared = sharedImageOf(res?.result);
+        // A successful share becomes the payload itself — a ShareImage/ShareFile pill beside it adds
+        // nothing. A FAILED share falls through to the normal tool row so its refusal remains readable.
+        const shared = sharedFileOf(res?.result) ?? sharedImageOf(res?.result);
         if (shared && res?.isError !== true) { segments.push(shared); continue; }
         const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
         const display = toolDisplay(p.name, p.arguments);

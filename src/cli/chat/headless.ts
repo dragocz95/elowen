@@ -425,7 +425,7 @@ export async function runHeadless(
       case 'text': if (!o.json) io.stdout(e.delta); activity = true; break;
       case 'reasoning': if (o.verbose && !o.json) io.stderr(dim(e.delta)); activity = true; break;
       case 'tool': if (o.verbose && !o.json) io.stderr(dim(`\n[tool] ${e.name}${e.command ? ` $ ${e.command}` : e.detail ? ` ${e.detail}` : ''}\n`)); activity = true; break;
-      case 'tool_output': case 'diff': case 'card': case 'image': activity = true; break;
+      case 'tool_output': case 'diff': case 'card': case 'image': case 'file': activity = true; break;
       case 'step': if (o.verbose && !o.json) io.stderr(dim(`[step ${e.step}/${e.maxSteps}]\n`)); activity = true; break;
       case 'notice': if (o.verbose && !o.json) io.stderr(dim(`[${e.kind}] ${e.message}\n`)); break;
       case 'ask':

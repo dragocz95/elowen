@@ -6,6 +6,7 @@ import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
+import { buildShareFileTool } from '../tools/shareFileTool.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
@@ -224,7 +225,10 @@ export class LiveSessionSpawner {
       },
       // Needs somewhere to keep the bytes; an in-memory store has none, and the tool says so rather than
       // silently doing nothing.
-      shareImage: () => [buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir })],
+      shareImage: () => [
+        buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir }),
+        buildShareFileTool({ imagesDir: this.d.chatImagesDir }),
+      ],
       pluginTools,
       // Plugin tools are gated at EXECUTE time from the turn's ToolPolicy (set in runWithPolicy), not
       // filtered at compose — one shared mechanism for owner chat and shared channels alike.

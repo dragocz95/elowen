@@ -175,6 +175,7 @@ export interface HistoryMessage {
     | { kind: 'text'; text: string }
     | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState; plan?: string }
     | { kind: 'image'; image: { url: string; mimeType: string }; caption?: string }
+    | { kind: 'file'; file: { url: string; name: string; size: number }; caption?: string }
   )[];
   /** The source's own id: the store row's for a `user`/`assistant`/`compaction` row, the session-change
    *  marker's for a `role:'event'` row. Absent only when the source had none. */
@@ -252,6 +253,10 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
         // and find nothing at all.
         const name = seg.image.url.slice(seg.image.url.lastIndexOf('/') + 1);
         segments.push({ kind: 'text', text: `🖼 ${seg.caption?.trim() || `shared ${name}`}` });
+      } else if (seg.kind === 'file') {
+        // The web owns the download affordance; terminal history still names the original artifact so the
+        // share never disappears silently on a client that cannot fetch authenticated file refs yet.
+        segments.push({ kind: 'text', text: `📎 ${seg.caption?.trim() || seg.file.name}` });
       } else {
         const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan };
         const tail = segments[segments.length - 1];

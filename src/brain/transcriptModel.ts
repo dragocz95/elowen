@@ -190,6 +190,13 @@ export class TranscriptModel implements TranscriptRead {
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
+      case 'file': {
+        const { turn, index, fresh } = this.ensureAssistant();
+        appendSegmentText(turn, 'text', `\n📎 ${event.caption?.trim() || event.name}\n`);
+        this.syncPreviousToolRunJoin(index);
+        this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
+        return true;
+      }
       case 'reasoning': {
         const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'reasoning', event.delta);

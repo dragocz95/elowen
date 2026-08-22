@@ -60,6 +60,31 @@ describe('a shared image after a reload', () => {
   });
 });
 
+describe('a shared file after a reload and while live', () => {
+  const file = `${'b'.repeat(64)}.bin`;
+  const stored = { file, name: 'jednatele-chetty-webhouse.htm', size: 42 };
+
+  it('rebuilds the stored result as a download segment', () => {
+    store.appendMessage({ id: 'f1', sessionId: 'brain-1', parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'toolCall', id: 'fc1', name: 'ShareFile', arguments: {} }] } });
+    store.appendMessage({ id: 'f2', sessionId: 'brain-1', parentId: null, role: 'toolResult', content: {
+      role: 'toolResult', toolCallId: 'fc1', toolName: 'ShareFile', isError: false,
+      content: [{ type: 'text', text: 'Shared the file.' }], details: { sharedFile: { ...stored, caption: 'ke stažení' } },
+    } });
+
+    const [view] = shapeBrainMessages(store.getMessages('brain-1'));
+    expect(view!.segments).toEqual([{ kind: 'file', file: { url: `/brain/chat-files/${file}`, name: stored.name, size: 42 }, caption: 'ke stažení' }]);
+  });
+
+  it('announces the live download with the same metadata', () => {
+    const event = toBrainEvent({
+      type: 'tool_execution_end', toolName: 'ShareFile', args: {},
+      result: { content: [{ type: 'text', text: 'Shared the file.' }], details: { sharedFile: stored } },
+    } as unknown as AgentSessionEvent);
+
+    expect(event).toMatchObject({ type: 'file', ref: `/api/brain/chat-files/${file}`, name: stored.name, size: 42 });
+  });
+});
+
 describe('a shared image while the turn is live', () => {
   const endEvent = (details: unknown) => toBrainEvent({
     type: 'tool_execution_end', toolName: 'ShareImage', args: {},

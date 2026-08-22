@@ -63,6 +63,9 @@ export type BrainEvent =
    *  also carries a `caption`), or one an image tool produced and the model's final text forgot to link.
    *  `ref` is a daemon path under `/api/brain/chat-images/` or the older `/api/brain/images/`. */
   | { type: 'image'; ref: string; id?: string; caption?: string }
+  /** A general file the agent shared via `ShareFile`. The web renders `ref` as an authenticated download;
+   *  `name` and `size` are display metadata preserved with the stored tool result. */
+  | { type: 'file'; ref: string; name: string; size: number; id?: string; caption?: string }
   /** A transient runtime notice (rate-limit retry, context compaction) — so a stalled turn explains
    *  itself instead of just hanging on the spinner. `done` marks the end of that phase. */
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
@@ -393,7 +396,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
     };
   }
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown } }; isError?: boolean;
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown; sharedFile?: unknown } }; isError?: boolean;
     toolCallId?: string; partialResult?: unknown;
     // toolcall_start additionally carries the in-progress assistant message: the tool NAME is already on
     // the partial block at `contentIndex` (only its arguments stream in later), so we thread it out.
@@ -505,8 +508,15 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
       const output = typeof anyE.toolName === 'string' ? toolOutputView(anyE.toolName, anyE.args, anyE.result, anyE.isError === true) : undefined;
       return { type: 'diff', diff, id: anyE.toolCallId, ...(output ? { output } : {}) };
     }
-    // ShareImage states its intent structurally, so it needs none of the text sniffing below: the file is
-    // already stored and named in the result's details.
+    // ShareImage/ShareFile state their intent structurally, so neither needs text sniffing: the immutable
+    // bytes and display metadata are already stored in the result details.
+    const sharedFile = anyE.result?.details?.sharedFile as { file?: unknown; name?: unknown; size?: unknown; caption?: unknown } | undefined;
+    if (typeof sharedFile?.file === 'string' && typeof sharedFile.name === 'string' && typeof sharedFile.size === 'number') {
+      return {
+        type: 'file', ref: `/api/brain/chat-files/${sharedFile.file}`, name: sharedFile.name, size: sharedFile.size, id: anyE.toolCallId,
+        ...(typeof sharedFile.caption === 'string' && sharedFile.caption ? { caption: sharedFile.caption } : {}),
+      };
+    }
     const shared = anyE.result?.details?.sharedImage as { file?: unknown; mimeType?: unknown; caption?: unknown } | undefined;
     if (typeof shared?.file === 'string') {
       return {

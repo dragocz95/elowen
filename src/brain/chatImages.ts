@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainMessageImage } from '../shared/wireContract.js';
+import { storeContentAddressed, sweepContentAddressed } from './contentAddressedStore.js';
 
 /** An image in a conversation, kept on disk so it still shows after a reload — one the USER attached, or
  *  one a TOOL produced (a screenshot, a page render) and the agent shared back. Raw base64 deliberately
@@ -73,33 +74,8 @@ export function storeImageByContent(dir: string, data: string, mimeType: string)
   if (!ext) return null;
   let bytes: Buffer;
   try { bytes = Buffer.from(data, 'base64'); } catch { return null; }
-  if (bytes.length === 0) return null;
-  const file = `${createHash('sha256').update(bytes).digest('hex')}.${ext}`;
-  const path = join(dir, file);
-  try {
-    mkdirSync(dir, { recursive: true });
-    if (existsSync(path)) {
-      // Same bytes by construction, so there is nothing to rewrite — but the sweep's grace window is
-      // measured from mtime, and this file is being referenced again right now. Left untouched, a copy
-      // that went unreferenced for a while could be swept out from under the row about to point at it.
-      try { utimesSync(path, new Date(), new Date()); } catch { /* a stale mtime only risks an early sweep */ }
-      return { file, mimeType };
-    }
-    // Written to a temp name and renamed, because a write interrupted halfway (a full disk) would
-    // otherwise leave a TRUNCATED file under a name that promises those exact bytes — and being
-    // content-addressed, every later attempt would find it, trust it, and serve the broken image forever.
-    const tmp = `${path}.${process.pid}.${randomUUID()}.part`;
-    try {
-      writeFileSync(tmp, bytes);
-      renameSync(tmp, path);
-    } catch (error) {
-      try { unlinkSync(tmp); } catch { /* nothing to clean up */ }
-      throw error;
-    }
-    return { file, mimeType };
-  } catch {
-    return null;
-  }
+  const file = storeContentAddressed(dir, bytes, ext);
+  return file ? { file, mimeType } : null;
 }
 
 /** An image block as it is PERSISTED: the bytes have moved to disk and the row keeps only the reference.
@@ -216,23 +192,7 @@ export function toMessageImages(stored: readonly StoredChatImage[]): BrainMessag
  *  before the row that references them is committed, so a sweep racing an admission would otherwise delete
  *  an attachment that is about to become live. Returns how many files were removed. */
 export function sweepChatImages(dir: string, referenced: ReadonlySet<string>, graceMs: number, now = Date.now()): number {
-  let removed = 0;
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return 0; // nothing written yet
-  }
-  for (const file of entries) {
-    if (!STORED_NAME.test(file) || referenced.has(file)) continue;
-    const path = join(dir, file);
-    try {
-      if (now - statSync(path).mtimeMs < graceMs) continue;
-      unlinkSync(path);
-      removed += 1;
-    } catch { /* vanished or unreadable — nothing to reclaim */ }
-  }
-  return removed;
+  return sweepContentAddressed(dir, referenced, isStoredChatImageName, graceMs, now);
 }
 
 /** Parse the `images` field off a persisted user row. The column is free-form JSON written by older

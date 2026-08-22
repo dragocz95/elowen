@@ -56,6 +56,7 @@ function renderSessionHtml(views: BrainMessageView[], title: string, generatedAt
         // An export is a single self-contained file that outlives the daemon, so a `/brain/chat-images/`
         // URL in it would be a broken image the moment it is opened anywhere else. Name what was shared.
         if (s.kind === 'image') return `<div class="text">🖼 ${esc(s.caption?.trim() || 'shared image')}</div>`;
+        if (s.kind === 'file') return `<div class="text">📎 ${esc(s.caption?.trim() || s.file.name)}</div>`;
         return renderTool(s);
       }).join('')
       : `<div class="text">${esc(v.text)}</div>`;

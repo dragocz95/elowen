@@ -4219,8 +4219,8 @@ describe('channel tool composition + per-turn gate', () => {
     // applyToolVisibility narrowed the active set to the role's allow-list before prompting.
     // A role allow-list names PLUGIN tools, so it narrows those only — built-ins are not something a
     // channel role opts into, and dropping them would silently take away e.g. ShareImage.
-    expect(d.session.setActiveToolsByName).toHaveBeenCalledWith(['ShareImage', 'demo_echo']);
-    expect(d.session.getActiveToolNames()).toEqual(['ShareImage', 'demo_echo']);
+    expect(d.session.setActiveToolsByName).toHaveBeenCalledWith(['ShareImage', 'ShareFile', 'demo_echo']);
+    expect(d.session.getActiveToolNames()).toEqual(['ShareImage', 'ShareFile', 'demo_echo']);
   });
 });
 

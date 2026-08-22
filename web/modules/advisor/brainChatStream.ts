@@ -49,6 +49,7 @@ interface LiveStreamHandlers {
   toolOutput: (frame: { output: ToolOutputView; id?: string; plan?: string }) => void;
   toolEnd: (frame: { id?: string; plan?: string }) => void;
   image: (frame: { ref: string; id?: string; caption?: string }) => void;
+  file: (frame: { ref: string; name: string; size: number; id?: string; caption?: string }) => void;
   ask: (frame: AskFrame) => void;
   askResolved: (id: string) => void;
   step: (usage?: BrainUsage) => void;
@@ -201,8 +202,9 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     onFrame('tool_output', (e) => handlers.toolOutput(JSON.parse((e as MessageEvent).data) as { output: ToolOutputView; id?: string; plan?: string }));
     // A display-less ExitPlanMode carries the submitted plan only on tool_end.
     onFrame('tool_end', (e) => handlers.toolEnd(JSON.parse((e as MessageEvent).data) as { id?: string; plan?: string }));
-    // Shared images are folded immediately in the same shape durable history later rebuilds.
+    // Shared images/files are folded immediately in the same shape durable history later rebuilds.
     onFrame('image', (e) => handlers.image(JSON.parse((e as MessageEvent).data) as { ref: string; id?: string; caption?: string }));
+    onFrame('file', (e) => handlers.file(JSON.parse((e as MessageEvent).data) as { ref: string; name: string; size: number; id?: string; caption?: string }));
     onFrame('ask', (e) => handlers.ask(JSON.parse((e as MessageEvent).data) as AskFrame));
     // Resolve by id so a late frame cannot clear the next question.
     onFrame('ask_resolved', (e) => handlers.askResolved((JSON.parse((e as MessageEvent).data) as { id: string }).id));

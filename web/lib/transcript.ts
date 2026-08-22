@@ -1,4 +1,4 @@
-import type { BrainCard, BrainMessage, BrainMessageImage, BrainPendingPlan, BrainStreamTailEvent, BrainWorkflowView, ToolOutputView } from './types';
+import type { BrainCard, BrainMessage, BrainMessageFile, BrainMessageImage, BrainPendingPlan, BrainStreamTailEvent, BrainWorkflowView, ToolOutputView } from './types';
 
 /** The workflow DAG a `WorkflowStart` call is running — the shared wire shape (BrainWorkflowView),
  *  attached to its tool item by call id exactly as `sub` is for a delegate call. */
@@ -30,6 +30,7 @@ export type TranscriptEvent =
    *  reload rebuilds carries the bare daemon path — {@link imageFromRef} is the single place that
    *  reconciles the two, so live and reloaded produce byte-identical segments. */
   | { type: 'image'; ref: string; id?: string; caption?: string }
+  | { type: 'file'; ref: string; name: string; size: number; id?: string; caption?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
@@ -83,6 +84,7 @@ type Segment =
   /** An image the agent shared on purpose. Its own segment rather than a tool row, because the picture IS
    *  the message — mirror of the wire's `BrainSegment` image variant. */
   | { kind: 'image'; image: BrainMessageImage; caption?: string }
+  | { kind: 'file'; file: BrainMessageFile; caption?: string }
   | { kind: 'tools'; items: ToolItem[] };
 /** A rendered tool group: consecutive items of the SAME tool with no diff and no output block fold into
  *  ONE pill showing the LAST item's detail plus a `×count` when >1 (mirror of the CLI's
@@ -202,6 +204,8 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
         segments.push({ kind: 'text', text: seg.text });
       } else if (seg.kind === 'image') {
         segments.push({ kind: 'image', image: seg.image, ...(seg.caption ? { caption: seg.caption } : {}) });
+      } else if (seg.kind === 'file') {
+        segments.push({ kind: 'file', file: seg.file, ...(seg.caption ? { caption: seg.caption } : {}) });
       } else {
         const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf, plan: seg.plan };
         const tail = segments[segments.length - 1];
@@ -357,6 +361,11 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       // pictures, and a caption belongs to exactly one of them.
       const t = ensureElowen();
       t.segments.push({ kind: 'image', image: imageFromRef(e.ref), ...(e.caption ? { caption: e.caption } : {}) });
+      return { turns, thinking: true, notice: view.notice };
+    }
+    case 'file': {
+      const t = ensureElowen();
+      t.segments.push({ kind: 'file', file: { url: e.ref.startsWith('/api/') ? e.ref.slice(4) : e.ref, name: e.name, size: e.size }, ...(e.caption ? { caption: e.caption } : {}) });
       return { turns, thinking: true, notice: view.notice };
     }
     case 'subagent': {

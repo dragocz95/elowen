@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3 } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3 } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -11,11 +11,11 @@ import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
-import type { BrainCard, BrainMessageImage, BrainWorkMode } from '../../lib/types';
+import type { BrainCard, BrainMessageFile, BrainMessageImage, BrainWorkMode } from '../../lib/types';
 import { groupToolItems, type ChatTurn, type SessionEventItem, type ToolItem } from '../../lib/transcript';
 import { MorePill } from '../../components/ui/MorePill';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
-import { Button } from '../../components/ui/Button';
+import { Button, buttonClassName } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
@@ -24,7 +24,7 @@ import { PlanDecisionModal } from './PlanDecisionModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { useBrainChat } from './BrainChatProvider';
-import { formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
+import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 
@@ -432,6 +432,33 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
   );
 }
 
+/** A file the agent handed over via ShareFile. The filename and size explain what will be fetched, while the
+ *  shared button styling makes the action unmistakable without inventing a one-off control. */
+function SharedFile({ file, caption, full }: { file: BrainMessageFile; caption?: string; full?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <div className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-elevated/50 p-3 ${full ? 'my-1.5' : ''}`} data-testid="shared-file">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <FileText size={20} className="shrink-0 text-text-muted" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-text" title={file.name}>{file.name}</div>
+          <div className="text-xs text-text-muted">{formatBytes(file.size)}</div>
+        </div>
+        <a
+          href={`/api${file.url}`}
+          download={file.name}
+          className={buttonClassName('default', 'h-8 shrink-0 px-3')}
+          aria-label={`${t.brainChat.fileDownload}: ${file.name}`}
+        >
+          <Download size={14} aria-hidden />
+          {t.brainChat.fileDownload}
+        </a>
+      </div>
+      {caption ? <div className="text-xs leading-relaxed text-text-muted">{caption}</div> : null}
+    </div>
+  );
+}
+
 /** Settled-turn metadata: when the turn ended and how long it took.
  *
  *  One visible reply is MANY assistant messages — the agent writes one per tool round — and every one of
@@ -480,6 +507,8 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
         ? (showThoughts ? <ReasoningBlock key={i} text={seg.text} full={full} live={turn.streaming && i === turn.segments.length - 1} /> : null)
         : seg.kind === 'image'
         ? <SharedImage key={i} image={seg.image} caption={seg.caption} full={full} />
+        : seg.kind === 'file'
+        ? <SharedFile key={i} file={seg.file} caption={seg.caption} full={full} />
         : <ToolPills key={i} tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />))}</>;
 
   if (full) {

@@ -8,6 +8,7 @@ import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
 import { CHANNEL_PREFIX, TASK_PREFIX } from '../brain/sessionId.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
+import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
 import { rollupWorkingSet } from '../brain/continuity/workingSet.js';
 import {
@@ -1276,6 +1277,29 @@ export class BrainStore {
     return false;
   }
 
+  /** The owned shared-file reference, including the original download name. The route needs the metadata
+   *  from the same parsed row that proves ownership; prose containing the hash grants neither access nor a
+   *  filename. Like images, tool-result rows are intentionally included. */
+  chatFileForUser(userId: number, file: string): StoredChatFile | undefined {
+    const rows = this.db.prepare(
+      `SELECT m.content FROM brain_messages m
+         JOIN brain_sessions s ON s.id = m.session_id
+        WHERE s.user_id = ? AND m.content LIKE ?`,
+    ).all(userId, `%${file}%`) as { content: string }[];
+    for (const row of rows) {
+      try {
+        const found = collectChatFiles(JSON.parse(row.content)).find((ref) => ref.file === file);
+        if (found) return found;
+      } catch { /* a malformed row references nothing */ }
+    }
+    return undefined;
+  }
+
+  /** Boolean counterpart of `chatImageBelongsTo`, useful to callers that need authorization only. */
+  chatFileBelongsTo(userId: number, file: string): boolean {
+    return this.chatFileForUser(userId, file) !== undefined;
+  }
+
   /** The image the most recent tool call in this conversation produced, or undefined when none has. Read
    *  from the store rather than from live state so it still answers after a restart, and so it sees the
    *  pending row a tool result writes the moment it lands — which is what makes `ShareImage({latest})`
@@ -1315,6 +1339,17 @@ export class BrainStore {
       try {
         for (const file of collectImageFiles(JSON.parse(row.content))) files.add(file);
       } catch { /* a malformed row references nothing */ }
+    }
+    return files;
+  }
+
+  /** Every general chat file still referenced by a stored ShareFile result. */
+  referencedChatFiles(): Set<string> {
+    const rows = this.db.prepare(`SELECT content FROM brain_messages WHERE content LIKE '%"sharedFile"%'`).all() as { content: string }[];
+    const files = new Set<string>();
+    for (const row of rows) {
+      try { for (const ref of collectChatFiles(JSON.parse(row.content))) files.add(ref.file); }
+      catch { /* a malformed row references nothing */ }
     }
     return files;
   }

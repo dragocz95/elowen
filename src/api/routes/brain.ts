@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { parseBody } from '../validation.js';
 import { brainStartSchema, brainRenameSchema } from '../schemas/brain.js';
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
+import { chatFileDisposition, chatFilesDir, isStoredChatFileName, readChatFile } from '../../brain/chatFiles.js';
 import { logger } from '../../shared/logger.js';
 import { UsageService, type ProviderUsage } from '../../brain/providerUsage.js';
 import { codexUsageSource } from '../../brain/openaiCodexUsage.js';
@@ -208,6 +209,28 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       'cache-control': 'private, max-age=31536000',
       'x-content-type-options': 'nosniff',
       'content-disposition': 'inline',
+    });
+  });
+
+  // Agent-shared general files. This intentionally differs from chat-images: arbitrary bytes — especially
+  // HTML — must NEVER render from the app's own origin, so every response is a forced opaque download.
+  app.get('/brain/chat-files/:file', async c => {
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.chatImagesDir || !d.brainStore) return c.json({ error: 'not found' }, 404);
+    const file = c.req.param('file');
+    // Shape BEFORE the database for the same reason as images: `%`/`_` must not widen the LIKE scan.
+    if (!isStoredChatFileName(file)) return c.json({ error: 'not found' }, 404);
+    // The parsed reference proves both ownership and the original filename. Foreign and missing files are
+    // deliberately indistinguishable: 404 avoids leaking that another user's artifact exists.
+    const owned = d.brainStore.chatFileForUser(c.get('user').id, file);
+    if (!owned) return c.json({ error: 'not found' }, 404);
+    const body = readChatFile(chatFilesDir(d.chatImagesDir), file);
+    if (!body) return c.json({ error: 'not found' }, 404);
+    return c.body(new Uint8Array(body), 200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'private, max-age=31536000',
+      'x-content-type-options': 'nosniff',
+      'content-disposition': chatFileDisposition(owned.name),
     });
   });
 
