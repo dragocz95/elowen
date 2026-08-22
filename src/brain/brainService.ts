@@ -867,6 +867,21 @@ export class BrainService {
     return this.statusView.searchMessages(userId, query);
   }
 
+  /** Who is mid-turn RIGHT NOW, for the team feed's presence line.
+   *
+   *  Derived from the live session registry rather than from a separate presence table with a TTL: this
+   *  IS the daemon's in-memory truth about running work, so it cannot drift, and a crash or restart
+   *  leaves nobody stuck as "working" because the map is simply gone. History is never consulted —
+   *  liveness that is inferred from the last event is a guess, and a wrong one after every restart.
+   *
+   *  Note this deliberately does NOT report a "typing" state: Discord, Teams, Telegram and WhatsApp
+   *  never tell the daemon that someone is composing. A turn running is the only thing actually known. */
+  presence(): { sessionId: string; userId: number | null }[] {
+    return this.sessions.liveEntries()
+      .filter(([, live]) => live.session.isStreaming)
+      .map(([sessionId]) => ({ sessionId, userId: this.d.store.getSession(sessionId)?.user_id ?? null }));
+  }
+
   /** The model a stored conversation is currently on, for labelling a feed row. Read-only and
    *  ownership-free on purpose: it exposes nothing but the model name of a session the caller already
    *  named, and the activity feed is instance-wide by decision. */

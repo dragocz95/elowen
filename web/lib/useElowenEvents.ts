@@ -115,13 +115,26 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
       qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
     });
 
+    // Someone acted somewhere on the instance — the team activity feed moved. Instance-wide by design,
+    // so every browser gets it; the row carries no message content to scope.
+    const activityHandler = makeHandler(() => {
+      qc.invalidateQueries({ queryKey: ['activity'] });
+      qc.invalidateQueries({ queryKey: ['activity-presence'] }); // someone started working
+    });
+
     // Same-origin SSE through the /api proxy; the httpOnly session cookie rides along via credentials.
     // Reconnects itself with capped exponential backoff so a daemon restart / proxy timeout recovers on
     // its own — load-bearing now that cache freshness relies on SSE invalidation, not a polling fallback.
     function connect(): void {
       es?.close();
       es = new EventSource(`${BASE}/events`, { withCredentials: true });
-      es.onopen = () => reconnect.succeeded(); // a healthy stream resets the backoff
+      es.onopen = () => {
+        reconnect.succeeded(); // a healthy stream resets the backoff
+        // Catch up on whatever happened while the stream was down. SSE has no replay here, so a laptop
+        // that slept would otherwise show a hole in the feed until the next event happened to arrive.
+        qc.invalidateQueries({ queryKey: ['activity'] });
+        qc.invalidateQueries({ queryKey: ['activity-presence'] });
+      };
 
       // Native EventSource auto-reconnects on transport drops (browser-managed retry per HTML spec); we
       // only act on a terminal failure (readyState CLOSED) where it has given up — then retry ourselves
@@ -146,6 +159,7 @@ export function useElowenEvents(opts?: { onReview?: (e: ReviewEvent) => void }):
       es.addEventListener('change', changeHandler);
       es.addEventListener('memory', memoryHandler);
       es.addEventListener('plugins', pluginsHandler);
+      es.addEventListener('activity', activityHandler);
     }
 
     const reconnect = createReconnectController(connect);

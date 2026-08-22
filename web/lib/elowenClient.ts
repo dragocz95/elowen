@@ -264,7 +264,9 @@ export const elowenClient = {
   /** `mode` stamps the turn's work mode (build/plan/workflow), exactly like the CLI's send(): the daemon
    *  keeps no mode of its own, so an unstamped turn simply runs in build mode. */
   brainSend: (text: string, images?: { data: string; mimeType: string }[], display?: string, bind: BrainBinding = {}, mode?: BrainWorkMode) =>
-    req<{ ok: boolean }>('/brain/send', json({ text, ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}), ...bind, ...(mode ? { mode } : {}) })),
+    // `surface: 'web'` is what lets the activity feed tell a browser turn from a CLI one; the two post
+    // an otherwise identical body, and inferring it from headers would trust a client-written value.
+    req<{ ok: boolean }>('/brain/send', json({ text, surface: 'web', ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}), ...bind, ...(mode ? { mode } : {}) })),
   brainAnswer: (id: string, answers: AskAnswer[]) => req<{ ok: boolean; matched: boolean }>('/brain/answer', json({ id, answers })),
   /** Admin: launch (or reuse) an `elowen chat` TUI terminal bound to the given brain conversation.
    *  Returns the opaque tmux terminal name to stack as a dock pane; `created:false` when one already runs. */
@@ -391,6 +393,8 @@ export const elowenClient = {
   createUser: (username: string, password: string) => req<User>('/users', json({ username, password })),
   updateUser: (id: number, patch: UserPatch) => req<User>(`/users/${id}`, json(patch, 'PATCH')),
   deleteUser: (id: number) => req<{ ok: boolean }>(`/users/${id}`, { method: 'DELETE' }),
+  /** Who is mid-turn right now — names only, never what they are working on. */
+  activityPresence: () => req<{ userId: number; label: string }[]>('/activity/presence'),
   activity: (opts?: { limit?: number; type?: string; target?: string }) => {
     const qs = new URLSearchParams({ ...(opts?.limit ? { limit: String(opts.limit) } : {}), ...(opts?.type ? { type: opts.type } : {}), ...(opts?.target ? { target: opts.target } : {}) }).toString();
     return req<ActivityEvent[]>(`/activity${qs ? `?${qs}` : ''}`);

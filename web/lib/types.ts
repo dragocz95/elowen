@@ -588,7 +588,17 @@ export interface PluginSubagent { name: string; description: string; tools: 'rea
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };
-export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string }
+export interface ActivityEvent {
+  id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string;
+  /** Team-feed attribution. `actor_label` is resolved server-side by JOIN (display name, username
+   *  fallback), so it follows a rename; an event whose account is gone simply has none. */
+  actor_user_id: number | null;
+  actor_label: string;
+  surface: string;
+  /** How many identical events this row folds, and when the last landed. `ts` is the first occurrence. */
+  count: number;
+  last_ts: string | null;
+}
 /** A worker's `elowen ask` question parked on a human (overseer escalated / none), shown in the Escalations inbox. */
 export interface PendingAsk { askId: string; taskId: string; question: string; since: number; title: string; epicId: string | null; projectId: number }
 export interface Project { id: number; slug: string; path: string; notes: string; icon: string; pr_enabled: boolean | null }

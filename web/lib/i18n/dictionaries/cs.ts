@@ -559,7 +559,11 @@ export const cs = {
     live: 'živě',
     eventStream: 'Dění',
     eventStreamEmpty: 'Zatím žádné události.',
+    workingNow: 'Právě pracují',
+    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', subagent: 'sub-agent', task: 'pracovník úlohy', unknown: 'neznámý klient' },
     ev: {
+      turn: 'pracuje',
+      someone: 'Někdo',
       taskOpen: 'Úkol otevřen',
       taskWorking: 'Agent pracuje',
       taskDone: 'Úkol dokončen',

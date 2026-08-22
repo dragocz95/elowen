@@ -559,7 +559,11 @@ export const en = {
     live: 'live',
     eventStream: 'Activity',
     eventStreamEmpty: 'No activity yet.',
+    workingNow: 'Working now',
+    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', subagent: 'sub-agent', task: 'task worker', unknown: 'unknown client' },
     ev: {
+      turn: 'is working',
+      someone: 'Someone',
       taskOpen: 'Task opened',
       taskWorking: 'Agent working',
       taskDone: 'Task done',

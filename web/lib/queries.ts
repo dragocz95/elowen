@@ -201,6 +201,11 @@ export const useSystemSkills = () =>
 
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers });
 
+/** The presence line of the team feed. Invalidated by the same SSE 'activity' event as the feed
+ *  itself, so it moves when someone starts or finishes work rather than on a timer. */
+export const usePresence = () =>
+  useQuery({ queryKey: ['activity-presence'], queryFn: elowenClient.activityPresence });
+
 export const useActivity = (type?: string, limit?: number) =>
   // SSE task/mission/signal/review events all invalidate ['activity']; no 5s poll needed. `limit` joins
   // the key so a small dashboard tail and the full timeline never share one cached payload.
