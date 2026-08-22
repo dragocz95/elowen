@@ -55,10 +55,11 @@ export function buildShareFileTool(deps: ShareFileDeps) {
 }
 
 function fromDisk(rawPath: string, dir: string): StoredChatFile | string {
-  // All-access skips path roots, but a platform member mapped to an admin role is still not the operator.
-  // Without this sole remaining boundary they could publish any readable host file into a shared channel.
+  // All-access skips path roots, so this is the only remaining boundary on WHICH host file may be published
+  // into a conversation. `owner` covers the operator and every admin account (see IdentityResolver.isOwner);
+  // an unlinked or non-admin sender is refused.
   if (isAllAccess() && currentIdentity()?.owner !== true) {
-    return 'ShareFile: sharing a file by path is only available to the operator.';
+    return 'ShareFile: sharing a file by path is not available to you. Ask an administrator to share it.';
   }
   let path: string;
   try { path = assertPathAllowed(rawPath); }

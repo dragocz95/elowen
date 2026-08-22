@@ -23,20 +23,31 @@ export interface IdentityDeps {
 }
 
 /** The ONE place turn identities are minted — auditable, testable, and hard to fork by accident.
- *  `owner` is stricter than `admin`: only the operator themselves (their authenticated chat, their
- *  linked platform account, or their own server-internal automation like cron/subagent) counts,
- *  NEVER a foreign platform member who merely holds an admin-mapped room role. Identity `admin` comes
- *  from account administration or internal automation; room trust stays separate in channel options. */
+ *  `owner` marks a turn driven by someone who administers this instance: the operator themselves, any
+ *  Elowen ACCOUNT holding the admin bit, or their own server-internal automation (cron/subagent). It is
+ *  NEVER a foreign platform member who merely holds an admin-mapped room role — that trust stays in
+ *  channel options and cannot mint an account. Identity `admin` tracks all-access policy scope. */
 export class IdentityResolver {
   constructor(private d: IdentityDeps) {}
 
-  /** Whether `userId` is the instance operator. When a platform owner is configured (production), it is
-   *  exactly that user; with none configured (single-user / tests) every user is treated as the owner,
-   *  preserving the pre-identity behaviour where the owner's own store was always used. */
+  /** Whether `userId` operates this instance — THE gate behind every owner-only surface (the shell and its
+   *  background processes, sharing a host path into a conversation, instance MCP servers, raw platform APIs,
+   *  the operator's long-term memory).
+   *
+   *  An ADMIN ACCOUNT counts as an operator. Admins already hold all-access policy, which makes `pathGuard`
+   *  skip path roots entirely, so they read and write every byte on the box through the ordinary file tools;
+   *  withholding the shell from them denied convenience rather than capability, and made a second admin's own
+   *  authenticated chat behave as if they were a stranger. Operator and admin are deliberately ONE authority
+   *  here — grant the admin bit only to people trusted with the host itself, including its secrets.
+   *
+   *  The admin bit is read from the ACCOUNT, so a room role mapped to admin still cannot reach this: an
+   *  unlinked platform sender resolves to no account at all. With no platform owner configured (single-user /
+   *  tests) every user is the owner, preserving the pre-identity behaviour. */
   isOwner(userId: number | undefined): boolean {
     if (userId === undefined) return false;
     const owner = this.d.platformOwner?.();
-    return owner === undefined ? true : userId === owner;
+    if (owner === undefined) return true;
+    return userId === owner || this.d.users.get(userId)?.is_admin === true;
   }
 
   /** The identity of a user driving their OWN authenticated Elowen chat (web dock / CLI). */

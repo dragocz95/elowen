@@ -116,25 +116,28 @@ describe('terminal plugin', () => {
       ['KillProcess', { id: 'x' }],
     ] as const) {
       const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), { identity: scoped });
-      expect(res.content[0].text).toMatch(/available only to the instance operator/);
+      expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
     }
   });
 
-  it('refuses a linked shared-room admin who is not the instance operator', async () => {
+  // Identifying the sender is not the same as trusting them with the host: this account is linked and its
+  // turn carries admin SCOPE from the room, but the account itself does not administer the instance, so the
+  // identity never gets the operator bit (IdentityResolver.isOwner reads `users.is_admin`, not room trust).
+  it('refuses a linked account whose admin scope comes from the room, not from the account', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo linkedadmin' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toMatch(/available only to the instance operator/);
+    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
   });
 
   it('refuses a linked account whose turn does not carry admin scope', async () => {
     // The other half of the pair: having an Elowen account says who you are, not that anyone trusted
     // you with the machine.
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo nope' }), { identity: linkedAdmin });
-    expect(res.content[0].text).toMatch(/available only to the instance operator/);
+    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
   });
 
   it('denies terminal tools when there is no identity (outside a turn)', async () => {
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', { command: 'echo x' }));
-    expect(res.content[0].text).toMatch(/available only to the instance operator/);
+    expect(res.content[0].text).toMatch(/available only to administrators of this instance/);
   });
 });
 

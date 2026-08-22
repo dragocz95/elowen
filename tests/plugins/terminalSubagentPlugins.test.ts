@@ -79,7 +79,7 @@ describe('terminal plugin background processes', () => {
     const CHANNEL: TurnIdentity = { platform: 'discord', userId: 'disc-9', admin: true, owner: false };
     await runWithPolicy(ADMIN, async () => {
       const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
-      expect(out).toMatch(/available only to the instance operator/);
+      expect(out).toMatch(/available only to administrators of this instance/);
     }, { identity: CHANNEL });
   });
 });

@@ -27,8 +27,9 @@ export class SessionProcessService {
 
   /** Push a background-process snapshot to the OWNER's live client streams (the CLI/web process panel),
    *  so it refreshes out of turn on every spawn/exit/kill. Wired to the process registry's change
-   *  listener in the daemon. Owner-only: a command line can carry a secret, so the event is delivered
-   *  ONLY to streams attached to the owner's own sessions, never a second admin's. */
+   *  listener in the daemon. A command line can carry a secret, so the event is delivered ONLY to streams
+   *  attached to a session owned by someone who operates this instance (see IdentityResolver.isOwner),
+   *  never to an ordinary user's. */
   broadcastProcesses(sessionId: string, processes: ProcessInfo[]): void {
     const event: BrainEvent = { type: 'process', processes };
     for (const [listener, attachedSessionId] of this.attachments.clientStreams) {

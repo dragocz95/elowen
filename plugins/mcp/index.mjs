@@ -104,7 +104,7 @@ function persistTools(db, spec, tools) {
 function ownerForScope(ctx, scope) {
   const identity = ctx.currentIdentity();
   if (scope === 'instance') {
-    if (identity?.owner !== true) throw new Error('instance MCP servers can be managed only by the instance owner');
+    if (identity?.owner !== true) throw new Error('instance MCP servers can be managed only by administrators of this instance');
     return null;
   }
   if (scope === 'personal') {
@@ -119,11 +119,11 @@ function specForOwner(ownerUserId, name) {
 }
 
 /** A stdio server is arbitrary local process execution, regardless of whether its row is labelled
- * personal or instance. Only the instance owner may create or start one. Remote HTTP/SSE servers do
- * not execute a caller-supplied command on this host, so a linked account may keep those personal. */
+ * personal or instance. Only an administrator of this instance may create or start one. Remote HTTP/SSE
+ * servers do not execute a caller-supplied command on this host, so a linked account may keep those personal. */
 function assertTransportAuthority(ctx, spec) {
   if (transportKind(spec) === 'stdio' && ctx.currentIdentity()?.owner !== true) {
-    throw new Error('local-process MCP servers can be managed only by the instance owner');
+    throw new Error('local-process MCP servers can be managed only by administrators of this instance');
   }
 }
 
@@ -658,7 +658,7 @@ function registerManagementTools(ctx) {
 
 function apiError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  const forbidden = /only by the instance owner|require a linked Elowen account/.test(message);
+  const forbidden = /only by administrators of this instance|require a linked Elowen account/.test(message);
   return { status: forbidden ? 403 : 409, body: { error: message } };
 }
 

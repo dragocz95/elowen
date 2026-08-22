@@ -151,9 +151,10 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!) }), { admin: true }));
 
   // Background processes (terminal plugin's `Bash(background:true)` children) — the panel next to
-  // the todos lists them, reads output for the modal, and kills on demand. OWNER-only (not merely admin):
-  // the underlying shell reads any absolute path — secrets, the config DB — exactly like the terminal tools
-  // that spawn these (owner-only there). A second admin is admin-but-not-owner and must not see the buffers.
+  // the todos lists them, reads output for the modal, and kills on demand. Restricted to whoever operates
+  // the instance, exactly like the terminal tools that spawn these: the underlying shell reads any absolute
+  // path — secrets, the config DB — so an ordinary user must never see the buffers. Each caller still sees
+  // only processes they own (`ownsProcess`), so one operator's shell output never reaches another's panel.
   const denyNonOwner = (c: { get: (k: 'tokenScope' | 'user') => unknown }): boolean => {
     const u = c.get('user') as { id: number } | undefined; // absent during setup mode (0 users) — fail closed
     return forbidden(c as { get: (k: 'tokenScope') => string }) || !u || !d.brain?.isOwner(u.id);

@@ -125,7 +125,7 @@ describe('ShareImage from a file', () => {
     const res = await call({ path: write('shot.png', PNG) }, undefined, ADMIN_STRANGER);
 
     expect(res.details?.sharedImage).toBeUndefined();
-    expect(res.content[0]!.text).toContain('only available to the operator');
+    expect(res.content[0]!.text).toContain('not available to you');
   });
 
   it('refuses a file past the size limit without reading it in', async () => {

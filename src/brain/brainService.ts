@@ -1009,9 +1009,9 @@ export class BrainService {
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the
    *  message (before @mention/prompt expansion) that the authoritative `user` echo shows; absent → the
    *  model-facing text is echoed. */
-  /** Whether `userId` is the instance operator (the owner). Exposed so owner-only API surfaces — e.g. the
-   *  background-process routes, which read/kill children of the owner-only terminal tools — gate on the same
-   *  notion the tools do, not merely `is_admin` (a second admin is admin-but-not-owner). */
+  /** Whether `userId` operates this instance — the operator or an admin account (see
+   *  IdentityResolver.isOwner). Exposed so operator-only API surfaces — e.g. the background-process routes,
+   *  which read/kill children of the terminal tools — gate on exactly the same notion the tools do. */
   isOwner(userId: number | undefined): boolean {
     return this.identity.isOwner(userId);
   }

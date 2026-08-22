@@ -4,7 +4,9 @@ import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-const users = { get: (id: number) => ({ username: `user${id}`, name: `User ${id}`, is_admin: id === 1 }) };
+// User 1 is the configured operator; user 3 is a SECOND admin account (the case that distinguishes
+// "operates the instance" from "is the operator"); everyone else is an ordinary account.
+const users = { get: (id: number) => ({ username: `user${id}`, name: `User ${id}`, is_admin: id === 1 || id === 3 }) };
 const src = (over: Record<string, unknown>) => ({
   platform: 'discord', userId: 'D1', roleIds: [], channelId: 'c1',
   access: { projectIds: [], admin: false },
@@ -48,10 +50,19 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(identity.elowenUserId).toBe(2);
   });
 
-  it('a linked NON-operator account is not owner even when its Elowen account is admin', () => {
-    const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: true }).forPlatformTurn(src({}), 1);
+  it('a linked ORDINARY account is not owner', () => {
+    const { identity } = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false }).forPlatformTurn(src({}), 1);
     expect(identity.owner).toBe(false);
     expect(identity.elowenUsername).toBe('amy');
+  });
+
+  // An admin account administers the host itself (all-access already skips path roots), so it carries the
+  // same authority as the operator on every owner-gated surface. The bit is read from the ACCOUNT, which is
+  // what keeps a room role out — see the two tests above.
+  it('a linked SECOND ADMIN account is owner without being the configured operator', () => {
+    const { identity } = resolver({ id: 3, name: 'Mike', username: 'mike', admin: true }).forPlatformTurn(src({}), 1);
+    expect(identity.owner).toBe(true);
+    expect(identity.elowenUserId).toBe(3);
   });
 
   it('the operator via their linked platform account IS owner', () => {
@@ -154,6 +165,25 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(multi.forOwnerChat(2, { allowedProjectIds: new Set<number>(), allowedPaths: () => [] }).owner).toBe(false);
     const single = new IdentityResolver({ users });
     expect(single.forOwnerChat(5, { allowedProjectIds: new Set<number>(), allowedPaths: () => [] }).owner).toBe(true);
+  });
+
+  // The reported symptom: a second admin was refused their own tools in their OWN authenticated web chat,
+  // where nobody else can read the conversation at all.
+  it('forOwnerChat: a SECOND ADMIN operates the instance in their own chat', () => {
+    const multi = new IdentityResolver({ platformOwner: () => 1, users });
+    const identity = multi.forOwnerChat(3, { allowedProjectIds: 'all', allowedPaths: () => [] });
+    expect(identity.owner).toBe(true);
+    expect(identity.conversation).toBe('own');
+  });
+
+  it('isOwner: the operator and every admin ACCOUNT, nobody else', () => {
+    const resolver = new IdentityResolver({ platformOwner: () => 1, users });
+    expect(resolver.isOwner(1)).toBe(true);  // the configured operator
+    expect(resolver.isOwner(3)).toBe(true);  // a second admin account
+    expect(resolver.isOwner(2)).toBe(false); // an ordinary account
+    expect(resolver.isOwner(undefined)).toBe(false); // no identity at all — fail closed
+    const gone = { get: () => null };
+    expect(new IdentityResolver({ platformOwner: () => 1, users: gone }).isOwner(9)).toBe(false);
   });
 });
 

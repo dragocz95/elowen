@@ -88,11 +88,10 @@ function latestToolImage(store: BrainStore, sessionId: string): StoredChatImage 
  *  size must be sane, and the type must come from the bytes rather than the name. */
 function fromDisk(rawPath: string, dir: string): StoredChatImage | string {
   // An all-access turn skips path roots entirely (pathGuard), so for those the guard below is the ONLY
-  // boundary — and all-access is not the same as operator: a platform member mapped to an admin role
-  // lands there too. Without this, such a member could have any file on the box uploaded into a shared
-  // channel. Same reasoning, and the same `owner` gate, as the terminal tools.
+  // boundary on which host file may be uploaded. `owner` covers the operator and every admin account
+  // (see IdentityResolver.isOwner). Same authority, and the same reasoning, as the terminal tools.
   if (isAllAccess() && currentIdentity()?.owner !== true) {
-    return 'ShareImage: sharing a file by path is only available to the operator. Use `latest: true` for an image a tool produced in this conversation.';
+    return 'ShareImage: sharing a file by path is not available to you. Use `latest: true` for an image a tool produced in this conversation.';
   }
   let path: string;
   try { path = assertPathAllowed(rawPath); }

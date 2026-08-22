@@ -142,7 +142,7 @@ describe('mcp plugin — owner-scoped management tools', () => {
       } as never, undefined, undefined, {} as never),
       { identity: { platform: 'discord', userId: 'member-7', elowenUserId: member.id, elowenUsername: member.username, admin: false, owner: false, conversation: 'shared' } },
     );
-    expect(resultText(result)).toContain('local-process MCP servers can be managed only by the instance owner');
+    expect(resultText(result)).toContain('local-process MCP servers can be managed only by administrators of this instance');
     expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
     await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
   }, 20000);
@@ -152,7 +152,7 @@ describe('mcp plugin — owner-scoped management tools', () => {
     await register(ctx as never);
     const add = ctx.tools.find((tool) => tool.name === 'AddMcpServer')!;
     const result = await add.execute('1', { scope: 'instance', name: 'blocked', transport: 'stdio', command: process.execPath, enabled: false });
-    expect(resultText(result)).toContain('instance MCP servers can be managed only by the instance owner');
+    expect(resultText(result)).toContain('instance MCP servers can be managed only by administrators of this instance');
     expect((ctx.rawDb.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
     await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
   });

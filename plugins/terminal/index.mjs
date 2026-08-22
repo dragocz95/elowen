@@ -243,27 +243,27 @@ export function register(ctx) {
   // re-established every run — an explicit `cwd` from one call never carries into the next.
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
-  // Who may run a shell: only the instance operator. No combination of room role, account link or
-  // all-project policy is equivalent to operating the host.
+  // Who may run a shell: whoever operates this instance — the operator or an Elowen ACCOUNT holding the
+  // admin bit (the `owner` identity bit means exactly that; see IdentityResolver.isOwner in core).
   //
-  // Admin scope is not enough, because a role policy may carry `admin: true` for a whole ROOM — a `*`
-  // wildcard is a normal way to serve a company — and that would hand the shell to anyone able to type
-  // into that channel. A linked account identifies the caller but likewise does not make them the host
-  // operator. The explicit owner bit is the only authority that means both.
+  // A room role is deliberately NOT equivalent. A role policy may carry `admin: true` for a whole ROOM — a
+  // `*` wildcard is a normal way to serve a company — and that would hand the shell to anyone able to type
+  // into that channel. The identity bit is minted from the linked ACCOUNT, never from room trust, so an
+  // unlinked sender cannot reach this gate however the room is configured.
   //
   // The shell runs with the daemon's own environment and reads ANY absolute path — the config DB and
   // every secret in it included — and cwd guarding does not contain that. Tool visibility and account
-  // permission rules may narrow an owner's shell further; neither can widen a non-owner into this gate.
+  // permission rules may narrow an operator's shell further; neither can widen anyone else into this gate.
   const denyNonOwner = () => {
     if (ctx.currentIdentity?.()?.owner === true) return null;
-    return ok('Error: terminal tools are available only to the instance operator. Ask the operator to run the command.');
+    return ok('Error: terminal tools are available only to administrators of this instance. Ask an administrator to run the command.');
   };
 
   ctx.registerTool(defineTool({
     name: 'Bash', label: 'Run command',
     description: [
       'Execute a shell command in a real shell and return its combined stdout and stderr with the exit code.',
-      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. It is reserved for the verified operator: any other caller, including a platform member with an admin role, is refused outright.',
+      'This is the most dangerous tool available: the command runs as the daemon user with the daemon\'s environment and can delete files, change services or reach anything on the box, and nothing here asks for confirmation — so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. It is reserved for verified administrators of this instance: any other caller, including a platform member who merely holds an admin-mapped room role, is refused outright.',
       'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',

@@ -43,7 +43,7 @@ describe('ShareFile security boundaries', () => {
     const res = await call({ path: write('report.txt') }, undefined, ADMIN_STRANGER);
 
     expect(res.details?.sharedFile).toBeUndefined();
-    expect(res.content[0]!.text).toContain('only available to the operator');
+    expect(res.content[0]!.text).toContain('not available to you');
     expect(existsSync(chatFilesDir(imagesDir))).toBe(false);
   });
 
