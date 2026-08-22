@@ -429,10 +429,14 @@ export class SessionTeardownService {
   /** Delete ANY of the owner's brain sessions by id (admin panel) — disposing a live conversation or
    *  channel session first. Deliberately bypasses the isNonUserSession guard: this IS the management
    *  surface. Returns how many were deleted (0 or 1). */
-  deleteManagedSession(userId: number, id: string): number {
+  deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): number {
     const row = this.store.getSession(id);
-    if (!row || row.user_id !== userId) return 0;
-    this.teardownDeletedSession(userId, id);
+    if (!row) return 0;
+    // `any` is the admin oversight register, which spans every account; `own` stays the default so a
+    // caller reaches across accounts only by saying so. Teardown runs as the session's REAL owner --
+    // passing the admin here would clean up the wrong user's terminals and processes.
+    if (scope === 'own' && row.user_id !== userId) return 0;
+    this.teardownDeletedSession(row.user_id, id);
     this.store.deleteSession(id);
     return 1;
   }

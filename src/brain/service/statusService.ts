@@ -94,6 +94,11 @@ export interface ManagedSessionView {
   active: boolean;
   kind: 'conversation' | 'channel' | 'task';
   tokens: number;
+  /** Whose conversation this is. The register spans every account, so a row without an owner label
+   *  would be unreadable. `ownerLabel` is resolved by JOIN at read time (name, username fallback) and
+   *  never denormalized, so renaming an account renames it throughout the history too. */
+  ownerId: number;
+  ownerLabel: string;
 }
 
 /** Answers "does the workflow ENGINE still hold this DAG?" — true/false from the engine, undefined when
@@ -410,16 +415,20 @@ export class BrainStatusService {
    *  never-spoken-in shells are withheld (same rule as listSessions — an open CLI is not a conversation
    *  yet); each surviving row is tagged with its `kind` so the UI can group + icon it. */
   listManagedSessions(userId: number): ManagedSessionView[] {
+    // `userId` is the ADMIN asking, used only to mark which row is their own active conversation --
+    // the listing itself deliberately spans every account (the route is admin-only).
     const activeId = this.d.lifecycle.activeSessionId(userId);
-    const tokens = this.d.store.tokenTotals(userId);
-    const unspoken = this.d.store.unspokenSessionIds(userId);
-    return this.d.store.listSessions(userId).filter((s) => !unspoken.has(s.id)).map((s) => {
+    const tokens = this.d.store.tokenTotalsAll();
+    const unspoken = this.d.store.unspokenSessionIdsAll();
+    return this.d.store.listAllSessionsWithOwner().filter((s) => !unspoken.has(s.id)).map((s) => {
       const channel = isChannelSession(s.id);
       const running = channel ? !!this.d.sessions.channelGet(channelIdOf(s.id)) : this.d.sessions.has(s.id);
       return {
         id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
         kind: channel ? 'channel' as const : isTaskSession(s.id) ? 'task' as const : 'conversation' as const,
         tokens: tokens[s.id] ?? 0,
+        ownerId: s.user_id,
+        ownerLabel: s.owner_name || s.owner_username || `#${s.user_id}`,
       };
     });
   }
@@ -434,9 +443,12 @@ export class BrainStatusService {
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
    *  task-worker sessions that `start()` refuses to resume. Ownership-checked; used by the read-only
    *  history view (Sessions → open in web chat). Throws for an unknown or foreign session. */
-  messagesOf(userId: number, sessionId: string): BrainMessageView[] {
+  messagesOf(userId: number, sessionId: string, opts: { anyOwner?: boolean } = {}): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
-    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    // `anyOwner` is the admin oversight register READING a foreign transcript. It is granted by the HTTP
+    // boundary on the read route only -- never on the send path, where it would let an admin post INTO
+    // someone else's conversation under that person's user id.
+    if (!row || (row.user_id !== userId && !opts.anyOwner)) throw new Error('unknown session');
     return this.withRunningAnchors(sessionId, this.shapedHistory(sessionId));
   }
 
@@ -444,10 +456,11 @@ export class BrainStatusService {
    *  turns on first fetch, then older ones as `before` walks back. Defaults to the caller's active
    *  conversation; an explicit `sessionId` is ownership-checked exactly like {@link messagesOf}. Shapes the
    *  full history then windows it (see {@link windowViews}) so folding/marker interleaving stays intact. */
-  messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts): MessagePage {
+  messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts, access: { anyOwner?: boolean } = {}): MessagePage {
     if (sessionId !== undefined) {
       const row = this.d.store.getSession(sessionId);
-      if (!row || row.user_id !== userId) throw new Error('unknown session');
+      // Same read-only escape hatch as messagesOf: the register pages through a foreign transcript.
+      if (!row || (row.user_id !== userId && !access.anyOwner)) throw new Error('unknown session');
     }
     const id = sessionId ?? this.d.lifecycle.activeSessionId(userId);
     const page = windowViews(this.shapedHistory(id), opts);

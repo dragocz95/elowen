@@ -268,6 +268,40 @@ export class BrainStore {
     return !!stored && !!normalized && sameDelegatedExecutionScope(stored, normalized);
   }
 
+  /** EVERY user's sessions, each carrying its owner's display name, for the admin oversight register.
+   *  Deliberately a separate method rather than an optional argument on `listSessions`: a listing that
+   *  crosses accounts must be asked for explicitly, never reached by forgetting to pass a user id.
+   *  The name is resolved by JOIN at read time, so renaming an account renames it here too. */
+  listAllSessionsWithOwner(): (BrainSessionRow & { owner_name: string; owner_username: string })[] {
+    return this.db.prepare(
+      `SELECT s.*, COALESCE(u.name, '') AS owner_name, COALESCE(u.username, '') AS owner_username
+         FROM brain_sessions s LEFT JOIN users u ON u.id = s.user_id
+        ORDER BY s.updated_at DESC, s.rowid ASC`
+    ).all() as (BrainSessionRow & { owner_name: string; owner_username: string })[];
+  }
+
+  /** Token totals across every account — the cross-account counterpart of {@link tokenTotals}. */
+  tokenTotalsAll(): Record<string, number> {
+    const rows = this.db.prepare(
+      `SELECT s.id AS id, COALESCE(SUM(CASE WHEN json_valid(m.content) THEN ${numeric('m.content', '$.usage.totalTokens')} ELSE 0 END), 0) AS tokens
+         FROM brain_sessions s LEFT JOIN brain_messages m ON m.session_id = s.id
+        GROUP BY s.id`
+    ).all() as { id: string; tokens: number }[];
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.id] = r.tokens ?? 0;
+    return out;
+  }
+
+  /** Empty shells across every account — the cross-account counterpart of {@link unspokenSessionIds}. */
+  unspokenSessionIdsAll(): Set<string> {
+    const rows = this.db.prepare(
+      `SELECT s.id FROM brain_sessions s
+       WHERE s.cleared_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+    ).all() as { id: string }[];
+    return new Set(rows.map((row) => row.id));
+  }
+
   listSessions(userId: number): BrainSessionRow[] {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE user_id = ? ORDER BY updated_at DESC, rowid ASC')
       .all(userId) as BrainSessionRow[];

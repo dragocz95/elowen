@@ -147,8 +147,11 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // Delete EVERYTHING (the panel's confirmed "delete all"). Registered before the `/:id` variant.
   app.delete('/brain/managed-sessions', withBrain((c, brain) =>
     c.json({ deleted: brain.deleteAllManagedSessions(c.get('user').id) }), { admin: true }));
+  // The register spans every account, so its delete does too ('any'). "Delete all" above deliberately
+  // does NOT: wiping the whole team's history behind one button is a different kind of action, and it
+  // was never asked for.
   app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
-    c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!) }), { admin: true }));
+    c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
 
   // Background processes (terminal plugin's `Bash(background:true)` children) — the panel next to
   // the todos lists them, reads output for the modal, and kills on demand. Restricted to whoever operates
@@ -303,14 +306,19 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // Active conversation's history by default, or ANY of the caller's sessions when `?session=<id>` is
   // given (read-only view of a channel/task session — ownership checked in messagesOf).
+  //
+  // An ADMIN additionally reads foreign transcripts here, which is what the oversight register opens.
+  // READ ONLY: the send path keeps its own ownership check, so this never becomes a way to post into
+  // someone else's conversation.
   app.get('/brain/messages', async c => {
     if (!d.brain) return c.json([]);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const session = c.req.query('session');
     const page = messagePageOpts(c.req.query('limit'), c.req.query('before'));
+    const access = { anyOwner: !!c.get('user')?.is_admin };
     try {
-      if (page) return c.json(d.brain.messagesPage(c.get('user').id, session, page));
-      return c.json(session ? d.brain.messagesOf(c.get('user').id, session) : d.brain.history(c.get('user').id));
+      if (page) return c.json(d.brain.messagesPage(c.get('user').id, session, page, access));
+      return c.json(session ? d.brain.messagesOf(c.get('user').id, session, access) : d.brain.history(c.get('user').id));
     } catch { return c.json({ error: 'unknown session' }, 404); }
   });
 

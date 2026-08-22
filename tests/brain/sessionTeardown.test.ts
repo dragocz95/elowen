@@ -225,3 +225,72 @@ describe('deleting a conversation releases everything it owns', () => {
     expect(order).toEqual(['turn settled', `dropped:${sessionId}`]);
   });
 });
+
+// The admin oversight register ("Všechny konverzace") spans every account. That is a deliberate widening
+// of what an admin sees, so the boundary it must NOT cross is pinned here: reading and deleting reach
+// across accounts, posting never does.
+describe('admin oversight register', () => {
+  function withUsers(d: ReturnType<typeof fakeDeps>) {
+    const db = (d.store as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } }).db;
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (1,'admin','x','')").run();
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (2,'bob','x','Bob Novák')").run();
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (3,'carol','x','')").run();
+  }
+
+  it('lists every account\'s conversations and labels each with its owner', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    withUsers(d);
+    await svc.start(1); await svc.send({ userId: 1, text: 'mine' });
+    const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
+    await svc.start(3); await svc.send({ userId: 3, text: 'nameless' });
+
+    const rows = svc.listManagedSessions(1);
+    const owners = new Map(rows.map((r) => [r.id, r.ownerLabel]));
+    expect(owners.get(foreign.sessionId)).toBe('Bob Novák');
+    // Display name wins, username is the fallback -- both resolved by JOIN, so a rename follows.
+    expect([...owners.values()]).toContain('carol');
+    expect(rows.map((r) => r.ownerId).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('deletes a foreign conversation only when the caller asks to cross accounts', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    withUsers(d);
+    const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
+
+    // The default stays owner-scoped, so no existing caller silently gained reach.
+    expect(svc.deleteManagedSession(1, foreign.sessionId)).toBe(0);
+    expect(d.store.getSession(foreign.sessionId)).toBeTruthy();
+
+    expect(svc.deleteManagedSession(1, foreign.sessionId, 'any')).toBe(1);
+    expect(d.store.getSession(foreign.sessionId)).toBeUndefined();
+  });
+
+  it('"delete all" stays owner-scoped even for an admin', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    withUsers(d);
+    await svc.start(1); await svc.send({ userId: 1, text: 'mine' });
+    const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
+
+    svc.deleteAllManagedSessions(1);
+
+    // Wiping the whole team's history behind one button was never asked for.
+    expect(d.store.getSession(foreign.sessionId)).toBeTruthy();
+  });
+
+  it('reads a foreign transcript only with anyOwner, and never accepts a post into it', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    withUsers(d);
+    const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
+
+    expect(() => svc.messagesOf(1, foreign.sessionId)).toThrow(/unknown session/);
+    expect(svc.messagesOf(1, foreign.sessionId, { anyOwner: true }).length).toBeGreaterThan(0);
+
+    // The escape hatch is READ-only: the send path has its own ownership check and must stay closed,
+    // or an admin would post into someone else's conversation under that person's identity.
+    expect(() => svc.messagesPage(1, foreign.sessionId, { limit: 10 })).toThrow(/unknown session/);
+  });
+});

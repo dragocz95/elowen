@@ -907,8 +907,8 @@ export class BrainService {
 
   /** Delete ANY of the owner's brain sessions by id (admin panel) — see
    *  SessionTeardownService.deleteManagedSession. */
-  deleteManagedSession(userId: number, id: string): number {
-    return this.teardown.deleteManagedSession(userId, id);
+  deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): number {
+    return this.teardown.deleteManagedSession(userId, id, scope);
   }
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms) —
@@ -1483,14 +1483,14 @@ export class BrainService {
   }
 
   /** ANY of the owner's stored sessions, shaped for display — see BrainStatusService.messagesOf. */
-  messagesOf(userId: number, sessionId: string): BrainMessageView[] {
-    return this.statusView.messagesOf(userId, sessionId);
+  messagesOf(userId: number, sessionId: string, opts: { anyOwner?: boolean } = {}): BrainMessageView[] {
+    return this.statusView.messagesOf(userId, sessionId, opts);
   }
 
   /** A backwards-paged window over a conversation's history (chat lazy-load) — see
    *  BrainStatusService.messagesPage. */
-  messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts): MessagePage {
-    return this.statusView.messagesPage(userId, sessionId, opts);
+  messagesPage(userId: number, sessionId: string | undefined, opts: MessagePageOpts, access: { anyOwner?: boolean } = {}): MessagePage {
+    return this.statusView.messagesPage(userId, sessionId, opts, access);
   }
 
   /** Export one of the caller's OWN conversations (owner-scoped exactly like messagesOf) as a
