@@ -432,11 +432,24 @@ function SharedImage({ image, caption, full }: { image: BrainMessageImage; capti
   );
 }
 
+/** Settled-turn metadata: when the turn ended and how long it took.
+ *
+ *  One visible reply is MANY assistant messages — the agent writes one per tool round — and every one of
+ *  them carries its own `createdAt`. Stamping each turn therefore printed the same date+time above every
+ *  single tool row. The daemon marks the run's LAST assistant row alone with `turn_duration_ms`
+ *  (store/schema.sql), and that is exactly the marker the CLI gates its own settled meta on
+ *  (src/cli/chat/turnRenderer.ts) — so keying off it puts one stamp at the end of the turn on both
+ *  surfaces instead of inventing a second, web-only notion of where a turn ends. A still-streaming turn
+ *  has not ended yet and carries no duration, so it stays unstamped until it settles.
+ *
+ *  A user message is a turn of its own, so it is stamped from its own `createdAt` whenever history
+ *  carries one. */
 function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen' }> }) {
   const { locale, t } = useTranslation();
-  if (!turn.createdAt && (turn.role !== 'elowen' || turn.durationMs == null)) return null;
+  const settled = turn.role === 'elowen' ? turn.durationMs != null : Boolean(turn.createdAt);
+  if (!settled) return null;
   return (
-    <div className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
+    <div data-testid="chat-turn-meta" className="mt-1 flex items-center gap-2 text-[10px] leading-none text-text-muted/70">
       {turn.createdAt ? <time dateTime={turn.createdAt}>{localDateTime(turn.createdAt, locale, false)}</time> : null}
       {turn.role === 'elowen' && turn.durationMs != null ? (
         <span className="inline-flex items-center gap-1" title={t.brainChat.turnDuration}>
