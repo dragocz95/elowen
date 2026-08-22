@@ -39,6 +39,27 @@ const write = (name: string, bytes = Buffer.from('artifact')) => {
 };
 
 describe('ShareFile security boundaries', () => {
+  // The gate that must not be removed again. An all-access turn skips path roots, so without this the
+  // caller can publish any file on the host.
+  //
+  // The tempting argument for deleting it — "they could read the same bytes with Read anyway" — is false
+  // for exactly the shape below. A role's allow-list narrows only PLUGIN tools; built-ins stay composed
+  // (capabilities.ts:322-330), so a child delegated with a deliberately narrow toolset has no Read and
+  // still holds ShareFile. Durable delegated scopes with admin: true, owner: false remain resumable, so
+  // this turn is reachable rather than hypothetical.
+  it('refuses a path from an all-access turn that does not administer the instance', async () => {
+    const res = await call({ path: write('secrets.db') }, undefined, ADMIN_STRANGER);
+
+    expect(res.details?.sharedFile).toBeUndefined();
+    expect(res.content[0]!.text).toContain('not available to you');
+    expect(existsSync(chatFilesDir(imagesDir))).toBe(false);
+  });
+
+  it('allows the same path once the turn does administer the instance', async () => {
+    const res = await call({ path: write('report.txt') }, undefined, OWNER);
+    expect(res.details?.sharedFile?.name).toBe('report.txt');
+  });
+
   // WHICH file may be published is the path guard's decision and nothing else — the same answer Read gives
   // for the same caller and the same path. A scoped account may share out of its own roots...
   it('shares a file inside the caller\'s roots for a scoped, non-admin turn', async () => {

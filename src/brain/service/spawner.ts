@@ -223,9 +223,17 @@ export class LiveSessionSpawner {
         toolSearchHandle = createToolSearchHandle(deferred);
         return [toolSearchTool(toolSearchHandle)];
       },
-      // Needs somewhere to keep the bytes; an in-memory store has none, and the tool says so rather than
-      // silently doing nothing.
-      shareImage: () => [
+      // Sharing needs a PERSON on the other end, and a sub-agent has none: whatever it shares lands in
+      // that sub-agent's own panel, never in the conversation that delegated the work, so the tool could
+      // not do what a model reaching for it intends. Withholding it also closes an escalation path — a
+      // delegated child can hold all-access while a narrow `tools` allow-list keeps Read out of its set,
+      // because an allow-list narrows only PLUGIN tools and these are built-ins (capabilities.ts:322-330),
+      // so that child could publish any file on the host. The tools keep their own all-access guard too;
+      // this is the half that removes the capability rather than refusing it.
+      //
+      // They also need somewhere to keep the bytes; an in-memory store has none, and the tool says so
+      // rather than silently doing nothing.
+      shareImage: isSubagentSession(sessionId) ? undefined : () => [
         buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir }),
         buildShareFileTool({ imagesDir: this.d.chatImagesDir }),
       ],

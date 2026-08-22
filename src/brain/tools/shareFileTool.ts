@@ -2,8 +2,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { assertPathAllowed } from '../../plugins/pathGuard.js';
-import { currentSessionId, currentTurnToken } from '../../plugins/policyContext.js';
+import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
+import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
 import { chatFilesDir, storeFileByContent, type StoredChatFile } from '../chatFiles.js';
 
 /** Large enough for normal documents, archives, and generated artifacts while staying below common chat
@@ -29,7 +29,7 @@ export function buildShareFileTool(deps: ShareFileDeps) {
   return defineTool({
     name: 'ShareFile',
     label: 'Share file',
-    description: 'Give the user a file to download from the web conversation — a document, archive, generated report, HTML file, source bundle, or another artifact they should KEEP. Use ShareImage instead when an image is something the user should SEE directly in the conversation; use ShareFile when the deliverable should be saved to their device. Pass an absolute `path` and optionally one short `caption`. The path must stay inside the caller’s accessible repositories, and the file must be at most 25 MB. At most 4 files may be shared per turn. The bytes are copied into conversation storage and served only as an authenticated download; the original filename is preserved. This affordance is implemented by the web chat (including a sub-agent’s own panel); on another chat platform use its platform-specific file-upload tool instead.',
+    description: 'Give the user a file to download from the web conversation — a document, archive, generated report, HTML file, source bundle, or another artifact they should KEEP. Use ShareImage instead when an image is something the user should SEE directly in the conversation; use ShareFile when the deliverable should be saved to their device. Pass an absolute `path` and optionally one short `caption`. The path must stay inside the caller’s accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance — and the file must be at most 25 MB. At most 4 files may be shared per turn. The bytes are copied into conversation storage and served only as an authenticated download; the original filename is preserved. This affordance is implemented by the web chat (including a sub-agent’s own panel); on another chat platform use its platform-specific file-upload tool instead.',
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to the file the user should download.' }),
       caption: Type.Optional(Type.String({ description: 'One short line explaining what the file is.' })),
@@ -55,10 +55,22 @@ export function buildShareFileTool(deps: ShareFileDeps) {
 }
 
 function fromDisk(rawPath: string, dir: string): StoredChatFile | string {
-  // WHICH file may be published is decided by the path guard alone, exactly as it is for Read and Write.
-  // There used to be an extra `owner` check here for all-access turns; it protected nothing, because an
-  // all-access caller can already read that byte range with Read and paste it into the same conversation —
-  // it only made sharing behave differently from reading, for the same person, on the same file.
+  // All-access skips path roots entirely (pathGuard), so for such a turn THIS is the only boundary on
+  // which host file may be published into a conversation.
+  //
+  // It was briefly removed on the argument that an all-access caller can already obtain the same bytes
+  // with Read, making this gate a difference without a distinction. That argument is FALSE, and the
+  // counter-example is a shape we create routinely: a delegated child. A role's `allow`-list narrows only
+  // PLUGIN tools — built-ins stay composed (capabilities.ts:322-330) — so a sub-agent delegated with
+  // `tools: ['Grep']` has no Read at all, yet still holds ShareFile. Give that child an admin scope and
+  // it can publish any file on the host, including the config DB, having been handed a deliberately
+  // narrow toolset. Durable `delegated_access` rows with `admin: true, owner: false` predate the isOwner
+  // widening and remain resumable, so the combination is reachable, not hypothetical.
+  //
+  // A scoped (non-all-access) caller is unaffected: their roots already contain them.
+  if (isAllAccess() && currentIdentity()?.owner !== true) {
+    return 'ShareFile: sharing a file by path is not available to you. Ask an administrator to share it.';
+  }
   let path: string;
   try { path = assertPathAllowed(rawPath); }
   catch (e) { return `ShareFile: ${(e as Error).message}`; }

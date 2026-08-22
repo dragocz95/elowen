@@ -119,6 +119,15 @@ describe('ShareImage from a file', () => {
     expect(res.details?.sharedImage).toBeUndefined();
   });
 
+  // The gate that must not be removed again — see the twin case in shareFileTool.test.ts for why
+  // "they could Read it anyway" is false for a narrowly-delegated child.
+  it('refuses a path from an all-access turn that does not administer the instance', async () => {
+    const res = await call({ path: write('shot.png', PNG) }, undefined, ADMIN_STRANGER);
+
+    expect(res.details?.sharedImage).toBeUndefined();
+    expect(res.content[0]!.text).toContain('not available to you');
+  });
+
   // WHICH file may be uploaded is the path guard's decision and nothing else — the same answer Read would
   // give the same caller for the same path. A scoped account uploads from its own roots and no further.
   it('refuses a path outside the caller\'s roots', async () => {

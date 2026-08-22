@@ -2,8 +2,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { assertPathAllowed } from '../../plugins/pathGuard.js';
-import { currentSessionId, currentTurnToken } from '../../plugins/policyContext.js';
+import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
+import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
 import { sniffImageMime, storeImageByContent, type StoredChatImage } from '../chatImages.js';
 import type { BrainStore } from '../../store/brainStore.js';
 
@@ -41,7 +41,7 @@ export function buildShareImageTool(deps: ShareImageDeps) {
   return defineTool({
     name: 'ShareImage',
     label: 'Share image',
-    description: 'Show the user an image in the conversation — a screenshot you just took, a chart you rendered, a photo or an image file from the repo. Use it when what you are describing is easier to SEE than to read: a layout that looks wrong, a rendered page, a photo the user asked about; do not use it to echo back an image the user themselves sent, and do not attach one to every step of a debugging session. Pass `path` for a file on disk, or `latest: true` for the image the most recent tool call returned to you (a screenshot taken without a file path exists only in that result). Exactly one of the two, and `caption` is one short line saying what they are looking at. A shared `path` must stay inside your accessible repositories, and it must really be a png, jpeg, gif or webp (sniffed from the bytes, not the extension) under 10 MB — anything else comes back as a refusal, not a share. At most 4 images per turn; after that describe the rest in words. The image appears in THIS conversation — the web chat and any connected platform — so from a sub-agent it reaches the panel for that sub-agent, not the parent conversation. It does not go back into your own context, which already has it, so do not describe it back in full afterwards.',
+    description: 'Show the user an image in the conversation — a screenshot you just took, a chart you rendered, a photo or an image file from the repo. Use it when what you are describing is easier to SEE than to read: a layout that looks wrong, a rendered page, a photo the user asked about; do not use it to echo back an image the user themselves sent, and do not attach one to every step of a debugging session. Pass `path` for a file on disk, or `latest: true` for the image the most recent tool call returned to you (a screenshot taken without a file path exists only in that result). Exactly one of the two, and `caption` is one short line saying what they are looking at. A shared `path` must stay inside your accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance — and it must really be a png, jpeg, gif or webp (sniffed from the bytes, not the extension) under 10 MB — anything else comes back as a refusal, not a share. At most 4 images per turn; after that describe the rest in words. The image appears in THIS conversation — the web chat and any connected platform — so from a sub-agent it reaches the panel for that sub-agent, not the parent conversation. It does not go back into your own context, which already has it, so do not describe it back in full afterwards.',
     parameters: Type.Object({
       path: Type.Optional(Type.String({ description: 'Absolute path to an image file (png, jpeg, gif or webp).' })),
       latest: Type.Optional(Type.Boolean({ description: 'Share the image the most recent tool call returned instead of a file on disk.' })),
@@ -87,8 +87,12 @@ function latestToolImage(store: BrainStore, sessionId: string): StoredChatImage 
  *  origin as the app, so none of them may be skipped: the path must be inside the caller's own roots, the
  *  size must be sane, and the type must come from the bytes rather than the name. */
 function fromDisk(rawPath: string, dir: string): StoredChatImage | string {
-  // WHICH file may be uploaded is decided by the path guard alone, exactly as it is for Read — see the
-  // note in shareFileTool.fromDisk for why the extra owner check that used to sit here protected nothing.
+  // An all-access turn skips path roots entirely (pathGuard), so this is the ONLY boundary on which host
+  // file may be uploaded. Same authority, and the same reasoning, as ShareFile — see the note in
+  // shareFileTool.fromDisk for why "they could just Read it" does not hold for a delegated child.
+  if (isAllAccess() && currentIdentity()?.owner !== true) {
+    return 'ShareImage: sharing a file by path is not available to you. Use `latest: true` for an image a tool produced in this conversation.';
+  }
   let path: string;
   try { path = assertPathAllowed(rawPath); }
   catch (e) { return `ShareImage: ${(e as Error).message}`; }
