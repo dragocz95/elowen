@@ -5,6 +5,14 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.10] - 2026-08-22
+
+A daemon whose database predates the move of the agents tables out of core failed to start at all. The
+tables are still there in such a file, so the migration that rewrites stored model identities believed it
+could read them — but the columns it wanted are added by the plugin, which runs long after core has opened
+the database. Core knows these tables may exist; it does not know their shape, and it now reads them the
+way the rest of the code already reads plugin-owned tables.
+
 ## [0.28.9] - 2026-08-22
 
 People can sign in to the web UI with their Microsoft account. An instance handed to a team should not
