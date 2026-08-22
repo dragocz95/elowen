@@ -78,6 +78,11 @@ export const brainSendSchema = z.object({
   /** The client's CLEAN rendering of the message (before @mention/prompt expansion) — what the daemon's
    *  authoritative `user` echo and the queued chip show. Absent → the model-facing `text` is echoed. */
   display: z.string().optional(),
+  /** WHICH client this is, for the team activity feed. Web and CLI are otherwise indistinguishable —
+   *  both POST this exact shape — so the caller states it. It is NOT inferred from User-Agent or IP:
+   *  the client writes both, and the web BFF strips headers anyway. Absent → 'unknown', which the feed
+   *  shows honestly rather than guessing a plausible surface. */
+  surface: z.enum(['web', 'cli']).optional(),
 });
 
 /** A session-scoped live toggle (POST /brain/fast, /brain/yolo): `on` absent → toggle the current state,

@@ -143,7 +143,11 @@ function fakeBrain() {
       started.add(id);
       return { sessionId: `brain-${id}` };
     },
-    preflightSend: (id: number) => { if (!started.has(id)) throw new Error('brain not started for user'); },
+    preflightSend: (id: number) => {
+      if (!started.has(id)) throw new Error('brain not started for user');
+      return `brain-${id}`; // the real one returns the conversation the turn will land in
+    },
+    sessionModel: () => 'test-model',
     send,
     startSend: (request: TurnRequest) => {
       let resolveAdmitted!: (sessionId: string) => void;
@@ -367,8 +371,9 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
   const config = new ConfigStore(db);
   const brain = fakeBrain();
   const brainStore = new BrainStore(db);
+  const bus = new EventBus();
   const app = createServer({
-    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus: new EventBus(),
+    tasks: new RefTaskStore(db), readiness: new RefReadiness(db), missions: new RefMissions(db), bus,
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
@@ -377,6 +382,7 @@ function setup(opts: { brainAuth?: BrainCredentialAccess; plugins?: PluginRegist
   });
   return {
     app,
+    bus,
     adminTok: users.issueToken(admin.id),
     adminAgentTok: users.issueToken(admin.id, 'agent'),
     amyTok: users.issueToken(amy.id),
@@ -1329,5 +1335,36 @@ describe('brain process routes', () => {
     expect((await app.request('/brain/processes/1', del(amyTok))).status).toBe(403);
     expect(brain.processCalls).toEqual([]); // refused before the service is touched
     expect(brain.killProcessCalls).toEqual([]);
+  });
+});
+
+// The team activity feed is fed from the send route, and its emit is deliberately wrapped in a catch so
+// a feed failure can never fail a user's turn. That catch is exactly why these tests exist: without them
+// a broken emit would be indistinguishable from a working one.
+describe('/brain/send — team activity feed', () => {
+  it('publishes who acted and from where, with the model but nothing from the message', async () => {
+    const { app, bus, amyTok } = setup();
+    await app.request('/brain/start', post(amyTok, {}));
+    const seen: unknown[] = [];
+    bus.subscribe((e) => { if (e.type === 'activity') seen.push(e); });
+
+    expect((await app.request('/brain/send', post(amyTok, { text: 'hi', surface: 'web' }))).status).toBe(202);
+
+    expect(seen).toEqual([{
+      type: 'activity', kind: 'turn', actorUserId: 2, surface: 'web', target: 'brain-2', detail: 'test-model',
+    }]);
+    // The message text must never reach the feed: it is instance-wide and read by the whole team.
+    expect(JSON.stringify(seen)).not.toContain('hi');
+  });
+
+  it('records an unidentified client honestly rather than guessing a surface', async () => {
+    const { app, bus, amyTok } = setup();
+    await app.request('/brain/start', post(amyTok, {}));
+    const seen: { surface?: string }[] = [];
+    bus.subscribe((e) => { if (e.type === 'activity') seen.push(e); });
+
+    await app.request('/brain/send', post(amyTok, { text: 'hi' }));
+
+    expect(seen[0]!.surface).toBe('unknown');
   });
 });

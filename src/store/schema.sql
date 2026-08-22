@@ -106,11 +106,25 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
   type TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
-  project_id INTEGER
+  project_id INTEGER,
+  label TEXT NOT NULL DEFAULT '',
+  -- WHO did it and FROM WHERE. Only the id is stored: the display name is resolved by JOIN at read
+  -- time, so renaming an account renames it throughout the history instead of leaving stale copies.
+  actor_user_id INTEGER,
+  surface TEXT NOT NULL DEFAULT '',
+  -- A repetitive event is folded into ONE row per actor/surface/type/project per time bucket:
+  -- `count` and `last_ts` move, `ts` stays the first occurrence. A feed nobody can read is worse
+  -- than no feed, and forty identical rows are unreadable.
+  count INTEGER NOT NULL DEFAULT 1,
+  last_ts TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_target ON events(target);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts DESC);
+-- NOTE: the index over actor_user_id/last_ts is NOT here. schema.sql is re-applied on every boot and
+-- runs BEFORE the additive column migrations, so on a database created before those columns existed the
+-- CREATE INDEX would fail and take the whole migration — and the daemon's boot — with it. It is created
+-- in db.ts immediately after the columns are added.
 -- Embedded brain (advisor engine): per-user conversations. SQLite is the sole authoritative store —
 -- the PI agent session runs in-memory (SessionManager.inMemory) and every settled turn is projected
 -- here; on start the history is rehydrated back into a fresh in-memory session. No JSONL on disk.

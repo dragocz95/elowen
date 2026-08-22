@@ -1,4 +1,5 @@
 import { queryInt } from '../validation.js';
+import { isTeamFeedRow } from '../../store/eventStore.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** The activity timeline, scoped to the caller's accessible projects. (The inter-agent handoff notes
@@ -16,6 +17,9 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // Scope the timeline to the caller's projects (admin/open mode → null → unrestricted). A row with no
     // project (legacy/unresolved) is shown only to the unrestricted caller — fail closed for tenants.
     const allowed = accessibleProjects(c);
-    return c.json(allowed ? rows.filter((r) => r.project_id !== null && allowed.has(r.project_id)) : rows);
+    if (!allowed) return c.json(rows);
+    // The team feed rows are the ONE deliberate exception: they are instance-wide by decision and carry
+    // no content to leak — only actor, surface and counts. Everything else stays fail-closed.
+    return c.json(rows.filter((r) => isTeamFeedRow(r) || (r.project_id !== null && allowed.has(r.project_id))));
   });
 }

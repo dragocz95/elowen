@@ -40,7 +40,7 @@ function setup() {
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
   });
-  return { app, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
+  return { app, events, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const targets = async (app: ReturnType<typeof setup>['app'], tok: string) =>
@@ -103,5 +103,33 @@ describe('EventStore.record project stamping', () => {
     expect(rows.find((r) => r.target === 'm-e1')!.project_id).toBe(7);
     expect(rows.find((r) => r.target === 't1')!.project_id).toBe(1);
     expect(rows.find((r) => r.target === 'm-e2')!.project_id).toBeNull();
+  });
+});
+
+// The team feed is the ONE deliberate exception to project scoping: Filip's decision that everyone sees
+// the same activity. It is safe only because of what the row does NOT carry -- no message text, no
+// conversation titles, no commands, no paths. Everything else must stay fail-closed for a tenant.
+describe('GET /activity — the instance-wide team feed', () => {
+  it('reaches a tenant even though it belongs to no project', async () => {
+    const { app, events, bobTok } = setup();
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 1, surface: 'cli', target: 'brain-1', detail: 'opus' });
+    const rows = await (await app.request('/activity', auth(bobTok))).json() as { type: string; surface: string; actor_label: string }[];
+
+    const feed = rows.filter((r) => r.type === 'turn');
+    expect(feed).toHaveLength(1);
+    expect(feed[0]!.surface).toBe('cli');
+    expect(feed[0]!.actor_label).toBe('admin'); // resolved by JOIN at read time, username as fallback
+  });
+
+  it('still withholds every project-scoped event the tenant cannot reach', async () => {
+    const { app, events, bobTok } = setup();
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 1, surface: 'cli', target: 'brain-1', detail: 'opus' });
+    const rows = await (await app.request('/activity', auth(bobTok))).json() as { type: string; target: string }[];
+
+    const targets = rows.map((r) => r.target);
+    expect(targets).toContain('t1'); // bob's own project
+    expect(targets).not.toContain('t2'); // foreign project
+    expect(targets).not.toContain('m-e2');
+    expect(targets).not.toContain('gone'); // unresolved project stays admin-only
   });
 });

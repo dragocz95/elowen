@@ -75,11 +75,14 @@ describe('BrainClient', () => {
     await expect(switching).rejects.toThrow('client request is no longer current');
   });
 
+  // `surface: 'cli'` is what lets the daemon's activity feed tell a CLI turn from a web one: the two
+  // post an otherwise identical body, so the client states which it is instead of the server sniffing
+  // a header the client controls.
   it('send posts the text with the CLI working directory', async () => {
     const f = vi.fn(async () => j(200, { ok: true })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
     await c.send('hi');
-    expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hi', cwd: process.cwd() }) }));
+    expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hi', cwd: process.cwd(), surface: 'cli' }) }));
   });
 
   it('send can pass the work mode', async () => {
@@ -88,7 +91,7 @@ describe('BrainClient', () => {
     await c.send('outline this first', 'plan');
     expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ text: 'outline this first', cwd: process.cwd(), mode: 'plan' }),
+      body: JSON.stringify({ text: 'outline this first', cwd: process.cwd(), surface: 'cli', mode: 'plan' }),
     }));
   });
 
@@ -190,7 +193,7 @@ describe('BrainClient', () => {
     await c.send('bound turn');
     expect(f).toHaveBeenLastCalledWith('http://x/brain/send', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ text: 'bound turn', cwd: process.cwd(), session: 'brain-7', client: 'cli-a', generation: 1 }),
+      body: JSON.stringify({ text: 'bound turn', cwd: process.cwd(), surface: 'cli', session: 'brain-7', client: 'cli-a', generation: 1 }),
     }));
 
     f.mockImplementation(async () => j(200, { stopped: true }) as Response);

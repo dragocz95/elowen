@@ -21,6 +21,10 @@ import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyB
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
   plugins: () => Promise<PluginRegistry | undefined>;
+  /** Report a platform turn to the team activity feed. A CALLBACK rather than the event bus itself:
+   *  the brain layer has no bus and should not grow a dependency on one for a single report. Absent in
+   *  minimal wirings (tests), where the feed is simply not fed. */
+  recordActivity?: (e: { actorUserId: number | null; surface: string; target: string; detail: string }) => void;
   /** The Elowen user that anchors platform channel sessions (the admin). */
   platformOwner?: () => number | undefined;
   /** The typed sub-agent registry, resolved when a delegate call names a `subagent_type` — turns the type
@@ -305,6 +309,16 @@ export class PlatformOrchestrator {
             policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
             toolPolicy = turnDenied.length ? { deny: new Set(turnDenied) } : undefined;
           }
+          // Team feed: a message arrived from a platform. The surface is the platform name, which IS
+          // derivable here — unlike web vs CLI, which post an identical body and must state themselves.
+          // An unlinked sender has no Elowen account, so the row carries no actor and the feed shows the
+          // platform alone rather than inventing an attribution.
+          this.d.recordActivity?.({
+            actorUserId: accountUserId ?? null,
+            surface: src.platform,
+            target: keyOf(src),
+            detail: '',
+          });
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           return this.d.channels.send({
             channelId: keyOf(src),

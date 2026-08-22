@@ -171,6 +171,16 @@ function applyAdditiveMigrations(db: Db): void {
   // Timeline labels: snapshot the task/epic title at write time so an event still reads as a name
   // after its task is deleted (events outlive tasks). Empty for signal/plan and unknown tasks.
   addColumn(db, 'events', 'label', "TEXT NOT NULL DEFAULT ''");
+  // Team activity feed: who acted, from where, and how many times within one bucket. Existing rows
+  // keep actor NULL and surface '' — an event recorded before attribution existed cannot be
+  // attributed retroactively, and guessing an actor for it would be a lie in an audit trail.
+  addColumn(db, 'events', 'actor_user_id', 'INTEGER');
+  addColumn(db, 'events', 'surface', "TEXT NOT NULL DEFAULT ''");
+  addColumn(db, 'events', 'count', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn(db, 'events', 'last_ts', 'TEXT');
+  // Created HERE, not in schema.sql: that file is applied first, so on a pre-existing database the
+  // index would reference columns the ALTERs above have not added yet and abort the whole migration.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_actor_bucket ON events(actor_user_id, type, last_ts DESC)');
   // Per-project override of the GitHub PR-native workflow. NULL = inherit the global autopilot default;
   // 1/0 = force on/off for this project (each project can run a different flow). Old DBs default NULL.
   addColumn(db, 'projects', 'pr_enabled', 'INTEGER');

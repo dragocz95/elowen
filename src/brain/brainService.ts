@@ -343,6 +343,7 @@ export class BrainService {
     this.pluginServices = new PluginServiceRunner(() => this.resolvePlugins());
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
+      recordActivity: d.recordActivity,
       platformOwner: d.platformOwner,
       agents: d.agents,
       // A linked platform sender uses the same account policy and deny-list wherever they write.
@@ -864,6 +865,13 @@ export class BrainService {
   /** Fulltext search across the user's stored conversations — see BrainStatusService.searchMessages. */
   searchMessages(userId: number, query: string): BrainSearchHit[] {
     return this.statusView.searchMessages(userId, query);
+  }
+
+  /** The model a stored conversation is currently on, for labelling a feed row. Read-only and
+   *  ownership-free on purpose: it exposes nothing but the model name of a session the caller already
+   *  named, and the activity feed is instance-wide by decision. */
+  sessionModel(sessionId: string): string {
+    return this.d.store.getSession(sessionId)?.model ?? '';
   }
 
   /** ADMIN session-management view (the sessions/ panel) — see BrainStatusService.listManagedSessions. */

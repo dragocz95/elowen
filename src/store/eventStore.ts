@@ -1,9 +1,30 @@
 import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
-import type { ElowenEvent } from '../api/sse.js';
+import { ACTIVITY_KINDS, type ElowenEvent } from '../api/sse.js';
 import type { EventPersistenceRow } from '../plugins/api.js';
 
-export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string }
+export interface ActivityEvent {
+  id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string;
+  /** Attribution. `actor_user_id` is the stored fact; `actor_label` is resolved by JOIN at read time
+   *  (users.name, username fallback) so a rename is reflected in the whole history at once. */
+  actor_user_id: number | null;
+  actor_label: string;
+  surface: string;
+  /** How many identical events this row folds, and when the last one landed. `ts` stays the first. */
+  count: number;
+  last_ts: string | null;
+}
+
+/** Does this persisted row belong to the instance-wide team feed? Rows are stored with the KIND as
+ *  their `type`, so this is the one place that maps stored rows back to the feed vocabulary — the read
+ *  route uses it to widen tenancy for exactly these and nothing else. */
+export function isTeamFeedRow(row: { type: string }): boolean {
+  return (ACTIVITY_KINDS as readonly string[]).includes(row.type);
+}
+
+/** How long identical events keep folding into one row. Long enough that a burst of turns reads as one
+ *  line, short enough that the feed still shows the shape of someone's afternoon. */
+const AGGREGATION_WINDOW_MINUTES = 10;
 
 /** The CORE persistence mapping: only the event shapes core itself owns. Everything agents-domain
  *  (mission/review/decision/message/signal) is mapped by the agents plugin's registered row resolver —
@@ -46,6 +67,9 @@ export class EventStore {
     return null;
   }
   record(e: ElowenEvent, projectId?: number | null): void {
+    // The team feed has its own write path because it AGGREGATES: an identical event inside the window
+    // bumps a counter instead of adding a row. It also carries an actor, which no other event shape has.
+    if (e.type === 'activity') { this.recordActivity(e, projectId); return; }
     const r = this.toRow(e);
     if (!r) return;
     // Stamp the event with its owning project so the timeline can scope it to the right repo. The bus
@@ -68,6 +92,28 @@ export class EventStore {
     const label = r.label ?? task?.title ?? '';
     this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, pid, label);
   }
+  /** Write one team-feed event, folding it into an existing row when an identical one is already in
+   *  the current window. Identical means the same actor, surface, kind and project — the target and
+   *  detail may differ (a second conversation, another model), so the row keeps the FIRST one and the
+   *  count says how many followed. Aggregation is at WRITE time deliberately: the read side is a
+   *  dashboard tile that must not scan and group the whole table on every poll. */
+  private recordActivity(e: Extract<ElowenEvent, { type: 'activity' }>, projectId?: number | null): void {
+    const pid = projectId === undefined ? (e.projectId ?? null) : projectId;
+    const bumped = this.db.prepare(
+      `UPDATE events SET count = count + 1, last_ts = datetime('now')
+        WHERE id = (
+          SELECT id FROM events
+           WHERE type = @type AND actor_user_id IS @actor AND surface = @surface AND project_id IS @pid
+             AND COALESCE(last_ts, ts) >= datetime('now', '-${AGGREGATION_WINDOW_MINUTES} minutes')
+           ORDER BY id DESC LIMIT 1)`
+    ).run({ type: e.kind, actor: e.actorUserId, surface: e.surface, pid }).changes;
+    if (bumped > 0) return;
+    this.db.prepare(
+      `INSERT INTO events (type, target, detail, project_id, label, actor_user_id, surface, count, last_ts)
+       VALUES (@type, @target, @detail, @pid, '', @actor, @surface, 1, datetime('now'))`
+    ).run({ type: e.kind, target: e.target, detail: e.detail ?? '', pid, actor: e.actorUserId, surface: e.surface });
+  }
+
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */
   deleteForTarget(target: string): void {
     this.db.prepare('DELETE FROM events WHERE target = ?').run(target);
@@ -84,17 +130,21 @@ export class EventStore {
   }
   list(opts?: { limit?: number; type?: string; target?: string }): ActivityEvent[] {
     const limit = opts?.limit ?? 200;
+    // Every read goes through this projection so the actor's name is resolved in ONE place. It is a
+    // LEFT JOIN: an event whose account was deleted keeps its history and simply loses the name.
+    const select = `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.username, '') AS actor_label
+                      FROM events e LEFT JOIN users u ON u.id = e.actor_user_id`;
     // Target-scoped: the per-task feed (decision + review for one task), read oldest-first so the
     // detail pane renders it as a chronological conversation rather than the reverse-time timeline.
     if (opts?.target) {
       const rows = opts.type
-        ? this.db.prepare('SELECT * FROM events WHERE target = ? AND type = ? ORDER BY id ASC LIMIT ?').all(opts.target, opts.type, limit)
-        : this.db.prepare('SELECT * FROM events WHERE target = ? ORDER BY id ASC LIMIT ?').all(opts.target, limit);
+        ? this.db.prepare(`${select} WHERE e.target = ? AND e.type = ? ORDER BY e.id ASC LIMIT ?`).all(opts.target, opts.type, limit)
+        : this.db.prepare(`${select} WHERE e.target = ? ORDER BY e.id ASC LIMIT ?`).all(opts.target, limit);
       return rows as ActivityEvent[];
     }
     if (opts?.type) {
-      return this.db.prepare('SELECT * FROM events WHERE type = ? ORDER BY id DESC LIMIT ?').all(opts.type, limit) as ActivityEvent[];
+      return this.db.prepare(`${select} WHERE e.type = ? ORDER BY e.id DESC LIMIT ?`).all(opts.type, limit) as ActivityEvent[];
     }
-    return this.db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT ?').all(limit) as ActivityEvent[];
+    return this.db.prepare(`${select} ORDER BY e.id DESC LIMIT ?`).all(limit) as ActivityEvent[];
   }
 }

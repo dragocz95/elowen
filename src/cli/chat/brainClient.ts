@@ -229,7 +229,9 @@ export class BrainClient {
     const binding = this.bound && this.boundGeneration !== undefined
       ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
       : this.bound ? { session: this.bound } : {};
-    await this.post('/brain/send', { text, cwd: process.cwd(), ...binding, ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
+    // `surface` is how the daemon tells a CLI turn from a web one: both post this same shape, so the
+    // client states which it is rather than the server guessing from a header the client controls.
+    await this.post('/brain/send', { text, cwd: process.cwd(), surface: 'cli', ...binding, ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
   }
 
   /** Answer a parked AskUserQuestion — settles the paused turn so it resumes with the user's picks. */

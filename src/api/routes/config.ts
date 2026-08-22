@@ -486,6 +486,12 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       // event carries no payload at all — nothing to scope. Withholding it from tenants under the project
       // gate would leave exactly the stale sidebar this event exists to prevent.
       if (e.type === 'plugins') return true;
+      // The team activity feed is deliberately instance-wide (Filip's explicit decision, 22 Aug 2026:
+      // everyone sees the same activity). It is safe to widen precisely because of what it does NOT
+      // carry: no message text, no conversation titles, no commands and no paths — only who acted,
+      // from where, and how often. Scoping it by project would leave most of it invisible, since a
+      // turn in a personal conversation resolves to no project at all.
+      if (e.type === 'activity') return true;
       if (!allowed) return true;
       const pid = eventProjectId(e, eventDeps);
       return pid !== null && allowed.has(pid);

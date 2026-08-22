@@ -4,7 +4,7 @@ import { makePluginDb } from '../store/pluginDb.js';
 import { TaskRefs } from '../store/taskRefs.js';
 import type { PluginBrainWorker, PluginHostAdvisor, PluginHostPush, PluginHostTerminals, TasksDomainControl } from '../plugins/api.js';
 import { RelayClient } from '../inference/client.js';
-import { EventBus } from '../api/sse.js';
+import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
 import { ThemeStore, activeThemeName } from '../store/themeStore.js';
 import { resolveBrand, type ResolvedBrand } from '../shared/brand.js';
@@ -702,6 +702,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // An owner turn finished with the device it was sent from off screen → push it to the user's phone.
         // No subscription registered ⇒ sendToUsers is a no-op, so this needs no separate enable flag.
         notifyTurnComplete: opts.notifyTurnComplete,
+        // Platform turns reach the team feed through the same bus every other event uses, so they are
+        // persisted (and folded into the current bucket) and streamed live by one mechanism.
+        recordActivity: (e) => bus.publish({
+          type: 'activity', kind: 'turn', actorUserId: e.actorUserId,
+          surface: (ACTIVITY_SURFACES as readonly string[]).includes(e.surface) ? e.surface as ActivitySurface : 'unknown',
+          target: e.target, detail: e.detail,
+        }),
         plugins: pluginProvider,
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),

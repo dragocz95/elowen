@@ -245,7 +245,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }));
 
   app.post('/brain/send', withBrain(async (c, brain) => {
-    const { text, images, mode, cwd, session, display, client, generation } = await parseBody(c, brainSendSchema);
+    const { text, images, mode, cwd, session, display, client, generation, surface } = await parseBody(c, brainSendSchema);
     // `session` binds the turn to the caller's own explicit conversation (ownership-checked in send();
     // channel/task sessions rejected). Absent → the active conversation, exactly as before. `display` is
     // the clean text the daemon echoes back as the authoritative `user` turn (the client no longer echoes
@@ -258,6 +258,19 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     try { targetSession = brain.preflightSend(c.get('user').id, session, boundClient); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
     pinOrigin(c, targetSession);
+    // Team feed: someone is working, and from where. Emitted on the bus, so the recorder persists it
+    // (folded into the current bucket) and every attached browser sees it live through the same path.
+    // Nothing about the message itself is published: only actor, surface and the model.
+    //
+    // Wrapped because the feed is a BY-PRODUCT of the turn and must never be able to fail one: the same
+    // rule the bus recorder already applies (installEventRecording swallows a failing record). Losing a
+    // feed line is a cosmetic loss; losing the user's turn is not.
+    try {
+      d.bus.publish({
+        type: 'activity', kind: 'turn', actorUserId: c.get('user').id, surface: surface ?? 'unknown',
+        target: targetSession, detail: brain.sessionModel(targetSession),
+      });
+    } catch { /* the activity feed never breaks a turn */ }
     // A model/tool turn can outlive nginx/SSH proxy request timeouts while its authoritative output is
     // already flowing over SSE. Wait only until the user row + stream echo are durable, then return 202.
     // A failure before that boundary is an HTTP error; a later failure is an ordered SSE error so an

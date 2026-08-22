@@ -150,6 +150,9 @@ export interface BrainDeps {
    *  notification is readable without unlocking. Kept as an opaque callback so this seam never depends on
    *  the push module; a turn watched live never calls it. */
   notifyTurnComplete?: (userId: number, title: string, preview: string) => void;
+  /** Report a platform turn to the team activity feed. Optional: a minimal wiring simply has no feed.
+   *  Deliberately a plain callback — the brain layer owns no event bus, and the daemon supplies one. */
+  recordActivity?: (e: { actorUserId: number | null; surface: string; target: string; detail: string }) => void;
 }
 
 /** Every tool name denied for a user's own sessions: the deny-list an admin set for them

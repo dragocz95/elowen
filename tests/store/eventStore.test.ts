@@ -164,3 +164,68 @@ describe('EventStore without the agents plugin resolver (plugin disabled)', () =
     expect(store.list().map((e) => [e.type, e.target, e.detail])).toEqual([['mission', 'm1', 'active']]);
   });
 });
+
+// The team activity feed ("Dění"). Two properties carry it: identical events fold into one row at WRITE
+// time (a feed nobody can read is worse than no feed), and the actor's name is resolved at READ time so
+// a rename is reflected in the whole history instead of leaving stale copies behind.
+describe('EventStore — team activity feed', () => {
+  const turn = (over: Partial<Parameters<EventStore['record']>[0]> = {}) => ({
+    type: 'activity' as const, kind: 'turn' as const, actorUserId: 1, surface: 'web' as const,
+    target: 'brain-1', detail: 'claude-opus-5', ...over,
+  });
+
+  it('folds identical events into one row and counts them', () => {
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (1,'filip','x','Filip Džudža')").run();
+
+    events.record(turn());
+    events.record(turn({ target: 'brain-1-other' }));
+    events.record(turn());
+
+    const rows = events.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.count).toBe(3);
+    // The row keeps the FIRST occurrence as its target; last_ts says when the latest one landed.
+    expect(rows[0]!.target).toBe('brain-1');
+    expect(rows[0]!.last_ts).toBeTruthy();
+  });
+
+  it('keeps a different actor or surface apart', () => {
+    events.record(turn());
+    events.record(turn({ actorUserId: 2 }));
+    events.record(turn({ surface: 'cli' }));
+
+    expect(events.list()).toHaveLength(3);
+  });
+
+  it('resolves the actor name at read time, preferring the display name', () => {
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (1,'filip','x','Filip Džudža')").run();
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (2,'bob','x','')").run();
+
+    events.record(turn());
+    events.record(turn({ actorUserId: 2 }));
+
+    const byActor = new Map(events.list().map((e) => [e.actor_user_id, e.actor_label]));
+    expect(byActor.get(1)).toBe('Filip Džudža');
+    expect(byActor.get(2)).toBe('bob'); // username is the fallback when no display name is set
+
+    // A rename must reach the whole history, which is exactly why the name is not stored on the row.
+    db.prepare("UPDATE users SET name = 'Filip D.' WHERE id = 1").run();
+    expect(events.list().find((e) => e.actor_user_id === 1)!.actor_label).toBe('Filip D.');
+  });
+
+  it('keeps the event when its account is gone, just without a name', () => {
+    db.prepare("INSERT INTO users (id,username,password_hash,name) VALUES (9,'gone','x','Gone')").run();
+    events.record(turn({ actorUserId: 9 }));
+    db.prepare('DELETE FROM users WHERE id = 9').run();
+
+    const [row] = events.list();
+    expect(row!.actor_user_id).toBe(9);
+    expect(row!.actor_label).toBe(''); // history outlives the account; it simply loses the label
+  });
+
+  it('leaves every other event shape unaggregated', () => {
+    events.record({ type: 'task', taskId: 't1', status: 'open' });
+    events.record({ type: 'task', taskId: 't1', status: 'open' });
+    expect(events.list()).toHaveLength(2);
+  });
+});
