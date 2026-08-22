@@ -13,7 +13,9 @@ const conversations = Array.from({ length: 13 }, (_, index) => ({
   id: `brain-${index + 1}`,
   title: `Conversation ${index + 1}`,
   model: 'gpt-5.5',
-  updated_at: `2026-07-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+  // Newest first, matching what the daemon returns (ORDER BY updated_at DESC) and what the register's
+  // default sort shows -- so "Conversation 1" is the most recent and lands on page one.
+  updated_at: `2026-07-${String(13 - index).padStart(2, '0')}T10:00:00.000Z`,
   running: index === 0,
   active: index === 0,
 }));
@@ -64,5 +66,69 @@ describe('BrainSessionsPanel (conversation register)', () => {
     expect(screen.getByTestId('brain-sessions-list').closest('.control-surface-register')).toBeInTheDocument();
     expect(within(toolbar).getByRole('heading', { name: 'Conversations' })).toHaveClass('text-base');
     expect(within(toolbar).getByRole('button', { name: 'Delete all' })).toHaveClass('spatial-inline-action');
+  });
+});
+
+// The register is an admin oversight view spanning every account, so a row has to say WHOSE it is and
+// the list has to stay navigable once it holds the whole team's conversations.
+describe('BrainSessionsPanel — owner, filtering and sorting', () => {
+  const owned = [
+    { id: 'brain-a', title: 'Mine', model: 'gpt-5.5', updated_at: '2026-07-03T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 10, ownerId: 2, ownerLabel: 'Me' },
+    { id: 'brain-b', title: 'Theirs', model: 'claude-opus-5', updated_at: '2026-07-02T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 20, ownerId: 7, ownerLabel: 'Bob Novák' },
+    { id: 'brain-c', title: 'Also theirs', model: 'aaa-model', updated_at: '2026-07-01T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 30, ownerId: 7, ownerLabel: 'Bob Novák' },
+  ];
+  beforeEach(() => {
+    admin = true;
+    server.use(http.get('*/api/brain/managed-sessions', () => HttpResponse.json(owned)));
+  });
+
+  it('names the owner on every row', async () => {
+    renderPanel();
+    await screen.findByText('Theirs');
+    expect(screen.getAllByText(/Bob Novák/).length).toBeGreaterThan(0);
+  });
+
+  it('opens a foreign conversation read-only and the caller\'s own for continuing', async () => {
+    renderPanel();
+    await screen.findByText('Theirs');
+    // The daemon reads a foreign transcript for an admin but refuses a post into it, so the row must
+    // not offer "continue" -- it would fail at send.
+    expect(screen.getByRole('button', { name: 'View history in web chat: Theirs' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open in web chat: Mine' })).toBeInTheDocument();
+  });
+
+  it('filters down to one user', async () => {
+    renderPanel();
+    await screen.findByText('Mine');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Owner' })); // options exist only while open
+    fireEvent.click(screen.getByRole('option', { name: 'Bob Novák' }));
+
+    await waitFor(() => expect(screen.queryByText('Mine')).not.toBeInTheDocument());
+    expect(screen.getByText('Theirs')).toBeInTheDocument();
+    expect(screen.getByText('Also theirs')).toBeInTheDocument();
+  });
+
+  it('sorts by model instead of recency', async () => {
+    renderPanel();
+    await screen.findByText('Mine');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Sort' }));
+    fireEvent.click(screen.getByRole('option', { name: 'By model' }));
+
+    await waitFor(() => {
+      const titles = [...screen.getByTestId('brain-sessions-list').querySelectorAll('[role="listitem"]')]
+        .map((row) => row.textContent ?? '');
+      expect(titles[0]).toContain('Also theirs'); // aaa-model sorts first
+    });
+  });
+
+  it('says so when the search matches nothing', async () => {
+    renderPanel();
+    await screen.findByText('Mine');
+
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'zzz-nothing' } });
+
+    expect(await screen.findByText('No conversation matches the filter')).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
@@ -11,6 +11,8 @@ import { useMe } from '../../lib/queries';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { ModelIcon } from '../ui/ModelIcon';
 import { Segmented } from '../ui/Segmented';
+import { SelectMenu } from '../ui/SelectMenu';
+import { Input } from '../ui/Input';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { HelpTip } from '../ui/HelpTip';
 import { Button } from '../ui/Button';
@@ -23,7 +25,9 @@ import { LoadingLine } from '../ui/states';
 
 const PAGE_SIZE = 12;
 
-interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number }
+interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string }
+
+type SortKey = 'recent' | 'owner' | 'model' | 'tokens';
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
  *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
@@ -34,12 +38,16 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const qc = useQueryClient();
   const me = useMe();
   const isAdmin = me.data?.user?.is_admin ?? false;
+  const myId = me.data?.user?.id;
   const [adminView, setAdminView] = usePersistentState<'all' | 'mine'>('elowen.sessions.brainView', 'all', ['all', 'mine']);
   // A non-admin only ever has their own; the toggle applies to admins.
   const view: 'all' | 'mine' = isAdmin ? adminView : 'mine';
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [sort, setSort] = useState<SortKey>('recent');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
@@ -49,11 +57,28 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const sessions: Row[] = view === 'all'
     ? (managed.data ?? [])
     : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }));
-  const pageCount = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE));
+  // Owners present in the data, so the filter can never offer someone with nothing to show.
+  const owners = [...new Map(sessions.filter((s) => s.ownerLabel).map((s) => [String(s.ownerId), s.ownerLabel!])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  const needle = search.trim().toLowerCase();
+  const visible = sessions
+    .filter((s) => !ownerFilter || String(s.ownerId) === ownerFilter)
+    .filter((s) => !needle || `${s.title} ${s.ownerLabel ?? ''} ${s.model}`.toLowerCase().includes(needle))
+    .slice()
+    .sort((a, b) => {
+      switch (sort) {
+        // Every sort falls back to recency, so rows with an equal key keep a stable, meaningful order.
+        case 'owner': return (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '') || b.updated_at.localeCompare(a.updated_at);
+        case 'model': return a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
+        case 'tokens': return (b.tokens ?? 0) - (a.tokens ?? 0) || b.updated_at.localeCompare(a.updated_at);
+        default: return b.updated_at.localeCompare(a.updated_at);
+      }
+    });
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageRows = sessions.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+  const pageRows = visible.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
 
-  useEffect(() => { setPage(0); }, [view]);
+  useEffect(() => { setPage(0); }, [view, search, ownerFilter, sort]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
 
@@ -102,12 +127,41 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-baseline gap-2">
             <h2 className="text-base font-semibold text-text">{t.sessionsPanel.tab}</h2>
-            {sessions.length > 0 ? <span className="font-mono text-xs text-text-muted">{sessions.length}</span> : null}
+            {visible.length > 0 ? <span className="font-mono text-xs text-text-muted">{visible.length}</span> : null}
             <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
           </div>
           <p className="text-xs text-text-muted">{t.sessionsPanel.hint}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="relative flex items-center">
+            <Search size={14} className="pointer-events-none absolute left-2 text-text-muted" aria-hidden />
+            <Input
+              aria-label={t.sessionsPanel.searchLabel}
+              placeholder={t.sessionsPanel.searchLabel}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-9 w-44 pl-7"
+            />
+          </label>
+          {owners.length > 1 ? (
+            <SelectMenu
+              label={t.sessionsPanel.owner}
+              value={ownerFilter}
+              onChange={setOwnerFilter}
+              options={[{ value: '', label: t.sessionsPanel.allOwners }, ...owners.map(([id, label]) => ({ value: id, label }))]}
+            />
+          ) : null}
+          <SelectMenu
+            label={t.sessionsPanel.sortLabel}
+            value={sort}
+            onChange={(v) => setSort(v as SortKey)}
+            options={[
+              { value: 'recent', label: t.sessionsPanel.sortRecent },
+              { value: 'owner', label: t.sessionsPanel.sortOwner },
+              { value: 'model', label: t.sessionsPanel.sortModel },
+              { value: 'tokens', label: t.sessionsPanel.sortTokens },
+            ]}
+          />
           {isAdmin ? (
             <Segmented
               size="sm"
@@ -117,7 +171,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               options={[{ value: 'all', label: t.sessionsPanel.viewAll }, { value: 'mine', label: t.sessionsPanel.viewMine }]}
             />
           ) : null}
-          {isAdmin && view === 'all' && sessions.length > 0 ? (
+          {isAdmin && view === 'all' && visible.length > 0 ? (
             <button type="button" onClick={() => setConfirmAll(true)} className="spatial-inline-action h-9 px-2 hover:!text-danger">
               <Trash2 size={14} aria-hidden />{t.sessionsPanel.deleteAll}
             </button>
@@ -128,14 +182,17 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       <ControlSurfaceRegister>
       {q.isLoading ? <LoadingLine />
         : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
-        : sessions.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{t.sessionsPanel.empty}</p>
+        : visible.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
         : (
           <EntityList data-testid="brain-sessions-list">
             <MotionPresence>
               {pageRows.map((s) => {
                 // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
                 // task-worker sessions open read-only (the daemon won't let the owner post into them).
-                const continuable = s.kind === 'conversation';
+                // A foreign conversation opens READ-ONLY: the daemon lets an admin read the transcript
+                // but never accept a post into it, so offering "continue" would just fail at send.
+                const foreign = s.ownerId !== undefined && myId !== undefined && s.ownerId !== myId;
+                const continuable = s.kind === 'conversation' && !foreign;
                 const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
                 const title = s.title || t.sessionsPanel.untitled;
                 return (
@@ -157,7 +214,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                             {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                           </span>
                           <span className="truncate font-mono text-tiny text-text-muted">
-                            {s.tokens != null ? `${formatTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
+                            {s.ownerLabel ? `${s.ownerLabel} · ` : ''}{s.tokens != null ? `${formatTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
                           </span>
                         </button>
                         <ActionMenu
@@ -177,13 +234,13 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
 
       {/* Inside the register so the pager shares the card's horizontal inset (it used to sit as a
           sibling and hug the card edge). */}
-      {sessions.length > 0 ? (
+      {visible.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-border/80 pt-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="font-mono text-xs text-text-muted">
             {t.sessionsPanel.pageRange
               .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
               .replace('{to}', String(clampedPage * PAGE_SIZE + pageRows.length))
-              .replace('{total}', String(sessions.length))}
+              .replace('{total}', String(visible.length))}
           </span>
           <div className="flex items-center gap-1">
             <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.calendar.previous}</Button>
