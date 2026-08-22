@@ -1705,6 +1705,8 @@ export const en = {
     secretReplace: 'Replace',
     secretReplacementPlaceholder: 'Enter a replacement',
     noProviders: 'No suitable provider — add one in Settings → {agentName} AI.',
+    catalogProjects: 'Projects',
+    catalogPlugins: 'Grantable plugins',
     noRoles: 'No roles mapped yet — users without a mapped role are ignored.',
     roleNew: 'New role',
     roleId: 'Role ID',

@@ -1699,6 +1699,8 @@ export const sk = {
     secretReplace: 'Nahradiť',
     secretReplacementPlaceholder: 'Zadajte náhradu',
     noProviders: 'Žiadny vhodný poskytovateľ — pridajte ho v Nastavenia → {agentName} AI.',
+    catalogProjects: 'Projekty',
+    catalogPlugins: 'Pluginy dostupné na pridelenie',
     noRoles: 'Zatiaľ žiadne roly — používatelia bez namapovanej roly sú ignorovaní.',
     roleNew: 'Nová rola',
     roleId: 'ID roly',

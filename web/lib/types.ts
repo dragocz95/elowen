@@ -383,13 +383,15 @@ export interface Marketplace {
  *  - `enum` — a single choice from `options`; `multiSelect` — multiple choices from `options`.
  *  - `code` — a code editor body; `language` hints the syntax mode. `prompt` — a prompt/markdown body.
  *  - `json` — a JSON blob validated as text. `embeddingModel` — an embedding-model picker (parallels `model`).
- *  - `destination` — one proactive-notification target from enabled platform providers. */
+ *  - `destination` — one proactive-notification target from enabled platform providers.
+ *  - `projects`/`plugins`/`tools`/`models` — multiple values from the matching live core catalog. */
 export interface PluginConfigField {
   key: string;
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination'
+    | 'projects' | 'plugins' | 'tools' | 'models';
   hint?: string;
   required?: boolean;
   /** For `number` fields: input bounds and step; `placeholder` typically shows the default value. */
@@ -553,6 +555,15 @@ export interface NotificationDestinationOption {
   label: string;
   group?: string;
   subtitle?: string;
+}
+
+/** One admin-selectable tool from the live built-in + enabled-plugin registry catalog. */
+export interface ToolCatalogOption {
+  name: string;
+  label: string;
+  icon: string | null;
+  plugin: string | null;
+  group: 'memory' | 'image' | 'plugin';
 }
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */

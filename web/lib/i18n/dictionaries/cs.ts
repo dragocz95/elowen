@@ -1705,6 +1705,8 @@ export const cs = {
     secretReplace: 'Nahradit',
     secretReplacementPlaceholder: 'Zadejte náhradu',
     noProviders: 'Žádný vhodný poskytovatel — přidejte ho v Nastavení → {agentName} AI.',
+    catalogProjects: 'Projekty',
+    catalogPlugins: 'Pluginy dostupné k přidělení',
     noRoles: 'Zatím žádné role — uživatelé bez namapované role jsou ignorováni.',
     roleNew: 'Nová role',
     roleId: 'ID role',

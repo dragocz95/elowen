@@ -238,7 +238,7 @@ export const usePendingAsks = () => {
 };
 
 export const useProjects = () =>
-  useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects });
+  useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects, staleTime: 60_000 });
 
 export const useProjectGit = (id: number | null) =>
   useQuery({ queryKey: ['project-git', id], queryFn: () => elowenClient.projectGit(id as number), enabled: !!id });
@@ -401,7 +401,7 @@ export const useMyNavSettings = () =>
 
 /** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
 export const usePlugins = () =>
-  useQuery({ queryKey: ['plugins'], queryFn: elowenClient.plugins });
+  useQuery({ queryKey: ['plugins'], queryFn: elowenClient.plugins, staleTime: 60_000 });
 
 /** One plugin's settings detail (schema + values, secrets masked). */
 export const usePluginDetail = (name: string | null) =>
@@ -467,6 +467,10 @@ export const usePluginSubagents = () =>
 export const useNotificationDestinations = () =>
   useQuery({ queryKey: ['notification-destinations'], queryFn: elowenClient.notificationDestinations, staleTime: 60_000 });
 
+/** Admin-selectable tools from the live built-in + enabled-plugin registry. */
+export const usePluginTools = () =>
+  useQuery({ queryKey: ['plugin-tools'], queryFn: elowenClient.pluginTools, staleTime: 60_000 });
+
 /** Admin request diagnostics. List queries carry metadata only; segment and raw payloads are separate lazy reads. */
 export const useBrainDebugSessions = (filters: Record<string, string | number | undefined>, enabled = true) =>
   useInfiniteQuery({
@@ -522,7 +526,7 @@ export const useBrainSessions = () =>
 
 /** Pickable brain models across all configured providers (the Account → CLI dropdown source). */
 export const useBrainModels = () =>
-  useQuery({ queryKey: ['brain-models'], queryFn: elowenClient.brainModels });
+  useQuery({ queryKey: ['brain-models'], queryFn: elowenClient.brainModels, staleTime: 60_000 });
 
 /** Which brain OAuth accounts are connected (admin, Settings → Brain). */
 export const useBrainOauthStatus = () =>

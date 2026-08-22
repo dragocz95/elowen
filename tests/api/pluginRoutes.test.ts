@@ -331,6 +331,11 @@ describe('notification destination routes', () => {
       ctx.registerNotificationDestinationProvider({ platform: 'msteams', list: () => [
         { id: 'a:filip', kind: 'person', label: 'Filip', group: 'Microsoft Teams' },
       ] });
+      ctx.registerTool({
+        name: 'teams_tool', label: 'Teams tool', description: 'A test tool.',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+      });
     }`);
     const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
@@ -360,6 +365,16 @@ describe('notification destination routes', () => {
     }]);
   });
 
+  it('serves the live tool catalog to admins and refuses non-admins', async () => {
+    const { app, adminTok, amyTok } = await destinationSetup();
+    expect((await app.request('/plugins/tools', auth(amyTok))).status).toBe(403);
+    const response = await app.request('/plugins/tools', auth(adminTok));
+    expect(response.status).toBe(200);
+    const tools = await response.json() as { name: string; label: string; plugin: string | null; group: string }[];
+    expect(tools).toContainEqual(expect.objectContaining({ name: 'teams_tool', label: 'Teams tool', plugin: 'teams', group: 'plugin' }));
+    expect(tools).toContainEqual(expect.objectContaining({ name: 'MemorySearch', plugin: null, group: 'memory' }));
+  });
+
   it('does not expose destination metadata through unauthenticated first-run setup access', async () => {
     const db = openPluginTablesDb(':memory:');
     const users = new UserStore(db);
@@ -372,6 +387,7 @@ describe('notification destination routes', () => {
       brainOauth: new BrainOAuthManager(sharedRuntime, noCreds),
     });
     expect((await app.request('/plugins/destinations')).status).toBe(403);
+    expect((await app.request('/plugins/tools')).status).toBe(403);
   });
 });
 

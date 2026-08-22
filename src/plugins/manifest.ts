@@ -34,7 +34,8 @@ export interface PluginConfigField {
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers' | 'destination'
+    | 'projects' | 'plugins' | 'tools' | 'models';
   hint?: string;
   required?: boolean;
   /** For `number` fields: the input bounds and step; `placeholder` typically shows the default value. */
@@ -169,6 +170,7 @@ const ConfigFieldSchema = Type.Object({
     Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
     Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
     Type.Literal('embeddingModel'), Type.Literal('mcpServers'), Type.Literal('destination'),
+    Type.Literal('projects'), Type.Literal('plugins'), Type.Literal('tools'), Type.Literal('models'),
   ]),
   hint: Type.Optional(Type.String()),
   required: Type.Optional(Type.Boolean()),

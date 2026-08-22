@@ -1,6 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Users, SlidersHorizontal, Link2, Info, MessagesSquare, Mic, Image as ImageIcon, Puzzle, Wrench, type LucideIcon } from 'lucide-react';
 import { TeamsAppPackageSection } from './TeamsAppPackageSection';
 import { MonacoEditor } from '../../lib/monaco/monacoLoader';
 import { defineEditorThemes, editorTheme } from '../../lib/monaco/oledTheme';
@@ -13,13 +13,15 @@ import { ManageSelectionModal, type ManageSelectionItem } from '../../components
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Toggle } from '../../components/ui/Toggle';
 import { BrainModelField } from '../../components/ui/BrainModelField';
+import { ModelIcon } from '../../components/ui/ModelIcon';
+import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { useConfig, useBrainModels, useNotificationDestinations } from '../../lib/queries';
-import type { NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
+import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
+import type { BrainModelOption, NotificationDestinationOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
@@ -108,6 +110,91 @@ function MultiSelectField({ label, options, value, onChange }: { label: string; 
       />
     </>
   );
+}
+
+/** Shared live-catalog multi-select: the catalog-specific wrappers only map their domain rows into the
+ *  same compact summary + manage modal used by the Users drawer. Stale stored ids remain selectable. */
+function CatalogMultiSelectField({ label, hint, items: catalogItems, value, onChange, groupIcons }: {
+  label: string;
+  hint?: string;
+  items: ManageSelectionItem[];
+  value: string[];
+  onChange: (v: string[]) => void;
+  groupIcons?: Record<string, ReactNode>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const byId = new Map(catalogItems.map((item) => [item.id, item]));
+  const stale = value.filter((id) => !byId.has(id)).map((id) => ({ id, label: id, group: '' }));
+  const items = [...stale, ...catalogItems];
+  return (
+    <>
+      <SelectionSummary
+        countText={t.managePicker.selectedCount.replace('{n}', String(value.length))}
+        samples={value.slice(0, 3).map((id) => ({ label: byId.get(id)?.label ?? id, icon: byId.get(id)?.icon }))}
+        moreCount={Math.max(0, value.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={label}
+        subtitle={hint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(value)}
+        onSave={(next) => onChange([...next])}
+        countLabel={(n) => t.managePicker.selectedCount.replace('{n}', String(n))}
+        groupIcons={groupIcons}
+      />
+    </>
+  );
+}
+
+function ProjectsField({ label, hint, value, onChange }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void }) {
+  const { t } = useTranslation();
+  const { data: projects = [] } = useProjects();
+  return <CatalogMultiSelectField label={label} hint={hint} value={value} onChange={onChange} items={projects.map((project) => ({
+    id: String(project.id), label: project.slug, group: 'projects', groupLabel: t.pluginCfg.catalogProjects,
+    icon: <ProjectIcon project={project} size={14} />,
+  }))} />;
+}
+
+function PluginsField({ label, hint, value, onChange }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void }) {
+  const { t } = useTranslation();
+  const { data: plugins = [] } = usePlugins();
+  const grantable = plugins.filter((plugin) => plugin.userGrantable && !plugin.removed);
+  return <CatalogMultiSelectField label={label} hint={hint} value={value} onChange={onChange} items={grantable.map((plugin) => ({
+    id: plugin.name, label: plugin.name, group: 'plugins', groupLabel: t.pluginCfg.catalogPlugins,
+    icon: <Puzzle size={14} aria-hidden />,
+  }))} />;
+}
+
+function ToolsField({ label, hint, value, onChange }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void }) {
+  const { t } = useTranslation();
+  const { data: tools = [] } = usePluginTools();
+  return <CatalogMultiSelectField label={label} hint={hint} value={value} onChange={onChange} items={tools.map((tool) => ({
+    id: tool.name,
+    label: tool.label,
+    group: tool.plugin ?? tool.group,
+    groupLabel: tool.plugin ?? (tool.group === 'memory' ? t.managePicker.toolGroupMemory : t.managePicker.toolGroupElowen),
+    icon: <span aria-hidden className="shrink-0 text-[13px] leading-none">{tool.icon ?? <Wrench size={12} className="inline" />}</span>,
+  }))} />;
+}
+
+function ModelsField({ label, hint, models, value, onChange }: { label: string; hint?: string; models: BrainModelOption[]; value: string[]; onChange: (v: string[]) => void }) {
+  const items: ManageSelectionItem[] = models.map((model) => ({
+    id: model.exec,
+    label: model.model,
+    group: model.provider,
+    groupLabel: model.providerLabel,
+    icon: <ModelIcon name={model.model} size={14} />,
+  }));
+  const groupIcons = Object.fromEntries(
+    [...new Map(models.map((model) => [model.provider, model.providerLabel])).entries()]
+      .map(([provider, providerLabel]) => [provider, <ModelIcon key={provider} name={providerLabel} size={14} />]),
+  );
+  return <CatalogMultiSelectField label={label} hint={hint} value={value} onChange={onChange} items={items} groupIcons={groupIcons} />;
 }
 
 /** Structured editor for a `rolePolicies` field. A role decides admission, the room prompt, and
@@ -324,6 +411,10 @@ function controlOwnsLayout(f: PluginConfigField): boolean {
     case 'provider':
     case 'destination':
     case 'multiSelect':
+    case 'projects':
+    case 'plugins':
+    case 'tools':
+    case 'models':
     case 'code':
     case 'prompt':
     case 'json':
@@ -416,6 +507,22 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         return <PluginProviderField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
       case 'destination':
         return <DestinationField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
+      case 'projects': {
+        const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
+        return <ProjectsField label={fieldLabel(f)} hint={fieldHint(f)} value={selected} onChange={(v) => set(f.key, v)} />;
+      }
+      case 'plugins': {
+        const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
+        return <PluginsField label={fieldLabel(f)} hint={fieldHint(f)} value={selected} onChange={(v) => set(f.key, v)} />;
+      }
+      case 'tools': {
+        const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
+        return <ToolsField label={fieldLabel(f)} hint={fieldHint(f)} value={selected} onChange={(v) => set(f.key, v)} />;
+      }
+      case 'models': {
+        const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
+        return <ModelsField label={fieldLabel(f)} hint={fieldHint(f)} models={brainModels ?? []} value={selected} onChange={(v) => set(f.key, v)} />;
+      }
       case 'rolePolicies':
         return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
       case 'mcpServers':

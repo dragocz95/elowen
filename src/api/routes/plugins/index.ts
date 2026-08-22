@@ -11,6 +11,8 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Context } from 'hono';
 import type { ElowenApp, RouteContext } from '../../context.js';
 import { registerBrainOAuthRoutes } from './oauth.js';
+import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../../brain/tools/index.js';
+import { makeToolIconResolver } from '../../../brain/toolIcons.js';
 
 /** Apply a config patch to the stored values, by the ONE rule both config forms follow: a key the caller
  *  did not send is left alone, an explicit `null` clears a non-secret back to its default, and a secret
@@ -82,6 +84,34 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (ctx.notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const registry = await d.plugins?.get().catch(() => undefined);
     return c.json(await registry?.notificationDestinations() ?? []);
+  });
+
+  /** Admin-only live tool catalog for schema-driven plugin config. It uses the same built-in metadata and
+   *  enabled-plugin registry as the per-user tool control; values are stable tool names. */
+  app.get('/plugins/tools', async c => {
+    if (ctx.notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const registry = await d.plugins?.get().catch(() => undefined);
+    const iconMap = new Map(Object.entries(BUILTIN_TOOL_ICONS));
+    for (const [name, icon] of registry?.toolIcons ?? []) iconMap.set(name, icon);
+    const iconOf = makeToolIconResolver(iconMap);
+    const tools = [
+      ...builtinToolMetas().map((tool) => ({
+        name: tool.name,
+        label: tool.label,
+        icon: iconOf(tool.name) ?? null,
+        plugin: null,
+        group: tool.group,
+      })),
+      ...(registry?.tools ?? []).map((tool) => ({
+        name: tool.name,
+        label: tool.label ?? tool.name,
+        icon: iconOf(tool.name) ?? null,
+        plugin: registry?.toolOwner.get(tool.name) ?? null,
+        group: 'plugin' as const,
+      })),
+    ];
+    tools.sort((a, b) => (a.plugin ?? a.group).localeCompare(b.plugin ?? b.group) || a.name.localeCompare(b.name));
+    return c.json(tools);
   });
 
   const listing = () => {
