@@ -323,7 +323,14 @@ sandbox permission system... is the actual security control").
 
 **Elowen.** The terminal plugin runs commands via PI's local shell backend with **no sandboxing at all** —
 confinement is only `cwd` (via `ctx.assertPathAllowed`, `plugins/terminal/index.mjs:1-6`) plus the
-permission-rule pattern matching covered in finding 7. The plugin's own header comment is explicit about the
+permission-rule pattern matching covered in finding 7.
+
+> **Superseded (22 Aug 2026).** Where this document says terminal tools are owner-only, they are now
+> handed out by GRANTING the `userGrantable` `terminal` plugin to an account (admins have it implicitly);
+> the plugin no longer gates on the owner bit itself. The sandboxing analysis below is unaffected — a
+> shell still reads any absolute path, which is exactly why the grant means granting the host.
+
+The plugin's own header comment is explicit about the
 resulting gap: "cwd guarding does NOT contain a shell that reads absolute paths outside the repo (e.g. the
 prod config DB), so ALL terminal tools are OWNER-ONLY" (`plugins/terminal/index.mjs:4-6`) — i.e. Elowen's
 current mitigation for "no sandbox" is "only the verified human owner can reach this tool at all," not a
