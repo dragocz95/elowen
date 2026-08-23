@@ -83,7 +83,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
 }
 
 /** The journal's chronological spine: newest daemon activity first, without a card shell. */
-export function ActivityTile({ limit = 5 }: { limit?: number }) {
+export function ActivityTile({ limit = 14 }: { limit?: number }) {
   const { t } = useTranslation();
   // Fetch a little more than the tile shows: `signal` rows are dropped client-side, and asking for the
   // exact limit could leave the spine short. The server-side default is 200 rows — far more than a
