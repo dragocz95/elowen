@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error — plain .mjs plugin module, no types
-import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter } from '../../packages/plugin-shared/format.mjs';
+import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter, formatColumns, formatColumnsCodeBlock } from '../../packages/plugin-shared/format.mjs';
 
 describe('shared plugin format helpers', () => {
   it('splitContent / extractImageRefs / stripThinking never throw on a null or undefined body (the shipped Discord/WhatsApp TypeError)', () => {
@@ -9,6 +8,91 @@ describe('shared plugin format helpers', () => {
     expect(() => extractImageRefs(undefined)).not.toThrow();
     expect(extractImageRefs(null)).toEqual({ cleaned: '', files: [] });
     expect(stripThinking(undefined)).toBe('');
+  });
+
+  describe('formatColumns / formatColumnsCodeBlock', () => {
+    // Every case here aligns on RENDERED monospace cells. Counting UTF-16 units, code points or JS
+    // characters instead each produces a plausible-looking table that is visibly ragged on a real client.
+    it('aligns decomposed Czech with composed Czech instead of counting its combining marks', () => {
+      // A macOS/iOS paste arrives in NFD: `ř` is `r` + U+030C, two code points but one cell. Measured by
+      // code points this row over-pads by nine and shifts the whole second column.
+      expect(formatColumns([
+        ['Příkaz', 'Stav'],
+        ['Příliš žluťoučký kůň'.normalize('NFD'), 'čeká'],
+        ['Příliš žluťoučký kůň', 'hotovo'],
+      ])).toBe([
+        'Příkaz                Stav',
+        'Příliš žluťoučký kůň  čeká',
+        'Příliš žluťoučký kůň  hotovo',
+      ].join('\n'));
+    });
+
+    it('counts emoji, ZWJ sequences and East Asian glyphs as the two cells they render as', () => {
+      expect(formatColumns([
+        ['Příkaz', 'Stav'],
+        ['Žluťoučký 🐎', 'hotovo'],
+        ['rodina 👨‍👩‍👧', 'ok'],
+        ['日本語', 'ok'],
+      ])).toBe([
+        'Příkaz        Stav',
+        'Žluťoučký 🐎  hotovo',
+        'rodina 👨‍👩‍👧     ok',
+        '日本語        ok',
+      ].join('\n'));
+    });
+
+    it('truncates on one line at a grapheme boundary, never inside a cluster', () => {
+      // Cutting by code point halves the ZWJ family into a different emoji, and strands the caron of `ť`.
+      expect(formatColumns([['👨‍👩‍👧‍👦 rodina a další text'], ['x']], { maxWidth: 6 }))
+        .toBe('👨‍👩‍👧‍👦 ro…\nx');
+      expect(formatColumns([['Příliš žluťoučký'.normalize('NFD')], ['x']], { maxWidth: 8 }))
+        .toBe('Příliš …\nx');
+      // A two-cell glyph is dropped whole rather than half-rendered when only one cell is left.
+      expect(formatColumns([['日本語テキスト'], ['x']], { maxWidth: 5 })).toBe('日本…\nx');
+    });
+
+    it('truncates long cells with an ellipsis and keeps every row within maxWidth', () => {
+      const result = formatColumns([
+        ['Příkaz', 'Popis'],
+        ['/reasoning', 'nastavit úroveň uvažování pro tento kanál'],
+      ], { maxWidth: 20 });
+
+      expect(result).toBe('Příkaz     Popis\n/reasoni…  nastavit…');
+      expect(result.split('\n')).toHaveLength(2);
+    });
+
+    it('neutralizes a fence terminator and invisible controls carried in a cell', () => {
+      // The model can put a ``` block in a description. Left intact it closes the surrounding fence and
+      // corrupts the fence parity splitContent relies on, so the rest of the message renders as raw text.
+      const block = formatColumnsCodeBlock([['/x', '```js\nrm -rf /\n```']]);
+      expect(block).toBe('```\n/x  `js rm -rf / `\n```');
+      expect(block.match(/```/g)).toHaveLength(2);
+      // Bidi overrides and zero-width spaces would silently reorder or pad a rendered line.
+      expect(formatColumns([['a\u202Eb\u200Bc', 'x'], ['plain', 'y']])).toBe('a b c  x\nplain  y');
+    });
+
+    it('returns no table for empty rows and omits columns whose every value is empty', () => {
+      expect(formatColumns([])).toBe('');
+      expect(formatColumns([['', ''], ['', '']])).toBe('');
+      expect(formatColumns([['Příkaz', '', 'Stav'], ['/new', '', 'ano']]))
+        .toBe('Příkaz  Stav\n/new    ano');
+      expect(formatColumnsCodeBlock([])).toBe('');
+    });
+
+    it('wraps a non-empty table in one shared fenced monospace block', () => {
+      expect(formatColumnsCodeBlock([['A', 'B'], ['1', '2']], { gap: 1 }))
+        .toBe('```\nA B\n1 2\n```');
+    });
+
+    it('fails loudly when the requested width cannot fit one cell per column', () => {
+      expect(() => formatColumns([['A', 'B', 'C']], { maxWidth: 4, gap: 1 }))
+        .toThrow('cannot fit 3 columns');
+    });
+
+    it('rejects a row that is not an array instead of rendering it as a blank line', () => {
+      expect(() => formatColumns(['nope' as unknown as string[], ['a', 'b']]))
+        .toThrow('row 0 is not an array');
+    });
   });
 
   it('splitContent keeps a fenced code block intact across a chunk boundary', () => {

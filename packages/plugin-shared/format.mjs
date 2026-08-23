@@ -138,6 +138,173 @@ export function parseModelExec(spec) {
   return slash > 0 ? { provider: s.slice(0, slash), model: s.slice(slash + 1) } : { model: s };
 }
 
+/** @typedef {string | number | boolean | null | undefined} ColumnValue */
+/** @typedef {{ maxWidth?: number, gap?: number }} ColumnFormatOptions */
+
+const DEFAULT_COLUMN_WIDTH = 72;
+const DEFAULT_COLUMN_GAP = 2;
+
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// East Asian Wide/Fullwidth code points, which a monospace grid renders two cells wide. JS exposes no
+// `East_Asian_Width` property escape, so the W/F classes are spelled out; emoji are covered separately by
+// `Emoji_Presentation`, which V8 DOES expose and which tracks the standard far better than a hand table.
+const WIDE_RANGES = [
+  [0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf], [0xa960, 0xa97f], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd],
+];
+
+const EMOJI_PRESENTATION = /^\p{Emoji_Presentation}/u;
+
+/** Cells that must never reach a chat surface: C0/C1 controls, and the format characters (bidi overrides,
+ *  zero-width spaces) that silently reorder or pad a rendered line. ZWJ is kept — it is load-bearing inside
+ *  an emoji sequence, which the grapheme segmenter then measures as one cluster. */
+const INVISIBLE = /[\p{Cc}\p{Cf}]/gu;
+
+function isWide(codePoint) {
+  for (const [low, high] of WIDE_RANGES) if (codePoint >= low && codePoint <= high) return true;
+  return false;
+}
+
+/** Rendered width of ONE grapheme cluster, in monospace cells. Combining marks, variation selectors and
+ *  ZWJ joiners live inside the cluster and therefore cost nothing extra — which is the whole reason this
+ *  measures clusters instead of code points: `ř` typed as `r`+U+030C is one cell, not two, and a ZWJ
+ *  family emoji is two cells, not five. */
+function graphemeWidth(cluster) {
+  if (cluster.includes('\uFE0F')) return 2;            // VS16 forces emoji presentation
+  if (EMOJI_PRESENTATION.test(cluster)) return 2;
+  return isWide(cluster.codePointAt(0)) ? 2 : 1;
+}
+
+/** Normalize a value to one printable line: NFC (so a macOS-decomposed `Příliš` measures like a composed
+ *  one), whitespace collapsed, invisibles dropped. Runs of three or more backticks are collapsed to one,
+ *  because {@link formatColumnsCodeBlock} puts this text inside a ``` fence and `splitContent` counts those
+ *  fences to decide where it may cut — a stray terminator in a cell breaks the rest of the message. */
+function normalizeCell(value) {
+  return String(value ?? '')
+    .normalize('NFC')
+    .replace(INVISIBLE, (c) => (c === '\u200D' ? c : ' '))
+    .replace(/`{3,}/gu, '`')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+const EMPTY_CELL = { text: '', clusters: [], width: 0 };
+
+/** Split a normalized cell into measured grapheme clusters plus its total rendered width. */
+function measureCell(text) {
+  const clusters = [];
+  let width = 0;
+  for (const { segment } of GRAPHEMES.segment(text)) {
+    const cellWidth = graphemeWidth(segment);
+    clusters.push({ segment, width: cellWidth });
+    width += cellWidth;
+  }
+  return { text, clusters, width };
+}
+
+/** Fit a measured cell into `width` cells on ONE line — truncated with `…`, never wrapped, and never cut
+ *  inside a grapheme cluster (which would orphan a diacritic or halve a ZWJ emoji). */
+function fitCell(cell, width) {
+  if (cell.width <= width) return cell;
+  let text = '';
+  let used = 0;
+  for (const { segment, width: cellWidth } of cell.clusters) {
+    if (used + cellWidth > width - 1) break;
+    text += segment;
+    used += cellWidth;
+  }
+  return { text: `${text}…`, clusters: null, width: used + 1 };
+}
+
+function fitColumnWidths(desired, available) {
+  const total = desired.reduce((sum, width) => sum + width, 0);
+  if (total <= available) return desired;
+
+  let low = 1;
+  let high = Math.max(...desired);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const used = desired.reduce((sum, width) => sum + Math.min(width, mid), 0);
+    if (used <= available) low = mid;
+    else high = mid - 1;
+  }
+
+  const widths = desired.map((width) => Math.min(width, low));
+  let spare = available - widths.reduce((sum, width) => sum + width, 0);
+  for (let i = 0; i < widths.length && spare > 0; i++) {
+    if (widths[i] < desired[i]) {
+      widths[i]++;
+      spare--;
+    }
+  }
+  return widths;
+}
+
+/**
+ * Format rows as aligned monospace columns. Cells are single-line strings measured in RENDERED CELLS —
+ * grapheme clusters, with East Asian and emoji glyphs counted as two — because the output is read on a
+ * monospace grid, not by a code-point counter. Columns that are empty in every row are omitted, and wider
+ * cells are truncated with `…`, never wrapped: one wrapped cell would destroy the alignment of every other
+ * row. No rendered line exceeds `maxWidth`.
+ *
+ * @param {ReadonlyArray<ReadonlyArray<ColumnValue>>} rows
+ * @param {ColumnFormatOptions} [options]
+ * @returns {string}
+ */
+export function formatColumns(rows, options = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+
+  const maxWidth = options.maxWidth ?? DEFAULT_COLUMN_WIDTH;
+  const gap = options.gap ?? DEFAULT_COLUMN_GAP;
+  if (!Number.isInteger(maxWidth) || maxWidth < 1) throw new RangeError('maxWidth must be a positive integer');
+  if (!Number.isInteger(gap) || gap < 0) throw new RangeError('gap must be a non-negative integer');
+
+  // A non-array row used to render as a blank line, which reads as "this entry has no data" rather than as
+  // the caller bug it is. Reject it instead of shipping a plausible-looking hole in the table.
+  const measured = rows.map((row, index) => {
+    if (!Array.isArray(row)) throw new TypeError(`formatColumns: row ${index} is not an array`);
+    return row.map((value) => measureCell(normalizeCell(value)));
+  });
+  const columnCount = measured.reduce((max, row) => Math.max(max, row.length), 0);
+  const activeColumns = Array.from({ length: columnCount }, (_, index) => index)
+    .filter((index) => measured.some((row) => (row[index]?.text ?? '') !== ''));
+  if (activeColumns.length === 0) return '';
+
+  const gapWidth = gap * (activeColumns.length - 1);
+  const available = maxWidth - gapWidth;
+  if (available < activeColumns.length) {
+    throw new RangeError(`maxWidth ${maxWidth} cannot fit ${activeColumns.length} columns with gap ${gap}`);
+  }
+
+  const desired = activeColumns.map((index) => measured.reduce(
+    (max, row) => Math.max(max, row[index]?.width ?? 0),
+    1,
+  ));
+  const widths = fitColumnWidths(desired, available);
+  const separator = ' '.repeat(gap);
+
+  return measured.map((row) => activeColumns.map((column, index) => {
+    const cell = fitCell(row[column] ?? EMPTY_CELL, widths[index]);
+    if (index === activeColumns.length - 1) return cell.text;
+    return cell.text + ' '.repeat(widths[index] - cell.width);
+  }).join(separator).trimEnd()).join('\n');
+}
+
+/**
+ * Format rows and wrap the result in the fenced monospace block used by text chat surfaces.
+ * Empty rows stay empty rather than producing a blank code block.
+ *
+ * @param {ReadonlyArray<ReadonlyArray<ColumnValue>>} rows
+ * @param {ColumnFormatOptions} [options]
+ * @returns {string}
+ */
+export function formatColumnsCodeBlock(rows, options = {}) {
+  const table = formatColumns(rows, options);
+  return table ? `\`\`\`\n${table}\n\`\`\`` : '';
+}
+
 /** Split text into ≤`chunk` pieces WITHOUT breaking a fenced code block: if a cut lands inside ``` … ```,
  *  close the fence on this piece and reopen it (same language) on the next. Prefers newline cuts. `chunk`
  *  is per-surface (Discord 1990, Telegram/WhatsApp 4000), so each adapter passes its own. */
