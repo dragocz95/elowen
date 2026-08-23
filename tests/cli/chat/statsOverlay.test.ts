@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openStatsOverlay } from '../../../src/cli/chat/statsOverlay.js';
+import { openStatsOverlay, type StatsOverlaySession } from '../../../src/cli/chat/statsOverlay.js';
 import type { BrainUsageView, ModelUsageView } from '../../../src/cli/chat/brainClient.js';
 import type { BrainContextBreakdown } from '../../../src/shared/wireContract.js';
 
@@ -14,6 +14,7 @@ function renderOverlay(o: {
   keys?: string[];
   /** Terminal height the overlay sizes itself against; `null` models a terminal that reports none. */
   rows?: number | null;
+  session?: Partial<StatsOverlaySession>;
 }): string[] {
   const shown: Overlay[] = [];
   const tui = {
@@ -29,7 +30,13 @@ function renderOverlay(o: {
     tui: tui as never,
     editor: {} as never,
     section: o.section,
-    data: { model: 'm', usage, models: o.models ?? [], context: o.context ?? null },
+    data: {
+      model: 'm',
+      usage,
+      models: o.models ?? [],
+      context: o.context ?? null,
+      session: { mode: 'Build', cwd: '~/proj', ...o.session },
+    },
   });
   const overlay = shown[0];
   if (!overlay) throw new Error('the overlay was never shown');
@@ -148,6 +155,38 @@ const breakdown = (over: Partial<BrainContextBreakdown> = {}): BrainContextBreak
   tools: [{ name: 'Bash', schemaTokens: 1_000, callTokens: 2_000, resultTokens: 75_000, tokens: 78_000, percent: 39, active: true }],
   compactAtTokens: 160_000,
   ...over,
+});
+
+// `/status` is gone; its session rows moved into this section, which is now the only place the CLI
+// reports the model/reasoning/mode/project/goal of the conversation.
+describe('stats overlay — session rows (the retired /status)', () => {
+  it('reports reasoning, mode, project and the active goal', () => {
+    const text = renderOverlay({
+      usage: { totalTokens: 10 },
+      session: {
+        title: 'Katalog', reasoning: 'High', mode: 'Plan', cwd: '~/proj', branch: 'main',
+        goal: { status: 'active', turnsUsed: 3, turnBudget: 12, pausedReason: 'needs review' },
+      },
+    }).join('\n');
+    expect(text).toContain('Katalog');
+    expect(text).toContain('High');
+    expect(text).toContain('Plan');
+    expect(text).toContain('main');
+    expect(text).toContain('3/12 turns');
+    expect(text).toContain('needs review');
+  });
+
+  it('omits the fast row when the model/account never offered priority processing', () => {
+    const off = renderOverlay({ usage: { totalTokens: 10 }, session: { fast: false } }).join('\n');
+    expect(off).toContain('fast');
+    expect(renderOverlay({ usage: { totalTokens: 10 } }).join('\n')).not.toContain('fast');
+  });
+
+  it('still shows the session rows when the conversation has no usage yet', () => {
+    const text = renderOverlay({ session: { reasoning: 'Low' } }).join('\n');
+    expect(text).toContain('Low');
+    expect(text).toContain('no conversation usage data');
+  });
 });
 
 describe('stats overlay — context section', () => {

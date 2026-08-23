@@ -566,6 +566,17 @@ export const useBrainContextUsage = (session: string | null, enabled = true) =>
     refetchInterval: 15_000,
   });
 
+/** The chat's own status row, for the `/reasoning` picker: which effort levels the CURRENT model offers,
+ *  their labels and the one in force. Fetched only while that modal is open — the controller's own status
+ *  poll is about usage and does not carry them into React state. Keyed by conversation. */
+export const useBrainSessionStatus = (session: string | null, enabled = true) =>
+  useQuery({
+    queryKey: ['brain-session-status', session],
+    queryFn: () => elowenClient.brainStatus(session ?? undefined),
+    enabled,
+    staleTime: 0,
+  });
+
 export const useUserProjects = (userId: number | null, enabled = true) =>
   useQuery({ queryKey: ['user-projects', userId], queryFn: () => elowenClient.userProjects(userId as number), enabled: !!userId && enabled });
 

@@ -202,7 +202,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   });
 
   // Execute a server-side (`action`) slash command through ONE dispatch path for every surface. Pickers
-  // (`model`/`think`) and info (`status`/`help`) stay client-side (their own endpoints / rendering).
+  // (`model`/`think`) and info (`stats`/`help`) stay client-side (their own endpoints / rendering).
   app.post('/brain/command', withBrain(async (c, brain) => {
     const user = c.get('user');
     // Polymorphic dispatch body: `name` selects the command and the remaining fields are per-command, so

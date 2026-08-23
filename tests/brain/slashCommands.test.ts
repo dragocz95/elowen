@@ -48,11 +48,26 @@ describe('slash command registry', () => {
     expect(commandsFor('discord', true).some((c) => c.name === 'rename')).toBe(false);
   });
 
-  it('publishes stop/status/compact to every surface', () => {
+  it('publishes stop/compact to every surface', () => {
     for (const surface of ['cli', 'discord', 'whatsapp', 'web'] as const) {
-      for (const n of ['stop', 'status', 'compact']) {
+      for (const n of ['stop', 'compact']) {
         expect(commandsFor(surface, true).some((c) => c.name === n), `${surface} ${n}`).toBe(true);
       }
+    }
+  });
+
+  /** `/stats` replaced `/status` on the CLI and the web dock (it is a strict superset there — the same
+   *  session rows plus per-model totals and the context breakdown). The chat platforms keep `/status`:
+   *  their one-line answer comes from the adapters' shared control core (CONTROL_COMMANDS), which cannot
+   *  draw the overlay, so retiring it there would leave a channel with no session info at all. */
+  it('splits session info: /stats on cli+web, /status on the chat platforms only', () => {
+    for (const surface of ['cli', 'web'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'stats'), surface).toBe(true);
+      expect(commandsFor(surface, true).some((c) => c.name === 'status'), surface).toBe(false);
+    }
+    for (const surface of ['discord', 'whatsapp', 'telegram', 'msteams'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'status'), surface).toBe(true);
+      expect(commandsFor(surface, true).some((c) => c.name === 'stats'), surface).toBe(false);
     }
   });
 
@@ -62,11 +77,11 @@ describe('slash command registry', () => {
     }
   });
 
-  it('publishes /reasoning to the CLI and every chat platform that wires the picker (not web)', () => {
-    for (const surface of ['cli', 'discord', 'whatsapp', 'telegram'] as const) {
+  // Every surface now wires its own reasoning picker, the web dock included (ReasoningModal).
+  it('publishes /reasoning to every surface', () => {
+    for (const surface of ['cli', 'discord', 'whatsapp', 'telegram', 'msteams', 'web'] as const) {
       expect(commandsFor(surface, true).some((c) => c.name === 'reasoning'), surface).toBe(true);
     }
-    expect(commandsFor('web', true).some((c) => c.name === 'reasoning')).toBe(false);
   });
 
   it('publishes the work modes to the CLI and the web dock (both stamp the mode per send)', () => {
@@ -200,12 +215,15 @@ describe('slash command registry', () => {
   // `context` is one name over two unrelated commands, split strictly by surface: the channel re-key on
   // the platforms (there is no channel to re-key from a terminal) and the context breakdown in the CLI.
   it('publishes the channel re-key /context to every platform surface and the breakdown to the CLI', () => {
-    for (const surface of ['discord', 'whatsapp', 'telegram', 'web'] as const) {
+    for (const surface of ['discord', 'whatsapp', 'telegram', 'msteams'] as const) {
       expect(commandsFor(surface, true).find((c) => c.name === 'context')?.kind, `${surface} context`).toBe('picker');
     }
     // The CLI's own /context is the read-only breakdown, for operators and non-operators alike.
     expect(commandsFor('cli', true).find((c) => c.name === 'context')?.kind).toBe('info');
     expect(commandsFor('cli', false).find((c) => c.name === 'context')?.kind).toBe('info');
+    // Neither `context` reaches the web dock: there is no channel to re-key, and the breakdown lives in
+    // the /stats modal's own Context section. Publishing it left a menu entry with no dispatch behind it.
+    expect(commandsFor('web', true).some((c) => c.name === 'context')).toBe(false);
   });
 
   it('gates /lsp behind adminOnly (daemon-wide toggle) and its own plugin', () => {

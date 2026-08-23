@@ -10,7 +10,6 @@ import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries
 import { elowenClient } from '../../lib/elowenClient';
 import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainUsage, BrainWorkMode, McpServerStatus, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
-import { formatTokens, formatCost } from '../../lib/format';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
@@ -115,6 +114,15 @@ export interface BrainChatValue {
   setAgentsOpen: (v: boolean) => void;
   statsOpen: boolean;
   setStatsOpen: (v: boolean) => void;
+  /** `/reasoning` — the effort picker plus the Thought-rows switch (the CLI's `/reasoning show`). */
+  reasoningOpen: boolean;
+  setReasoningOpen: (v: boolean) => void;
+  /** `/skills` — the loaded-skill overview (filter, load into the conversation, delete a user skill). */
+  skillsOpen: boolean;
+  setSkillsOpen: (v: boolean) => void;
+  /** Push a skill into THIS conversation as PI's native `/skill:name`, exactly as the CLI's skills picker
+   *  does — the daemon expands it to the skill's full instructions on the way in. */
+  loadSkill: (name: string) => void;
   queued: { id: string; text: string }[];
   readOnly: string | null;
   activeSessionId: string | null;
@@ -288,6 +296,8 @@ function useBrainChatController(): BrainChatValue {
   const [cards, setCards] = useState<BrainCard[]>([]);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
   // Ids whose DELETE is in flight. The optimistic remove HIDES the item instead of taking it out of the
   // list, so a failure only has to unhide it and there is no position left to reconstruct — reconstructing
@@ -828,17 +838,18 @@ function useBrainChatController(): BrainChatValue {
       await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
     } catch { toast(t.chat.renameError, 'error'); }
   };
+  // The CLI's skills picker submits `/skill:name` through the ordinary send path, and so does this: the
+  // daemon recognizes the prefix and hands the slash to PI RAW, which expands it to the skill's full
+  // instructions. The DAEMON renders the user turn (the `user` stream event), so nothing is echoed here.
+  const loadSkill = (name: string): void => {
+    void elowenClient.brainSend(`/skill:${name}`, [], undefined, binding(), workMode)
+      .catch(() => toast(t.brainChat.sendError, 'error'));
+  };
   const runSlash = async (cmd: SlashCommandDef): Promise<void> => {
     if (cmd.name === 'model') { setInput(''); setModelSlashOpen(true); void loadModels(); return; }
     setInput('');
     try {
       if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
-      if (cmd.name === 'status') {
-        const s = await elowenClient.brainStatus(boundSessionRef.current); const u = s.usage;
-        const model = s.model ? brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model }) : '';
-        const parts = [model && `model: ${model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${formatTokens(u.totalTokens)} tok`, u && formatCost(u.cost, 2)].filter(Boolean) as string[];
-        toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
-      }
       if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
       if (cmd.name === 'stats') {
         setStatsOpen(true);
@@ -847,8 +858,8 @@ function useBrainChatController(): BrainChatValue {
         { const stamp = usageStampRef.current; void elowenClient.brainStatus(boundSessionRef.current).then((s) => { if (s) setUsageIfFresh(s.usage, stamp); }).catch(() => undefined); }
         return;
       }
-      // Inspect loaded skills — list the invocable /skill:name commands (PI expands them on send).
-      if (cmd.name === 'skills') { const sk = await elowenClient.pluginSkills(); toast(sk.length ? sk.map((s) => `/skill:${s.name}`).join('  ') : t.managePicker.noResults, 'ok'); return; }
+      if (cmd.name === 'reasoning') { setReasoningOpen(true); return; }
+      if (cmd.name === 'skills') { setSkillsOpen(true); return; }
       if (cmd.kind === 'mode') {
         const mode = WORK_MODES.find((m) => m === cmd.name);
         if (mode) { runMode(mode); return; }
@@ -990,7 +1001,9 @@ function useBrainChatController(): BrainChatValue {
   useEffect(() => () => stream.stop(), []);
 
   return {
-    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued: visibleQueue, readOnly, activeSessionId,
+    turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, loadSkill,
+    queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
     models, currentModel, provider, setModel: (m) => void runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError,

@@ -20,6 +20,8 @@ import { Input } from '../../components/ui/Input';
 import { AskQuestionCard } from './AskQuestionCard';
 import { AgentsTable } from './AgentsTable';
 import { StatsModal } from './StatsModal';
+import { ReasoningModal } from './ReasoningModal';
+import { SkillsModal } from './SkillsModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
@@ -673,7 +675,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const { toast } = useToast();
   const c = useBrainChat();
   const {
-    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen, queued, readOnly,
+    turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts, setShowThoughts,
@@ -1000,6 +1003,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         ) : null}
         {statsOpen ? (
           <StatsModal onClose={() => setStatsOpen(false)} />
+        ) : null}
+        {reasoningOpen ? (
+          <ReasoningModal onClose={() => setReasoningOpen(false)} />
+        ) : null}
+        {skillsOpen ? (
+          <SkillsModal onClose={() => setSkillsOpen(false)} />
         ) : null}
         {todosOpen ? (
           <Modal title={t.chat.todos} onClose={() => setTodosOpen(false)} size="md" icon={ListChecks}>

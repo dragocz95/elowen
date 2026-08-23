@@ -18,7 +18,14 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // caller's own conversation, and a shared channel has no such conversation to clear.
   { name: 'clear', description: 'Clear this conversation and start from an empty context', kind: 'action', surfaces: ['cli', 'web'] },
   { name: 'stop', description: 'Stop the running agent', kind: 'action' },
-  { name: 'status', description: 'Session info — model, context and usage', kind: 'info' },
+  // CHAT PLATFORMS ONLY. `/stats` below is the single session-info command on the CLI and the web dock,
+  // and it is a superset of what this ever showed there. The platforms keep `/status` because their
+  // one-line answer is rendered by the adapters' own shared control core (CONTROL_COMMANDS in
+  // packages/plugin-shared/chatCommands.mjs, plus Telegram's BotFather list), which has no way to draw the
+  // /stats overlay — dropping it there would leave a chat channel with no session info at all.
+  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
+  // The ONE session-info command on the CLI and the web dock: conversation usage, per-model totals and the
+  // context breakdown, plus the session rows (model, reasoning, mode, project, goal) `/status` used to own.
   { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', surfaces: ['cli', 'web'] },
   // CLI-only: the /stats overlay opened straight on its context-breakdown section. The name is
   // deliberately shared with the channel re-key `context` further down, which is explicitly absent from
@@ -44,13 +51,17 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'model', description: 'Switch the AI model', kind: 'picker' },
   // Move (not fork) one of the caller's own conversations INTO this channel/thread so the bot continues in
   // it. A `picker` (not `action`), so it is never server-dispatched through POST /brain/command — its
-  // dedicated endpoint is POST /brain/context. Absent from the CLI: there is no shared channel to re-key,
-  // and the CLI's own `context` above is the unrelated context-breakdown overlay.
-  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams', 'web'] },
+  // dedicated endpoint is POST /brain/context. Absent from the CLI and the web dock: neither is a shared
+  // channel to re-key — the CLI's own `context` above is the unrelated context-breakdown overlay, and the
+  // web dock already addresses the caller's conversations directly through its history rail. It was
+  // published to `web` with no dispatch behind it, which showed a menu entry that only ever toasted its
+  // own name; keeping it off `web` is also what keeps this name resolving once per surface.
+  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
   { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'msteams', 'web'] },
-  // The reasoning-effort picker is wired in the CLI TUI and as a native /reasoning command on Discord,
-  // WhatsApp, Telegram and Teams; only the web dock has no picker for it yet (would show a dead menu entry).
-  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'msteams'] },
+  // Every surface wires its own picker: the CLI TUI's overlay, a native /reasoning command on Discord,
+  // WhatsApp, Telegram and Teams, and the web dock's ReasoningModal (which also carries the "show"
+  // sub-behaviour as a Thought-rows switch).
+  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker' },
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
   // CLI-local like /theme: toggles the flame mascot and persists the choice in cli-prefs.json. Purely
   // local chrome, so it is never mirrored to the server — meaningless on the other surfaces.

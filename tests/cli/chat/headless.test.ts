@@ -64,6 +64,7 @@ function fakeClient(goalRow: GoalView | null = null): { client: never; calls: st
     async send(text: string, mode: string) { calls.push(`send:${mode}:${text}`); push({ type: 'user', text }, { type: 'step', step: 1, maxSteps: 10 }, { type: 'text', delta: 'hello ' }, { type: 'text', delta: 'world' }, { type: 'idle' }); },
     async compact() { calls.push('compact'); return { message: 'compacted 3 turns', usage: null, compacted: true }; },
     async status() { calls.push('status'); return { model: 'm', title: 't' } as never; },
+    async usageByModel() { calls.push('usageByModel'); return []; },
     async skills() { calls.push('skills'); return []; },
     async history() { return []; },
     async sessions() { calls.push('sessions'); return [{ id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-07', active: true }]; },
@@ -419,10 +420,12 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(b.calls).toContain('send:build:/nonexistent hello');
   });
 
-  it('dispatches a /status slash and exits 0', async () => {
+  // `/status` is retired on the CLI: `/stats` is the one session-info command and its payload already
+  // carries the whole status object (plus the per-model totals).
+  it('dispatches a /stats slash and exits 0', async () => {
     const { client, calls } = fakeClient();
     const { io: sink, out } = io();
-    const code = await runHeadless('http://x', {}, ['-p', '/status'], { client, io: sink });
+    const code = await runHeadless('http://x', {}, ['-p', '/stats'], { client, io: sink });
     expect(code).toBe(0);
     expect(calls).toContain('status');
     expect(out.join('')).toContain('"model"');

@@ -1,5 +1,5 @@
 import { CURSOR_MARKER, SelectList, Editor, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
+import { isBackspaceKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, modalRow } from './theme.js';
@@ -289,50 +289,3 @@ export function openTextInput(o: { tui: TUI; editor: Editor; title: string; init
   o.tui.requestRender();
 }
 
-/** A read-only, scrollable info modal (esc/enter/q closes) in the same chrome as the pickers. Each row
- *  is a pre-rendered, possibly-ANSI-coloured line. Used for /status and any "show me this data" panel. */
-class InfoModal {
-  private scroll = 0;
-  constructor(
-    private readonly title: string,
-    private readonly lines: string[],
-    private readonly onClose: () => void,
-    private readonly footer = 'esc close',
-    private readonly viewport = 16,
-  ) {}
-  invalidate(): void { /* state driven */ }
-  handleInput(data: string): void {
-    if (isKeyRelease(data)) return; // ignore Kitty release edges so scroll advances one row per press
-    if (isEscapeKey(data) || isEnterKey(data) || data === 'q') { this.onClose(); return; }
-    const maxScroll = Math.max(0, this.lines.length - this.viewport);
-    if (isDownKey(data)) this.scroll = Math.min(maxScroll, this.scroll + 1);
-    else if (isUpKey(data)) this.scroll = Math.max(0, this.scroll - 1);
-  }
-  render(width: number): string[] {
-    const bodyWidth = Math.max(1, width - 4);
-    const shown = this.lines.slice(this.scroll, this.scroll + this.viewport);
-    const more = this.lines.length > this.viewport ? ` ${this.scroll + shown.length}/${this.lines.length}` : '';
-    return [
-      modalRow(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width),
-      modalRow('', width),
-      ...shown.map((line) => modalRow(`  ${padAnsi(line, bodyWidth)}  `, width)),
-      modalRow('', width),
-      modalRow(`  ${color.text(this.footer)}${color.faint(more)}`, width),
-    ];
-  }
-}
-
-export function openInfoModal(o: { tui: TUI; editor: Editor; title: string; lines: string[]; footer?: string }): void {
-  const restore = (): void => { o.tui.setFocus(o.editor); o.tui.requestRender(); };
-  let handle: ReturnType<TUI['showOverlay']> | null = null;
-  const close = (): void => { handle?.hide(); handle = null; restore(); };
-  const modal = new InfoModal(o.title, o.lines.length ? o.lines : [color.faint('nothing to show')], close, o.footer);
-  // Adaptive like the picker: as wide as the longest line, clamped to [50, 90% of the terminal].
-  const width = Math.max(50, Math.min(
-    Math.max(...o.lines.map((l) => visibleWidth(l)), 0, visibleTitle(o.title) + 24) + 8,
-    Math.floor(o.tui.terminal.columns * 0.9),
-  ));
-  handle = o.tui.showOverlay(modal, { anchor: 'center', width, maxHeight: 26, margin: 2 });
-  handle.focus();
-  o.tui.requestRender();
-}

@@ -212,7 +212,10 @@ export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; 
 export interface BrainProject { cwd: string | null; branch: string | null }
 /** One MCP server of this daemon. `mcp: null` (non-admin, or the plugin is off) hides the section. */
 export interface McpServerStatus { name: string; status: string }
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
+/** `thinkingLevel*` are the reasoning-effort controls of the conversation's CURRENT model — the levels it
+ *  offers (empty when it has none), their provider-facing labels, and the one in force. They drive the
+ *  `/reasoning` picker, which writes back through POST /brain/think. */
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
 /** One subscription rate-limit window of a connected OAuth account (mirrors the daemon's providerUsage). */
 interface UsageWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 /** A connected OAuth account's usage rail: its windows (ordered shortest-first) plus plan/freshness meta. */
@@ -578,8 +581,10 @@ export interface ToolCatalogOption {
  *  the optional `metadata.version` frontmatter field (null when the skill carries none). */
 /** One skill of the skills plugin. `owner` is the account it belongs to: null for a bundled or an
  *  instance-wide skill (everyone's), a user id for a personal one. Two accounts may hold the same name,
- *  so a write addresses a skill by name AND owner. */
-export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user'; owner: number | null; canDelete: boolean; disableModelInvocation: boolean; version?: number | null; content?: string }
+ *  so a write addresses a skill by name AND owner. `scope`/`active` are the resolver's own view of the
+ *  row (where it comes from, and whether the skills plugin is actually loading it) — the `/skills` modal
+ *  reports them so a skill that cannot currently be invoked never looks loadable. */
+export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user'; owner: number | null; canDelete: boolean; disableModelInvocation: boolean; version?: number | null; content?: string; scope?: string; active?: boolean; missingRequirement?: string }
 /** One typed sub-agent of the subagent plugin (GET /plugins/agents/list). Built-in explore/plan ship
  *  with the install and are read-only; user agents are one `.md` each and can be edited or deleted.
  *  `tools` is the frontmatter spec: a preset keyword (`read-only`/`all`/`inherit`) or an explicit tool

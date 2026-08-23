@@ -1,6 +1,6 @@
 import { chatThemeItems, color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { savePrefs } from './prefs.js';
-import { sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
+import { sessionItems, modelItems, parseModelValue, openPicker, openTextInput } from './picker.js';
 import { resolveModelQuery } from './fuzzy.js';
 import { chdirFailure, gitBranch, prettyCwd, resolveCdTarget } from './projectDir.js';
 import { loadMentionFrecency } from './mentions.js';
@@ -10,7 +10,6 @@ import { openStatuslineEditor } from './statuslineEditor.js';
 import { openStatsOverlay } from './statsOverlay.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { trimTrailingSlash } from '../../shared/url.js';
-import { formatK } from '../ui/text.js';
 import { WORK_MODE_LABEL, type BrainProviderView } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
@@ -26,7 +25,6 @@ export interface Pickers {
   applyTheme(name: string): boolean;
   openThemePicker(): void;
   openHelpModal(): void;
-  openStatusModal(): void;
   /** `/stats` opens on the conversation section; `/context` passes 'context' to land on the breakdown. */
   openStatsModal(section?: 'conversation' | 'models' | 'context'): void;
   openSessionsModal(): void;
@@ -39,7 +37,7 @@ export interface Pickers {
 }
 
 /** Everything the picker/modal surface of the chat offers: model + provider management, reasoning
- *  effort, themes, and the /sessions /mcp /skills /lsp /tools /status /help modals. */
+ *  effort, themes, and the /sessions /mcp /skills /lsp /tools /stats /help modals. */
 export function createPickers(
   rt: ChatState,
   resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'termSettings' | 'cwdLabel' | 'branchLabel' | 'commandDefs' | 'lifetime' | 'mentionIndex'>,
@@ -310,43 +308,16 @@ export function createPickers(
     });
   };
 
-  // /status as a read-only modal: model, reasoning, context/usage, project and any active goal at a glance.
-  const openStatusModal = (): void => {
-    runSession(() => Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]), ([s, g]) => {
-      const lines: string[] = [];
-      const kv = (k: string, v: string): void => { lines.push(`${color.faint(k.padEnd(12))} ${color.text(v)}`); };
-      if (s?.title) kv('conversation', s.title);
-      kv('model', s?.model || '—');
-      if (s?.thinkingLevel) kv('reasoning', s.thinkingLevelLabels?.[s.thinkingLevel] ?? s.thinkingLevel);
-      if (s?.fastAvailable) kv('fast', s.fast ? 'on' : 'off');
-      kv('mode', WORK_MODE_LABEL[rt.workMode]);
-      const u = s?.usage;
-      if (u) {
-        if (u.percent != null) kv('context', `${Math.round(u.percent)}%  (${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)})`);
-        kv('tokens', `${formatK(u.totalTokens)} total`);
-        kv('cost', `$${u.cost.toFixed(2)}`);
-      }
-      kv('cwd', resources.cwdLabel);
-      if (resources.branchLabel) kv('branch', resources.branchLabel);
-      if (g) {
-        lines.push('');
-        lines.push(color.accent('Goal'));
-        kv('  status', g.status);
-        kv('  turns', `${g.turns_used}/${g.turn_budget}`);
-        if (g.paused_reason) kv('  paused', g.paused_reason);
-      }
-      openInfoModal({ tui, editor, title: 'Session status', lines });
-    }, fail);
-  };
-
-  // /stats as an interactive overlay with ←→-switchable sections: Conversation usage, per-model totals
-  // and the context breakdown. `/context` opens the SAME overlay straight on the breakdown section.
+  // /stats as an interactive overlay with ←→-switchable sections: Conversation (the session rows the
+  // retired /status used to own, plus this conversation's usage), per-model totals and the context
+  // breakdown. `/context` opens the SAME overlay straight on the breakdown section.
   const openStatsModal = (section?: 'conversation' | 'models' | 'context'): void => {
     runSession(() => Promise.all([
       client.status().catch(() => null),
       client.usageByModel().catch(() => null),
       client.contextBreakdown().catch(() => null),
-    ]), ([s, models, context]) => {
+      client.goal().catch(() => null),
+    ]), ([s, models, context, goal]) => {
       openStatsOverlay({
         tui, editor, section,
         data: {
@@ -354,6 +325,22 @@ export function createPickers(
           usage: s?.usage ?? null,
           models: models ?? [],
           context: context ?? null,
+          session: {
+            ...(s?.title ? { title: s.title } : {}),
+            ...(s?.thinkingLevel ? { reasoning: s.thinkingLevelLabels?.[s.thinkingLevel] ?? s.thinkingLevel } : {}),
+            // Only offered when the model/account actually has priority processing — otherwise the row
+            // would claim "off" for something that was never available.
+            ...(s?.fastAvailable ? { fast: s.fast === true } : {}),
+            mode: WORK_MODE_LABEL[rt.workMode],
+            cwd: resources.cwdLabel,
+            ...(resources.branchLabel ? { branch: resources.branchLabel } : {}),
+            ...(goal ? { goal: {
+              status: goal.status,
+              turnsUsed: goal.turns_used,
+              turnBudget: goal.turn_budget,
+              ...(goal.paused_reason ? { pausedReason: goal.paused_reason } : {}),
+            } } : {}),
+          },
         },
       });
     }, fail);
@@ -661,7 +648,7 @@ export function createPickers(
 
   return {
     openThinkingPicker, cycleThinkingLevel, openModelPicker, applyModelArg, changeDirectory, applyTheme, openThemePicker,
-    openHelpModal, openStatusModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal,
+    openHelpModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal,
     openLspModal, openToolsModal, openKeybindsModal, openStatuslineModal,
   };
 }

@@ -64,9 +64,9 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/advisor/BrainChatProvider.tsx': {
     "name === 'model'": 'Not a plugin name — a built-in SLASH COMMAND name from the core command catalog.',
     "name === 'new'": 'Built-in slash command.',
-    "name === 'status'": 'Built-in slash command.',
     "name === 'help'": 'Built-in slash command.',
     "name === 'stats'": 'Built-in slash command.',
+    "name === 'reasoning'": 'Built-in slash command.',
     "name === 'skills'": 'Built-in slash command.',
     "name === 'rename'": 'Built-in slash command.',
   },

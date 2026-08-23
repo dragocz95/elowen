@@ -134,7 +134,7 @@ describe('picker application lifetime', () => {
     expect(render).not.toHaveBeenCalled();
   });
 
-  it('does not open /status or publish an abort error after stop', async () => {
+  it('does not open /stats or publish an abort error after stop', async () => {
     const status = deferred<never>();
     const goal = deferred<never>();
     const lifetime = new ChatApplicationLifetime<'metadata'>();
@@ -144,7 +144,12 @@ describe('picker application lifetime', () => {
     const pickers = createPickers(
       state,
       {
-        client: { status: () => status.promise, goal: () => goal.promise }, tui, editor: {}, termSettings: null,
+        client: {
+          status: () => status.promise,
+          goal: () => goal.promise,
+          usageByModel: async () => [],
+          contextBreakdown: async () => null,
+        }, tui, editor: {}, termSettings: null,
         cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
       } as never,
       { render, refreshMeta: async () => {} },
@@ -152,7 +157,7 @@ describe('picker application lifetime', () => {
       { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
     );
 
-    pickers.openStatusModal();
+    pickers.openStatsModal();
     lifetime.stop();
     status.reject(new Error('late status abort'));
     goal.resolve(null as never);

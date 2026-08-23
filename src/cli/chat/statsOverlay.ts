@@ -8,12 +8,26 @@ import { formatK } from '../ui/text.js';
 import type { ModelUsageView, BrainUsageView } from './brainClient.js';
 import type { BrainContextBreakdown, BrainContextCategoryId } from '../../shared/wireContract.js';
 
+/** The session rows `/status` used to own, folded into the Conversation section so `/stats` is the one
+ *  session-info command. Every field is optional: a status read that failed still renders the usage. */
+export interface StatsOverlaySession {
+  title?: string;
+  reasoning?: string;
+  /** Priority processing, when the model/account offers it at all (undefined = not offered). */
+  fast?: boolean;
+  mode: string;
+  cwd: string;
+  branch?: string;
+  goal?: { status: string; turnsUsed: number; turnBudget: number; pausedReason?: string } | null;
+}
+
 interface StatsOverlayData {
   model: string | null;
   usage: BrainUsageView | null;
   models: ModelUsageView[];
   /** What is filling the window right now; null when no live session could be measured. */
   context: BrainContextBreakdown | null;
+  session: StatsOverlaySession;
 }
 
 type Section = 'conversation' | 'models' | 'context';
@@ -120,14 +134,25 @@ class StatsOverlay implements Component, Focusable {
   }
 
   private renderConversation(body: string[], bodyWidth: number): void {
-    const { model, usage: u } = this.data;
+    const { model, usage: u, session: s } = this.data;
     body.push(sectionRule('session', bodyWidth));
     body.push('');
+    if (s.title) body.push(kv('chat', color.text(s.title)));
+    body.push(kv('model', color.text(model || '—')));
+    if (s.reasoning) body.push(kv('reasoning', color.text(s.reasoning)));
+    if (s.fast !== undefined) body.push(kv('fast', color.text(s.fast ? 'on' : 'off')));
+    body.push(kv('mode', color.text(s.mode)));
+    body.push(kv('cwd', color.text(s.cwd)));
+    if (s.branch) body.push(kv('branch', color.text(s.branch)));
+    if (s.goal) {
+      body.push(kv('goal', color.text(s.goal.status) + color.faint(`   ${s.goal.turnsUsed}/${s.goal.turnBudget} turns`)));
+      if (s.goal.pausedReason) body.push(kv('paused', color.faint(s.goal.pausedReason)));
+    }
     if (!u) {
+      body.push('');
       body.push(kv('', color.faint('no conversation usage data')));
       return;
     }
-    body.push(kv('model', color.text(model || '—')));
     if (u.percent != null) {
       body.push(kv('context', color.text(`${Math.round(u.percent)}%`) + color.faint(`   ${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)}`)));
       body.push(kv('', contextBar(Math.min(34, Math.max(10, bodyWidth - LABEL_W - 6)), u.percent)));

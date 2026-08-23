@@ -24,6 +24,7 @@ class FakeES {
 
 let sendBodies: Record<string, unknown>[] = [];
 let renameCalls: { id: string; title: string }[] = [];
+let thinkBodies: Record<string, unknown>[] = [];
 
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
@@ -31,7 +32,19 @@ const server = setupServer(
   http.get('*/api/brain/messages', ({ request }) => new URL(request.url).searchParams.has('limit')
     ? HttpResponse.json({ items: [], hasMore: false, nextBefore: null })
     : HttpResponse.json([])),
-  http.get('*/api/brain/status', () => HttpResponse.json({ running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [] })),
+  http.get('*/api/brain/status', () => HttpResponse.json({
+    running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
+    thinkingLevel: 'low', thinkingLevels: ['low', 'high'], thinkingLevelLabels: { low: 'Low', high: 'High' },
+  })),
+  http.post('*/api/brain/think', async ({ request }) => {
+    const body = (await request.json()) as { level: string };
+    thinkBodies.push(body as unknown as Record<string, unknown>);
+    return HttpResponse.json({ thinkingLevel: body.level });
+  }),
+  http.get('*/api/plugins/skills/list', () => HttpResponse.json([
+    { name: 'deploy', description: 'Ship it', source: 'user', owner: 1, canDelete: true, disableModelInvocation: false, scope: 'personal', active: true },
+    { name: 'pdf', description: 'Read PDFs', source: 'bundled', owner: null, canDelete: false, disableModelInvocation: false, scope: 'bundled', active: true },
+  ])),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([{ id: 'brain-1', title: 'Katalog dílů', model: 'm', updated_at: '2026-07-08', active: true, attached: 0 }])),
   http.patch('*/api/brain/sessions/:id', async ({ request, params }) => {
@@ -46,6 +59,8 @@ const server = setupServer(
       { name: 'build', description: 'Build mode', kind: 'mode' },
       { name: 'workflow', description: 'Workflow mode', kind: 'mode' },
       { name: 'rename', description: 'Rename this conversation', kind: 'picker' },
+      { name: 'reasoning', description: 'Set the reasoning effort', kind: 'picker' },
+      { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker' },
     ],
   })),
 );
@@ -54,7 +69,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -125,6 +140,49 @@ describe('web slash commands: work mode + rename', () => {
     act(() => fireEvent.change(field, { target: { value: '  Objednávky  ' } }));
     await act(async () => { fireEvent.keyDown(field, { key: 'Enter' }); });
     await waitFor(() => expect(renameCalls).toEqual([{ id: 'brain-1', title: 'Objednávky' }]));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  // `/reasoning` used to be absent from the web catalog because nothing here could render it. Both halves
+  // of the CLI command are covered: the effort picker (POST /brain/think) and the `show` sub-behaviour.
+  it('/reasoning opens the picker and applies the chosen effort to the bound conversation', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('reasoning');
+    const dialog = await screen.findByRole('dialog');
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'High' })); });
+    await waitFor(() => expect(thinkBodies).toEqual([{ level: 'high', session: 'brain-1' }]));
+  });
+
+  it('/reasoning toggles the Thought rows (the CLI\u2019s "/reasoning show")', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('reasoning');
+    const dialog = await screen.findByRole('dialog');
+    const toggle = within(dialog).getByRole('switch');
+    const before = toggle.getAttribute('aria-checked');
+    await act(async () => { fireEvent.click(toggle); });
+    await waitFor(() => expect(within(dialog).getByRole('switch').getAttribute('aria-checked')).not.toBe(before));
+  });
+
+  // `/skills` used to be a toast of names glued together; it is a modal now, and loading one sends PI's
+  // native `/skill:name` exactly as the CLI's picker does.
+  it('/skills lists the loaded skills and loads one into the conversation', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('skills');
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('/skill:deploy')).toBeInTheDocument();
+    expect(within(dialog).getByText('/skill:pdf')).toBeInTheDocument();
+    // A bundled skill is protected, exactly as in the CLI picker.
+    const deletes = within(dialog).getAllByRole('button', { name: 'Delete' });
+    expect(deletes[0]).not.toBeDisabled();
+    expect(deletes[1]).toBeDisabled();
+
+    const load = within(dialog).getAllByRole('button', { name: 'Load into conversation' })[0]!;
+    await act(async () => { fireEvent.click(load); });
+    await waitFor(() => expect(sendBodies.length).toBe(1));
+    expect(sendBodies[0]).toMatchObject({ text: '/skill:deploy' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
