@@ -679,8 +679,11 @@ export class BrainService {
 
   /** Set the reasoning effort of the ACTIVE conversation live (the /think command) — PI applies it to
    *  the running session without a respawn, unlike a model switch. A level the current model doesn't
-   *  support is clamped by PI. Returns the effective level. Session-scoped (like /model): the saved
-   *  per-user default in Account → CLI is unchanged. */
+   *  support is clamped by PI. Returns the effective level.
+   *
+   *  This applies it to the LIVE session only. Persisting the choice as the account default is the
+   *  /brain/think route's job, because that is where the caller's token scope is known — see the note
+   *  there for why the two must not disagree. */
   async setThinkingLevel(userId: number, level: string, session?: string): Promise<{ thinkingLevel: string }> {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');

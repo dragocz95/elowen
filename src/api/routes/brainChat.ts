@@ -142,9 +142,25 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }, { admin: true }));
 
   // Set the active conversation's reasoning effort live (the /think command) — no session rebuild.
+  //
+  // The level is ALSO written to the caller's account default, and that is the whole point. A reload
+  // builds a fresh session from that default, so while the picker only touched the live conversation
+  // the effect was: change the level, press F5, and the old one is back. Two places claimed to hold
+  // the reasoning effort and neither was the answer. Now the picker and Account → Elowen AI are one
+  // value, whichever surface moved it — the web dock, the CLI's /reasoning, or a slash command.
+  //
+  // Only a person's own token gets this far: withBrain already refuses an agent-scoped one, so nothing
+  // a spawned agent does can rewrite the default that outlives its conversation.
+  //
+  // The EFFECTIVE level is persisted, not the requested one — the model may clamp it, and storing the
+  // asked-for value would put back exactly the disagreement this removes.
   app.post('/brain/think', withBrain(async (c, brain) => {
     const { level, session } = await parseBody(c, brainThinkSchema);
-    try { return c.json(await brain.setThinkingLevel(c.get('user').id, level, session)); }
+    try {
+      const applied = await brain.setThinkingLevel(c.get('user').id, level, session);
+      d.userSettings?.setCliSettings(c.get('user').id, { thinkingLevel: applied.thinkingLevel });
+      return c.json(applied);
+    }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
 

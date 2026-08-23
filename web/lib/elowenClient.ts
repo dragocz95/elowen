@@ -282,8 +282,9 @@ export const elowenClient = {
   /** Switch the conversation's model (the `/model` picker). Server rebuilds the session; `session` targets
    *  the caller's own bound conversation. */
   brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
-  /** Set the conversation's reasoning effort live (the `/reasoning` picker). Session-scoped like the model
-   *  switch — the persisted per-user default lives in Account → Elowen AI. */
+  /** Set the conversation's reasoning effort live (the `/reasoning` picker). Applies to the running
+   *  conversation AND becomes the account default shown in Account → Elowen AI — one value, so the
+   *  choice survives a reload instead of being replaced by the saved one. */
   brainThink: (level: string, session?: string) => req<{ thinkingLevel: string }>('/brain/think', json({ level, ...(session ? { session } : {}) })),
   /** Stop the streaming turn for ALL watchers of the bound conversation (the explicit Stop intent). */
   brainAbort: (session?: string) => req<{ ok: boolean }>('/brain/abort', json(session ? { session } : {})),

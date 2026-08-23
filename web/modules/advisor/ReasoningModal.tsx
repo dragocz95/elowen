@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Brain } from 'lucide-react';
 import { useBrainChat } from './BrainChatProvider';
 import { useBrainSessionStatus } from '../../lib/queries';
@@ -14,12 +15,16 @@ import { Modal, ModalBody } from '../../components/ui/Modal';
 
 /** The web dock's `/reasoning` picker — the counterpart of the CLI TUI's reasoning overlay, and it
  *  carries the same two things that command does: the effort levels the CURRENT model offers (applied
- *  live through POST /brain/think, session-scoped exactly like the CLI) and the `show` sub-behaviour,
- *  which toggles the transcript's Thought rows. The levels come from the chat's own status row rather
- *  than the model catalog, so the modal reports what the running session actually supports. */
+ *  live through POST /brain/think, exactly like the CLI) and the `show` sub-behaviour, which toggles
+ *  the transcript's Thought rows. The levels come from the chat's own status row rather than the model
+ *  catalog, so the modal reports what the running session actually supports.
+ *
+ *  The write also moves the account default, so an Account panel open elsewhere is refetched rather
+ *  than left showing the value this picker just replaced. */
 export function ReasoningModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { activeSessionId, showThoughts, setShowThoughts } = useBrainChat();
   const statusQuery = useBrainSessionStatus(activeSessionId);
   const status = statusQuery.data;
@@ -34,7 +39,10 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
     const previous = current;
     setApplied(level);
     void elowenClient.brainThink(level, activeSessionId ?? undefined)
-      .then((r) => setApplied(r.thinkingLevel))
+      .then((r) => {
+        setApplied(r.thinkingLevel);
+        void queryClient.invalidateQueries({ queryKey: ['my-cli-settings'] });
+      })
       .catch((e: Error) => { setApplied(previous || null); toast(e.message, 'error'); });
   };
 
