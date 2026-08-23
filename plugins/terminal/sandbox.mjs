@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 // Filesystem confinement for shell commands run by a NON-ADMIN account.
 //
 // The problem this closes: `ctx.assertPathAllowed` guards the cwd a command STARTS in, but a shell reads
@@ -58,14 +59,44 @@ const ETC_ALLOWLIST = [
 /** Whether this host can sandbox at all. Bubblewrap works unprivileged through its AppArmor profile on
  *  Ubuntu 24.04; it is NOT setuid and needs no root. A generic `unshare` launcher is not an alternative
  *  here: unprivileged user namespaces are restricted to profiled binaries
- *  (kernel.apparmor_restrict_unprivileged_userns=1), and bwrap is one of them. */
+ *  (kernel.apparmor_restrict_unprivileged_userns=1), and bwrap is one of them.
+ *
+ *  The binary EXISTING is not the question — being allowed to build a namespace is. Installing the
+ *  `bubblewrap` package ships no AppArmor profile of its own, so on a host where nobody wrote one the
+ *  file check passed, this gate said yes, and every command then died on `bwrap: setting up uid map:
+ *  Permission denied` — a fail-closed guard reporting success and failing later, which is the one thing
+ *  a guard must not do. So ask the kernel: run the smallest possible sandbox and see. The answer is a
+ *  property of the host, so it is asked once and remembered. */
+let sandboxProbe = null;
 export function sandboxAvailable() {
+  if (sandboxProbe !== null) return sandboxProbe;
   try {
     realpathSync(BWRAP);
-    return true;
+    // The smallest namespace a binary can actually RUN in. The merged-usr symlinks are not decoration:
+    // without /lib the dynamic linker is unreachable and every exec fails with ENOENT, which would make
+    // this probe report "cannot sandbox" on hosts that sandbox perfectly well.
+    const probe = spawnSync(BWRAP, [
+      '--ro-bind', '/usr', '/usr',
+      '--symlink', 'usr/bin', '/bin',
+      '--symlink', 'usr/lib', '/lib',
+      '--symlink', 'usr/lib64', '/lib64',
+      '--dev', '/dev',
+      '--', '/usr/bin/true',
+    ], {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+    sandboxProbe = probe.status === 0;
   } catch {
-    return false;
+    sandboxProbe = false;
   }
+  return sandboxProbe;
+}
+
+/** Test seam: the probe result is cached because it describes the host, and a suite that changes what the
+ *  host looks like has to be able to say so. */
+export function resetSandboxProbe() {
+  sandboxProbe = null;
 }
 
 /** Writable HOME for the caller, kept across calls so npm's cache, pip and .gitconfig survive between

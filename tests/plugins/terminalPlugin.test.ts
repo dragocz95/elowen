@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
+// The same predicate the plugin gates on: a host with the binary but no profile CANNOT sandbox, and
+// asking a different question here is how the suite came to pass locally and fail in CI.
+import { sandboxAvailable } from '../../plugins/terminal/sandbox.mjs';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
@@ -641,7 +644,7 @@ describe('terminal plugin — ProcessOutput(block)', () => {
 //
 // Skipped where bubblewrap is absent: the sandbox is refused rather than bypassed there (the plugin fails
 // closed), so there is nothing to observe.
-describe.skipIf(!existsSync('/usr/bin/bwrap'))('terminal plugin — sandboxing a non-admin shell', () => {
+describe.skipIf(!sandboxAvailable())('terminal plugin — sandboxing a non-admin shell', () => {
   let reg: PluginRegistry;
   let dir: string;
   let outside: string;

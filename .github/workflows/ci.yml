@@ -49,7 +49,24 @@ jobs:
       # poppler (pdftotext/pdftoppm/pdfinfo) to read real PDFs; tests/plugins/filesPlugin.test.ts
       # shells out to ripgrep (rg) for the Grep tool.
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y tmux poppler-utils ripgrep bubblewrap
+        run: |
+          sudo apt-get update && sudo apt-get install -y tmux poppler-utils ripgrep bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces to AppArmor-profiled binaries, and the
+          # bubblewrap package ships no profile of its own — so without this the terminal sandbox is
+          # refused with "setting up uid map: Permission denied" and the suite measures a host the
+          # product never runs on. Production writes the same profile from provision.sh.
+          sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          PROFILE
+          sudo sed -i 's/^          //' /etc/apparmor.d/bwrap
+          # Best effort: where AppArmor is absent the probe in sandboxAvailable() reports honestly and
+          # the sandbox suites skip, rather than the whole job failing on the environment.
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap || true
 
       - uses: actions/setup-node@v7
         with:

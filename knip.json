@@ -19,7 +19,8 @@
       ],
       "ignore": [
         "tests/e2e/**",
-        "playwright.config.ts"
+        "playwright.config.ts",
+        "lib/chatPresentation.ts"
       ],
       "playwright": false
     },
@@ -58,7 +59,7 @@
   "ignoreDependencies": [
     "@types/react",
     "lucide-react",
-        "botframework-connector",
+    "botframework-connector",
     "grammy",
     "baileys",
     "qrcode",
