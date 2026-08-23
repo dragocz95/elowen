@@ -9,6 +9,7 @@ import { useEffects } from '../../lib/useEffects';
 import { HeroNowTile } from './HeroNowTile';
 import { JournalTrunk } from './JournalTrunk';
 import { ActivityTile } from './ActivityTile';
+import { TeamPulseTile } from './TeamPulseTile';
 import { TodayTasksTile } from './TodayTasksTile';
 import { useWorkPlugin } from '../../lib/queries';
 import { WorkspacePage } from '../../components/ui/WorkspacePrimitives';
@@ -61,6 +62,7 @@ export function DashboardView() {
             the mascot in the hero cosmos above. */}
         <MotionReveal delay={0.06} className="relative z-[1] @container">
           <div className="flex max-w-[46rem] flex-col gap-2">
+            <TeamPulseTile />
             <ActivityTile />
             {work ? <TodayTasksTile now={nowMs} /> : null}
           </div>

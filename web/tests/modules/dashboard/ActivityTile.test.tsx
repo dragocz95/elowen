@@ -19,7 +19,7 @@ const row = (over: Partial<ActivityEvent>): ActivityEvent => ({
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
-function mount(rows: ActivityEvent[], working: { userId: number; label: string }[] = []) {
+function mount(rows: ActivityEvent[], working: { userId: number; label: string; working: boolean }[] = []) {
   server.use(http.get('*/api/activity', () => HttpResponse.json(rows)));
   server.use(http.get('*/api/activity/presence', () => HttpResponse.json(working)));
   const { wrapper: Wrapper } = createWrapper();
@@ -61,7 +61,7 @@ describe('ActivityTile — team feed rows', () => {
 // Presence is the daemon's live view of RUNNING TURNS -- not "typing", which no platform reports.
 describe('ActivityTile — presence line', () => {
   it('names who is working right now', async () => {
-    mount([row({})], [{ userId: 1, label: 'Filip Džudža' }, { userId: 2, label: 'Michal' }]);
+    mount([row({})], [{ userId: 1, label: 'Filip Džudža', working: true }, { userId: 2, label: 'Michal', working: true }]);
     expect(await screen.findByText(`${en.dashboard.workingNow}: Filip Džudža, Michal`)).toBeInTheDocument();
   });
 
@@ -70,5 +70,13 @@ describe('ActivityTile — presence line', () => {
     expect(await screen.findByText(en.dashboard.live)).toBeInTheDocument();
     // It must not claim activity that is not happening.
     expect(screen.queryByText(new RegExp(en.dashboard.workingNow))).not.toBeInTheDocument();
+  });
+
+  // Presence also carries people who were merely seen today, for the pulse rail above. This line is
+  // about NOW, so someone who is not mid-turn must not be announced as working.
+  it('does not announce somebody who was only seen earlier', async () => {
+    mount([row({})], [{ userId: 2, label: 'Michal', working: false }]);
+    expect(await screen.findByText(en.dashboard.live)).toBeInTheDocument();
+    expect(screen.queryByText(/Michal/)).not.toBeInTheDocument();
   });
 });

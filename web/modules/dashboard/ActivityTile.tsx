@@ -89,7 +89,8 @@ export function ActivityTile({ limit = 5 }: { limit?: number }) {
   // exact limit could leave the spine short. The server-side default is 200 rows — far more than a
   // five-row tile can use.
   const activity = useActivity(undefined, limit * 2 + 2);
-  const working = usePresence().data ?? [];
+  // Presence also carries recently-seen people for the pulse rail; this line is only about NOW.
+  const working = (usePresence().data ?? []).filter((p) => p.working);
   const rows = (activity.data ?? []).filter((e) => e.type !== 'signal').slice(0, limit);
   return (
     <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">

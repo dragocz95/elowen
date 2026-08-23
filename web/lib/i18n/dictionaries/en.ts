@@ -560,6 +560,10 @@ export const en = {
     eventStream: 'Activity',
     eventStreamEmpty: 'No activity yet.',
     workingNow: 'Working now',
+    pulse: 'Team pulse',
+    pulseNobody: 'Nobody around yet',
+    pulseTurns: '{count} turns / {days} days',
+    pulseAria: 'Activity by hour over the last two weeks',
     surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', unknown: 'unknown client' },
     ev: {
       turn: 'is working',
