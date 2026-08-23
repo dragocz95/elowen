@@ -238,10 +238,17 @@ function usePluginStrings(plugin: string): Record<string, string> {
   }), [strings]);
 }
 
-/** Same-origin JSON fetch against the daemon through the BFF (`/api` + path). Rejects on non-2xx. */
+/** Same-origin JSON fetch against the daemon through the BFF (`/api` + path). Rejects on non-2xx with
+ *  an ElowenApiError carrying the daemon's own `error` string, so a plugin passing the rejection to
+ *  `utils.apiErrorMessage` shows what the route actually refused rather than a bare status line. */
 async function api(path: string, init?: RequestInit): Promise<unknown> {
   const res = await fetch(`${BASE}${path}`, { ...init, credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`api ${res.status} on ${path}`);
+  if (!res.ok) {
+    let body: Record<string, unknown> | undefined;
+    try { body = (await res.json()) as Record<string, unknown>; } catch { /* non-JSON body */ }
+    const code = typeof body?.error === 'string' ? body.error : undefined;
+    throw new ElowenApiError(`api ${res.status} on ${path}`, res.status, code, body);
+  }
   return res.status === 204 ? undefined : res.json();
 }
 
