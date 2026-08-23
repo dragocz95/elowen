@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -17,17 +17,12 @@ const server = setupServer(http.get('*/api/health', () => HttpResponse.json({ ok
 beforeAll(() => server.listen({ onUnhandledRequest }));
 afterAll(() => server.close());
 
-/** The layout always renders a title of its own (Next metadata from the brand). Standing it up makes the
- *  fallback in these tests the real one — the tab must never simply go blank. */
-let layoutTitle: HTMLTitleElement;
 beforeEach(() => {
   currentPath.value = '/dash';
   localStorage.clear();
-  layoutTitle = document.createElement('title');
-  layoutTitle.textContent = 'Elowen';
-  document.head.appendChild(layoutTitle);
+  document.head.querySelectorAll('title').forEach((node) => node.remove());
 });
-afterEach(() => { layoutTitle.remove(); });
+afterEach(() => { document.head.querySelectorAll('title').forEach((node) => node.remove()); });
 
 const PLUGIN_LISTING = [
   {
@@ -63,6 +58,20 @@ function mount({ locale = 'en', theme, children }: { locale?: string; theme?: Th
 }
 
 describe('DocumentTitle — one mechanism names every tab', () => {
+  it('keeps one non-empty title after the initial render and a later React commit', async () => {
+    const { renavigate } = mount({ locale: 'cs' });
+    expect(document.title).toBe('Elowen — Domů');
+
+    await act(async () => {
+      await Promise.resolve();
+      renavigate();
+      await Promise.resolve();
+    });
+
+    expect(document.title).toBe('Elowen — Domů');
+    expect([...document.head.querySelectorAll('title')].map((node) => node.textContent)).toEqual(['Elowen — Domů']);
+  });
+
   it('titles a core page with the navigation label, in the active locale', () => {
     mount({ locale: 'cs' });
     expect(document.title).toBe('Elowen — Domů');
@@ -95,6 +104,13 @@ describe('DocumentTitle — one mechanism names every tab', () => {
     currentPath.value = '/p/work';
     mount();
     expect(document.title).toBe('Elowen — Práce');
+  });
+
+  it('leaves the chromeless terminal title to the pop-out route', () => {
+    currentPath.value = '/terminal/elowen-advisor-1';
+    document.title = 'Elowen — advisor-1';
+    mount();
+    expect(document.title).toBe('Elowen — advisor-1');
   });
 
   it('carries the white-label product name, never a hardcoded "Elowen"', () => {

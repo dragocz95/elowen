@@ -16,8 +16,10 @@ import { activeSkin } from '../lib/skins';
 // (exactly what happened when `next build` ran while the daemon was down).
 export const dynamic = 'force-dynamic';
 
-// Title, PWA name and icons follow the instance brand (white-label theme), resolved per request so a
-// theme switch lands on the next reload without a rebuild.
+// PWA name and icons follow the instance brand (white-label theme), resolved per request so a theme
+// switch lands on the next reload without a rebuild. The browser title is deliberately absent here:
+// components/shell/DocumentTitle is its sole owner, because Next metadata and a client-rendered <title>
+// otherwise remain as competing head nodes and the metadata node wins `document.title` by document order.
 //
 // Icons otherwise come from Next file conventions: app/icon.png → <link rel="icon"> and
 // app/apple-icon.png → <link rel="apple-touch-icon">. Declaring `metadata.icons` REPLACES that
@@ -36,7 +38,6 @@ export async function generateMetadata() {
   const favicon = themeIcon(theme, 'favicon') ?? themeIcon(theme, 'icon');
   const touchIcon = themeIcon(theme, 'icon192') ?? favicon;
   return {
-    title: appName,
     manifest: '/manifest.webmanifest',
     appleWebApp: { capable: true, title: appName, statusBarStyle: 'black' as const },
     ...(favicon || touchIcon

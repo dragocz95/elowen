@@ -169,8 +169,6 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
   return (
     <BrainChatProvider>
-      {/* Names the browser tab for every route under the shell — see components/shell/DocumentTitle. */}
-      <DocumentTitle />
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
@@ -216,6 +214,8 @@ export function Shell({ children, theme, pluginUiSeed, meSeed, sessionPresent = 
         <BrandProvider theme={theme ?? BUILTIN_THEME}>
         <ConfiguredToastProvider>
           <PageHeaderProvider>
+            {/* One title owner for login and every authenticated route; terminal names itself. */}
+            <DocumentTitle />
             <LoginGate initiallyAuthenticated={meSeed != null} sessionPresent={sessionPresent}>
               <ShellBody>{children}</ShellBody>
             </LoginGate>

@@ -20,10 +20,9 @@ export default function TerminalWindow() {
   const name = decodeURIComponent(String(params.name));
   return (
     <div className="flex h-dvh flex-col bg-bg">
-      {/* The shell skips its chrome — and therefore its DocumentTitle — for /terminal/*, so this window
-          names its own tab. Rendered, not written: an imperative document.title is reverted the next
-          time React commits the <title> node the layout owns. The session is not a navigation
-          destination, so its name is the agent's, composed through the shared separator. */}
+      {/* The global DocumentTitle deliberately skips /terminal/*, so this chromeless pop-out names its
+          own tab. The session is not a navigation destination, so its name is the agent's, composed
+          through the shared separator. */}
       <title>{formatDocumentTitle(appName, agentDisplayName(name))}</title>
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 bg-surface px-4">
         <span className="grid h-8 w-8 place-items-center rounded-full border border-accent/25 bg-accent/[0.035] text-accent"><SquareTerminal size={14} aria-hidden /></span>

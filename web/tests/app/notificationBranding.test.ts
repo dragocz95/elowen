@@ -45,6 +45,11 @@ describe('push notification branding', () => {
 // is wanted when a theme ships its own artwork and wrong when it does not, so the declaration has to
 // stay conditional — an unconditional one would drop the favicon from every themeless install.
 describe('favicon follows the theme', () => {
+  it('leaves the browser title to the client shell instead of creating a competing metadata node', () => {
+    const layout = source('app', 'layout.tsx');
+    expect(layout).not.toContain("    title: appName,\n    manifest: '/manifest.webmanifest',");
+  });
+
   it('declares icons only when the theme carries them', () => {
     const layout = source('app', 'layout.tsx');
     // The dedicated slot first, the static mascot only as the fallback — never the reverse, since
