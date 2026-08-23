@@ -61,10 +61,17 @@ export function DashboardView() {
             labels, the shared spine) instead of hairline-ruled boxes; the operational signals orbit
             the mascot in the hero cosmos above. */}
         <MotionReveal delay={0.06} className="relative z-[1] @container">
-          <div className="flex max-w-[46rem] flex-col gap-2">
-            <TeamPulseTile />
-            <ActivityTile />
-            {work ? <TodayTasksTile now={nowMs} /> : null}
+          {/* One column while narrow, two once there is room. The journal (what happened, and what is on
+              today) reads as a list and stays left; the pulse is a wide grid and takes the space that
+              was previously empty to the right of a 46rem column. */}
+          <div className="grid max-w-[46rem] grid-cols-1 gap-x-10 gap-y-2 @4xl:max-w-[76rem] @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-col gap-2">
+              <ActivityTile />
+              {work ? <TodayTasksTile now={nowMs} /> : null}
+            </div>
+            <div className="flex min-w-0 flex-col gap-2">
+              <TeamPulseTile />
+            </div>
           </div>
         </MotionReveal>
       </div>
