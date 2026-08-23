@@ -71,16 +71,24 @@ describe('BrainSessionsPanel (conversation register)', () => {
 
   // "Delete all" hits an endpoint that deletes only the CALLER's conversations. Over the cross-account
   // view it would read as wiping the team's history and then quietly delete just the admin's own rows.
-  it('offers Delete all over the admin\'s own list, never over the whole team\'s', async () => {
+  /** The button now stands over BOTH views, because it is told which rows to delete. It used to be
+   *  hidden over the register: back then the endpoint could only reach the caller's own conversations,
+   *  so above a cross-account list it would have deleted six of forty without saying so. */
+  it('offers Delete all in both admin views, and says so when it would wipe every account', async () => {
     admin = true;
     renderPanel();
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: 'Delete all' })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
+    const wide = await screen.findByRole('dialog');
+    expect(within(wide).getByText(/every account/i)).toBeInTheDocument();
+    fireEvent.click(within(wide).getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(screen.getByRole('radio', { name: 'Just mine' }));
-
-    const button = await screen.findByRole('button', { name: 'Delete all' });
-    expect(button).toHaveClass('spatial-inline-action');
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
+    // The personal view keeps the personal wording -- clearing your own history is a different act.
+    const mine = await screen.findByRole('dialog');
+    expect(within(mine).queryByText(/every account/i)).toBeNull();
   });
 });
 
