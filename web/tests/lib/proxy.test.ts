@@ -78,6 +78,7 @@ describe('proxy helpers', () => {
         forwarded: 'for=1.2.3.4',
         'x-forwarded-host': 'evil.example',
         accept: 'application/json',
+        range: 'bytes=1024-2047',
       },
     }));
     expect(h.get('authorization')).toBeNull();
@@ -92,6 +93,7 @@ describe('proxy helpers', () => {
     expect(h.get('x-real-ip')).toBe('203.0.113.7');
     // Legitimate content-negotiation headers still pass through.
     expect(h.get('accept')).toBe('application/json');
+    expect(h.get('range')).toBe('bytes=1024-2047');
     // accept-encoding is not forwarded: daemon<->proxy runs over localhost so compression buys
     // nothing, and keeping it out avoids any gzip/SSE streaming edge case.
     const enc = forwardHeaders(new Request('https://web.example/api/x', { headers: { 'accept-encoding': 'gzip, br' } }));

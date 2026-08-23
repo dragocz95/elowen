@@ -100,8 +100,8 @@ export function requireSameOrigin(req: Request): Response | null {
  *  client can never smuggle its own `authorization` (the proxy injects the real bearer) or inject
  *  hop-by-hop headers. `x-forwarded-for` and `forwarded` stay OUT deliberately: the browser writes
  *  those itself, so forwarding them would let any client dictate the source address the daemon
- *  rate-limits and attributes spend by. Only content-negotiation headers pass through. */
-const FORWARD_ALLOW = new Set(['content-type', 'accept', 'accept-language']);
+ *  rate-limits and attributes spend by. Only content-negotiation headers and byte ranges pass through. */
+const FORWARD_ALLOW = new Set(['content-type', 'accept', 'accept-language', 'range']);
 
 /** The one header we re-emit rather than pass through. nginx OVERWRITES it with the real peer
  *  (`proxy_set_header X-Real-IP $remote_addr`), so the value arriving here is the proxy's statement,
