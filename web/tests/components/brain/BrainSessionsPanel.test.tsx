@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { BrainSessionsPanel } from '../../../components/brain/BrainSessionsPanel';
@@ -173,5 +173,72 @@ describe('BrainSessionsPanel — owner, filtering and sorting', () => {
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'zzz-nothing' } });
 
     expect(await screen.findByText('No conversation matches the filter')).toBeInTheDocument();
+  });
+});
+
+/** The register sits in a FIXED-height dialog, so a hardcoded page of twelve rows left a dead band under
+ *  the table on a large screen. The page is now measured from the scroll box. jsdom lays nothing out, so
+ *  the geometry is supplied by hand — the point of the test is the arithmetic and the fallback, which is
+ *  exactly what cannot be seen by reading the component. */
+describe('BrainSessionsPanel — the page fills the dialog', () => {
+  class FakeResizeObserver {
+    static last: FakeResizeObserver | null = null;
+    constructor(private cb: () => void) { FakeResizeObserver.last = this; }
+    observe() {}
+    disconnect() {}
+    run() { this.cb(); }
+  }
+
+  const withGeometry = (boxHeight: number, rowHeight: number) => {
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value(this: HTMLElement) {
+        if (this.getAttribute('role') === 'row') return { height: rowHeight } as DOMRect;
+        return realRect.call(this);
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.dataset['testid'] === 'brain-sessions-scroll' ? boxHeight : 0; },
+    });
+    return () => {
+      Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', { configurable: true, value: realRect });
+      Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
+    };
+  };
+
+  it('shows as many rows as the measured box fits instead of a fixed twelve', async () => {
+    const restore = withGeometry(1000, 48);
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    try {
+      renderPanel();
+      await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+      // (1000 - 48 header) / 48 = 19 rows fit, so all thirteen sit on one page — the fixed twelve would
+      // have pushed the last one onto page two. Measured on mount, not first on resize: the dialog opens
+      // at its final size, so waiting for a resize would show a short page until the user moved something.
+      await waitFor(() => expect(screen.getByText('Conversation 13')).toBeInTheDocument());
+
+      // Re-measuring the same box must be a no-op rather than a step in a feedback loop.
+      await act(async () => { FakeResizeObserver.last?.run(); });
+      expect(screen.getByText('Conversation 13')).toBeInTheDocument();
+    } finally {
+      restore();
+      Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, 'ResizeObserver');
+    }
+  });
+
+  it('keeps the fallback page when the box cannot be measured', async () => {
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    try {
+      renderPanel();
+      await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+      // A zero-height box (hidden dialog, jsdom) must not be read as "no rows fit".
+      await act(async () => { FakeResizeObserver.last?.run(); });
+      expect(screen.getByText('Conversation 12')).toBeInTheDocument();
+      expect(screen.queryByText('Conversation 13')).toBeNull();
+    } finally {
+      Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, 'ResizeObserver');
+    }
   });
 });

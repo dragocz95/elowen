@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
@@ -22,7 +22,16 @@ import { ContextMenu, type ContextMenuState } from '../ui/ContextMenu';
 import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../ui/ControlSurface';
 import { LoadingLine } from '../ui/states';
 
-const PAGE_SIZE = 12;
+/** The page is sized to the dialog instead of being a fixed count. The register lives in a FIXED-height
+ *  modal (`lg` is `h-[88vh]`), so twelve rows left a dead band under the table on a large screen while
+ *  still overflowing a short one — the table stopped where the dialog kept going.
+ *
+ *  Only the VIEWPORT is measured, never the content: the scroll box takes its height from flex, so how
+ *  many rows are shown cannot feed back into how much room there is, and the observer cannot oscillate.
+ *  Where nothing can be measured (a zero-height box, jsdom) the fallback stands. */
+const FALLBACK_PAGE_SIZE = 12;
+const MIN_PAGE_SIZE = 4;
+const FALLBACK_ROW_HEIGHT = 44;
 
 interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string }
 
@@ -52,6 +61,11 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(FALLBACK_PAGE_SIZE);
+  // The measurement's own view of the current size: the observer must compare against the latest value
+  // without re-subscribing, and reading it out of state would pin the callback to a stale render.
+  const pageSizeRef = useRef(FALLBACK_PAGE_SIZE);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('updated');
   const [direction, setDirection] = useState<SortDirection>('desc');
@@ -84,11 +98,37 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         default: return flip * a.updated_at.localeCompare(b.updated_at);
       }
     });
-  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageRows = visible.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+  const pageRows = visible.slice(clampedPage * pageSize, (clampedPage + 1) * pageSize);
 
   useEffect(() => { setPage(0); }, [view, search, sort, direction]);
+
+  useLayoutEffect(() => {
+    const box = scrollRef.current;
+    if (!box || typeof ResizeObserver === 'undefined') return;
+    const measure = (): void => {
+      const available = box.clientHeight;
+      if (available <= 0) return; // hidden or unmeasurable — keep the last good answer rather than guessing
+      // The header row is inside the scroll box, so it eats from the same budget. Reading both heights off
+      // the live DOM keeps this honest when density, font size or zoom changes.
+      const rows = box.querySelectorAll('[role="row"]');
+      const headHeight = rows[0]?.getBoundingClientRect().height ?? 0;
+      const rowHeight = rows[1]?.getBoundingClientRect().height ?? FALLBACK_ROW_HEIGHT;
+      if (rowHeight <= 0) return;
+      const next = Math.max(MIN_PAGE_SIZE, Math.floor((available - headHeight) / rowHeight));
+      const prev = pageSizeRef.current;
+      if (prev === next) return;
+      pageSizeRef.current = next;
+      setPageSize(next);
+      // Keep the reader where they were: the first row on screen stays on screen across a resize.
+      setPage((p) => Math.floor((p * prev) / next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, []);
 
   /** Clicking the active column reverses it; a different column starts at its own natural order. */
   const sortBy = (key: SortKey) => {
@@ -138,7 +178,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   };
 
   return (
-    <section className="flex min-w-0 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <ControlSurfaceToolbar testId="brain-sessions-toolbar" className="flex-col items-stretch gap-3 sm:flex-row sm:items-end sm:justify-between">
         {/* The heading carries the count and the help affordance; the one-line description that used to
             sit under it said what the table already shows. */}
@@ -178,7 +218,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         </div>
       </ControlSurfaceToolbar>
 
-      <ControlSurfaceRegister>
+      <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} data-testid="brain-sessions-scroll" className="min-h-0 flex-1 overflow-y-auto">
       {q.isLoading ? <LoadingLine />
         : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
         : visible.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
@@ -254,15 +295,16 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
             })}
           </DataTable>
         )}
+      </div>
 
       {/* Inside the register so the pager shares the card's horizontal inset (it used to sit as a
           sibling and hug the card edge). */}
       {visible.length > 0 ? (
-        <div className="flex flex-col gap-2 border-t border-border/80 pt-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex shrink-0 flex-col gap-2 border-t border-border/80 pt-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="font-mono text-xs text-text-muted">
             {t.sessionsPanel.pageRange
-              .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
-              .replace('{to}', String(clampedPage * PAGE_SIZE + pageRows.length))
+              .replace('{from}', String(clampedPage * pageSize + 1))
+              .replace('{to}', String(clampedPage * pageSize + pageRows.length))
               .replace('{total}', String(visible.length))}
           </span>
           <div className="flex items-center gap-1">
