@@ -229,3 +229,45 @@ describe('EventStore — team activity feed', () => {
     expect(events.list()).toHaveLength(2);
   });
 });
+
+// The heatmap reads an hourly rollup, never brain_messages: that table is the largest one and
+// better-sqlite3 is synchronous, so grouping it per request would run on the daemon's event loop.
+describe('EventStore — activity heatmap rollup', () => {
+  const turn = (actorUserId: number | null) =>
+    events.record({ type: 'activity', kind: 'turn', actorUserId, surface: 'web', target: 'brain-1' });
+
+  it('counts every turn, even the ones the feed folds into one line', () => {
+    turn(1); turn(1); turn(1);
+
+    // The feed deliberately shows a burst as ONE row so it stays readable...
+    expect(events.list().filter((r) => r.type === 'turn')).toHaveLength(1);
+    // ...but the heatmap is about volume, so the two cannot share a counter.
+    expect(events.heatmap(7).reduce((n, b) => n + b.count, 0)).toBe(3);
+  });
+
+  it('aggregates the whole team into one bucket per hour', () => {
+    turn(1); turn(2); turn(3);
+
+    const buckets = events.heatmap(7);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0].count).toBe(3);
+    expect(buckets[0].hour).toBeGreaterThanOrEqual(0);
+  });
+
+  it('keeps counting a turn that has no account behind it', () => {
+    // A cron or an unlinked platform sender. SQLite treats every NULL in a primary key as distinct, so
+    // storing the missing actor as NULL would stop the bucket folding and produce a row per turn.
+    turn(null); turn(null);
+
+    const rows = db.prepare('SELECT user_id, count FROM activity_buckets').all() as { user_id: number; count: number }[];
+    expect(rows).toEqual([{ user_id: 0, count: 2 }]);
+  });
+
+  it('does not reach outside the window it was asked for', () => {
+    turn(1);
+    db.prepare("UPDATE activity_buckets SET day = strftime('%Y-%m-%d','now','-40 days')").run();
+
+    expect(events.heatmap(7)).toEqual([]);
+    expect(events.heatmap(60)).toHaveLength(1);
+  });
+});

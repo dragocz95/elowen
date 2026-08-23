@@ -101,6 +101,7 @@ export class EventStore {
    *  second conversation), so the row keeps the FIRST one and the count says how many followed. Aggregation is at WRITE time deliberately: the read side is a
    *  dashboard tile that must not scan and group the whole table on every poll. */
   private recordActivity(e: Extract<ElowenEvent, { type: 'activity' }>, pid: number | null): void {
+    this.bumpActivityBucket(e.actorUserId);
     const bumped = this.db.prepare(
       `UPDATE events SET count = count + 1, last_ts = datetime('now')
         WHERE id = (
@@ -114,6 +115,44 @@ export class EventStore {
       `INSERT INTO events (type, target, detail, project_id, label, actor_user_id, surface, count, last_ts)
        VALUES (@type, @target, '', @pid, '', @actor, @surface, 1, datetime('now'))`
     ).run({ type: e.kind, target: e.target, pid, actor: e.actorUserId, surface: e.surface });
+  }
+
+  /** Bump the hourly rollup behind the heatmap. Separate from the feed row on purpose: the feed folds
+   *  a burst into ONE line so it stays readable, while the heatmap wants every turn counted, so the two
+   *  cannot share a counter. Written here rather than derived on read — see the table comment. */
+  private bumpActivityBucket(actorUserId: number | null): void {
+    this.db.prepare(
+      `INSERT INTO activity_buckets (day, hour, user_id, count)
+       VALUES (strftime('%Y-%m-%d','now'), CAST(strftime('%H','now') AS INTEGER), @actor, 1)
+       ON CONFLICT(day, hour, user_id) DO UPDATE SET count = count + 1`
+    ).run({ actor: actorUserId ?? 0 });
+  }
+
+  /** Hourly activity for the dashboard heatmap, newest `days` days, aggregated across everyone.
+   *  Counts only: who did what is the feed's job, and this is read by the whole instance. */
+  heatmap(days: number): { day: string; hour: number; count: number }[] {
+    return this.db.prepare(
+      `SELECT day, hour, SUM(count) AS count
+         FROM activity_buckets
+        WHERE day >= strftime('%Y-%m-%d', 'now', ?)
+        GROUP BY day, hour
+        ORDER BY day, hour`
+    ).all(`-${Math.max(1, Math.min(90, Math.trunc(days)))} days`) as { day: string; hour: number; count: number }[];
+  }
+
+  /** Who has been active in the last `hours`, most recent first, from the feed rows themselves.
+   *  Presence alone would leave the rail empty whenever nobody happens to be mid-turn, which is most of
+   *  the time; this answers "who is around today" without inventing a second state table. */
+  recentActors(hours: number): { userId: number; lastTs: string }[] {
+    return this.db.prepare(
+      `SELECT actor_user_id AS userId, MAX(COALESCE(last_ts, ts)) AS lastTs
+         FROM events
+        WHERE actor_user_id IS NOT NULL
+          AND surface <> ''
+          AND COALESCE(last_ts, ts) >= datetime('now', ?)
+        GROUP BY actor_user_id
+        ORDER BY lastTs DESC`
+    ).all(`-${Math.max(1, Math.min(720, Math.trunc(hours)))} hours`) as { userId: number; lastTs: string }[];
   }
 
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */

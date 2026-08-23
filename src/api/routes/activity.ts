@@ -11,16 +11,31 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
    *  itself, and just as content-free: names only, never what anyone is working ON. Registered before
    *  the '/activity' route below so the literal path is matched first. */
   app.get('/activity/presence', (c) => {
-    if (!d.brain) return c.json([]);
     // One row per PERSON, not per conversation: someone with three running turns is still one person
-    // on the line. An unattributable session (no account) is dropped rather than shown as a ghost.
-    const byUser = new Map<number, string>();
-    for (const { userId } of d.brain.presence()) {
-      if (userId === null || byUser.has(userId)) continue;
-      const u = d.users?.get(userId);
-      if (u) byUser.set(userId, u.name || u.username);
-    }
-    return c.json([...byUser].map(([id, label]) => ({ userId: id, label })));
+    // on the rail. An unattributable turn (no account) is dropped rather than shown as a ghost.
+    const working = new Set<number>();
+    for (const { userId } of d.brain?.presence() ?? []) if (userId !== null) working.add(userId);
+
+    // Anyone who worked recently, so the rail is not empty whenever nobody happens to be mid-turn.
+    // `working` is live process state and always wins over the recorded timestamp.
+    const seen = new Map<number, string>();
+    for (const { userId, lastTs } of d.events?.recentActors(24) ?? []) seen.set(userId, lastTs);
+
+    const rows = [...new Set([...working, ...seen.keys()])].flatMap((id) => {
+      const u = d.users?.get(id);
+      if (!u) return [];
+      return [{ userId: id, label: u.name || u.username, working: working.has(id), lastTs: seen.get(id) ?? '' }];
+    });
+    // Whoever is working first, then by how recently they were seen.
+    rows.sort((a, b) => Number(b.working) - Number(a.working) || b.lastTs.localeCompare(a.lastTs));
+    return c.json(rows);
+  });
+
+  /** Hourly volume behind the dashboard heatmap. Counts only -- who did what is the feed's job -- and
+   *  read from the write-time rollup, never from brain_messages. */
+  app.get('/activity/heatmap', (c) => {
+    if (!d.events) return c.json([]);
+    return c.json(d.events.heatmap(queryInt(c.req.query('days'), { min: 1, max: 90, fallback: 14 })));
   });
   app.get('/activity', (c) => {
     if (!d.events) return c.json([]);

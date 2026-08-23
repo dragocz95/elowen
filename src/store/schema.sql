@@ -565,6 +565,21 @@ CREATE TABLE IF NOT EXISTS memory_categories (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_categories_user ON memory_categories(user_id);
 
+-- Hourly rollup behind the dashboard's activity heatmap. A write-time rollup for the same reason
+-- usage_by_origin is one: the only other source for "how busy was this instance at 3pm last Tuesday"
+-- is brain_messages, the largest table, and better-sqlite3 is synchronous — grouping it per request
+-- would run on the daemon's event loop. `user_id` is NOT NULL with 0 meaning "no account behind it"
+-- (a cron or an unlinked platform sender), because SQLite treats every NULL in a primary key as
+-- distinct and the bucket would stop folding.
+CREATE TABLE IF NOT EXISTS activity_buckets (
+  day TEXT NOT NULL,              -- YYYY-MM-DD, UTC, matching strftime output
+  hour INTEGER NOT NULL,          -- 0-23, UTC
+  user_id INTEGER NOT NULL DEFAULT 0,
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, hour, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_buckets_day ON activity_buckets(day);
+
 -- Plugin-owned schema migrations bookkeeping (plugin-platform F1c). Plugin tables live in THIS database
 -- (one WAL/backup/transaction domain — see src/store/pluginDb.ts for why not a per-plugin file); each
 -- plugin applies its own ordered steps through ctx.db().migrate(), recorded here exactly once.

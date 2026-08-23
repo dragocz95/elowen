@@ -104,6 +104,7 @@ function migrate(db: Db): void {
   dropPersonalityTables(db);
   makeUserIdsMonotonic(db);
   repairUserSequenceBelowReferences(db);
+  backfillActivityBuckets(db);
   widenSessionEventKindsForSubagent(db);
   widenSessionEventKindsForWorkflow(db);
   keyToolResultSpillsByOccurrence(db);
@@ -316,6 +317,33 @@ function applyAdditiveMigrations(db: Db): void {
  *  Idempotent and harmless where nothing is wrong: the seed only ever raises the counter. */
 function repairUserSequenceBelowReferences(db: Db): void {
   runOnce(db, 8, () => { seedUserSequenceAboveEveryReference(db); });
+}
+
+/** v9 — seed the activity heatmap from the history that already exists.
+ *
+ *  The rollup is filled at write time from here on, but an instance that has been running for weeks
+ *  would show an empty tile for a month before it filled in. One grouped pass over `brain_messages`
+ *  produces the whole backlog: measured at 743ms over 186672 rows, which is acceptable exactly once at
+ *  boot and would not be acceptable per request — which is why the read path never does it.
+ *
+ *  Scoped to 90 days: further back the tile does not show it, and the pass stays bounded on an old
+ *  instance. `INSERT OR IGNORE` keeps a re-run (a restored database taking v9 again) from double
+ *  counting rows the live path has since written. */
+function backfillActivityBuckets(db: Db): void {
+  runOnce(db, 9, () => {
+    db.prepare(
+      `INSERT OR IGNORE INTO activity_buckets (day, hour, user_id, count)
+       SELECT strftime('%Y-%m-%d', m.created_at),
+              CAST(strftime('%H', m.created_at) AS INTEGER),
+              COALESCE(s.user_id, 0),
+              COUNT(*)
+         FROM brain_messages m
+         JOIN brain_sessions s ON s.id = m.session_id
+        WHERE m.role = 'user'
+          AND m.created_at > datetime('now', '-90 days')
+        GROUP BY 1, 2, 3`
+    ).run();
+  });
 }
 
 /** v7 — rebuild `users` with `id INTEGER PRIMARY KEY AUTOINCREMENT`.

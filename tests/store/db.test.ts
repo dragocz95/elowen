@@ -59,6 +59,37 @@ describe('openDb', () => {
     expect(idx).toBeTruthy();
   });
 
+  // The heatmap is fed by a write-time rollup, so an instance that has been running for weeks would
+  // show an empty tile for a month before it filled in. v9 seeds it from the history already stored.
+  it('seeds the activity heatmap from existing history exactly once', () => {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'history.db');
+    // Build the real schema first, then rewind user_version so the seeding migration runs over history
+    // that already exists -- which is exactly the situation on an instance that has been up for weeks.
+    const seeded = openDb(path);
+    seeded.prepare("INSERT INTO brain_sessions (id, user_id, title, provider, model) VALUES ('brain-1', 7, '', '', '')").run();
+    for (const [id, role] of [['m1', 'user'], ['m2', 'user'], ['m3', 'assistant']]) {
+      seeded.prepare("INSERT INTO brain_messages (id, session_id, role, content, created_at) VALUES (?, 'brain-1', ?, '{}', datetime('now','-2 days'))").run(id, role);
+    }
+    seeded.prepare('DELETE FROM activity_buckets').run();
+    seeded.pragma('user_version = 8');
+    seeded.close();
+
+    const db = openDb(path);
+    const rows = db.prepare('SELECT user_id, count FROM activity_buckets').all() as { user_id: number; count: number }[];
+    // Only what a person actually sent: assistant replies are not that person's activity.
+    expect(rows).toEqual([{ user_id: 7, count: 2 }]);
+
+    // Re-opening must not count the same history again -- a restored database would otherwise double
+    // every bucket, and the rollup cannot tell a re-seed from real traffic.
+    db.close();
+    const again = openDb(path);
+    again.pragma('user_version = 8');
+    again.close();
+    const third = openDb(path);
+    expect(third.prepare('SELECT count FROM activity_buckets').all()).toEqual([{ count: 2 }]);
+  });
+
   it('backfills brain_subagent_runs.lifecycle from legacy state, and a legacy running row is NOT a recovery candidate', () => {
     dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
     const path = join(dir, 'old.db');

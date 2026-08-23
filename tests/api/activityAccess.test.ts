@@ -157,3 +157,29 @@ describe('GET /activity — the instance-wide team feed', () => {
     expect(JSON.stringify(rows)).not.toContain('brain-1-private');
   });
 });
+
+describe('GET /activity/heatmap and /activity/presence', () => {
+  it('reports hourly volume for the whole team', async () => {
+    const { app, events, bobTok } = setup();
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 1, surface: 'web', target: 'brain-1' });
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 2, surface: 'cli', target: 'brain-2' });
+
+    const rows = (await (await app.request('/activity/heatmap', auth(bobTok))).json()) as { day: string; hour: number; count: number }[];
+
+    // Both turns land in the same hour bucket, counted per turn -- the feed's folding does not apply.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].count).toBe(2);
+  });
+
+  it('lists who was recently active, not only who is mid-turn', async () => {
+    const { app, events, bobTok, adminTok } = setup();
+    events.record({ type: 'activity', kind: 'turn', actorUserId: 2, surface: 'web', target: 'brain-2' });
+
+    const rows = (await (await app.request('/activity/presence', auth(bobTok))).json()) as { label: string; working: boolean }[];
+
+    // Nobody is running a turn in this harness, so a presence line built only from live sessions would
+    // be empty -- and empty most of the day on a real instance too.
+    expect(rows).toEqual([{ userId: 2, label: 'bob', working: false, lastTs: expect.any(String) }]);
+    expect((await (await app.request('/activity/presence', auth(adminTok))).json())).toHaveLength(1);
+  });
+});
