@@ -658,6 +658,37 @@ describe('BrainStore', () => {
     expect(store.staleConversationIds(9, 30)).toEqual(['other-user']);
   });
 
+  /** Sub-agent and cron sessions wear the `brain-ch-` prefix only because they route through the channel
+   *  machinery, and excluding that whole prefix is what let 2594 of 2683 sessions on the operator's
+   *  instance sit outside retention's reach forever — it could see five. They are one-shot RUNS, minted
+   *  fresh every  time and never returned to, so they are judged on their own age. A real platform channel is
+   *  a live resource and still must not be touched. */
+  it('staleConversationIds reaches finished sub-agent and cron runs, but never a real channel', () => {
+    const spoke = (id: string) => store.appendMessage({ id: `${id}-m`, sessionId: id, parentId: null, role: 'user', content: { text: 'hi' } });
+    const age = (id: string) => db.prepare("UPDATE brain_sessions SET updated_at = datetime('now', '-90 days') WHERE id = ?").run(id);
+    const aged = (id: string, parentSessionId?: string) => {
+      store.createSession({ id, userId: 7, model: 'm', ...(parentSessionId ? { parentSessionId } : {}) });
+      spoke(id); age(id);
+    };
+
+    aged('brain-ch-subagent-sub-dlg-1');
+    aged('brain-ch-cron-job-nightly-arch-abc');
+    aged('brain-ch-discord-123#0');       // live channel → must survive
+    aged('brain-ch-msteams-a:xyz');       // live channel → must survive
+    aged('convo');
+    // A finished delegation still hanging under a live conversation: its own age decides, or the runs
+    // that accumulate under a long-lived chat would never be collected at all.
+    store.createSession({ id: 'live-root', userId: 7, model: 'm' }); spoke('live-root');
+    aged('brain-ch-subagent-sub-dlg-2', 'live-root');
+
+    expect(store.staleConversationIds(7, 30).sort()).toEqual([
+      'brain-ch-cron-job-nightly-arch-abc',
+      'brain-ch-subagent-sub-dlg-1',
+      'brain-ch-subagent-sub-dlg-2',
+      'convo',
+    ]);
+  });
+
   it('lastMessageAt returns the newest message timestamp, undefined for an empty session', () => {
     store.createSession({ id: 'a', userId: 1, model: 'm' });
     expect(store.lastMessageAt('a')).toBeUndefined();

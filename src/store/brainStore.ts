@@ -6,7 +6,7 @@ import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
-import { CHANNEL_PREFIX, TASK_PREFIX } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, TASK_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX } from '../brain/sessionId.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
@@ -336,11 +336,18 @@ export class BrainStore {
     const rows = this.db.prepare(
       `SELECT s.id FROM brain_sessions s
        WHERE s.user_id = ?
-         AND s.parent_session_id IS NULL
-         AND s.id NOT LIKE '${CHANNEL_PREFIX}%'
-         AND s.id NOT LIKE '${TASK_PREFIX}%'
          AND s.updated_at < datetime('now', '-${d} days')
-         AND EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+         AND EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)
+         AND (
+           -- The caller's own conversations: only roots, so a child is never deleted out from under
+           -- the transcript that links to it.
+           (s.parent_session_id IS NULL AND s.id NOT LIKE '${CHANNEL_PREFIX}%' AND s.id NOT LIKE '${TASK_PREFIX}%')
+           -- One-shot runs (see isEphemeralRunSession): judged on their OWN age, parent or not. A
+           -- finished delegation is finished whether or not the conversation that started it lives on,
+           -- and these are what actually accumulate. A real platform channel stays excluded.
+           OR s.id LIKE '${SUBAGENT_PREFIX}%'
+           OR s.id LIKE '${CRON_PREFIX}%'
+         )`
     ).all(userId) as { id: string }[];
     return rows.map((row) => row.id);
   }

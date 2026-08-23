@@ -27,7 +27,14 @@ export const TASK_PREFIX = 'brain-task-';
 export const SUBAGENT_PLATFORM = 'subagent';
 /** Delegated sub-agent sessions are a sub-family of channel sessions (internal — reached via
  *  {@link isSubagentSession}). */
-const SUBAGENT_PREFIX = `${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-`;
+export const SUBAGENT_PREFIX = `${CHANNEL_PREFIX}${SUBAGENT_PLATFORM}-`;
+
+/** The cronjob plugin's scheduled runs. Like `subagent` this is a PLATFORM name (the plugin routes with
+ *  `platform: 'cron', channelId: 'job-<id>'`), so the core is naming a platform here, not guessing at a
+ *  string shape. It has to know it for the same reason it knows `subagent`: retention must be able to
+ *  tell a one-shot RUN from a conversation people come back to. */
+export const CRON_PLATFORM = 'cron';
+export const CRON_PREFIX = `${CHANNEL_PREFIX}${CRON_PLATFORM}-`;
 
 /** The session id a delegated turn lands on, given the channelId the subagent plugin minted for it.
  *  Mirrors what platforms.ts builds — the one place a test can ask "does the router still recognise
@@ -65,6 +72,19 @@ export function isTaskSession(id: string): boolean {
 /** A delegated sub-agent session (a channel sub-family). */
 export function isSubagentSession(id: string): boolean {
   return id.startsWith(SUBAGENT_PREFIX);
+}
+
+/** A session that recorded ONE finished run rather than a conversation anyone returns to: a delegated
+ *  sub-agent, or a scheduled cron execution. Both are minted fresh per run and never reused, so they
+ *  accumulate without bound — 2594 of 2683 sessions on this instance when it was first measured.
+ *
+ *  They wear the `brain-ch-` prefix purely because they route through the channel machinery, and the
+ *  retention janitor used to exclude the whole prefix as "channel shells that must never be deleted".
+ *  That is right for a Discord channel, which is a LIVE resource holding an ongoing conversation with
+ *  people; it is wrong for these, and the effect was that retention could reach 5 sessions out of 2683.
+ *  A real platform channel is deliberately NOT included here. */
+export function isEphemeralRunSession(id: string): boolean {
+  return isSubagentSession(id) || id.startsWith(CRON_PREFIX);
 }
 
 /** Archived channel transcript produced by {@link archivedChannelSessionId}; never a live delivery target. */
