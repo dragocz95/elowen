@@ -185,7 +185,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
               <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
               <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>
-              <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+              {/* The actions column has no name to print, but it is still a cell: `role="presentation"`
+                  would leave a non-cell child inside role="row", which is invalid. */}
+              <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
             </DataTableRow>
             {pageRows.map((s) => {
               // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
