@@ -356,19 +356,23 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
       ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Field, { label: s.url, htmlFor: "mcp-url", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Input, { id: "mcp-url", value: draft.url, onChange: (event) => onChange({ ...draft, url: event.target.value }) }) }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "sm:col-span-2", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Toggle, { checked: draft.enabled, onChange: (enabled) => onChange({ ...draft, enabled }), label: s.enabled }) })
     ] }),
-    server ? server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.DetailBlock, { icon: Wrench, title: s.tools, hint: s.toolsHint, children: server.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-xs text-text-muted", children: s.noTools }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       C.SelectionSummary,
       {
-        variant: "line",
         readOnly: true,
         countText: s.toolsCount.replace("{n}", String(server.tools.length)),
-        samples: server.tools.slice(0, 3).map((tool) => ({ label: tool.title || tool.name })),
+        samples: server.tools.slice(0, 3).map((tool) => ({
+          label: tool.title || tool.name,
+          // Bridged tools carry no icon of their own, so they all wear the generic wrench the
+          // user detail falls back to — the chips stay aligned with the ones there.
+          icon: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Wrench, { size: 12, className: "inline" })
+        })),
         moreCount: Math.max(0, server.tools.length - 3),
         onManage: onShowTools,
         manageLabel: s.viewTools,
         manageAriaLabel: `${s.viewTools}: ${server.name}`
       }
-    ) : null,
+    ) }) : null,
     error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "text-sm text-danger", role: "alert", children: error }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3", children: [
       server ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(C.Button, { variant: "ghost-danger", icon: Trash2, onClick: onRemove, disabled: busy, children: s.removeServer }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {}),
@@ -380,7 +384,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
   ] });
 }
 function McpServersPage() {
-  const { components: C, hooks } = runtime();
+  const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings("mcp");
   const { t } = hooks.useTranslation();
   const [data, setData] = (0, import_react3.useState)();
@@ -433,6 +437,13 @@ function McpServersPage() {
     setBusy(true);
     setActionError(void 0);
     try {
+      if (selected && editor.draft.scope !== selected.scope) {
+        await apiJson("/plugins/mcp/api/transfer", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope })
+        });
+      }
       const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : "/plugins/mcp/api/servers";
       await apiJson(path, {
         method: selected ? "PATCH" : "POST",
@@ -441,8 +452,9 @@ function McpServersPage() {
       });
       setEditor(void 0);
       await load();
-    } catch {
-      setActionError(s.saveError);
+    } catch (error) {
+      setActionError(utils.apiErrorMessage(error) || s.saveError);
+      await load();
     } finally {
       setSaving(false);
       setBusy(false);
