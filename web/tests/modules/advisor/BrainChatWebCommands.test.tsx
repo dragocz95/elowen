@@ -25,6 +25,7 @@ class FakeES {
 let sendBodies: Record<string, unknown>[] = [];
 let renameCalls: { id: string; title: string }[] = [];
 let thinkBodies: Record<string, unknown>[] = [];
+let thinkingLevel = 'low';
 
 const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
@@ -34,11 +35,12 @@ const server = setupServer(
     : HttpResponse.json([])),
   http.get('*/api/brain/status', () => HttpResponse.json({
     running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
-    thinkingLevel: 'low', thinkingLevels: ['low', 'high'], thinkingLevelLabels: { low: 'Low', high: 'High' },
+    thinkingLevel, thinkingLevels: ['low', 'high'], thinkingLevelLabels: { low: 'Low', high: 'High' },
   })),
   http.post('*/api/brain/think', async ({ request }) => {
     const body = (await request.json()) as { level: string };
     thinkBodies.push(body as unknown as Record<string, unknown>);
+    thinkingLevel = body.level;
     return HttpResponse.json({ thinkingLevel: body.level });
   }),
   http.get('*/api/plugins/skills/list', () => HttpResponse.json([
@@ -69,7 +71,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; thinkingLevel = 'low'; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -145,13 +147,28 @@ describe('web slash commands: work mode + rename', () => {
 
   // `/reasoning` used to be absent from the web catalog because nothing here could render it. Both halves
   // of the CLI command are covered: the effort picker (POST /brain/think) and the `show` sub-behaviour.
-  it('/reasoning opens the picker and applies the chosen effort to the bound conversation', async () => {
+  it('opens the same reasoning drawer from the brain button', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    expect(await screen.findByRole('dialog', { name: 'Reasoning' })).toHaveClass('animate-drawer-in');
+  });
+
+  it('/reasoning opens the drawer and applies a slider step to the bound conversation', async () => {
     renderChat();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await runSlash('reasoning');
-    const dialog = await screen.findByRole('dialog');
-    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'High' })); });
+    let dialog = await screen.findByRole('dialog');
+    const slider = within(dialog).getByRole('slider', { name: 'Effort' });
+    expect(slider).toHaveValue('0');
+    await act(async () => { fireEvent.change(slider, { target: { value: '1' } }); });
     await waitFor(() => expect(thinkBodies).toEqual([{ level: 'high', session: 'brain-1' }]));
+    expect(within(dialog).getByRole('button', { name: 'High' })).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByRole('slider', { name: 'Effort' })).toHaveValue('1'));
   });
 
   it('/reasoning toggles the Thought rows (the CLI\u2019s "/reasoning show")', async () => {
@@ -163,6 +180,21 @@ describe('web slash commands: work mode + rename', () => {
     const before = toggle.getAttribute('aria-checked');
     await act(async () => { fireEvent.click(toggle); });
     await waitFor(() => expect(within(dialog).getByRole('switch').getAttribute('aria-checked')).not.toBe(before));
+  });
+
+  it('keeps the thought switch usable when the model offers no effort levels', async () => {
+    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
+      running: true, sessionId: 'brain-1', model: 'plain', usage: null, statusline: null, cards: [], queued: [],
+      thinkingLevel: '', thinkingLevels: [], thinkingLevelLabels: {},
+    })));
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('No effort levels')).toBeInTheDocument();
+    const toggle = within(dialog).getByRole('switch');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
   });
 
   // `/skills` used to be a toast of names glued together; it is a modal now, and loading one sends PI's

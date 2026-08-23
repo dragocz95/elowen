@@ -1651,8 +1651,6 @@ export const sk = {
     queued: 'Vo fronte',
     removeFromQueue: 'Odobrať z frontu',
     queueRemoveError: 'Správu sa nepodarilo odobrať — stále čaká vo fronte na doručenie',
-    showThoughts: 'Zobraziť uvažovanie',
-    hideThoughts: 'Skryť uvažovanie',
     toolRunning: 'Prebieha',
     reasoningLabel: 'Uvažovanie',
     turnDuration: 'Doba behu',

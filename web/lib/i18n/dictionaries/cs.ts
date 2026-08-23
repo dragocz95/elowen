@@ -1657,8 +1657,6 @@ export const cs = {
     queued: 'Ve frontě',
     removeFromQueue: 'Odebrat z fronty',
     queueRemoveError: 'Zprávu se nepodařilo odebrat — stále čeká ve frontě na doručení',
-    showThoughts: 'Zobrazit uvažování',
-    hideThoughts: 'Skrýt uvažování',
     toolRunning: 'Probíhá',
     reasoningLabel: 'Uvažování',
     turnDuration: 'Doba běhu',

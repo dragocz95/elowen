@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -62,26 +62,30 @@ async function streamReasoning(): Promise<void> {
 }
 
 describe('BrainChatSurface reasoning display toggle', () => {
-  it('hides the reasoning segment when switched off and brings it back when switched on', async () => {
+  it('opens the shared reasoning panel and hides the reasoning text when its switch is off', async () => {
     renderSurface('compact');
     await streamReasoning();
     expect(await screen.findByText(REASONING)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide reasoning' }));
+    fireEvent.click(screen.getByTestId('chat-thoughts-toggle'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('switch'));
     await waitFor(() => expect(screen.queryByText(REASONING)).toBeNull());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show reasoning' }));
+    fireEvent.click(within(dialog).getByRole('switch'));
     expect(await screen.findByText(REASONING)).toBeInTheDocument();
   });
 
   it('persists the choice into localStorage', async () => {
     renderSurface('compact');
     await streamReasoning();
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    const toggle = within(await screen.findByRole('dialog')).getByRole('switch');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Hide reasoning' }));
+    fireEvent.click(toggle);
     await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBe('hide'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show reasoning' }));
+    fireEvent.click(toggle);
     await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBe('show'));
   });
 
@@ -90,16 +94,19 @@ describe('BrainChatSurface reasoning display toggle', () => {
     renderSurface('compact');
     await streamReasoning();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Show reasoning' })).toBeInTheDocument());
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    expect(within(await screen.findByRole('dialog')).getByRole('switch')).toHaveAttribute('aria-checked', 'false');
     expect(screen.queryByText(REASONING)).toBeNull();
   });
 
-  it('offers the same toggle in the full /chat variant', async () => {
+  it('opens the same reasoning panel in the full /chat variant', async () => {
     renderSurface('full');
     await streamReasoning();
     expect(await screen.findByText(REASONING)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide reasoning' }));
+    fireEvent.click(await screen.findByTestId('chat-thoughts-toggle'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('switch'));
     await waitFor(() => expect(screen.queryByText(REASONING)).toBeNull());
   });
 });

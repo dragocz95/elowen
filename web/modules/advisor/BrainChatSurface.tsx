@@ -580,23 +580,20 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start">{body}<MessageMeta turn={turn} /></div>;
 }
 
-/** Header switch for showing the model's reasoning in the transcript. Rendered as a pressed-state icon
- *  button like its sibling controls (new chat, telemetry) rather than ui/IconButton or ui/Toggle: neither
- *  carries a toggled state at this bar's size, and a switch pill reads as a settings control here. */
-function ThoughtsToggle({ full, on, onToggle }: { full?: boolean; on: boolean; onToggle: () => void }) {
+/** Opens the conversation's reasoning controls. The historic test id stays stable for browser helpers,
+ *  but this is no longer a second display toggle: the button and `/reasoning` open the same modal. */
+function ReasoningButton({ full, onOpen }: { full?: boolean; onOpen: () => void }) {
   const { t } = useTranslation();
-  const label = on ? t.brainChat.hideThoughts : t.brainChat.showThoughts;
   return (
     <button
       type="button"
       data-testid="chat-thoughts-toggle"
-      onClick={onToggle}
-      aria-pressed={on}
-      aria-label={label}
-      title={label}
-      className={`flex shrink-0 items-center justify-center rounded-md transition-colors hover:bg-elevated hover:text-text ${
+      onClick={onOpen}
+      aria-label={t.reasoning.modalTitle}
+      title={t.reasoning.modalTitle}
+      className={`flex shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text ${
         full ? 'h-8 w-8' : 'h-7 w-7'
-      } ${on ? 'text-text' : 'text-text-muted'}`}
+      }`}
     >
       <Brain size={full ? 18 : 16} aria-hidden />
     </button>
@@ -621,11 +618,11 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
 }
 
 /** Phone-only overflow for the conversation bar: on a narrow screen the bar can't hold the model picker,
- *  work-mode pill and thoughts toggle inline without cramming, so they fold behind one ⋯ button.
+ *  work-mode pill and reasoning button inline without cramming, so they fold behind one ⋯ button.
  *  A transient popover (outside-pointer / Escape dismiss, same grammar as ModelPicker), never a persistent
  *  panel. Desktop keeps every control inline and never mounts this. */
-function BarOverflowMenu({ workMode, showThoughts, onToggleThoughts, hasTodos, onOpenTodos }: {
-  workMode: BrainWorkMode; showThoughts: boolean; onToggleThoughts: () => void; hasTodos: boolean; onOpenTodos: () => void;
+function BarOverflowMenu({ workMode, onOpenReasoning, hasTodos, onOpenTodos }: {
+  workMode: BrainWorkMode; onOpenReasoning: () => void; hasTodos: boolean; onOpenTodos: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -659,9 +656,9 @@ function BarOverflowMenu({ workMode, showThoughts, onToggleThoughts, hasTodos, o
               <span>{t.chat.todos}</span>
             </button>
           ) : null}
-          <button type="button" onClick={onToggleThoughts} aria-pressed={showThoughts} className={rowClass}>
-            <Brain size={16} className={showThoughts ? 'text-text' : 'text-text-muted'} aria-hidden />
-            <span>{showThoughts ? t.brainChat.hideThoughts : t.brainChat.showThoughts}</span>
+          <button type="button" onClick={() => { setOpen(false); onOpenReasoning(); }} className={rowClass}>
+            <Brain size={16} className="text-text-muted" aria-hidden />
+            <span>{t.reasoning.modalTitle}</span>
           </button>
           {workMode !== 'build' ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-muted">
@@ -717,7 +714,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
-    ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts, setShowThoughts,
+    ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
     workMode, planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
   } = c;
@@ -742,7 +739,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const railOwnsLiveWork = telemetryShown === true;
   // `undefined` until the viewport has actually been measured. Every branch below therefore tests `=== true`
   // or `=== false` and renders NOTHING in between: the boolean-returning hook reports `false` first, which
-  // on a phone painted one frame of the desktop controls (inline picker, mode pill, thoughts toggle) before
+  // on a phone painted one frame of the desktop controls (inline picker, mode pill, reasoning button) before
   // swapping them for the ⋯ menu. A bar that is briefly missing a control is quieter than one that visibly
   // rearranges itself. Same approach as ChatView, which reads this hook for its own layout.
   const mobile = useMobileViewport();
@@ -890,7 +887,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           </button>
           <WorkModePill mode={workMode} />
           <ModelPicker variant="compact" />
-          <ThoughtsToggle on={showThoughts} onToggle={() => setShowThoughts(!showThoughts)} />
+          <ReasoningButton onOpen={() => setReasoningOpen(true)} />
           <button
             type="button"
             onClick={newChat}
@@ -918,14 +915,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             </button>
           ) : null}
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
-          {/* On a phone the model picker, work-mode pill and thoughts toggle fold into the ⋯ menu below; on
+          {/* On a phone the model picker, work-mode pill and reasoning button fold into the ⋯ menu below; on
               desktop they stay inline. The pill is a security indicator (plan/workflow), so it also shows
               inline on desktop and, when non-build, inside the ⋯ menu on mobile. */}
           {mobile === false ? (
             <>
               <WorkModePill mode={workMode} full />
               <ModelPicker variant="full" />
-              <ThoughtsToggle full on={showThoughts} onToggle={() => setShowThoughts(!showThoughts)} />
+              <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
             </>
           ) : null}
           {onOpenTelemetry ? (
@@ -956,8 +953,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           {mobile === true ? (
             <BarOverflowMenu
               workMode={workMode}
-              showThoughts={showThoughts}
-              onToggleThoughts={() => setShowThoughts(!showThoughts)}
+              onOpenReasoning={() => setReasoningOpen(true)}
               hasTodos={todoCards.length > 0}
               onOpenTodos={() => setTodosOpen(true)}
             />

@@ -1657,8 +1657,6 @@ export const en = {
     queued: 'Queued',
     removeFromQueue: 'Remove from queue',
     queueRemoveError: 'The message was not removed — it is still queued for delivery',
-    showThoughts: 'Show reasoning',
-    hideThoughts: 'Hide reasoning',
     toolRunning: 'Running',
     reasoningLabel: 'Reasoning',
     turnDuration: 'Run time',

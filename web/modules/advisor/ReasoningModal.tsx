@@ -39,7 +39,7 @@ export function ReasoningModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title={t.reasoning.modalTitle} onClose={onClose} size="md" icon={Brain}>
+    <Modal title={t.reasoning.modalTitle} onClose={onClose} presentation="drawer" icon={Brain}>
       <ModalBody gap={4}>
         {statusQuery.isLoading ? (
           <LoadingState variant="list" />
