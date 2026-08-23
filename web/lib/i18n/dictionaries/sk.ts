@@ -89,6 +89,15 @@ export const sk = {
     noLevelsTitle: 'Žiadne úrovne',
     noLevelsDesc: 'Tento model úroveň uvažovania neponúka.',
   },
+  helpModal: {
+    modalTitle: 'Príkazy',
+    filterPlaceholder: 'Filtrovať príkazy',
+    emptyTitle: 'Žiadny príkaz nezodpovedá',
+    emptyDesc: 'Skúste iné slovo, alebo filter vymažte a zobrazte všetky príkazy.',
+  },
+  modelModal: {
+    filterPlaceholder: 'Filtrovať modely',
+  },
   skillsModal: {
     modalTitle: 'Zručnosti',
     filterPlaceholder: 'Filtrovať zručnosti',
@@ -1586,7 +1595,7 @@ export const sk = {
     readOnlyExit: 'Späť do chatu',
     untitled: 'Bez názvu',
     empty: 'Pýtajte sa na čokoľvek — úlohy, misie alebo vaše repozitáre.',
-    placeholder: 'Napíšte správu… (Enter odošle)',
+    placeholder: 'Napíšte správu, / pre príkazy',
     send: 'Odoslať',
     stop: 'Zastaviť',
     modelSwitched: 'Prepnuté na',

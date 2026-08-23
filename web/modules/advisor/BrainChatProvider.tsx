@@ -120,6 +120,13 @@ export interface BrainChatValue {
   /** `/skills` — the loaded-skill overview (filter, load into the conversation, delete a user skill). */
   skillsOpen: boolean;
   setSkillsOpen: (v: boolean) => void;
+  /** `/help` — the command catalog with descriptions (it used to be a toast of bare names). */
+  helpOpen: boolean;
+  setHelpOpen: (v: boolean) => void;
+  /** `/model` — the catalog overlay. The slash used to take over the composer's suggestion dropdown, so
+   *  the same pick was offered in two different shapes depending on where it was started from. */
+  modelOpen: boolean;
+  setModelOpen: (v: boolean) => void;
   /** Push a skill into THIS conversation as PI's native `/skill:name`, exactly as the CLI's skills picker
    *  does — the daemon expands it to the skill's full instructions on the way in. */
   loadSkill: (name: string) => void;
@@ -212,9 +219,6 @@ export interface BrainChatValue {
   slash: {
     items: SlashItem[];
     open: boolean;
-    /** The model picker (level 1) is open — a composer change should dismiss it. */
-    modelOptsOpen: boolean;
-    clearModelOpts: () => void;
   };
   sessions: ReturnType<typeof useBrainSessions>;
 }
@@ -298,6 +302,8 @@ function useBrainChatController(): BrainChatValue {
   const [statsOpen, setStatsOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
   // Ids whose DELETE is in flight. The optimistic remove HIDES the item instead of taking it out of the
   // list, so a failure only has to unhide it and there is no position left to reconstruct — reconstructing
@@ -309,10 +315,8 @@ function useBrainChatController(): BrainChatValue {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // The model catalog (lazily fetched, RBAC-filtered server-side) — the single source shared by the header
-  // ModelPicker and the composer `/model` slash. `modelSlashOpen` is only the composer slash view's toggle,
-  // decoupled from the catalog so opening the header picker never pops the composer dropdown.
+  // ModelPicker and the `/model` overlay, both of which render it through ModelOptionList.
   const [models, setModels] = useState<BrainModelOption[] | null>(null);
-  const [modelSlashOpen, setModelSlashOpen] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(false);
   const [currentModel, setCurrentModel] = useState('');
@@ -781,9 +785,11 @@ function useBrainChatController(): BrainChatValue {
   // The initiator updates its own model label immediately (covers an empty conversation that emits no
   // marker). The bound session is unchanged, so the SSE stream stays open on the same generation.
   // The composer draft is left untouched: this runs from the header/dock picker too, where the user may
-  // have unsent text typed — only the slash entry clears the input (when it opens the picker list).
+  // have unsent text typed — only the slash entry clears the input (when it opens the overlay).
+  // Closing the `/model` overlay lives here rather than only in its own row handler, so a switch started
+  // from any other entry point still leaves no stale picker standing over the conversation.
   const runModel = async (m: BrainModelOption): Promise<void> => {
-    setModelSlashOpen(false);
+    setModelOpen(false);
     try {
       const { model } = await elowenClient.brainSetModel({ provider: m.provider, model: m.model }, boundSessionRef.current);
       setCurrentModel(model);
@@ -860,11 +866,11 @@ function useBrainChatController(): BrainChatValue {
       .catch(() => toast(t.brainChat.sendError, 'error'));
   };
   const runSlash = async (cmd: SlashCommandDef): Promise<void> => {
-    if (cmd.name === 'model') { setInput(''); setModelSlashOpen(true); void loadModels(); return; }
+    if (cmd.name === 'model') { setInput(''); setModelOpen(true); void loadModels(); return; }
     setInput('');
     try {
       if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
-      if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
+      if (cmd.name === 'help') { setHelpOpen(true); return; }
       if (cmd.name === 'stats') {
         setStatsOpen(true);
         // Refresh usage data for the modal — fenced, so opening it mid-turn cannot roll the statusline
@@ -886,9 +892,9 @@ function useBrainChatController(): BrainChatValue {
       toast(`/${cmd.name}`, 'ok');
     } catch (e) { toast((e as Error).message ?? String(e), 'error'); }
   };
-  const slashItems: SlashItem[] = modelSlashOpen
-    ? (models ?? []).map((m) => ({ key: `${m.provider}/${m.model}`, label: `${m.providerLabel}/${m.model}`, desc: m.provider, run: () => void runModel(m) }))
-    : slashMatches.map((c) => ({ key: c.name, label: `/${c.name}`, desc: c.description, run: () => void runSlash(c) }));
+  const slashItems: SlashItem[] = slashMatches.map(
+    (c) => ({ key: c.name, label: `/${c.name}`, desc: c.description, run: () => void runSlash(c) }),
+  );
 
   // --- Lazy attach + the cross-mount bridge (session/composer requests + live BRAIN_* events). ---
   const ensureAttached = (): boolean => {
@@ -1016,7 +1022,7 @@ function useBrainChatController(): BrainChatValue {
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, loadSkill,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
@@ -1026,7 +1032,7 @@ function useBrainChatController(): BrainChatValue {
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
     commands, runSlash: (cmd) => void runSlash(cmd),
-    slash: { items: slashItems, open: slashItems.length > 0, modelOptsOpen: modelSlashOpen, clearModelOpts: () => setModelSlashOpen(false) },
+    slash: { items: slashItems, open: slashItems.length > 0 },
     sessions,
   };
 }

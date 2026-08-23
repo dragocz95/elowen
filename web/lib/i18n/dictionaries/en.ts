@@ -89,6 +89,15 @@ export const en = {
     noLevelsTitle: 'No effort levels',
     noLevelsDesc: 'This model does not offer a reasoning effort.',
   },
+  helpModal: {
+    modalTitle: 'Commands',
+    filterPlaceholder: 'Filter commands',
+    emptyTitle: 'No command matches',
+    emptyDesc: 'Try a different word, or clear the filter to see every command.',
+  },
+  modelModal: {
+    filterPlaceholder: 'Filter models',
+  },
   skillsModal: {
     modalTitle: 'Skills',
     filterPlaceholder: 'Filter skills',
@@ -1592,7 +1601,7 @@ export const en = {
     readOnlyExit: 'Back to chat',
     untitled: 'Untitled',
     empty: 'Ask anything — tasks, missions or your repositories.',
-    placeholder: 'Write a message… (Enter to send)',
+    placeholder: 'Write a message, or / for commands',
     send: 'Send',
     stop: 'Stop',
     modelSwitched: 'Switched to',

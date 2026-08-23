@@ -22,6 +22,8 @@ import { AgentsTable } from './AgentsTable';
 import { StatsModal } from './StatsModal';
 import { ReasoningModal } from './ReasoningModal';
 import { SkillsModal } from './SkillsModal';
+import { HelpModal } from './HelpModal';
+import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
@@ -711,7 +713,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const c = useBrainChat();
   const {
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, queued, readOnly,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
@@ -861,9 +863,17 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     requestAnimationFrame(() => composerRef.current?.focus());
   }, [focusNonce]);
 
-  // Opening the /model picker resets the keyboard cursor to the top (parity with the pre-lift runSlash,
-  // whose setSlashIdx(0) moved into the surface since slashIdx is now surface-local view state).
-  useEffect(() => { if (slash.modelOptsOpen) setSlashIdx(0); }, [slash.modelOptsOpen]);
+  // Grow the composer with its content up to the CSS cap, then let it scroll. `rows` used to be derived
+  // from newline count, which ignores WRAPPING — a long message typed without pressing Enter stayed one
+  // line tall and hid everything above the caret. Height has to be reset before reading scrollHeight, or
+  // the box can only ever grow. This runs on `input` rather than on keystrokes so text placed by another
+  // path (a recalled queue item, a restored draft, a `/`-prefilled macro) is measured too.
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
@@ -1043,6 +1053,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         ) : null}
         {skillsOpen ? (
           <SkillsModal onClose={() => setSkillsOpen(false)} />
+        ) : null}
+        {helpOpen ? (
+          <HelpModal onClose={() => setHelpOpen(false)} />
+        ) : null}
+        {modelOpen ? (
+          <ModelModal onClose={() => setModelOpen(false)} />
         ) : null}
         {todosOpen ? (
           <Modal title={t.chat.todos} onClose={() => setTodosOpen(false)} size="md" icon={ListChecks}>
@@ -1235,13 +1251,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           ref={composerRef}
           data-testid="chat-composer"
           value={input}
-          onChange={(e) => { setInput(e.target.value); if (slash.modelOptsOpen) slash.clearModelOpts(); setSlashIdx(0); }}
+          onChange={(e) => { setInput(e.target.value); setSlashIdx(0); }}
           onKeyDown={(e) => {
             if (slashOpen) {
               if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) + 1) % slashItems.length); return; }
               if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) - 1 + slashItems.length) % slashItems.length); return; }
               if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); slashItems[slashSel]?.run(); return; }
-              if (e.key === 'Escape') { e.preventDefault(); slash.clearModelOpts(); setInput(''); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setInput(''); return; }
             }
             // ↑ with empty input + queued message → recall into composer
             if (e.key === 'ArrowUp' && input === '' && queued.length > 0) {
@@ -1257,7 +1273,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
             if (files.length) { e.preventDefault(); void addFiles(files); }
           }}
-          rows={Math.min(5, input.split('\n').length)}
+          rows={1}
           placeholder={t.brainChat.placeholder}
           className={`max-h-40 flex-1 resize-none text-sm text-text placeholder:text-text-muted ${
             variant === 'full'

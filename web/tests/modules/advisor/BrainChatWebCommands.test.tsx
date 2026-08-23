@@ -25,6 +25,7 @@ class FakeES {
 let sendBodies: Record<string, unknown>[] = [];
 let renameCalls: { id: string; title: string }[] = [];
 let thinkBodies: Record<string, unknown>[] = [];
+let modelBodies: Record<string, unknown>[] = [];
 let thinkingLevel = 'low';
 
 const server = setupServer(
@@ -48,6 +49,15 @@ const server = setupServer(
     { name: 'pdf', description: 'Read PDFs', source: 'bundled', owner: null, canDelete: false, disableModelInvocation: false, scope: 'bundled', active: true },
   ])),
   http.get('*/api/brain/processes', () => HttpResponse.json([])),
+  http.get('*/api/brain/models', () => HttpResponse.json([
+    { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'e1', source: 'oauth' },
+    { provider: 'openai-codex', providerLabel: 'OpenAI', model: 'gpt-5.6-sol', exec: 'e2', source: 'oauth' },
+  ])),
+  http.post('*/api/brain/model', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    modelBodies.push(body);
+    return HttpResponse.json({ model: String(body['model']) });
+  }),
   http.get('*/api/brain/sessions', () => HttpResponse.json([{ id: 'brain-1', title: 'Katalog dílů', model: 'm', updated_at: '2026-07-08', active: true, attached: 0 }])),
   http.patch('*/api/brain/sessions/:id', async ({ request, params }) => {
     const body = (await request.json()) as { title: string };
@@ -63,6 +73,8 @@ const server = setupServer(
       { name: 'rename', description: 'Rename this conversation', kind: 'picker' },
       { name: 'reasoning', description: 'Set the reasoning effort', kind: 'picker' },
       { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker' },
+      { name: 'model', description: 'Switch the model', kind: 'picker' },
+      { name: 'help', description: 'List every command', kind: 'info' },
     ],
   })),
 );
@@ -71,7 +83,7 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; thinkingLevel = 'low'; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; modelBodies = []; thinkingLevel = 'low'; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -268,5 +280,62 @@ describe('web slash commands: work mode + rename', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('plan-decision-implement')); });
     await waitFor(() => expect(sendBodies.length).toBe(1));
     await waitFor(() => expect(screen.queryByTestId('plan-decision-implement')).toBeNull());
+  });
+});
+
+describe('web slash commands: /help and /model overlays', () => {
+  /** `/help` was a toast that glued the bare names together and vanished — no descriptions, and nothing
+   *  to click. A command menu that cannot be read or used is worse than no menu, so this pins the two
+   *  things the toast could not do: show what a command DOES, and run it. */
+  it('/help lists the catalog with descriptions and runs the command that is clicked', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('help');
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('/plan')).toBeInTheDocument();
+    expect(within(dialog).getByText('Plan mode')).toBeInTheDocument();
+    // `/help` does not list itself: re-opening the overlay you are reading is not a command.
+    expect(within(dialog).queryByText('/help')).toBeNull();
+
+    await act(async () => { fireEvent.click(within(dialog).getByText('/plan')); });
+    expect(await screen.findByTestId('chat-work-mode')).toBeInTheDocument();
+  });
+
+  it('/help filters by name and by description', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('help');
+    const dialog = await screen.findByRole('dialog');
+
+    act(() => fireEvent.change(within(dialog).getByLabelText('Filter commands'), { target: { value: 'rename' } }));
+    await waitFor(() => expect(within(dialog).queryByText('/plan')).toBeNull());
+    expect(within(dialog).getByText('/rename')).toBeInTheDocument();
+
+    // The description is searchable too — people look for what a command does, not its name.
+    act(() => fireEvent.change(within(dialog).getByLabelText('Filter commands'), { target: { value: 'effort' } }));
+    await waitFor(() => expect(within(dialog).queryByText('/rename')).toBeNull());
+    expect(within(dialog).getByText('/reasoning')).toBeInTheDocument();
+  });
+
+  /** `/model` used to take over the composer's suggestion dropdown and list flat `provider/model` text,
+   *  so the same choice looked different depending on where it was started. It is now the overlay, built
+   *  from the same rows as the header picker — grouped by provider, with brand icons. */
+  it('/model opens the grouped catalog with icons and switches the conversation', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('model');
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Anthropic')).toBeInTheDocument();
+    const row = within(dialog).getByRole('option', { name: /claude-opus-5/ });
+    // The brand icon is what the plain dropdown could not carry; without it this is the old flat list.
+    expect(row.querySelector('img, svg')).not.toBeNull();
+
+    await act(async () => { fireEvent.click(row); });
+    await waitFor(() => expect(modelBodies.length).toBe(1));
+    expect(modelBodies[0]).toMatchObject({ provider: 'anthropic', model: 'claude-opus-5' });
+    // Picking closes the overlay rather than leaving it over the conversation.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });

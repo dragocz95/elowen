@@ -1,31 +1,22 @@
 'use client';
 import { useRef, useState } from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useDismiss } from '../../lib/useDismiss';
 import { useTranslation } from '../../lib/i18n';
-import type { BrainModelOption } from '../../lib/types';
-import { brainModelQualifiedLabel, SOURCE_BADGE } from '../../lib/modelProvider';
+import { brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { useBrainChat } from './BrainChatProvider';
-
-/** Group the flat catalog into ordered provider buckets keyed by the provider's display label, preserving
- *  the server's ordering (first occurrence wins the slot). */
-function groupByProvider(models: BrainModelOption[]): { label: string; source: BrainModelOption['source']; items: BrainModelOption[] }[] {
-  const groups: { label: string; source: BrainModelOption['source']; items: BrainModelOption[] }[] = [];
-  for (const m of models) {
-    let group = groups.find((g) => g.label === m.providerLabel);
-    if (!group) { group = { label: m.providerLabel, source: m.source, items: [] }; groups.push(group); }
-    group.items.push(m);
-  }
-  return groups;
-}
+import { ModelOptionList } from './ModelOptionList';
 
 /** The shared model picker: a trigger button (current model + chevron) opening a grouped popover of every
  *  selectable model. Reads the single catalog + switch action off the chat controller (no props catalog,
  *  no second fetch). `full` is a labelled header control; `compact` is an icon-sized dock button — same
- *  component, same data. Selecting a model switches the conversation IN PLACE (no SSE reconnect). */
+ *  component, same data. Selecting a model switches the conversation IN PLACE (no SSE reconnect).
+ *
+ *  The rows themselves are ModelOptionList, shared with the `/model` overlay so the two entry points can
+ *  never drift into showing the same catalog two different ways. */
 export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
   const { t } = useTranslation();
-  const { models, currentModel, provider, setModel, modelsLoading, modelsError, loadModels } = useBrainChat();
+  const { models, currentModel, provider, modelsLoading, loadModels } = useBrainChat();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -40,7 +31,6 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
     });
   };
 
-  const groups = models ? groupByProvider(models) : [];
   const label = currentModel ? brainModelQualifiedLabel({ provider, model: currentModel }) : t.brainChat.modelPicker;
 
   return (
@@ -65,61 +55,7 @@ export function ModelPicker({ variant = 'full' }: { variant?: 'full' | 'compact'
           aria-label={t.brainChat.modelPicker}
           className="absolute right-0 z-20 mt-1 max-h-80 w-64 overflow-y-auto rounded-lg border border-border bg-elevated py-1 shadow-lg"
         >
-          {modelsLoading ? (
-            <div className="px-3 py-2 text-tiny italic text-text-muted">{t.brainChat.modelPickerLoading}</div>
-          ) : modelsError ? (
-            <div className="flex flex-col gap-1.5 px-3 py-2 text-tiny text-text-muted">
-              <span>{t.brainChat.modelPickerError}</span>
-              <button
-                type="button"
-                onClick={() => loadModels()}
-                className="self-start rounded-md border border-border px-2 py-0.5 text-tiny text-text transition-colors hover:bg-bg"
-              >
-                {t.brainChat.modelPickerRetry}
-              </button>
-            </div>
-          ) : groups.length === 0 ? (
-            <div className="px-3 py-2 text-tiny italic text-text-muted">{t.brainChat.modelPickerEmpty}</div>
-          ) : (
-            groups.map((group) => (
-              <div key={group.label} className="py-0.5">
-                <div className="flex items-center gap-1.5 px-3 py-1 text-tiny font-medium uppercase tracking-wide text-text-muted">
-                  <span className="truncate">{group.label}</span>
-                  <span className="shrink-0 rounded bg-bg px-1 py-0.5 text-[0.6rem] font-normal normal-case tracking-normal text-text-muted">
-                    {SOURCE_BADGE[group.source]}
-                  </span>
-                </div>
-                {group.items.map((m) => {
-                  const active = m.provider === provider && m.model === currentModel;
-                  const levels = m.reasoningLevels ?? [];
-                  return (
-                    <button
-                      key={`${m.provider}/${m.model}`}
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => { setModel(m); setOpen(false); }}
-                      className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-bg ${active ? 'text-text' : 'text-text-muted'}`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        {active ? <Check size={12} className="shrink-0 text-accent" aria-label={t.brainChat.modelActive} /> : <span className="w-3 shrink-0" aria-hidden />}
-                        <span className="truncate font-mono text-sm">{m.model}</span>
-                      </span>
-                      {levels.length > 0 ? (
-                        <span className="flex flex-wrap gap-1 pl-[1.125rem]" title={t.brainChat.modelReasoning}>
-                          {levels.map((level) => (
-                            <span key={level} className="rounded bg-bg px-1 py-0.5 text-[0.6rem] text-text-muted">
-                              {m.reasoningLabels?.[level] ?? level}
-                            </span>
-                          ))}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ))
-          )}
+          <ModelOptionList onPick={() => setOpen(false)} />
         </div>
       ) : null}
     </div>
