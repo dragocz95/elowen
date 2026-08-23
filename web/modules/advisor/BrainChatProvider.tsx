@@ -491,6 +491,7 @@ function useBrainChatController(): BrainChatValue {
           void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
         },
         reasoning: (delta) => applyEvent({ type: 'reasoning', delta }),
+        toolAuthoring: ({ name, detail, reason }) => applyEvent({ type: 'tool_authoring', name, detail, reason }),
         tool: ({ name, detail, icon, id }) => applyEvent({ type: 'tool', name, detail, icon, id }),
         toolProgress: ({ id, text }) => applyEvent({ type: 'tool_progress', id, text }),
         subagent: (subagent) => {
@@ -675,6 +676,19 @@ function useBrainChatController(): BrainChatValue {
           if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
           setReady(true);
         },
+        text: (delta) => applyEvent({ type: 'text', delta }),
+        reasoning: (delta) => applyEvent({ type: 'reasoning', delta }),
+        toolAuthoring: ({ name, detail, reason }) => applyEvent({ type: 'tool_authoring', name, detail, reason }),
+        tool: ({ name, detail, icon, id }) => applyEvent({ type: 'tool', name, detail, icon, id }),
+        toolProgress: ({ id, text }) => applyEvent({ type: 'tool_progress', id, text }),
+        subagent: (subagent) => applyEvent({ type: 'subagent', ...subagent }),
+        workflow: (workflow) => applyEvent({ type: 'workflow', ...workflow }),
+        diff: (diff) => applyEvent({ type: 'diff', diff }),
+        toolOutput: ({ output, id, plan }) => applyEvent({ type: 'tool_output', output, id, plan }),
+        toolEnd: ({ id, plan }) => applyEvent({ type: 'tool_end', id, plan }),
+        image: ({ ref, id, caption }) => applyEvent({ type: 'image', ref, id, caption }),
+        file: ({ ref, name, size, id, caption }) => applyEvent({ type: 'file', ref, name, size, id, caption }),
+        idle: () => applyEvent({ type: 'idle' }),
         card: (card) => setCards((cur) => upsertCard(cur, card)),
         error: (message) => applyEvent({ type: 'error', message }),
         openError: () => {

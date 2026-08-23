@@ -35,7 +35,7 @@ import { AnimationController } from './animationController.js';
 import { InputRouter } from './inputRouter.js';
 import { OverlayController } from './overlayController.js';
 import { RenderShell } from './renderShell.js';
-import { LONG_COMPOSE_TOOLS } from './composeLabels.js';
+import { DEFAULT_COMPOSE_MARKER_MS, DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS, LONG_COMPOSE_TOOLS } from './composeLabels.js';
 import { activityChip, bottomHintItems, fitSegments, fitVariants, goalMeta, modelMetaLine, quitHint, startScreenHintItems, statusline } from './composeLines.js';
 import { execRefSpec } from '../../shared/execs.js';
 
@@ -97,8 +97,10 @@ export const NOTICE_TTL_MS = 4_000;
  *  `ELOWEN_COMPOSE_MARKER_MS` (a single non-negative int applied to BOTH) to speed up the tmux E2E; an
  *  unset/invalid value keeps these defaults. */
 const composeMarkerOverride = Number.parseInt(process.env.ELOWEN_COMPOSE_MARKER_MS ?? '', 10);
-const COMPOSE_MARKER_MS = Number.isFinite(composeMarkerOverride) && composeMarkerOverride >= 0 ? composeMarkerOverride : 10_000;
-const LONG_TOOL_COMPOSE_MARKER_MS = Number.isFinite(composeMarkerOverride) && composeMarkerOverride >= 0 ? composeMarkerOverride : 3_000;
+const COMPOSE_MARKER_MS = Number.isFinite(composeMarkerOverride) && composeMarkerOverride >= 0
+  ? composeMarkerOverride : DEFAULT_COMPOSE_MARKER_MS;
+const LONG_TOOL_COMPOSE_MARKER_MS = Number.isFinite(composeMarkerOverride) && composeMarkerOverride >= 0
+  ? composeMarkerOverride : DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS;
 
 /** Pure half of the notice-expiry contract (mirrors `interruptPress`: the shell owns the timer, this
  *  makes the boundary testable). Decides what the frame loop does with the notice slot it just saw:

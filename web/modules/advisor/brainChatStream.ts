@@ -33,6 +33,7 @@ interface LiveStreamHandlers {
   error: (message: string) => void;
   session: (sessionId: string) => void;
   reasoning: (delta: string) => void;
+  toolAuthoring: (frame: { name?: string; detail?: string; reason?: string }) => void;
   tool: (frame: { name: string; detail?: string; icon?: string; id?: string }) => void;
   toolProgress: (frame: { id: string; text: string }) => void;
   subagent: (frame: SubagentFrame) => void;
@@ -56,7 +57,10 @@ interface LiveStreamHandlers {
   idle: (usage?: BrainUsage) => void;
 }
 
-interface ReadOnlyStreamHandlers {
+interface ReadOnlyStreamHandlers extends Pick<LiveStreamHandlers,
+  'text' | 'reasoning' | 'toolAuthoring' | 'tool' | 'toolProgress' | 'subagent' | 'workflow' |
+  'diff' | 'toolOutput' | 'toolEnd' | 'image' | 'file' | 'idle'
+> {
   snapshot: (snapshot: BrainStreamSnapshotFrame) => void;
   card: (card: BrainCard) => void;
   error: (message: string) => void;
@@ -178,6 +182,9 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     // Idle rollover rebinds to a fresh conversation WITHOUT bumping the generation, matching BrainClient.
     onFrame('session', (e) => handlers.session((JSON.parse((e as MessageEvent).data) as { sessionId: string }).sessionId));
     onFrame('reasoning', (e) => handlers.reasoning((JSON.parse((e as MessageEvent).data) as { delta: string }).delta));
+    // Do not throttle again here: the daemon already preserves the first reason-bearing delta and caps later
+    // growth. A client-side throttle could swallow the only useful frame from bursty providers.
+    onFrame('tool_authoring', (e) => handlers.toolAuthoring(JSON.parse((e as MessageEvent).data) as { name?: string; detail?: string; reason?: string }));
     // Keep the toolCallId: live progress and final output are folded onto the matching tool pill by id.
     onFrame('tool', (e) => handlers.tool(JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string; id?: string }));
     // Live Bash output is a bounded rolling tail; stored history supersedes it after reload.
@@ -251,6 +258,25 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     onFrame('snapshot', (e) => {
       snapshotSeen = true;
       handlers.snapshot(JSON.parse((e as MessageEvent).data) as BrainStreamSnapshotFrame);
+    });
+    // A running child/workflow node is a live transcript tap, not a frozen snapshot. Consume the same
+    // presentation events as the parent so its authored reason, tool row and completion remain coherent.
+    onFrame('text', (e) => handlers.text((JSON.parse((e as MessageEvent).data) as { delta: string }).delta));
+    onFrame('reasoning', (e) => handlers.reasoning((JSON.parse((e as MessageEvent).data) as { delta: string }).delta));
+    onFrame('tool_authoring', (e) => handlers.toolAuthoring(JSON.parse((e as MessageEvent).data) as { name?: string; detail?: string; reason?: string }));
+    onFrame('tool', (e) => handlers.tool(JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string; id?: string }));
+    onFrame('tool_progress', (e) => handlers.toolProgress(JSON.parse((e as MessageEvent).data) as { id: string; text: string }));
+    onFrame('subagent', (e) => handlers.subagent(JSON.parse((e as MessageEvent).data) as SubagentFrame));
+    onFrame('workflow', (e) => handlers.workflow(JSON.parse((e as MessageEvent).data) as WorkflowFrame));
+    onFrame('diff', (e) => handlers.diff((JSON.parse((e as MessageEvent).data) as { diff: string }).diff));
+    onFrame('tool_output', (e) => handlers.toolOutput(JSON.parse((e as MessageEvent).data) as { output: ToolOutputView; id?: string; plan?: string }));
+    onFrame('tool_end', (e) => handlers.toolEnd(JSON.parse((e as MessageEvent).data) as { id?: string; plan?: string }));
+    onFrame('image', (e) => handlers.image(JSON.parse((e as MessageEvent).data) as { ref: string; id?: string; caption?: string }));
+    onFrame('file', (e) => handlers.file(JSON.parse((e as MessageEvent).data) as { ref: string; name: string; size: number; id?: string; caption?: string }));
+    onFrame('idle', (e) => {
+      let usage: BrainUsage | undefined;
+      try { usage = (JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage; } catch { /* idle without payload */ }
+      handlers.idle(usage);
     });
     onFrame('card', (e) => handlers.card((JSON.parse((e as MessageEvent).data) as { card: BrainCard }).card));
     onFrame('error', (e) => {

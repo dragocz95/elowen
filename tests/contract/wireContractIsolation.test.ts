@@ -11,7 +11,9 @@ import { fileURLToPath } from 'node:url';
 // The isolation is load-bearing but was previously unguarded: adding an import passed typecheck, lint and
 // every suite, because a type-only import is erased before the web bundle is ever produced and a runtime
 // one simply had no test that looked. This pins the property directly rather than hoping a build notices.
-const contractPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/shared/wireContract.ts');
+const sharedDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/shared');
+const contractPath = resolve(sharedDir, 'wireContract.ts');
+const presentationPath = resolve(sharedDir, 'chatPresentation.ts');
 const source = readFileSync(contractPath, 'utf8');
 
 /** Strip comments and string literals so a mention of "import" in prose or in a type name cannot count. */
@@ -43,5 +45,15 @@ describe('wireContract stays importless so both toolchains can compile it', () =
   it('exports only types, never a runtime value', () => {
     // A runtime export would make the web bundle actually execute this module rather than erase it.
     expect(code).not.toMatch(/\bexport\s+(?:default|const|let|var|function|class|enum)\b/);
+  });
+});
+
+describe('chatPresentation stays an importless browser-safe runtime leaf', () => {
+  const code = stripCommentsAndStrings(readFileSync(presentationPath, 'utf8'));
+
+  it('has no module dependencies or Node-only globals', () => {
+    expect(code.match(/\bimport\b\s*(?:type\b)?[^;]*from\s*['"`]/g) ?? []).toEqual([]);
+    expect(code).not.toMatch(/\bimport\s*\(|\brequire\s*\(|\bprocess\b|\bBuffer\b/);
+    expect(code).not.toMatch(/\bexport\b[^;]*\bfrom\s*['"`]/);
   });
 });

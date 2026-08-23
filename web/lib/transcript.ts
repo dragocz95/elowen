@@ -16,6 +16,7 @@ export type WorkflowState = BrainWorkflowView;
 export type TranscriptEvent =
   | { type: 'text'; delta: string }
   | { type: 'reasoning'; delta: string }
+  | { type: 'tool_authoring'; name?: string; detail?: string; reason?: string }
   | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
   /** Live rolling tail of a running `Bash` (mirror of the daemon `tool_progress` event). Attaches
    *  to the in-progress tool row by id; the final `tool_output`/`diff` supersedes it (no doubled dump). */
@@ -157,7 +158,11 @@ function imageFromRef(ref: string): BrainMessageImage {
  *  STABLE React key (so a lazy-load prepend never remounts the live tail) and the identity `prependHistory`
  *  dedupes on — never a text fingerprint. */
 type YouTurn = { role: 'you'; text: string; id?: string; images?: BrainMessageImage[]; createdAt?: string };
-type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean; createdAt?: string; durationMs?: number };
+type ElowenTurn = {
+  role: 'elowen'; segments: Segment[]; streaming: boolean; id?: string; synthetic?: boolean; createdAt?: string; durationMs?: number;
+  /** Live-only tool-call authoring hint. Cleared as soon as the matching tool starts or the turn settles. */
+  composing?: boolean; composingTool?: string; composingDetail?: string; composingReason?: string;
+};
 /** A context-compaction boundary: everything before it was summarized away server-side, so the dock
  *  renders a subtle "context compacted" divider in its place, followed by the kept tail. */
 type DividerTurn = { role: 'divider'; id?: string };
@@ -270,7 +275,7 @@ export function prependHistory(view: ChatView, older: BrainMessage[]): ChatView 
  *  out-of-band frames (card / ask / queue / step) the transcript fold has no case for — this narrows the
  *  wire events down to the ones it understands instead of casting the rest through it. */
 const TRANSCRIPT_EVENT_TYPES = new Set<TranscriptEvent['type']>([
-  'text', 'reasoning', 'tool', 'tool_progress', 'diff', 'tool_output', 'tool_end', 'image',
+  'text', 'reasoning', 'tool_authoring', 'tool', 'tool_progress', 'diff', 'tool_output', 'tool_end', 'image',
   'notice', 'session', 'subagent', 'workflow', 'user', 'discard_user', 'idle', 'error',
 ]);
 
@@ -294,7 +299,11 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
   const ensureElowen = (): ElowenTurn => {
     const last = turns[turns.length - 1];
     if (last && last.role === 'elowen' && last.streaming) {
-      const clone: ElowenTurn = { role: 'elowen', segments: [...last.segments], streaming: true };
+      const clone: ElowenTurn = {
+        role: 'elowen', segments: [...last.segments], streaming: true,
+        composing: last.composing, composingTool: last.composingTool,
+        composingDetail: last.composingDetail, composingReason: last.composingReason,
+      };
       turns[turns.length - 1] = clone;
       return clone;
     }
@@ -324,8 +333,21 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
     case 'notice': {
       return { turns, thinking: view.thinking, notice: e.done ? undefined : e.message };
     }
+    case 'tool_authoring': {
+      const t = ensureElowen();
+      if (t.composing && t.composingTool === e.name && t.composingDetail === e.detail && t.composingReason === e.reason) return view;
+      t.composing = true;
+      t.composingTool = e.name;
+      t.composingDetail = e.detail;
+      t.composingReason = e.reason;
+      return { turns, thinking: true, notice: view.notice };
+    }
     case 'tool': {
       const t = ensureElowen();
+      t.composing = false;
+      t.composingTool = undefined;
+      t.composingDetail = undefined;
+      t.composingReason = undefined;
       const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}), ...(e.command ? { command: e.command } : {}) };
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
@@ -423,6 +445,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       const last = turns[turns.length - 1];
       if (last && last.role === 'elowen') turns[turns.length - 1] = {
         ...last, streaming: false,
+        composing: false, composingTool: undefined, composingDetail: undefined, composingReason: undefined,
         ...(e.completedAt ? { createdAt: e.completedAt } : {}),
         ...(e.durationMs != null ? { durationMs: e.durationMs } : {}),
       };
@@ -432,6 +455,10 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       const t = ensureElowen();
       addText(t, `\n[error: ${e.message}]`);
       t.streaming = false;
+      t.composing = false;
+      t.composingTool = undefined;
+      t.composingDetail = undefined;
+      t.composingReason = undefined;
       return { turns, thinking: false, notice: undefined };
     }
     default:

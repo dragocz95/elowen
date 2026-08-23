@@ -29,6 +29,15 @@ import { useBrainChat } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelQualifiedLabel } from '../../lib/modelProvider';
+import {
+  DEFAULT_COMPOSE_MARKER_MS,
+  DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS,
+  LONG_COMPOSE_TOOLS,
+  TODO_PREVIEW_ITEMS,
+  composingLabel,
+  todoPreviewItems,
+  type ComposeLocale,
+} from '../../../src/shared/chatPresentation.js';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
@@ -136,10 +145,6 @@ function ToolOutputBlock({ output }: { output: NonNullable<ToolItem['output']> }
   );
 }
 
-/** How many checklist items a card previews before folding the rest behind the "+N more" pill (mirror of
- *  the CLI CardPanel's TODO_PREVIEW_ITEMS). */
-const CARD_PREVIEW_ITEMS = 4;
-
 /** A display card (ctx.emitCard) — the web mirror of the CLI/Discord panel: a clickable title row with a
  *  done/total count that collapses the card, a checklist (done struck through + green, in-progress
  *  accented, pending muted) previewed to its first items, and an optional freeform body. The todo
@@ -152,8 +157,8 @@ function CardBlock({ card }: { card: BrainCard }) {
   const items = card.items ?? [];
   const done = items.filter((i) => i.status === 'completed').length;
   if (items.length > 0 && done === items.length) return null;
-  const previewable = items.length > CARD_PREVIEW_ITEMS;
-  const shown = collapsed ? [] : previewable && !expanded ? items.slice(0, CARD_PREVIEW_ITEMS) : items;
+  const previewable = items.length > TODO_PREVIEW_ITEMS;
+  const shown = collapsed ? [] : previewable && !expanded ? todoPreviewItems(items, TODO_PREVIEW_ITEMS) : items;
   return (
     <div data-testid="chat-card" className="flex flex-col leading-relaxed">
       {(card.title || items.length > 0) ? (
@@ -182,7 +187,7 @@ function CardBlock({ card }: { card: BrainCard }) {
       ) : null}
       {!collapsed && previewable ? (
         <div className="mt-1">
-          <MorePill expanded={expanded} hidden={items.length - CARD_PREVIEW_ITEMS} onToggle={() => setExpanded((v) => !v)} />
+          <MorePill expanded={expanded} hidden={items.length - TODO_PREVIEW_ITEMS} onToggle={() => setExpanded((v) => !v)} />
         </div>
       ) : null}
       {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-text-muted">{card.body}</div> : null}
@@ -490,8 +495,39 @@ function MessageMeta({ turn }: { turn: Extract<ChatTurn, { role: 'you' | 'elowen
   );
 }
 
-function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+function ToolAuthoringHint({ turn, locale }: {
+  turn: Extract<ChatTurn, { role: 'elowen' }>;
+  locale: ComposeLocale;
+}) {
   const { t } = useTranslation();
+  const startedAt = useRef(Date.now());
+  const [ready, setReady] = useState(false);
+  const threshold = turn.composingTool && LONG_COMPOSE_TOOLS.has(turn.composingTool)
+    ? DEFAULT_LONG_TOOL_COMPOSE_MARKER_MS
+    : DEFAULT_COMPOSE_MARKER_MS;
+
+  useEffect(() => {
+    const remaining = Math.max(0, threshold - (Date.now() - startedAt.current));
+    if (remaining === 0) { setReady(true); return; }
+    setReady(false);
+    const timer = setTimeout(() => setReady(true), remaining);
+    return () => clearTimeout(timer);
+  }, [threshold]);
+
+  if (!turn.streaming || !turn.composing || !ready) return null;
+  const label = composingLabel(turn.composingReason, turn.composingTool, turn.composingDetail, locale)
+    ?? turn.composingTool
+    ?? t.brainChat.toolRunning;
+  return (
+    <div data-testid="chat-tool-authoring" role="status" aria-live="polite" className="flex items-center gap-1.5 py-0.5 pl-4 font-mono text-text-muted">
+      <Spinner size="xs" tone="text-warning" />
+      <span className="truncate italic opacity-80">{label}</span>
+    </div>
+  );
+}
+
+function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+  const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
   if (turn.role === 'event') return <SessionEvents events={turn.events} tk={tk} />;
@@ -511,7 +547,9 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
         ? <SharedImage key={i} image={seg.image} caption={seg.caption} full={full} />
         : seg.kind === 'file'
         ? <SharedFile key={i} file={seg.file} caption={seg.caption} full={full} />
-        : <ToolPills key={i} tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />))}</>;
+        : <ToolPills key={i} tools={seg.items} full={full} live={turn.streaming && i === turn.segments.length - 1} />))}
+        {turn.composing ? <ToolAuthoringHint turn={turn} locale={locale as ComposeLocale} /> : null}
+      </>;
 
   if (full) {
     return (

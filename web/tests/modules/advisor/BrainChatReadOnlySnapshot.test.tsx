@@ -91,6 +91,27 @@ describe('read-only child snapshot', () => {
     await waitFor(() => expect(screen.getByTestId('cards')).toHaveTextContent('Child live card'));
   });
 
+  it('continues folding a running child tool authoring stream after the snapshot', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(1));
+    await act(async () => { fireEvent.click(screen.getByText('open child')); });
+    await waitFor(() => expect(FakeES.instances).toHaveLength(2));
+    const child = FakeES.instances[1]!;
+    child.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-child', session: { model: 'child-model', provider: 'openai-codex' },
+      history: [], events: [], cards: [],
+      control: { streaming: true, pendingAsk: null, workMode: 'build', pendingPlan: null },
+    });
+
+    child.emit('tool_authoring', { type: 'tool_authoring', name: 'Bash', detail: 'npm test', reason: 'Running child tests…' });
+    await waitFor(() => expect(screen.getByTestId('turns')).toHaveTextContent('Running child tests'));
+
+    child.emit('tool', { type: 'tool', name: 'Bash', detail: 'npm test', id: 'child-tool' });
+    await waitFor(() => expect(screen.getByTestId('turns')).not.toHaveTextContent('Running child tests'));
+    expect(screen.getByTestId('turns')).toHaveTextContent('child-tool');
+  });
+
   it('leaves a native transport error to EventSource auto-reconnect', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><BrainChatProvider><Harness /></BrainChatProvider></ToastProvider>, { wrapper });

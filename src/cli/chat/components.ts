@@ -1,13 +1,14 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
-import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
+import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import type { WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color, inputRow, paintRow } from './theme.js';
 import { highlightLine, wrapTokens } from './codeHighlight.js';
 import type { CodeToken } from './codeHighlight.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
+import { TODO_PREVIEW_ITEMS, todoPreviewItems } from '../../shared/chatPresentation.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
@@ -34,7 +35,6 @@ const DIM = color.dim;
 const FAINTC = color.faint;
 const GREENC = color.success;
 const inlineText = terminalInlineText;
-const TODO_PREVIEW_ITEMS = 4;
 
 /** A rail section header: a collapse chevron, a bold label and optional faint meta — no full-width rule.
  *  Sections separate by the bold label plus the blank row between them, which keeps the rail airy instead
@@ -47,39 +47,6 @@ export function sectionHeaderContent(chevron: string, label: string, meta = ''):
  *  padded to width later by the panel's background paint, so nothing is appended here. */
 export function sectionHeaderRow(content: string, width: number): string {
   return truncateToWidth(content, Math.max(1, width), '…');
-}
-
-/** Pick a useful compact Todo snapshot instead of blindly showing the first rows forever.
- *  The preview combines recent progress with the work that matters next, then restores source order
- *  so an interleaved checklist still reads naturally. An active item is always preferred over a
- *  merely pending item, and either group fills spare slots when the other has fewer than two rows. */
-function todoPreviewItems(items: readonly BrainCardItem[], limit: number): BrainCardItem[] {
-  if (limit <= 0) return [];
-  if (items.length <= limit) return [...items];
-  const completed = items.map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.status === 'completed');
-  const remaining = items.map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.status !== 'completed');
-
-  let completedCount = Math.min(2, completed.length, limit);
-  let remainingCount = Math.min(2, remaining.length, limit - completedCount);
-  let spare = limit - completedCount - remainingCount;
-  const extraRemaining = Math.min(spare, remaining.length - remainingCount);
-  remainingCount += extraRemaining;
-  spare -= extraRemaining;
-  completedCount += Math.min(spare, completed.length - completedCount);
-
-  const selectedCompleted = completed.slice(-completedCount);
-  const selectedRemaining = [...remaining]
-    .sort((a, b) => {
-      const activeDelta = Number(b.item.status === 'in_progress') - Number(a.item.status === 'in_progress');
-      return activeDelta || a.index - b.index;
-    })
-    .slice(0, remainingCount);
-
-  return [...selectedCompleted, ...selectedRemaining]
-    .sort((a, b) => a.index - b.index)
-    .map(({ item }) => item);
 }
 
 /** A full-width user message: a blue left rail and a raised gray background (opencode backgroundElement),

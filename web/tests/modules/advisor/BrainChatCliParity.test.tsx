@@ -104,6 +104,23 @@ describe('BrainChatSurface tool rows', () => {
     await waitFor(() => expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(1));
     expect(screen.queryByRole('status', { name: 'Running' })).toBeNull();
   });
+
+  it('shows the streamed model reason after the CLI threshold and clears it when the tool starts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const es = await renderSurface();
+      act(() => es.emit({ type: 'tool_authoring', name: 'Write', detail: '/tmp/readme.md', reason: 'Preparing release…' }));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      expect(screen.getByTestId('chat-tool-authoring')).toHaveTextContent('Preparing release…');
+      expect(screen.queryByText('Writing file')).toBeNull();
+
+      act(() => es.emit({ type: 'tool', name: 'Write', id: 't-authoring', detail: '/tmp/readme.md' }));
+      await waitFor(() => expect(screen.queryByTestId('chat-tool-authoring')).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('BrainChatSurface submitted plan', () => {
@@ -191,6 +208,21 @@ describe('BrainChatSurface checklist card', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '+2 more' }));
     expect(await screen.findByText('step 6')).toBeInTheDocument();
+  });
+
+  it('previews recent progress and the next active work instead of the first four rows', async () => {
+    const es = await renderSurface();
+    act(() => es.emit({ type: 'card', card: todoCard([
+      'completed', 'pending', 'completed', 'completed', 'pending', 'in_progress', 'completed', 'pending',
+    ]) }));
+
+    expect(await screen.findByText('step 2')).toBeInTheDocument();
+    expect(screen.getByText('step 4')).toBeInTheDocument();
+    expect(screen.getByText('step 6')).toBeInTheDocument();
+    expect(screen.getByText('step 7')).toBeInTheDocument();
+    expect(screen.queryByText('step 1')).toBeNull();
+    expect(screen.queryByText('step 3')).toBeNull();
+    expect(screen.queryByText('step 5')).toBeNull();
   });
 
   it('collapses the checklist from its header', async () => {
