@@ -469,7 +469,6 @@ export const sk = {
   },
   sessionsPanel: {
     tab: 'Konverzácie',
-    hint: 'História brainu z webu, CLI, kanálov a agentov úloh.',
     searchLabel: 'Hľadať',
     owner: 'Vlastník',
     colTitle: 'Konverzácia',

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
@@ -9,6 +9,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../ui/Toast';
 import { useMe } from '../../lib/queries';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
 import { Segmented } from '../ui/Segmented';
 import { Input } from '../ui/Input';
@@ -31,7 +32,8 @@ type SortKey = 'title' | 'owner' | 'model' | 'tokens' | 'updated';
  *  timestamp are almost always wanted biggest/newest first. */
 const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { title: 'asc', owner: 'asc', model: 'asc', tokens: 'desc', updated: 'desc' };
 
-const COLUMNS = 'minmax(0,2.4fr) minmax(0,1fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
+// Model first, then the conversation, its owner, the tokens it burned and when it last moved.
+const COLUMNS = 'minmax(0,1.2fr) minmax(0,2.4fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
 const COMPACT_COLUMNS = 'minmax(0,1fr) 2.25rem';
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
@@ -55,6 +57,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const [direction, setDirection] = useState<SortDirection>('desc');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
+  // Accounts are read only to put a FACE on the owner column — the rows already carry the name. An
+  // ordinary user never sees a foreign row, so the admin-only endpoint stays unasked for them.
+  const users = useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers, enabled: isAdmin });
+  const userById = useMemo(() => new Map((users.data ?? []).map((u) => [u.id, u])), [users.data]);
   const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
   const own = useQuery({ queryKey: ['brain-sessions'], queryFn: elowenClient.brainSessions, enabled: view === 'mine' });
   const q = view === 'all' ? managed : own;
@@ -134,13 +140,12 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   return (
     <section className="flex min-w-0 flex-col">
       <ControlSurfaceToolbar testId="brain-sessions-toolbar" className="flex-col items-stretch gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-base font-semibold text-text">{t.sessionsPanel.tab}</h2>
-            {visible.length > 0 ? <span className="font-mono text-xs text-text-muted">{visible.length}</span> : null}
-            <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
-          </div>
-          <p className="text-xs text-text-muted">{t.sessionsPanel.hint}</p>
+        {/* The heading carries the count and the help affordance; the one-line description that used to
+            sit under it said what the table already shows. */}
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 className="text-base font-semibold text-text">{t.sessionsPanel.tab}</h2>
+          {visible.length > 0 ? <span className="font-mono text-xs text-text-muted">{visible.length}</span> : null}
+          <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative flex items-center">
@@ -180,9 +185,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         : (
           <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} data-testid="brain-sessions-list">
             <DataTableRow header>
+              <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
               <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
               <DataTableSortCell priority="wide" active={sort === 'owner'} direction={direction} onSort={() => sortBy('owner')}>{t.sessionsPanel.owner}</DataTableSortCell>
-              <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
               <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
               <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>
               {/* The actions column has no name to print, but it is still a cell: `role="presentation"`
@@ -198,8 +203,18 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               const continuable = s.kind === 'conversation' && !foreign;
               const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
               const title = s.title || t.sessionsPanel.untitled;
+              // A session whose owner is not in the account list (or a list this caller may not read)
+              // still deserves a face, so fall back to the name the row carries.
+              const owner = s.ownerId == null ? undefined
+                : userById.get(s.ownerId) ?? { id: s.ownerId, username: s.ownerLabel || String(s.ownerId) };
               return (
                 <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
+                  <DataTableCell priority="wide">
+                    <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
+                      <ModelIcon name={s.model} size={14} />
+                      <span className="truncate text-xs text-text-muted">{s.model}</span>
+                    </span>
+                  </DataTableCell>
                   <DataTableCell>
                     <button
                       type="button"
@@ -212,12 +227,15 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                     </button>
                   </DataTableCell>
-                  <DataTableCell priority="wide" className="truncate text-xs text-text-muted" title={s.ownerLabel ?? ''}>{s.ownerLabel ?? ''}</DataTableCell>
                   <DataTableCell priority="wide">
-                    <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
-                      <ModelIcon name={s.model} size={12} />
-                      <span className="truncate text-xs text-text-muted">{s.model}</span>
-                    </span>
+                    {/* The account row when it is known (it carries the uploaded picture); otherwise the
+                        name the session itself reported, which still yields a monogram. */}
+                    {owner ? (
+                      <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
+                        <Avatar user={owner} size={20} />
+                        <span className="truncate text-xs text-text-muted">{s.ownerLabel ?? ''}</span>
+                      </span>
+                    ) : null}
                   </DataTableCell>
                   <DataTableCell priority="wide" className="text-right font-mono text-tiny text-text-muted">
                     {s.tokens != null ? formatTokens(s.tokens) : ''}

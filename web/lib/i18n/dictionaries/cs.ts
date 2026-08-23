@@ -469,7 +469,6 @@ export const cs = {
   },
   sessionsPanel: {
     tab: 'Konverzace',
-    hint: 'Historie brainu z webu, CLI, kanálů a agentů úkolů.',
     searchLabel: 'Hledat',
     owner: 'Vlastník',
     colTitle: 'Konverzace',

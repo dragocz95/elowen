@@ -469,7 +469,6 @@ export const en = {
   },
   sessionsPanel: {
     tab: 'Conversations',
-    hint: 'Brain history from web, CLI, channels and task agents.',
     searchLabel: 'Search',
     owner: 'Owner',
     colTitle: 'Conversation',

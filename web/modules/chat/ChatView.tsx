@@ -84,8 +84,10 @@ export function ChatView() {
           <TelemetryPanel variant="drawer" open={telemetryOpen} onClose={() => setTelemetryOpen(false)} onOpenWorkflow={openDag} />
         ) : null}
         {dagId ? <WorkflowModal workflowId={dagId} onClose={() => setDagId(null)} /> : null}
+        {/* `lg` is the WIDEST size (92vw, up to 90rem) despite the name — `xl` is a 42rem dialog, which
+            squeezed a six-column register into a third of the screen. */}
         {registerOpen ? (
-          <Modal title={t.chat.openRegister} icon={Library} size="xl" onClose={() => setRegisterOpen(false)}>
+          <Modal title={t.chat.openRegister} icon={Library} size="lg" onClose={() => setRegisterOpen(false)}>
             <ModalBody>
               {/* Opening a row hands the conversation to THIS page's surface (the shared controller
                   switches it), so the modal dismisses itself instead of covering the loaded chat. */}

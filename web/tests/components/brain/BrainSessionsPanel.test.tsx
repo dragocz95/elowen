@@ -103,6 +103,17 @@ describe('BrainSessionsPanel — owner, filtering and sorting', () => {
     expect(screen.getAllByText(/Bob Novák/).length).toBeGreaterThan(0);
   });
 
+  it('leads with the model and gives the owner a face', async () => {
+    renderPanel();
+    await screen.findByText('Theirs');
+
+    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent?.trim());
+    expect(headers.slice(0, 4)).toEqual(['Model', 'Conversation', 'Owner', 'Tokens']);
+    // The monogram stands in when the account list is unavailable — as it is here, and as it is for
+    // any caller who may not read it — so the column has a face on every row either way.
+    expect(screen.getAllByLabelText('Bob Novák').length).toBeGreaterThan(0);
+  });
+
   it('opens a foreign conversation read-only and the caller\'s own for continuing', async () => {
     renderPanel();
     await screen.findByText('Theirs');
