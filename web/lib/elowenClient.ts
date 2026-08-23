@@ -362,7 +362,7 @@ export const elowenClient = {
    *  channels + task workers), each tagged with its kind. */
   brainManagedSessions: () => req<ManagedSession[]>('/brain/managed-sessions'),
   brainDeleteManagedSession: (id: string) => req<{ deleted: number }>(`/brain/managed-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  brainDeleteAllManagedSessions: () => req<{ deleted: number }>('/brain/managed-sessions', { method: 'DELETE' }),
+  brainDeleteAllManagedSessions: (scope?: 'all') => req<{ deleted: number }>(`/brain/managed-sessions${scope === 'all' ? '?scope=all' : ''}`, { method: 'DELETE' }),
   /** One backwards page of chat history for the lazy-load: the newest `limit` turns, then older ones as
    *  `before` (a previous page's `nextBefore`) walks back. The session defaults to the caller's active
    *  conversation. */

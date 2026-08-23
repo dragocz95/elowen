@@ -153,7 +153,13 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   };
   const doDeleteAll = async () => {
     setConfirmAll(false);
-    try { const { deleted } = await elowenClient.brainDeleteAllManagedSessions(); await refresh(); toast(`${t.sessionsPanel.deletedAll} (${deleted})`, 'ok'); }
+    try {
+      // Delete what is on screen: the cross-account register wipes every account's history, the personal
+      // view only the caller's. Sending one of them regardless would make the button lie in the other.
+      const { deleted } = await elowenClient.brainDeleteAllManagedSessions(view === 'all' ? 'all' : undefined);
+      await refresh();
+      toast(`${t.sessionsPanel.deletedAll} (${deleted})`, 'ok');
+    }
     catch { toast(t.common.error, 'error'); }
   };
 
@@ -207,13 +213,13 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               options={[{ value: 'all', label: t.sessionsPanel.viewAll }, { value: 'mine', label: t.sessionsPanel.viewMine }]}
             />
           ) : null}
-          {/* Owner-scoped by design: the endpoint deletes only the caller's conversations, so the button
-              belongs over the caller's OWN list. Above the cross-account view it would read as deleting
-              the team's history and then quietly delete six rows out of forty. */}
-          {isAdmin && view === 'mine' && visible.length > 0 ? (
-            <button type="button" onClick={() => setConfirmAll(true)} className="spatial-inline-action h-9 px-2 hover:!text-danger">
-              <Trash2 size={14} aria-hidden />{t.sessionsPanel.deleteAll}
-            </button>
+          {/* Admin-only, in BOTH views, and each deletes exactly what is listed under it — the endpoint is
+              told which. It used to appear only over the personal list, because back then it could only
+              ever delete the caller's own rows and above the register it would have deleted six of forty
+              without saying so. Ordinary users have no bulk delete at all: nobody asked for one, and a
+              non-admin must never be able to reach another account's history. */}
+          {isAdmin && visible.length > 0 ? (
+            <Button variant="danger" icon={Trash2} onClick={() => setConfirmAll(true)}>{t.sessionsPanel.deleteAll}</Button>
           ) : null}
         </div>
       </ControlSurfaceToolbar>
@@ -329,7 +335,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       <ConfirmDialog
         open={confirmAll}
         title={t.sessionsPanel.confirmDeleteAllTitle}
-        description={t.sessionsPanel.confirmDeleteAllDesc}
+        // Wiping the whole team's history is a different act from clearing your own, so it says so.
+        description={view === 'all' ? t.sessionsPanel.confirmDeleteAllEveryoneDesc : t.sessionsPanel.confirmDeleteAllDesc}
         confirmLabel={t.sessionsPanel.deleteAll}
         onConfirm={() => void doDeleteAll()}
         onClose={() => setConfirmAll(false)}

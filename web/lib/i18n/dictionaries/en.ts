@@ -519,6 +519,7 @@ export const en = {
     confirmDeleteDesc: 'Its whole conversation history will be permanently removed. This cannot be undone.',
     confirmDeleteAllTitle: 'Delete every session?',
     confirmDeleteAllDesc: 'Every conversation — chat, CLI and channels — will be permanently removed. This cannot be undone.',
+    confirmDeleteAllEveryoneDesc: 'Every conversation of every account will be permanently deleted, including channel and task sessions. This cannot be undone.',
   },
   calendar: {
     day: 'Day',

@@ -146,12 +146,14 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (forbidden(c) || !c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
     return c.json(d.brain.listManagedSessions(c.get('user').id));
   });
-  // Delete EVERYTHING (the panel's confirmed "delete all"). Registered before the `/:id` variant.
+  // Delete EVERYTHING the caller was shown (the panel's confirmed "delete all"). Registered before the
+  // `/:id` variant. `?scope=all` is the cross-account register, anything else is the caller's own list —
+  // the button must delete exactly the rows under it, or "delete all" quietly deletes some. Reaching
+  // across accounts is admin-only, which this whole route already is; no second gate is added here,
+  // because a second place to ask would be a second place to get it wrong.
   app.delete('/brain/managed-sessions', withBrain((c, brain) =>
-    c.json({ deleted: brain.deleteAllManagedSessions(c.get('user').id) }), { admin: true }));
-  // The register spans every account, so its delete does too ('any'). "Delete all" above deliberately
-  // does NOT: wiping the whole team's history behind one button is a different kind of action, and it
-  // was never asked for.
+    c.json({ deleted: brain.deleteAllManagedSessions(c.get('user').id, c.req.query('scope') === 'all' ? 'any' : 'own') }), { admin: true }));
+  // The register spans every account, so its per-row delete does too ('any').
   app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
     c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
 

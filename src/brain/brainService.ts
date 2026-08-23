@@ -935,8 +935,8 @@ export class BrainService {
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms) —
    *  see SessionTeardownService.deleteAllManagedSessions. */
-  deleteAllManagedSessions(userId: number): number {
-    return this.teardown.deleteAllManagedSessions(userId);
+  deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): number {
+    return this.teardown.deleteAllManagedSessions(userId, scope);
   }
 
   /** Retention janitor: delete this user's own idle top-level conversations older than `days` — see

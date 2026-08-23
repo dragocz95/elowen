@@ -267,17 +267,24 @@ describe('admin oversight register', () => {
     expect(d.store.getSession(foreign.sessionId)).toBeUndefined();
   });
 
-  it('"delete all" stays owner-scoped even for an admin', async () => {
+  /** "Delete all" deletes what the caller was shown, and the register shows every account — so the scope
+   *  has to be said out loud rather than assumed. The DEFAULT stays owner-scoped, which is not politeness:
+   *  the other caller of this method is account deletion (routes/auth.ts), and a default that crossed
+   *  accounts would wipe the whole instance when one person is removed. */
+  it('"delete all" stays owner-scoped by default and crosses accounts only when asked', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     withUsers(d);
-    await svc.start(1); await svc.send({ userId: 1, text: 'mine' });
+    const own = await svc.start(1); await svc.send({ userId: 1, text: 'mine' });
     const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
 
-    svc.deleteAllManagedSessions(1);
-
-    // Wiping the whole team's history behind one button was never asked for.
+    expect(svc.deleteAllManagedSessions(1)).toBe(1);
+    expect(d.store.getSession(own.sessionId)).toBeUndefined();
     expect(d.store.getSession(foreign.sessionId)).toBeTruthy();
+
+    // The cross-account register's own button, which the route only reaches for an admin.
+    expect(svc.deleteAllManagedSessions(1, 'any')).toBe(1);
+    expect(d.store.getSession(foreign.sessionId)).toBeUndefined();
   });
 
   it('reads a foreign transcript only with anyOwner, and never accepts a post into it', async () => {

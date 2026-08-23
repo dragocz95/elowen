@@ -465,9 +465,14 @@ export class SessionTeardownService {
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms).
    *  Returns the count removed. */
-  deleteAllManagedSessions(userId: number): number {
+  deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): number {
+    // The rows deleted are exactly the rows the caller was looking at: `own` walks their own list, `any`
+    // walks the cross-account register. Anything else makes "delete all" delete some. `own` stays the
+    // DEFAULT because the other caller is account deletion (routes/auth.ts), where reaching across
+    // accounts would wipe the instance instead of one person's history.
+    const rows = scope === 'any' ? this.store.listAllSessionsWithOwner() : this.store.listSessions(userId);
     let n = 0;
-    for (const s of this.store.listSessions(userId)) n += this.deleteManagedSession(userId, s.id);
+    for (const s of rows) n += this.deleteManagedSession(userId, s.id, scope);
     return n;
   }
 

@@ -519,6 +519,7 @@ export const cs = {
     confirmDeleteDesc: 'Celá historie konverzace bude trvale odstraněna. Tuto akci nelze vrátit.',
     confirmDeleteAllTitle: 'Smazat všechny relace?',
     confirmDeleteAllDesc: 'Všechny konverzace — chat, CLI i kanály — budou trvale odstraněny. Tuto akci nelze vrátit.',
+    confirmDeleteAllEveryoneDesc: 'Trvale se smažou všechny konverzace všech účtů včetně kanálových a úlohových relací. Akci nelze vzít zpět.',
   },
   calendar: {
     day: 'Den',
