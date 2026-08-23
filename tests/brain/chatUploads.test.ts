@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { chooseUploadProject, resolveUploadTarget, sanitizeUploadName, uploadRelativeDir } from '../../src/brain/chatUploads.js';
+import { chooseUploadProject, createUploadTarget, sanitizeUploadName, uploadRelativeDir } from '../../src/brain/chatUploads.js';
 
 const SOURCES = { id: 1, slug: 'chetty', path: '/opt/elowen' };
 const SHARED = { id: 2, slug: 'sdilene', path: '/data/project' };
@@ -75,6 +75,17 @@ describe('an uploaded file name is attacker-controlled', () => {
   it('leaves an ordinary name, spaces and diacritics alone', () => {
     expect(sanitizeUploadName('Nabídka pro klienta 2026.pdf')).toBe('Nabídka pro klienta 2026.pdf');
   });
+
+  it('keeps a long Czech name under the filesystem limit, which counts BYTES', () => {
+    // Every accented letter costs two bytes, so a name that is comfortably short in characters can
+    // still be refused by the kernel with ENAMETOOLONG — which reached the user as a bare 500.
+    const name = sanitizeUploadName(`${'ř'.repeat(200)}.xlsx`);
+    expect(Buffer.byteLength(name)).toBeLessThanOrEqual(255);
+    expect(name.endsWith('.xlsx')).toBe(true);
+    // Cut on a character boundary: a sliced buffer would end in U+FFFD and the stored name would no
+    // longer be the one that was sent.
+    expect(name).not.toContain('\ufffd');
+  });
 });
 
 describe('where an upload lands', () => {
@@ -88,10 +99,17 @@ describe('where an upload lands', () => {
     expect(uploadRelativeDir('lukas.korinek@chetty.ai', NOW)).toBe(join('uploads', 'lukas.korinek@chetty.ai', '2026-08-23'));
   });
 
+  /** Claim a target and close its descriptor — the tests care about placement, not about writing. */
+  function claim(dir: string, account: string, name: string): { path: string; name: string; relative: string } {
+    const target = createUploadTarget(dir, account, name, NOW);
+    closeSync(target.fd);
+    return target;
+  }
+
   it('resolves inside the project root and reports the relative path', () => {
     const dir = root();
     try {
-      const target = resolveUploadTarget(dir, 'filip', 'notes.md', NOW);
+      const target = claim(dir, 'filip', 'notes.md');
       expect(target.path.startsWith(dir + sep)).toBe(true);
       expect(target.relative).toBe(join('uploads', 'filip', '2026-08-23', 'notes.md'));
       expect(target.name).toBe('notes.md');
@@ -101,7 +119,7 @@ describe('where an upload lands', () => {
   it('cannot be walked out of the root by the file name', () => {
     const dir = root();
     try {
-      const target = resolveUploadTarget(dir, 'filip', '../../../../../../tmp/owned.sh', NOW);
+      const target = claim(dir, 'filip', '../../../../../../tmp/owned.sh');
       expect(target.path.startsWith(dir + sep)).toBe(true);
       expect(target.name).toBe('owned.sh');
       expect(target.relative).toBe(join('uploads', 'filip', '2026-08-23', 'owned.sh'));
@@ -111,27 +129,73 @@ describe('where an upload lands', () => {
   it('never overwrites: a second file of the same name is suffixed before its extension', () => {
     const dir = root();
     try {
-      const first = resolveUploadTarget(dir, 'filip', 'screenshot.png', NOW);
+      const first = claim(dir, 'filip', 'screenshot.png');
       writeFileSync(first.path, 'one');
-      const second = resolveUploadTarget(dir, 'filip', 'screenshot.png', NOW);
+      const second = claim(dir, 'filip', 'screenshot.png');
       expect(second.name).toBe('screenshot (2).png');
       writeFileSync(second.path, 'two');
-      const third = resolveUploadTarget(dir, 'filip', 'screenshot.png', NOW);
+      const third = claim(dir, 'filip', 'screenshot.png');
       expect(third.name).toBe('screenshot (3).png');
       // The original survived — losing somebody else's file in a shared project is the failure that
       // matters here, not the naming.
-      expect(first.path).not.toBe(second.path);
+      expect(readFileSync(first.path, 'utf8')).toBe('one');
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('hands two simultaneous uploads of one name two different files', () => {
+    // The regression: the old code asked whether the name was free and only then opened it, so two
+    // uploads racing through that gap both got the same path and the second silently replaced the
+    // first. Claiming both targets BEFORE either writes reproduces exactly that interleaving.
+    const dir = root();
+    try {
+      const a = createUploadTarget(dir, 'filip', 'report.txt', NOW);
+      const b = createUploadTarget(dir, 'filip', 'report.txt', NOW);
+      expect(a.path).not.toBe(b.path);
+      writeSync(a.fd, 'from A');
+      writeSync(b.fd, 'from B');
+      closeSync(a.fd);
+      closeSync(b.fd);
+      expect(readFileSync(a.path, 'utf8')).toBe('from A');
+      expect(readFileSync(b.path, 'utf8')).toBe('from B');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('refuses to write through a symlink left at the chosen name', () => {
+    // A DANGLING symlink is the dangerous one: the old existsSync check followed it, saw nothing and
+    // called the name free, so the write landed wherever the link pointed — outside the project.
+    const dir = root();
+    const outside = join(tmpdir(), `elowen-escape-${process.pid}.txt`);
+    try {
+      const planted = createUploadTarget(dir, 'filip', 'invoice.pdf', NOW);
+      closeSync(planted.fd);
+      rmSync(planted.path);
+      symlinkSync(outside, planted.path);
+
+      const target = createUploadTarget(dir, 'filip', 'invoice.pdf', NOW);
+      writeSync(target.fd, 'payload');
+      closeSync(target.fd);
+
+      expect(target.path).not.toBe(planted.path);
+      expect(target.name).toBe('invoice (2).pdf');
+      expect(existsOutside(outside)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outside, { force: true });
+    }
   });
 
   it('keeps two accounts apart inside one shared project', () => {
     const dir = root();
     try {
-      const mine = resolveUploadTarget(dir, 'filip', 'plan.docx', NOW);
-      const theirs = resolveUploadTarget(dir, 'michal', 'plan.docx', NOW);
+      const mine = claim(dir, 'filip', 'plan.docx');
+      const theirs = claim(dir, 'michal', 'plan.docx');
       expect(mine.path).not.toBe(theirs.path);
       expect(mine.name).toBe('plan.docx');
       expect(theirs.name).toBe('plan.docx');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+function existsOutside(path: string): boolean {
+  try { readFileSync(path); return true; } catch { return false; }
+}

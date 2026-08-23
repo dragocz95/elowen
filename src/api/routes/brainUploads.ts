@@ -2,7 +2,7 @@ import { createWriteStream } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { chooseUploadProject, resolveUploadTarget, type UploadProject } from '../../brain/chatUploads.js';
+import { chooseUploadProject, createUploadTarget, type UploadProject } from '../../brain/chatUploads.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp } from '../context.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
@@ -19,7 +19,7 @@ import type { BrainRouteContext } from './brainRouteContext.js';
  *  decides what it can do with one.
  */
 export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d } = route;
+  const { d, forbidden } = route;
 
   /** The projects this account may write into, as upload candidates. An admin with no explicit
    *  assignment administers every project, matching how resolvePolicy treats one for path access. */
@@ -36,6 +36,10 @@ export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteConte
   };
 
   app.post('/brain/uploads', async (c) => {
+    // Writing a file into somebody's project is a mutation, and every other brain mutation is closed to
+    // an agent-scoped token. An upload has no reason to be the one exception.
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+
     const u = c.get('user');
     const raw = c.req.raw.body;
     if (!raw) return c.json({ error: 'request body required' }, 400);
@@ -50,22 +54,36 @@ export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteConte
 
     let target;
     try {
-      target = resolveUploadTarget(project.path, u.username, c.req.query('name') ?? '', new Date());
+      target = createUploadTarget(project.path, u.username, c.req.query('name') ?? '', new Date());
     } catch (e) {
       return c.json({ error: (e as Error).message }, 400);
     }
 
+    // Built before the body is touched so that a failure anywhere below still has something that owns
+    // the descriptor: destroying the sink closes it, where an early throw would leak it.
+    const sink = createWriteStream(target.path, { fd: target.fd, autoClose: true });
     try {
-      await pipeline(Readable.fromWeb(raw as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(target.path));
+      await pipeline(Readable.fromWeb(raw as Parameters<typeof Readable.fromWeb>[0]), sink);
     } catch (e) {
       // A half-written file is worse than none: the agent would read a truncated document and report on
       // it as if it were whole. Remove it and let the caller retry.
+      sink.destroy();
       await rm(target.path, { force: true }).catch(() => {});
       logger('brain-uploads').warn(`upload of "${target.name}" failed: ${(e as Error).message}`);
       return c.json({ error: 'upload failed' }, 500);
     }
 
-    const size = await stat(target.path).then((s) => s.size).catch(() => 0);
+    let size: number;
+    try {
+      size = (await stat(target.path)).size;
+    } catch (e) {
+      // The bytes may well be on disk, but we cannot say what landed. Reporting a confident `size: 0`
+      // with HTTP 200 would hand back an upload that looks fine and send the agent to read a file we
+      // could not even measure.
+      logger('brain-uploads').warn(`upload of "${target.name}" could not be measured: ${(e as Error).message}`);
+      return c.json({ error: 'upload could not be verified' }, 500);
+    }
+
     return c.json({
       path: target.path,
       relative: target.relative,

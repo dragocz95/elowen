@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync, openSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { realPathWithin } from '../plugins/pathGuard.js';
 
@@ -15,9 +15,33 @@ import { realPathWithin } from '../plugins/pathGuard.js';
  *  shared project is shared by everyone in it, and per day because a conversation that runs for months
  *  otherwise buries the file somebody is looking for. */
 
-/** Longest stored file name. Well under the 255-byte ceiling every filesystem we run on enforces, with
- *  room left for the ` (2)` a collision appends. */
-const MAX_NAME = 180;
+/** Longest stored file name, IN BYTES. The filesystem limit is 255 bytes, not characters, and the
+ *  difference is not academic here: `Přehled hospodaření` spends two bytes on every accented letter, so
+ *  a perfectly ordinary Czech file name can pass a 180-CHARACTER check and still be rejected by the
+ *  kernel with ENAMETOOLONG — which the upload would report as a bare 500 with nothing to act on.
+ *  Well under 255 either way, leaving room for the ` (2)` a collision appends. */
+const MAX_NAME_BYTES = 180;
+
+/** Longest extension worth preserving, also in bytes. */
+const MAX_EXT_BYTES = 32;
+
+/** Cut a string to a byte budget without splitting a character in half.
+ *
+ *  Slicing the UTF-8 buffer would be shorter and wrong: it can land mid-sequence and leave a byte that
+ *  decodes to U+FFFD, so the stored name would differ from the one the user sent. Iterating the string
+ *  walks whole code points (surrogate pairs included), so the result is always a prefix of the input. */
+function clampBytes(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+  let out = '';
+  let used = 0;
+  for (const ch of value) {
+    const width = Buffer.byteLength(ch);
+    if (used + width > maxBytes) break;
+    out += ch;
+    used += width;
+  }
+  return out;
+}
 
 export interface UploadProject {
   id: number;
@@ -89,9 +113,10 @@ function safeSegment(raw: string, fallback: string): string {
 export function sanitizeUploadName(raw: string): string {
   // basename() first: the browser sends a bare name, but an API caller can send anything at all.
   const named = safeSegment(basename(String(raw ?? '')), FALLBACK_NAME);
-  if (named.length <= MAX_NAME) return named;
-  const ext = extname(named).slice(0, 32);
-  return `${named.slice(0, MAX_NAME - ext.length)}${ext}`;
+  if (Buffer.byteLength(named) <= MAX_NAME_BYTES) return named;
+  const ext = clampBytes(extname(named), MAX_EXT_BYTES);
+  const stem = clampBytes(named.slice(0, named.length - extname(named).length), MAX_NAME_BYTES - Buffer.byteLength(ext));
+  return `${stem || FALLBACK_NAME}${ext}`;
 }
 
 /** `name (2).pdf` — the suffix goes BEFORE the extension so the file keeps opening in the right app. */
@@ -108,29 +133,41 @@ export function uploadRelativeDir(account: string, now: Date): string {
 }
 
 export interface UploadTarget {
-  /** Absolute path to write. */
+  /** Absolute path of the file, which by now EXISTS and is empty. */
   path: string;
   /** The name actually used, which is the sanitized name plus any collision suffix. */
   name: string;
   /** Path relative to the project root — what the UI shows and what reads nicely in a message. */
   relative: string;
+  /** Descriptor of the exclusively created file. The caller owns it and must close it. */
+  fd: number;
 }
 
 /**
- * Resolve where to write one upload, creating the day directory.
+ * Claim where to write one upload, creating the day directory and the file itself.
+ *
+ * The file is created EXCLUSIVELY (`wx`) rather than tested for and then opened. A check followed by an
+ * open is two operations with a gap between them, and both things that fit in that gap are real: two
+ * people dropping `screenshot.png` into the same shared project in the same second would each see a
+ * free name and the second would silently replace the first, and a symlink left at the chosen name
+ * would send the write wherever it points — `existsSync` FOLLOWS symlinks, so a dangling one does not
+ * even register as a collision. `wx` refuses both in a single syscall, with no gap to exploit.
+ *
+ * It follows that the descriptor is opened BEFORE the request body is touched: a stream cannot be
+ * rewound, so a collision discovered mid-write could no longer be retried under another name.
  *
  * Containment is asserted against the project root even though every segment was sanitized on the way
  * in. The sanitizer is one function that could be wrong; the root check is a second, independent
  * property, and the cost of being wrong here is a write anywhere the daemon user can reach.
  *
- * `exists` is injectable so the collision walk can be tested without touching a disk.
+ * `create` is injectable so the collision walk can be tested without touching a disk.
  */
-export function resolveUploadTarget(
+export function createUploadTarget(
   projectRoot: string,
   account: string,
   rawName: string,
   now: Date,
-  exists: (path: string) => boolean = existsSync,
+  create: (path: string) => number = (path) => openSync(path, 'wx'),
 ): UploadTarget {
   const relativeDir = uploadRelativeDir(account, now);
   const dir = resolve(projectRoot, relativeDir);
@@ -144,14 +181,20 @@ export function resolveUploadTarget(
   const base = sanitizeUploadName(rawName);
   for (let n = 1; n <= MAX_COLLISIONS; n += 1) {
     const name = n === 1 ? base : suffixed(base, n);
-    // A collision must never overwrite: two people can drop `screenshot.png` into the same shared
-    // project on the same day, and the second one silently replacing the first would lose data.
-    if (exists(join(dir, name))) continue;
     const path = join(dir, name);
     if (path !== resolve(path) || name.includes(sep)) {
       throw new Error('upload name escapes its directory');
     }
-    return { path, name, relative: join(relativeDir, name) };
+    let fd: number;
+    try {
+      fd = create(path);
+    } catch (e) {
+      // Taken — by a concurrent upload, or by something already sitting at that name. Either way the
+      // answer is the next name. Anything else is a real filesystem failure the caller must hear.
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw e;
+    }
+    return { path, name, relative: join(relativeDir, name), fd };
   }
   throw new Error(`too many files named "${base}" in this folder today`);
 }
