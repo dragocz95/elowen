@@ -1584,6 +1584,7 @@ export const en = {
     attachRemove: 'Remove attachment',
     attachmentAlt: 'Attached image',
     attachmentOpen: 'Open full size',
+    attachmentGone: 'Image no longer available',
     fileDownload: 'Download',
     attachFailed: 'The file could not be uploaded and was not attached.',
     attachedFile: 'attached file',

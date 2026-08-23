@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -66,6 +66,22 @@ describe('a user turn with attachments', () => {
     const es = await renderSurface('full');
     act(() => es.emit({ type: 'user', text: 'mrkni na tohle', durableId: 'm1', images: [IMAGE] }));
     expect((await attachment()).getAttribute('src')).toBe(`/api/brain/chat-images/${FILE}`);
+  });
+
+  /** The bytes can legitimately be gone: the daily sweep reclaims unreferenced files, and a read-only
+   *  transcript asks for an image the daemon serves only to its owner. Left alone the browser draws its
+   *  broken-image glyph, which reads as a broken CHAT rather than a missing picture — and the surrounding
+   *  link would then lead to a 404. */
+  it('replaces an image that no longer loads with a stated placeholder, not a broken glyph', async () => {
+    const es = await renderSurface('full');
+    act(() => es.emit({ type: 'user', text: 'mrkni na tohle', durableId: 'm1', images: [IMAGE] }));
+    const img = await attachment();
+    await act(async () => { fireEvent.error(img); });
+
+    expect(screen.queryByRole('img', { name: /obrázek|image|obrázok/i })).toBeNull();
+    expect(screen.getByText(/no longer available|už není k dispozici|už nie je k dispozícii/i)).toBeInTheDocument();
+    // No click-through either: a link to a 404 is worse than no link.
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('lets the thumbnail open the full-size file', async () => {

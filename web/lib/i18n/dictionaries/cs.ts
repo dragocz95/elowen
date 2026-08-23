@@ -1584,6 +1584,7 @@ export const cs = {
     attachRemove: 'Odebrat přílohu',
     attachmentAlt: 'Přiložený obrázek',
     attachmentOpen: 'Otevřít v plné velikosti',
+    attachmentGone: 'Obrázek už není k dispozici',
     fileDownload: 'Stáhnout',
     attachFailed: 'Soubor se nepodařilo nahrát a nebyl přiložen.',
     attachedFile: 'přiložený soubor',

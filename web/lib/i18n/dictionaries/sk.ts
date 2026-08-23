@@ -1578,6 +1578,7 @@ export const sk = {
     attachRemove: 'Odobrať prílohu',
     attachmentAlt: 'Priložený obrázok',
     attachmentOpen: 'Otvoriť v plnej veľkosti',
+    attachmentGone: 'Obrázok už nie je k dispozícii',
     fileDownload: 'Stiahnuť',
     attachFailed: 'Súbor sa nepodarilo nahrať a nebol priložený.',
     attachedFile: 'priložený súbor',

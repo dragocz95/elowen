@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3 } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, PanelLeft, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
@@ -410,22 +410,46 @@ function SessionEvents({ events, tk }: { events: SessionEventItem[]; tk?: string
  *  `<img>` hits the same-origin proxy, which turns the session cookie into the daemon bearer, so no
  *  signed link is involved. Clicking opens the full-size file in a new tab. */
 function Attachments({ images, full }: { images: BrainMessageImage[]; full?: boolean }) {
-  const { t } = useTranslation();
   return (
     <div className={`flex flex-wrap gap-2 ${full ? 'my-1.5' : 'mt-1.5'}`}>
-      {images.map((image) => (
-        <a
-          key={image.url}
-          href={`/api${image.url}`}
-          target="_blank"
-          rel="noreferrer"
-          title={t.brainChat.attachmentOpen}
-          className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-accent"
-        >
-          <img src={`/api${image.url}`} alt={t.brainChat.attachmentAlt} className="max-h-48 max-w-[min(16rem,100%)] object-contain" />
-        </a>
-      ))}
+      {images.map((image) => <AttachmentThumb key={image.url} image={image} />)}
     </div>
+  );
+}
+
+/** One attachment, with an answer for the case where the bytes are gone. A stored picture can stop
+ *  resolving — the daily sweep reclaims files nothing references any more, and a transcript opened
+ *  read-only asks for an image the daemon will only serve to its owner (a 404 by design, so the request
+ *  cannot be used to probe what other conversations hold). The browser's own reply to that is a broken
+ *  image glyph, which reads as "the chat is buggy" rather than "this picture is no longer here". State it
+ *  instead, and drop the click-through: a link to a 404 is worse than no link. */
+function AttachmentThumb({ image }: { image: BrainMessageImage }) {
+  const { t } = useTranslation();
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-2 text-xs text-text-muted">
+        <ImageOff size={14} className="shrink-0" aria-hidden />
+        {t.brainChat.attachmentGone}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={`/api${image.url}`}
+      target="_blank"
+      rel="noreferrer"
+      title={t.brainChat.attachmentOpen}
+      className="block overflow-hidden rounded-lg border border-border transition-colors hover:border-accent"
+    >
+      <img
+        src={`/api${image.url}`}
+        alt={t.brainChat.attachmentAlt}
+        onError={() => setFailed(true)}
+        className="max-h-48 max-w-[min(16rem,100%)] object-contain"
+      />
+    </a>
   );
 }
 
