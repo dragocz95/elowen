@@ -4,6 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { createWrapper } from '../test-utils';
 import PluginHostPage from '../../app/p/[plugin]/[[...rest]]/page';
 import { en } from '../../lib/i18n/dictionaries/en';
+import { PageHeaderProvider, usePageHeader } from '../../lib/pageHeader';
 import type { PluginUiRegistration } from '../../lib/pluginUi';
 
 const route = vi.hoisted(() => ({ plugin: 'skills', rest: [] as string[] }));
@@ -31,8 +32,14 @@ const mount = (opts: { listing?: unknown[]; admin?: boolean } = {}) => {
     { name: 'skills', url: '/plugins/skills/web/index.js', apiVersion: 1, nav: [], settings: [{ id: 'skills', label: 'Skills' }] },
   ]);
   client.setQueryData(['me'], { user: { id: 7, username: 'amy', is_admin: opts.admin ?? true } });
-  return render(<Wrapper><PluginHostPage /></Wrapper>);
+  return render(<Wrapper><PageHeaderProvider><PluginHostPage /><MastheadProbe /></PageHeaderProvider></Wrapper>);
 };
+
+/** Stands in for the shell's masthead: the page name the route publishes is what both the heading and
+ *  the browser tab (components/shell/DocumentTitle) read. */
+function MastheadProbe() {
+  return <div data-testid="masthead">{usePageHeader()?.header.title ?? ''}</div>;
+}
 
 const fullRegistration = registration.value;
 beforeEach(() => { route.rest = []; registration.value = fullRegistration; });
@@ -74,8 +81,9 @@ describe('plugin host route', () => {
   });
 
   // The deck page around a section supplies the page column and names the page; standalone, the route
-  // owes the section the column and the masthead/tab title, and tells it that it is on a page so it can
-  // head itself. Without that it renders as a fragment on an empty screen.
+  // owes the section the column and the masthead title, and tells it that it is on a page so it can
+  // head itself. Without that it renders as a fragment on an empty screen. The browser tab reads the
+  // same published name — see tests/components/shell/DocumentTitle.test.tsx.
   it('gives a standalone settings section the page column, the page name and its surface', async () => {
     route.rest = ['settings', 'skills'];
     const seen: string[] = [];
@@ -89,7 +97,7 @@ describe('plugin host route', () => {
     expect(page).not.toBeNull();
     expect(page!.contains(screen.getByTestId('section'))).toBe(true);
     expect(seen).toContain('page');
-    expect(global.document.title).toContain('Skills');
+    await waitFor(() => expect(screen.getByTestId('masthead')).toHaveTextContent('Skills'));
   });
 
   // Settings is core-only, so a page IS where a section lives now — and a section autosaves. The

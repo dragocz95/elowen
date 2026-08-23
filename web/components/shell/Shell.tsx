@@ -10,6 +10,7 @@ import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
 import { OrbitalNav } from './OrbitalNav';
 import { TopBar } from './TopBar';
+import { DocumentTitle } from './DocumentTitle';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
@@ -172,6 +173,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
         </div>
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>
+      {/* Names the browser tab for every route under the shell — see components/shell/DocumentTitle. */}
+      <DocumentTitle />
       <CommandPalette />
       {!docked && !onChat && <AdvisorLauncher onOpen={() => dock.setOpen(true)} />}
     </BrainChatProvider>
