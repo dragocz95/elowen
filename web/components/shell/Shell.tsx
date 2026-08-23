@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { usePathname } from 'next/navigation';
-import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT } from '../../lib/brainDock';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../lib/brainDock';
+import { useMobileViewport } from '../../lib/useMobile';
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
 import { LanguageProvider, type Locale } from '../../lib/i18n';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
@@ -10,7 +11,6 @@ import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
 import { OrbitalNav } from './OrbitalNav';
 import { TopBar } from './TopBar';
-import { DocumentTitle } from './DocumentTitle';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
@@ -23,6 +23,7 @@ import { UiScaleProvider } from '../../lib/useUiScale';
 import { ThemeProvider } from '../../lib/useTheme';
 import { PageHeaderProvider } from '../../lib/pageHeader';
 import { RouteTransition } from './RouteTransition';
+import { DocumentTitle } from './DocumentTitle';
 import { EffectsProvider } from '../../lib/useEffects';
 
 /** How the rail presents itself, decided by the shell from the measured room it has. */
@@ -66,19 +67,27 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // open in Terminál mode — see AdvisorPanel). This is a UX guard only; the single controller in
   // BrainChatProvider guarantees one SSE stream regardless of how many surfaces mount.
   const onChat = usePathname() === '/chat';
+  const router = useRouter();
+  const mobile = useMobileViewport();
+  const openAdvisor = useCallback(() => {
+    const target = advisorOpenTarget({ onChat, mobile });
+    if (target === 'none') return;
+    if (target === 'chat-page') { router.push('/chat'); return; }
+    dock.addAdvisorPane();
+    dock.setOpen(true);
+  }, [onChat, mobile, router, dock]);
   // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in
   // web chat (Sessions → open in chat). BrainChat mounts on open and switches to the requested session.
   // On /chat the full-page surface reads the same controller and IS the chat host — the request loads
   // there directly, so popping the dock over it would only duplicate the conversation.
   useEffect(() => {
-    const onOpen = () => { if (onChat) return; dock.addAdvisorPane(); dock.setOpen(true); };
-    window.addEventListener(BRAIN_OPEN_EVENT, onOpen);
-    window.addEventListener(BRAIN_COMPOSE_EVENT, onOpen);
+    window.addEventListener(BRAIN_OPEN_EVENT, openAdvisor);
+    window.addEventListener(BRAIN_COMPOSE_EVENT, openAdvisor);
     return () => {
-      window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
-      window.removeEventListener(BRAIN_COMPOSE_EVENT, onOpen);
+      window.removeEventListener(BRAIN_OPEN_EVENT, openAdvisor);
+      window.removeEventListener(BRAIN_COMPOSE_EVENT, openAdvisor);
     };
-  }, [dock, onChat]);
+  }, [openAdvisor]);
   // When the dock takes the left edge, the sidebar moves to the right edge (mirrored) so the two
   // never stack on the same side. Top/bottom docks span the full width above/below the row.
   const dockLeft = docked && dock.state.side === 'left';
@@ -160,6 +169,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
   // Deliberately inside ShellLayout only, never over ShellBody's chromeless /terminal/* branch.
   return (
     <BrainChatProvider>
+      {/* Names the browser tab for every route under the shell — see components/shell/DocumentTitle. */}
+      <DocumentTitle />
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
         <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
@@ -173,10 +184,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
         </div>
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>
-      {/* Names the browser tab for every route under the shell — see components/shell/DocumentTitle. */}
-      <DocumentTitle />
       <CommandPalette />
-      {!docked && !onChat && <AdvisorLauncher onOpen={() => dock.setOpen(true)} />}
+      {!docked && !onChat && <AdvisorLauncher onOpen={openAdvisor} />}
     </BrainChatProvider>
   );
 }

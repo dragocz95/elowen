@@ -183,7 +183,7 @@ function CardBlock({ card }: { card: BrainCard }) {
           <MorePill expanded={expanded} hidden={items.length - CARD_PREVIEW_ITEMS} onToggle={() => setExpanded((v) => !v)} />
         </div>
       ) : null}
-      {!collapsed && card.body ? <div className="whitespace-pre-wrap text-text-muted">{card.body}</div> : null}
+      {!collapsed && card.body ? <div className="whitespace-pre-wrap break-words text-text-muted">{card.body}</div> : null}
     </div>
   );
 }
@@ -294,7 +294,7 @@ function ReasoningBlock({ text, live, full }: { text: string; live: boolean; ful
         <span>{t.brainChat.reasoningLabel}</span>
         <span className="tabular-nums opacity-60">{formatDuration(elapsed)}</span>
       </button>
-      {open ? <p className={`whitespace-pre-wrap border-l-2 border-border pl-2 italic text-text-muted ${full ? 'text-xs' : 'text-tiny'}`}>{text}</p> : null}
+      {open ? <p className={`whitespace-pre-wrap break-words border-l-2 border-border pl-2 italic text-text-muted ${full ? 'text-xs' : 'text-tiny'}`}>{text}</p> : null}
     </div>
   );
 }
@@ -498,7 +498,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   const roleAttr = you ? 'you' : 'assistant';
   const body = turn.role === 'you'
     ? <>
-        {turn.text.trim() ? <div className={`whitespace-pre-wrap text-sm leading-relaxed text-text ${full ? 'my-1.5' : ''}`}>{turn.text}</div> : null}
+        {turn.text.trim() ? <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-text ${full ? 'my-1.5' : ''}`}>{turn.text}</div> : null}
         {turn.images?.length ? <Attachments images={turn.images} full={full} /> : null}
       </>
     : <>{turn.segments.map((seg, i) => (seg.kind === 'text'
@@ -529,7 +529,7 @@ function Message({ turn, full, showRole, showThoughts, tk }: { turn: ChatTurn; f
   if (you) {
     return (
       <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="ml-8 flex max-w-full flex-col items-end self-end">
-        <div className="whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+        <div className="whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
           {turn.role === 'you' ? turn.text : null}
           {turn.role === 'you' && turn.images?.length ? <Attachments images={turn.images} /> : null}
         </div>

@@ -52,3 +52,17 @@ export function consumePendingBrainComposer(): string | null {
   pendingComposer = null;
   return text;
 }
+
+/** Where a request to open the advisor should land.
+ *
+ *  A phone gets the full /chat page rather than the dock: the dock is a side panel sized in PIXELS and
+ *  anchored to a window edge, with a drag handle and a resizable split, so on a phone it arrived as a
+ *  cramped overlay with the conversation squeezed into whatever width was left over.
+ *
+ *  `mobile` is `undefined` until the viewport has actually been measured, and that case deliberately
+ *  resolves to the dock: the measurement lands on mount, long before anyone can tap, and guessing
+ *  "mobile" would send a desktop user to a different page for one frame. */
+export function advisorOpenTarget(opts: { onChat: boolean; mobile: boolean | undefined }): 'none' | 'chat-page' | 'dock' {
+  if (opts.onChat) return 'none'; // that page is already the chat host; popping the dock would duplicate it
+  return opts.mobile === true ? 'chat-page' : 'dock';
+}
