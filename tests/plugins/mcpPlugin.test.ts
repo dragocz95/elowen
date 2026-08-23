@@ -199,6 +199,97 @@ describe('mcp plugin — owner-scoped management tools', () => {
     await ownerCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
   });
 
+  // Moving a server between scopes is its own operation: PATCH resolves the row in the scope it is ASKED
+  // for, so a request naming the new scope reads to it as a server that does not exist.
+  describe('scope transfer', () => {
+    const remote = (name: string, scope: 'personal' | 'instance') =>
+      ({ scope, name, transport: 'http', url: 'https://example.invalid/mcp', enabled: false });
+    const transferRoute = (ctx: ReturnType<typeof fakeCtx>) =>
+      ctx.apiRoutes.find((route) => route.path === 'transfer' && route.method === 'POST')!;
+    const move = (ctx: ReturnType<typeof fakeCtx>, fromScope: string, name: string, toScope: string) =>
+      transferRoute(ctx).handler({ json: async () => ({ fromScope, name, toScope }) }) as Promise<{ status?: number; body: Record<string, unknown> }>;
+    const ownerOf = (db: Db, name: string) =>
+      (db.prepare('SELECT owner_user_id FROM p_mcp_servers WHERE name = ?').get(name) as { owner_user_id: number | null }).owner_user_id;
+
+    it('moves a remote server between the instance set and the caller own set, in both directions', async () => {
+      const db = openPluginTablesDb();
+      const amy = new UserStore(db).create('amy-move', 'pw');
+      const ctx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
+      await register(ctx as never);
+      const add = ctx.tools.find((tool) => tool.name === 'AddMcpServer')!;
+      await add.execute('1', remote('shared-remote', 'instance'));
+      expect(ownerOf(db, 'shared-remote')).toBeNull();
+
+      const taken = await move(ctx, 'instance', 'shared-remote', 'personal');
+      expect(taken.body.server).toMatchObject({ name: 'shared-remote', scope: 'personal' });
+      expect(ownerOf(db, 'shared-remote')).toBe(amy.id);
+      // It really left the instance set: the tool that lists that scope no longer sees it.
+      const list = ctx.tools.find((tool) => tool.name === 'ListMcpServers')!;
+      expect(resultText(await list.execute('2', { scope: 'instance' }))).toBe('No instance MCP servers configured.');
+      expect(resultText(await list.execute('3', { scope: 'personal' }))).toContain('shared-remote');
+
+      const given = await move(ctx, 'personal', 'shared-remote', 'instance');
+      expect(given.body.server).toMatchObject({ scope: 'instance' });
+      expect(ownerOf(db, 'shared-remote')).toBeNull();
+      await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+    });
+
+    // Whether a local process may run is authority the DESTINATION owner needs, and this plugin cannot
+    // ask — it has no view of accounts, and assertTransportAuthority reads the CALLER, who is the wrong
+    // person the moment a server changes hands. A move would also hand over the stored env.
+    it('refuses to move a local-process server, leaving it where it was', async () => {
+      const db = openPluginTablesDb();
+      const amy = new UserStore(db).create('amy-stdio-move', 'pw');
+      const ctx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
+      await register(ctx as never);
+      const add = ctx.tools.find((tool) => tool.name === 'AddMcpServer')!;
+      await add.execute('1', { scope: 'instance', name: 'local-proc', transport: 'stdio', command: process.execPath, enabled: false });
+
+      const refused = await move(ctx, 'instance', 'local-proc', 'personal');
+      expect(refused.status).toBe(409);
+      expect(String(refused.body.error)).toMatch(/local-process/);
+      expect(ownerOf(db, 'local-proc')).toBeNull();
+      await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+    });
+
+    it('refuses a move onto a name the destination scope already holds', async () => {
+      const db = openPluginTablesDb();
+      const amy = new UserStore(db).create('amy-clash', 'pw');
+      const ctx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
+      await register(ctx as never);
+      const add = ctx.tools.find((tool) => tool.name === 'AddMcpServer')!;
+      // Personal first: an instance row of that name would block creating the personal one.
+      await add.execute('1', remote('dup', 'personal'));
+      await add.execute('2', remote('dup', 'instance'));
+
+      const refused = await move(ctx, 'instance', 'dup', 'personal');
+      expect(refused.status).toBe(409);
+      expect(String(refused.body.error)).toMatch(/already exists/);
+      // Both rows survive, each in the scope it was created in.
+      const owners = (db.prepare('SELECT owner_user_id FROM p_mcp_servers WHERE name = ? ORDER BY owner_user_id IS NULL').all('dup') as { owner_user_id: number | null }[]);
+      expect(owners.map((row) => row.owner_user_id)).toEqual([amy.id, null]);
+      await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+    });
+
+    // Both directions touch the instance set, so both are an administrator's decision — the same rule
+    // that governs creating one.
+    it('refuses a non-administrator either direction', async () => {
+      const db = openPluginTablesDb();
+      const amy = new UserStore(db).create('amy-nonadmin', 'pw');
+      const ownerCtx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: true });
+      await register(ownerCtx as never);
+      await ownerCtx.tools.find((tool) => tool.name === 'AddMcpServer')!.execute('1', remote('mine', 'personal'));
+      await ownerCtx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+
+      const ctx = fakeCtx({}, undefined, db, { elowenUserId: amy.id, owner: false });
+      await register(ctx as never);
+      const refused = await move(ctx, 'personal', 'mine', 'instance');
+      expect(refused.status).toBe(403);
+      expect(ownerOf(db, 'mine')).toBe(amy.id);
+      await ctx.hooks.find((hook) => hook.name === 'plugin.reload.before')!.run({});
+    });
+  });
+
   it('adds, lists and removes a personal server only for its owning account', async () => {
     const db = openPluginTablesDb();
     const users = new UserStore(db);

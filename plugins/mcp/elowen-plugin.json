@@ -1,13 +1,13 @@
 {
   "name": "mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "apiVersion": "1",
   "description": "Bridge external MCP servers (stdio, HTTP, SSE) into the assistant's toolset.",
   "entry": "index.mjs",
   "icons": { "mcp__*": "🧩", "*McpServer*": "🧩", "ListMcpResources": "🧩", "ReadMcpResource": "🧩" },
   "provides": {
     "tools": ["AddMcpServer", "ListMcpServers", "RemoveMcpServer", "ReconnectMcpServer", "ListMcpResources", "ReadMcpResource", "mcp__*"],
-    "apiRoutes": ["servers", "reconnect"]
+    "apiRoutes": ["servers", "reconnect", "transfer"]
   },
   "web": {
     "entry": "web/index.js",

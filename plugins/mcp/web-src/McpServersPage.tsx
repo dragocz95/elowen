@@ -270,7 +270,7 @@ function ServerEditor({ server, draft, saving, busy, error, canManageInstance, o
  *  instance owner, the shared ones — as one register, with the selected server's editor in the
  *  workspace's detail drawer. */
 export function McpServersPage() {
-  const { components: C, hooks } = runtime();
+  const { components: C, hooks, utils } = runtime();
   const s = hooks.usePluginStrings('mcp');
   const { t } = hooks.useTranslation();
   const [data, setData] = useState<McpServersResponse>();
@@ -318,6 +318,18 @@ export function McpServersPage() {
     if (!editor) return;
     setSaving(true); setBusy(true); setActionError(undefined);
     try {
+      // Changing the scope is a MOVE, not a field edit: PATCH resolves the server in the scope it is
+      // ASKED for, so a request carrying the new scope reads to it as a server that does not exist.
+      // The move runs FIRST because it is the step that can be refused on its own — a name already
+      // taken in the target scope, or a local-process server — and a refusal has to leave the server
+      // exactly where it was rather than edited into a scope it never reached.
+      if (selected && editor.draft.scope !== selected.scope) {
+        await apiJson('/plugins/mcp/api/transfer', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope }),
+        });
+      }
       const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : '/plugins/mcp/api/servers';
       await apiJson(path, {
         method: selected ? 'PATCH' : 'POST',
@@ -326,7 +338,14 @@ export function McpServersPage() {
       });
       setEditor(undefined);
       await load();
-    } catch { setActionError(s.saveError); }
+    } catch (error) {
+      // Show what the daemon actually refused — a collision and a local-process server are different
+      // problems and the user can only act on the difference.
+      setActionError(utils.apiErrorMessage(error) || s.saveError);
+      // A move that landed before a later step failed already changed the register, so re-read it
+      // instead of leaving the page asserting a scope the server no longer has.
+      await load();
+    }
     finally { setSaving(false); setBusy(false); }
   };
 

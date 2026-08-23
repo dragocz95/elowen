@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll, afterEach } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../msw';
@@ -118,6 +118,75 @@ describe('MCP page load states', () => {
     // The failure lands in the status cell as ONE line, not as a wrapped paragraph in a card.
     expect(screen.getByText('connect ECONNREFUSED')).toBeInTheDocument();
     expect(screen.queryByText(strings.loadError!)).not.toBeInTheDocument();
+  });
+});
+
+// Changing the scope is a MOVE on the daemon, not a field on the PATCH: PATCH resolves the server in the
+// scope it is asked for, so sending the new one reads to it as a server that does not exist.
+describe('MCP scope transfer', () => {
+  it('moves the server before saving the edit, and only when the scope actually changed', async () => {
+    const calls: string[] = [];
+    let moveBody: unknown;
+    msw.use(
+      http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [], instance: [remote], canManageInstance: true })),
+      http.post('*/api/plugins/mcp/api/transfer', async ({ request }) => {
+        calls.push('transfer');
+        moveBody = await request.json();
+        return HttpResponse.json({ server: { ...remote, scope: 'personal' } });
+      }),
+      http.patch('*/api/plugins/mcp/api/servers/docs', () => { calls.push('patch'); return HttpResponse.json({ server: remote }); }),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
+
+    // The scope picker is a SelectMenu: it renders its options only while the listbox is open.
+    fireEvent.click(drawer.getByRole('combobox', { name: strings.scope }));
+    fireEvent.click(await screen.findByRole('option', { name: strings.scopePersonal }));
+    fireEvent.click(drawer.getByRole('button', { name: strings.save }));
+
+    // The move runs FIRST — a refusal must leave the server in the scope it was in, not edited into one
+    // it never reached — and it names where the server is NOW.
+    await waitFor(() => expect(calls).toEqual(['transfer', 'patch']));
+    expect(moveBody).toEqual({ fromScope: 'instance', name: 'docs', toScope: 'personal' });
+  });
+
+  it('saves an ordinary edit without calling the move at all', async () => {
+    const calls: string[] = [];
+    msw.use(
+      http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [], instance: [remote], canManageInstance: true })),
+      http.post('*/api/plugins/mcp/api/transfer', () => { calls.push('transfer'); return HttpResponse.json({ server: remote }); }),
+      http.patch('*/api/plugins/mcp/api/servers/docs', () => { calls.push('patch'); return HttpResponse.json({ server: remote }); }),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
+    fireEvent.change(drawer.getByLabelText(strings.url!), { target: { value: 'https://mcp.example.test/v2' } });
+    fireEvent.click(drawer.getByRole('button', { name: strings.save }));
+
+    await waitFor(() => expect(calls).toEqual(['patch']));
+  });
+
+  // The daemon refuses a local-process server and a name already taken in the target scope. Those are
+  // different problems and the user can only act on the difference, so the page must not flatten both
+  // into its own generic message.
+  it('shows the daemon refusal rather than a generic save error', async () => {
+    msw.use(
+      http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [], instance: [remote], canManageInstance: true })),
+      http.post('*/api/plugins/mcp/api/transfer', () => HttpResponse.json(
+        { error: 'local-process MCP servers cannot change scope — create the server again in the target scope instead' },
+        { status: 409 },
+      )),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }));
+    const drawer = within(await screen.findByRole('dialog', { name: 'docs' }));
+    fireEvent.click(drawer.getByRole('combobox', { name: strings.scope }));
+    fireEvent.click(await screen.findByRole('option', { name: strings.scopePersonal }));
+    fireEvent.click(drawer.getByRole('button', { name: strings.save }));
+
+    expect(await screen.findByText(/local-process MCP servers cannot change scope/)).toBeInTheDocument();
+    expect(screen.queryByText(strings.saveError!)).toBeNull();
   });
 });
 

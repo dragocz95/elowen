@@ -277,6 +277,67 @@ async function updateMcpServerForScope(ctx, scope, name, input) {
   }
 }
 
+/** Move a server between the instance set and the caller's OWN personal set. Both ends resolve through
+ *  `ownerForScope`, so this cannot place a server in a scope AddMcpServer would refuse — and because
+ *  'personal' resolves to the caller, a server is only ever taken to or from the acting account. There is
+ *  deliberately no way to hand one to a third party: that would need an authority check on somebody who
+ *  is not making the request.
+ *
+ *  stdio is refused outright, and that is the whole reason this is safe. Whether a local process may run
+ *  is authority the DESTINATION owner needs to hold, and this plugin cannot ask — it declares
+ *  `reads: ['db']`, so it has no view of accounts, while `assertTransportAuthority` reads the CALLER,
+ *  which is the wrong person the moment a server changes hands. Moving one would also hand the
+ *  destination the stored `env`, which `editableServer` returns to whoever owns the row. So stdio stays
+ *  what its own comment already says it is: an administrator's local-process decision, delegated by
+ *  granting `terminal`, never by moving a row. */
+async function moveMcpServerScope(ctx, fromScope, name, toScope) {
+  const fromOwner = ownerForScope(ctx, fromScope);
+  const toOwner = ownerForScope(ctx, toScope);
+  if (fromOwner === toOwner) throw new Error('the MCP server already belongs to that scope');
+  const spec = specForOwner(fromOwner, String(name ?? '').trim());
+  if (!spec) throw new Error(`unknown ${fromScope} MCP server "${name}"`);
+  if (transportKind(spec) === 'stdio') {
+    throw new Error('local-process MCP servers cannot change scope — create the server again in the target scope instead');
+  }
+  // The visibility rule AddMcpServer applies, minus the server being moved: the name must not collide
+  // with the instance set, nor with the destination account's own servers.
+  if (state.specs.some((candidate) => candidate !== spec && candidate.name === spec.name
+    && (candidate.ownerUserId == null || candidate.ownerUserId === toOwner))) {
+    throw new Error(`MCP server "${spec.name}" already exists in that scope`);
+  }
+  // Tear down FIRST. Every runtime map — live, servers, connecting, reconnecting — is keyed by
+  // serverKey(ownerUserId, name), so a connection closed after the owner changed would be looked up
+  // under a key it was never stored with: the transport would leak, and for a spawned server so would
+  // its process group.
+  await closeLiveSpec(spec);
+  const previousOwner = spec.ownerUserId;
+  const previousKey = serverKey(previousOwner, spec.name);
+  const sql = previousOwner == null
+    ? 'UPDATE p_mcp_servers SET owner_user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE owner_user_id IS NULL AND name = ?'
+    : 'UPDATE p_mcp_servers SET owner_user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE owner_user_id = ? AND name = ?';
+  state.db.prepare(sql).run(...(previousOwner == null ? [toOwner, spec.name] : [toOwner, previousOwner, spec.name]));
+  // The cached tool list is kept on purpose: the SPECIFICATION did not change, so what the server last
+  // advertised is still what it advertises — and a personal server composes its tools from that cache
+  // without connecting at all.
+  spec.ownerUserId = toOwner;
+  state.servers.delete(previousKey);
+  setServerState(spec, { status: spec.enabled ? 'disconnected' : 'disabled', transport: transportKind(spec), lastError: null });
+  // An instance server is expected to be LIVE; a personal one connects lazily on first use, which is
+  // exactly the state AddMcpServer leaves it in. A failed connect is reported in the server's own state
+  // rather than rolled back: this specification was already verified when it was created, so a server
+  // that is unreachable right now is no evidence that the move was wrong.
+  if (toOwner == null && spec.enabled) {
+    try {
+      const tools = await connectServer(ctx, spec, state.live);
+      if (tools.length) registerBridgedTools(ctx, connectedClient(state.live), [{ spec, tools }]);
+    } catch (error) {
+      ctx.logger?.warn?.(`mcp: moved "${spec.name}" to the instance scope but could not connect it: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  ctx.requestReload();
+  return editableServer(spec);
+}
+
 const state = {
   ctx: null,
   db: null,
@@ -712,6 +773,17 @@ function registerManagementApi(ctx) {
       try {
         const body = await req.json();
         return { body: await removeMcpServerForScope(ctx, body.scope, decodeURIComponent(req.path)) };
+      } catch (error) { return apiError(error); }
+    },
+  });
+  // Separate from PATCH because it is a different operation: PATCH resolves the server in the scope it is
+  // ASKED for, so a request naming the new scope looks to it like a server that does not exist.
+  ctx.registerApiRoute({
+    path: 'transfer', method: 'POST', access: 'user',
+    handler: async (req) => {
+      try {
+        const body = await req.json();
+        return { body: { server: await moveMcpServerScope(ctx, body.fromScope, body.name, body.toScope) } };
       } catch (error) { return apiError(error); }
     },
   });

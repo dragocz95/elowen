@@ -65,6 +65,10 @@ interface McpRuntime {
     usePluginStrings(plugin: string): Record<string, string>;
     useTranslation(): { t: { common: { close: string }; pluginUi: { eyebrow: string } } };
   };
+  utils: {
+    /** The daemon's own refusal text when it sent one, rather than a bare status line. */
+    apiErrorMessage(error: unknown): string;
+  };
   api(path: string, init?: RequestInit): Promise<unknown>;
 }
 
