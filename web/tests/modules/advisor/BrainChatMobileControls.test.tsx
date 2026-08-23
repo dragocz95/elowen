@@ -8,8 +8,9 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 
-// The conversation bar carries different controls on a phone (folded into the ⋯ popover) than on desktop
-// (inline). Which set is chosen must wait for the viewport measurement.
+// The conversation bar carries different controls on a phone (model picker and work-mode pill fold into
+// the ⋯ popover) than on desktop (everything inline). Which set is chosen must wait for the viewport
+// measurement. The reasoning button is the exception — it stays inline at every width.
 
 class FakeES {
   static instances: FakeES[] = [];
@@ -49,15 +50,39 @@ function renderSurface() {
 }
 
 describe('conversation bar controls', () => {
-  it('never paints the desktop controls on a phone, not even for one commit', async () => {
+  it('never paints the desktop-only controls on a phone, not even for one commit', async () => {
     // The boolean-returning useMobile reports `false` before the first measurement, so the phone briefly
     // got the inline desktop bar and then swapped it for the ⋯ popover — a visible rearrangement on load.
+    // The model picker is the marker now: on a phone it exists only INSIDE the popover, so any mount
+    // before that popover is opened is the flash coming back.
     setViewport(true);
-    const sawDesktopControls = watchMounts('[data-testid="chat-thoughts-toggle"]');
+    const sawDesktopControls = watchMounts('[data-testid="chat-model-picker"]');
     renderSurface();
 
     await screen.findByRole('button', { name: 'More options' });
     expect(sawDesktopControls()).toBe(false);
+  });
+
+  it('keeps the reasoning button one tap away on a phone', async () => {
+    // It is the control that gets changed mid-conversation, so it is the one that must not sit behind ⋯.
+    setViewport(true);
+    renderSurface();
+
+    expect(await screen.findByTestId('chat-thoughts-toggle')).toBeInTheDocument();
+  });
+
+  it('does not also list reasoning inside the ⋯ popover', async () => {
+    // Two ways to reach one modal is how a bar starts drifting; the inline button is the only one.
+    setViewport(true);
+    renderSurface();
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+
+    const popover = await waitFor(() => {
+      const el = document.querySelector('[data-chat-popover]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(popover.textContent).not.toContain('Reasoning');
   });
 
   it('keeps the desktop controls inline off a phone', async () => {
@@ -65,6 +90,7 @@ describe('conversation bar controls', () => {
     renderSurface();
 
     expect(await screen.findByTestId('chat-thoughts-toggle')).toBeInTheDocument();
+    expect(await screen.findByTestId('chat-model-picker')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'More options' })).toBeNull();
   });
 

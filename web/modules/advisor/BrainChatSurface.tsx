@@ -643,12 +643,13 @@ function WorkModePill({ mode, full }: { mode: BrainWorkMode; full?: boolean }) {
   );
 }
 
-/** Phone-only overflow for the conversation bar: on a narrow screen the bar can't hold the model picker,
- *  work-mode pill and reasoning button inline without cramming, so they fold behind one ⋯ button.
+/** Phone-only overflow for the conversation bar: on a narrow screen the bar can't hold the model picker
+ *  and work-mode pill inline without cramming, so they fold behind one ⋯ button. The reasoning button is
+ *  deliberately NOT here — it is changed often enough that burying it behind two taps was the complaint.
  *  A transient popover (outside-pointer / Escape dismiss, same grammar as ModelPicker), never a persistent
  *  panel. Desktop keeps every control inline and never mounts this. */
-function BarOverflowMenu({ workMode, onOpenReasoning, hasTodos, onOpenTodos }: {
-  workMode: BrainWorkMode; onOpenReasoning: () => void; hasTodos: boolean; onOpenTodos: () => void;
+function BarOverflowMenu({ workMode, hasTodos, onOpenTodos }: {
+  workMode: BrainWorkMode; hasTodos: boolean; onOpenTodos: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -682,10 +683,6 @@ function BarOverflowMenu({ workMode, onOpenReasoning, hasTodos, onOpenTodos }: {
               <span>{t.chat.todos}</span>
             </button>
           ) : null}
-          <button type="button" onClick={() => { setOpen(false); onOpenReasoning(); }} className={rowClass}>
-            <Brain size={16} className="text-text-muted" aria-hidden />
-            <span>{t.reasoning.modalTitle}</span>
-          </button>
           {workMode !== 'build' ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-muted">
               <span>{t.brainChat.workModeLabel}:</span><WorkModePill mode={workMode} full />
@@ -949,16 +946,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             </button>
           ) : null}
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{active?.title || t.brainChat.newChat}</span>
-          {/* On a phone the model picker, work-mode pill and reasoning button fold into the ⋯ menu below; on
-              desktop they stay inline. The pill is a security indicator (plan/workflow), so it also shows
-              inline on desktop and, when non-build, inside the ⋯ menu on mobile. */}
+          {/* On a phone the model picker and work-mode pill fold into the ⋯ menu below; on desktop they
+              stay inline. The pill is a security indicator (plan/workflow), so it also shows inline on
+              desktop and, when non-build, inside the ⋯ menu on mobile. */}
           {mobile === false ? (
             <>
               <WorkModePill mode={workMode} full />
               <ModelPicker variant="full" />
-              <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
             </>
           ) : null}
+          {/* The reasoning button stays inline at EVERY width. It is the one control here that gets
+              changed mid-conversation rather than set once, and two taps through ⋯ for something that
+              frequent is what made the phone feel worse than the desktop. It is a single 8×8 icon, so
+              the only thing it costs the narrow bar is a little more truncation of the title. */}
+          <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
           {onOpenTelemetry ? (
             <button
               type="button"
@@ -987,7 +988,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           {mobile === true ? (
             <BarOverflowMenu
               workMode={workMode}
-              onOpenReasoning={() => setReasoningOpen(true)}
               hasTodos={todoCards.length > 0}
               onOpenTodos={() => setTodosOpen(true)}
             />
