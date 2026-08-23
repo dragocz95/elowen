@@ -104,13 +104,16 @@ function migrate(db: Db): void {
   dropPersonalityTables(db);
   makeUserIdsMonotonic(db);
   repairUserSequenceBelowReferences(db);
-  backfillActivityBuckets(db);
   widenSessionEventKindsForSubagent(db);
   widenSessionEventKindsForWorkflow(db);
   keyToolResultSpillsByOccurrence(db);
   migrateExecIdentity(db);
   migrateExecIdentityDropPrefix(db);
   migrateDocsToolName(db);
+  // LAST, and it must stay last: these run in call order but share ONE `user_version` counter, so a
+  // migration with the highest number placed earlier would raise the counter past every migration
+  // below it and skip them all in silence.
+  backfillActivityBuckets(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -319,7 +322,7 @@ function repairUserSequenceBelowReferences(db: Db): void {
   runOnce(db, 8, () => { seedUserSequenceAboveEveryReference(db); });
 }
 
-/** v9 — seed the activity heatmap from the history that already exists.
+/** v15 — seed the activity heatmap from the history that already exists.
  *
  *  The rollup is filled at write time from here on, but an instance that has been running for weeks
  *  would show an empty tile for a month before it filled in. One grouped pass over `brain_messages`
@@ -327,10 +330,16 @@ function repairUserSequenceBelowReferences(db: Db): void {
  *  boot and would not be acceptable per request — which is why the read path never does it.
  *
  *  Scoped to 90 days: further back the tile does not show it, and the pass stays bounded on an old
- *  instance. `INSERT OR IGNORE` keeps a re-run (a restored database taking v9 again) from double
- *  counting rows the live path has since written. */
+ *  instance. `INSERT OR IGNORE` keeps a re-run (a restored database taking v15 again) from double
+ *  counting rows the live path has since written.
+ *
+ *  The number must be HIGHER than every other runOnce in this file, not merely unused-looking: runOnce
+ *  compares against a single `user_version` counter, so a number at or below the database's current
+ *  value is skipped in silence. This shipped as v9 first -- a number already taken by another migration
+ *  -- and did nothing on a live database sitting at 14. `migrationVersionsAreUnique` now fails the build
+ *  on a repeat. */
 function backfillActivityBuckets(db: Db): void {
-  runOnce(db, 9, () => {
+  runOnce(db, 15, () => {
     db.prepare(
       `INSERT OR IGNORE INTO activity_buckets (day, hour, user_id, count)
        SELECT strftime('%Y-%m-%d', m.created_at),

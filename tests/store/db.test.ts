@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,7 +73,12 @@ describe('openDb', () => {
       seeded.prepare("INSERT INTO brain_messages (id, session_id, role, content, created_at) VALUES (?, 'brain-1', ?, '{}', datetime('now','-2 days'))").run(id, role);
     }
     seeded.prepare('DELETE FROM activity_buckets').run();
-    seeded.pragma('user_version = 8');
+    // 14 is the highest version that existed BEFORE this migration, i.e. what a live database actually
+    // sits at. The first version of this test rewound to 8 instead, which no real database has been at
+    // for months -- so it passed while the migration, numbered 9, was silently skipped in production
+    // because runOnce compares against one shared counter. The uniqueness test below is the mechanical
+    // guard; this number is only the realistic starting point.
+    seeded.pragma('user_version = 14');
     seeded.close();
 
     const db = openDb(path);
@@ -84,7 +90,7 @@ describe('openDb', () => {
     // every bucket, and the rollup cannot tell a re-seed from real traffic.
     db.close();
     const again = openDb(path);
-    again.pragma('user_version = 8');
+    again.pragma('user_version = 14');
     again.close();
     const third = openDb(path);
     expect(third.prepare('SELECT count FROM activity_buckets').all()).toEqual([{ count: 2 }]);
@@ -336,7 +342,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     mid.close();
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools).toBe('run_command');
-    expect(db.pragma('user_version', { simple: true })).toBe(14); // every one-shot migration is done
+    expect(db.pragma('user_version', { simple: true })).toBe(15); // every one-shot migration is done
   });
 
   it("rewrites a platform role's tool allow-list, keeping the unrestricted markers intact", () => {
@@ -377,7 +383,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp__chrome_devtools__click,mcp__chrome_devtools__performance_analyze_insight,mcp_ghost_thing,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
   });
 
   it('prefers the longest matching server, so one name cannot be split by another\'s prefix', () => {
@@ -401,7 +407,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp_chrome_devtools_click');
-    expect(db.pragma('user_version', { simple: true })).toBe(14); // still marked done — there was nothing to do
+    expect(db.pragma('user_version', { simple: true })).toBe(15); // still marked done — there was nothing to do
   });
 
   it('leaves a corrupt permissions blob exactly as found', () => {
@@ -486,7 +492,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('Bash,todo_write');
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
   });
 
   it('names the image tools verb-first, the way a one-tool plugin is named', () => {
@@ -510,7 +516,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('GenerateImage,EditImage,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
   });
 });
 
@@ -544,7 +550,7 @@ describe('openDb — session-event kinds (v5)', () => {
   it('accepts a cwd marker on a database that predates the kind, carrying the old markers across', () => {
     const path = seedPre5();
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
 
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT event_id, kind, detail, created_at FROM brain_session_events ORDER BY event_id').all())
@@ -564,7 +570,7 @@ describe('openDb — session-event kinds (v5)', () => {
     const path = seedPre5();
     openDb(path).close();     // v5 runs here
     const db = openDb(path);  // ...and must not rebuild the table a second time
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT COUNT(*) AS n FROM brain_session_events').get()).toEqual({ n: 2 });
   });
@@ -592,7 +598,7 @@ describe('openDb — drop personality tables (v6)', () => {
   it('drops both personality tables (and their indexes) on a database that predates the collapse', () => {
     const path = seedPre6();
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(hasTable(db, 'personality_profiles')).toBe(false);
     expect(hasTable(db, 'personality_active_profiles')).toBe(false);
     // The index went with its table — no orphan left behind.
@@ -601,7 +607,7 @@ describe('openDb — drop personality tables (v6)', () => {
 
   it('is a no-op on a fresh database that never had the tables (idempotent)', () => {
     const db = openDb(':memory:');
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(hasTable(db, 'personality_profiles')).toBe(false);
     expect(hasTable(db, 'personality_active_profiles')).toBe(false);
   });
@@ -652,7 +658,7 @@ describe('openDb — monotonic user ids (v7)', () => {
 
   it('rebuilds a legacy table, preserving every row, id and column value', () => {
     const db = openDb(seedPre7());
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(db.prepare('SELECT id, username, password_hash, is_admin, email, created_at FROM users ORDER BY id').all())
       .toEqual([
         { id: 1, username: 'alice', password_hash: 'h1', is_admin: 1, email: 'a@x', created_at: '2026-01-01 09:00:00' },
@@ -713,13 +719,13 @@ describe('openDb — monotonic user ids (v7)', () => {
     seeded.close();
 
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(addUser(db, 'dave')).toBe(10); // clears the orphaned 9 rather than reissuing it
   });
 
   it('leaves a fresh database alone — already monotonic, nothing to rebuild', () => {
     const db = openDb(':memory:');
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     const a = addUser(db, 'alice');
     db.prepare('DELETE FROM users WHERE id = ?').run(a);
     expect(addUser(db, 'bob')).toBe(a + 1);
@@ -729,7 +735,7 @@ describe('openDb — monotonic user ids (v7)', () => {
     const path = seedPre7();
     openDb(path).close();      // v7 runs here
     const db = openDb(path);   // ...and must not rebuild a second time
-    expect(db.pragma('user_version', { simple: true })).toBe(14);
+    expect(db.pragma('user_version', { simple: true })).toBe(15);
     expect(db.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 3 });
     expect(addUser(db, 'dave')).toBe(4); // counter survived the reopen, so it did not restart at max(id)
   });
@@ -788,4 +794,19 @@ describe('concurrent openDb', () => {
     const db = openDb(path);
     expect(db.prepare('PRAGMA table_info(projects)').all().filter((r: any) => r.name === 'notes')).toHaveLength(1);
   }, 30_000);
+});
+
+// runOnce compares the requested version against ONE shared `user_version` counter, so a number that is
+// already taken -- or merely lower than the database's current value -- is skipped in complete silence.
+// That is exactly how the heatmap seed shipped as a no-op: it was numbered 9, a number another migration
+// already used, against live databases sitting at 14. Nothing failed; the feature was just empty.
+describe('migration versions', () => {
+  it('are unique, so no migration is silently skipped', () => {
+    const source = readFileSync(new URL('../../src/store/db.ts', import.meta.url), 'utf8');
+    const versions = [...source.matchAll(/runOnce\(db,\s*(\d+)/g)].map((m) => Number(m[1]));
+
+    expect(versions.length).toBeGreaterThan(5);
+    const duplicates = versions.filter((v, i) => versions.indexOf(v) !== i);
+    expect(duplicates).toEqual([]);
+  });
 });
