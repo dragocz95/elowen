@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isBuiltinCommand, findCommand } from '../../src/brain/slashCommands.js';
+import { CONTROL_COMMANDS } from '../../packages/plugin-shared/chatCommands.mjs';
+import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isBuiltinCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
+import type { SlashSurface } from '../../src/brain/slashCommands.js';
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
@@ -249,5 +251,120 @@ describe('slash command registry', () => {
   it('no longer ships a /tdd command', () => {
     expect(findCommand('tdd')).toBeUndefined();
     expect(commandsFor('cli', true).some((c) => c.name === 'tdd')).toBe(false);
+  });
+
+  /** `execution` says WHICH MECHANISM runs a command; `kind` says how a surface renders it. The field is
+   *  published but nothing dispatches on it yet, so these tests guard two things: that the catalog states
+   *  the truth about today's behaviour, and that adding the field moved nothing. */
+  describe('execution contract', () => {
+    const PLATFORMS = ['discord', 'whatsapp', 'telegram', 'msteams'] as const;
+    const SURFACES = ['cli', 'web', ...PLATFORMS] as const;
+    /** Identity of a published entry as it existed BEFORE `execution` — name, rendering and both gates,
+     *  in menu order. */
+    const shape = (c: { name: string; kind: string; adminOnly?: boolean; requiresPlugin?: string }): string =>
+      `${c.name}:${c.kind}${c.adminOnly ? '!' : ''}${c.requiresPlugin ? `@${c.requiresPlugin}` : ''}`;
+
+    /** Frozen from the catalog as it stood before this field existed (generated from `HEAD`, surface by
+     *  surface). A phase that is supposed to be purely additive must leave every one of these untouched;
+     *  the later phases that DO move commands have to change this table deliberately. */
+    const PUBLISHED_SHAPE: Record<SlashSurface, string[]> = {
+      cli: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'context:info', 'mcp:picker@mcp', 'skills:picker@skills', 'goal:action', 'subgoal:action', 'tools:picker', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'yolo:action', 'model:picker', 'fast:action', 'reasoning:picker', 'theme:picker', 'maskot:action', 'keybinds:info', 'statusline:picker@statusline', 'cd:action', 'paste:action', 'editor:picker', 'export:action', 'lsp:picker!@lsp', 'restart:action!', 'help:info', 'sessions:picker', 'resume:picker', 'rename:picker', 'delete:picker', 'quit:action'],
+      web: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'skills:picker@skills', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'model:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info', 'rename:picker'],
+      discord: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
+      whatsapp: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
+      telegram: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
+      msteams: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
+    };
+
+    it('leaves every surface roster, order, kind and gate unchanged for both admin projections', () => {
+      const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
+      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline']);
+      for (const surface of SURFACES) {
+        for (const isAdmin of [false, true]) {
+          const expected = PUBLISHED_SHAPE[surface].filter((entry) => isAdmin || !entry.includes('!'));
+          expect(commandsFor(surface, isAdmin).map(shape), `${surface} admin=${isAdmin}`).toEqual(expected);
+          expect(commandsWithPlugins(surface, isAdmin, macro, loaded).map(shape), `${surface}+plugins admin=${isAdmin}`)
+            .toEqual([...expected, 'deploy:prompt']);
+        }
+      }
+    });
+
+    it('states the exact execution mechanism for every built-in and plugin prompt', () => {
+      const identity = (c: { name: string; kind: string; surfaces?: readonly string[] }) =>
+        `${c.name}:${c.kind}:${c.surfaces?.join(',') ?? '*'}`;
+      const sessionControls = new Set([
+        'new:action:*',
+        'clear:action:cli,web',
+        'stop:action:*',
+        'status:info:discord,whatsapp,telegram,msteams',
+        'compact:action:*',
+        'context:picker:discord,whatsapp,telegram,msteams',
+        'fast:action:cli,discord,whatsapp,telegram,msteams,web',
+        'restart:action:*',
+      ]);
+      for (const c of SLASH_COMMANDS) {
+        expect(c.execution, `/${identity(c)}`).toBe(sessionControls.has(identity(c)) ? 'session-control' : 'surface-local');
+      }
+      const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
+      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline']);
+      for (const surface of SURFACES) {
+        const published = commandsWithPlugins(surface, true, macro, loaded);
+        for (const c of published) {
+          expect(c.execution === 'plugin-prompt', `${surface} /${c.name}`).toBe(c.kind === 'prompt');
+        }
+      }
+    });
+
+    /** THE drift lock between the two registries. The catalog is the source of truth for WHICH commands a
+     *  platform gets; `CONTROL_COMMANDS` (packages/plugin-shared) is the independent set the adapters
+     *  actually execute. `/status` proved they can part ways: it was dropped from the CLI and the web dock
+     *  while `runControlCommand` kept executing it on the platforms. Declaring `execution` only helps if
+     *  the two sets are held equal, so hold them here — the catalog's platform control commands must be
+     *  exactly the ones that shared core owns. */
+    it('declares exactly the control set the adapters shared core executes', () => {
+      for (const surface of PLATFORMS) {
+        // Pickers are excluded: /context is also `session-control`, but its listing/binding runs through
+        // dedicated PlatformControlApi methods and its own per-surface chooser, not the control core.
+        const declared = commandsFor(surface, true)
+          .filter((c) => c.execution === 'session-control' && c.kind !== 'picker')
+          .map((c) => c.name);
+        expect(declared.sort(), surface).toEqual([...CONTROL_COMMANDS].sort());
+      }
+    });
+
+    it('keeps `adapter-state` reserved for the adapter-owned names, which are still not catalog entries', () => {
+      expect(SLASH_COMMANDS.some((c) => c.execution === 'adapter-state')).toBe(false);
+      for (const name of ['voice', 'display']) {
+        expect(findCommand(name), name).toBeUndefined();
+        expect(isReservedCommandName(name), name).toBe(true);
+      }
+    });
+
+    /** The duplicated `context` name stays two commands, and `execution` is now the field that PROVES it:
+     *  the CLI's breakdown is a local overlay, the platforms' re-key is a daemon operation on the channel
+     *  session. Since they differ in both `kind` and `execution`, they cannot be folded into one entry —
+     *  and `findCommand` remains first-match, so it still cannot answer how `/context` runs. */
+    it('resolves the twice-carried `context` name to one execution per surface', () => {
+      const entries = SLASH_COMMANDS.filter((c) => c.name === 'context');
+      expect(entries).toHaveLength(2);
+      expect(new Set(entries.map((c) => c.execution)).size).toBe(2);
+      expect(commandsFor('cli', true).find((c) => c.name === 'context')?.execution).toBe('surface-local');
+      for (const surface of PLATFORMS) {
+        expect(commandsFor(surface, true).find((c) => c.name === 'context')?.execution, surface).toBe('session-control');
+      }
+    });
+
+    it('declares arguments only where every surface accepts the same values', () => {
+      expect(findCommand('fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off'] });
+      // Platform compact parses text but runControlCommand currently drops it before ctl.compact(ref).
+      expect(findCommand('compact')?.argument).toBeUndefined();
+      // `show` is CLI/web-only; platform /reasoning opens its picker and ignores the text argument.
+      expect(findCommand('reasoning')?.argument).toBeUndefined();
+      // Transport option schemas (Discord's option definitions) stay in the adapters; a declared enum that
+      // enumerates nothing would be one of those leaking in as an empty shell.
+      for (const c of SLASH_COMMANDS) {
+        if (c.argument?.kind === 'enum') expect(c.argument.values.length, c.name).toBeGreaterThan(0);
+      }
+    });
   });
 });

@@ -6,49 +6,77 @@
 import { createSyntheticSourceInfo, type PromptTemplate } from '@earendil-works/pi-coding-agent';
 // SlashCommandDef/SlashSurface live in the shared wire contract so the web dock's menu can't drift from
 // this canonical list. Re-exported here for the daemon/CLI importers that expect them.
-import type { SlashCommandDef, SlashSurface } from '../shared/wireContract.js';
+import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../shared/wireContract.js';
 
-export type { SlashCommandDef, SlashSurface };
+export type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface };
 
-/** The canonical command set. Order is the display order in menus. */
-export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
-  { name: 'new', description: 'Start a fresh conversation', kind: 'action' },
+/** A command as THIS module produces it: a {@link SlashCommandDef} that always states how it executes.
+ *  The wire type keeps `execution` optional so it stays additive for every consumer of an older copy;
+ *  requiring it here is what makes "every published command says how it runs" a compile error instead of
+ *  a review note. */
+export type PublishedSlashCommand = SlashCommandDef & { execution: SlashExecution };
+
+/** The canonical command set. Order is the display order in menus.
+ *
+ *  `kind` is how a surface RENDERS the command; `execution` is which mechanism RUNS it (see
+ *  {@link SlashExecution}). Nothing dispatches on `execution` yet — the adapters still route the six
+ *  control commands through their own `CONTROL_COMMANDS` name set (packages/plugin-shared/chatCommands.mjs)
+ *  and everything else through a `switch (name)`. It is declared here so that can stop being true. */
+export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
+  // `session-control` on every surface, by two different mechanisms: the HTTP surfaces get a fresh
+  // conversation from the daemon (POST /brain/command → brain.start), while an adapter starts a fresh
+  // CHANNEL session by bumping its own generation counter (chatCommands.mjs) — same semantic, and F2 moves
+  // it behind a typed PlatformControlApi method so the daemon states it once.
+  { name: 'new', description: 'Start a fresh conversation', kind: 'action', execution: 'session-control' },
   // Empties THIS conversation (history, markers, cards and the live context) without starting a new one —
   // the id, title, model and every attached client stay. CLI + web only: the dispatcher resolves the
   // caller's own conversation, and a shared channel has no such conversation to clear.
-  { name: 'clear', description: 'Clear this conversation and start from an empty context', kind: 'action', surfaces: ['cli', 'web'] },
-  { name: 'stop', description: 'Stop the running agent', kind: 'action' },
+  { name: 'clear', description: 'Clear this conversation and start from an empty context', kind: 'action', execution: 'session-control', surfaces: ['cli', 'web'] },
+  { name: 'stop', description: 'Stop the running agent', kind: 'action', execution: 'session-control' },
   // CHAT PLATFORMS ONLY. `/stats` below is the single session-info command on the CLI and the web dock,
   // and it is a superset of what this ever showed there. The platforms keep `/status` because their
   // one-line answer is rendered by the adapters' own shared control core (CONTROL_COMMANDS in
   // packages/plugin-shared/chatCommands.mjs, plus Telegram's BotFather list), which has no way to draw the
   // /stats overlay — dropping it there would leave a chat channel with no session info at all.
-  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
+  // `session-control` even though it only READS: the answer is `PlatformControlApi.status(ref)` over the
+  // channel's live session, which is exactly why POST /brain/command (actions only) cannot serve it and
+  // why this survived the CLI/web removal — the mechanism, not the catalog, kept it alive.
+  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', execution: 'session-control', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
   // The ONE session-info command on the CLI and the web dock: conversation usage, per-model totals and the
   // context breakdown, plus the session rows (model, reasoning, mode, project, goal) `/status` used to own.
-  { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', surfaces: ['cli', 'web'] },
+  { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', execution: 'surface-local', surfaces: ['cli', 'web'] },
   // CLI-only: the /stats overlay opened straight on its context-breakdown section. The name is
   // deliberately shared with the channel re-key `context` further down, which is explicitly absent from
   // the CLI — every surface renders and dispatches from `commandsFor`, and no surface ever sees both.
-  { name: 'context', description: 'Context breakdown — what is filling the window', kind: 'info', surfaces: ['cli'] },
+  // …and the two also differ in `execution`: this one is a local overlay, the channel re-key is a daemon
+  // operation on the channel session. So the duplicated NAME is not a duplicated command.
+  { name: 'context', description: 'Context breakdown — what is filling the window', kind: 'info', execution: 'surface-local', surfaces: ['cli'] },
   // Both are core commands whose entire payload comes from a plugin's routes, so both carry
   // `requiresPlugin` and vanish from the menu when that plugin is not running.
-  { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', surfaces: ['cli'], requiresPlugin: 'mcp' },
-  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli', 'web'], requiresPlugin: 'skills' },
-  { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', surfaces: ['cli'] },
-  { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', surfaces: ['cli'] },
-  { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', surfaces: ['cli'] },
-  { name: 'compact', description: 'Summarize the conversation to free up context (add text to steer what to keep)', kind: 'action' },
+  { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', execution: 'surface-local', surfaces: ['cli'], requiresPlugin: 'mcp' },
+  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'], requiresPlugin: 'skills' },
+  // `surface-local` despite hitting the daemon: the CLI drives the goal endpoints from its own handler,
+  // not through a catalog dispatch, and no other surface publishes them.
+  { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
+  { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
+  { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
+  // CLI and web can steer compaction with free text, but the current platform control core calls
+  // `ctl.compact(ref)` without forwarding its parsed argument. Do not publish a cross-surface argument
+  // contract until every surface actually honours it.
+  { name: 'compact', description: 'Summarize the conversation to free up context (add text to steer what to keep)', kind: 'action', execution: 'session-control' },
   // CLI + web dock: both keep the chosen mode in their own session state and stamp it on every send
   // (`mode` on POST /brain/send), so there is no server-side mode to switch. The chat platforms have no
   // place to show which mode a channel is in, so they stay out.
-  { name: 'plan', description: 'Plan mode — think through the approach before editing', kind: 'mode', surfaces: ['cli', 'web'] },
-  { name: 'build', description: 'Build mode — implement changes with tools', kind: 'mode', surfaces: ['cli', 'web'] },
-  { name: 'workflow', description: 'Workflow mode — orchestrate the task as a DAG of sub-agents', kind: 'mode', surfaces: ['cli', 'web'] },
+  { name: 'plan', description: 'Plan mode — think through the approach before editing', kind: 'mode', execution: 'surface-local', surfaces: ['cli', 'web'] },
+  { name: 'build', description: 'Build mode — implement changes with tools', kind: 'mode', execution: 'surface-local', surfaces: ['cli', 'web'] },
+  { name: 'workflow', description: 'Workflow mode — orchestrate the task as a DAG of sub-agents', kind: 'mode', execution: 'surface-local', surfaces: ['cli', 'web'] },
   // CLI-local like /goal: the TUI calls POST /brain/yolo itself. Session-scoped — the persisted
   // default is edited in web Account → Elowen AI (or PATCH /auth/me/permissions).
-  { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'] },
-  { name: 'model', description: 'Switch the AI model', kind: 'picker' },
+  { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
+  // Each surface runs its own chooser against its own model-switch path (the CLI and web dock switch the
+  // caller's conversation; an adapter patches the channel's stored model), so the catalog carries the
+  // command, not the mechanism.
+  { name: 'model', description: 'Switch the AI model', kind: 'picker', execution: 'surface-local' },
   // Move (not fork) one of the caller's own conversations INTO this channel/thread so the bot continues in
   // it. A `picker` (not `action`), so it is never server-dispatched through POST /brain/command — its
   // dedicated endpoint is POST /brain/context. Absent from the CLI and the web dock: neither is a shared
@@ -56,56 +84,63 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // web dock already addresses the caller's conversations directly through its history rail. It was
   // published to `web` with no dispatch behind it, which showed a menu entry that only ever toasted its
   // own name; keeping it off `web` is also what keeps this name resolving once per surface.
-  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
-  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'msteams', 'web'] },
+  // `picker` (rendering) + `session-control` (execution): the chooser is drawn per surface, but listing and
+  // binding are daemon operations on the CHANNEL session (PlatformControlApi.listContext/bindContext).
+  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', execution: 'session-control', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
+  // `on`/`off` is the value set every surface honours (the CLI's extra local `status` read is CLI chrome,
+  // not part of the contract). Bare `/fast` toggles.
+  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off'] }, surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'msteams', 'web'] },
   // Every surface wires its own picker: the CLI TUI's overlay, a native /reasoning command on Discord,
-  // WhatsApp, Telegram and Teams, and the web dock's ReasoningModal (which also carries the "show"
-  // sub-behaviour as a Thought-rows switch).
-  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker' },
-  { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
+  // WhatsApp, Telegram and Teams, and the web dock's ReasoningModal. The CLI/web-only `show` behaviour is
+  // not a cross-surface argument, and effort levels come from the active model, so no portable enum exists.
+  { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', execution: 'surface-local' },
+  { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-local like /theme: toggles the flame mascot and persists the choice in cli-prefs.json. Purely
   // local chrome, so it is never mirrored to the server — meaningless on the other surfaces.
-  { name: 'maskot', description: 'Show or hide the flame mascot (on by default)', kind: 'action', surfaces: ['cli'] },
+  { name: 'maskot', description: 'Show or hide the flame mascot (on by default)', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-local: opens the keybinds modal in the TUI (parseCommand dispatches it before any server call).
   // Lives in the catalog so the CLI command menu lists it from the single roster, not a synthetic inject.
-  { name: 'keybinds', description: 'List keyboard shortcuts and where to customize them', kind: 'info', surfaces: ['cli'] },
+  { name: 'keybinds', description: 'List keyboard shortcuts and where to customize them', kind: 'info', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-only: ticks what the bottom status bar shows. The toggles are the statusline plugin's shared
   // config (also editable in the web dock), so the picker PATCHes it server-side and refreshes the bar.
-  { name: 'statusline', description: 'Choose what the bottom status bar shows', kind: 'picker', surfaces: ['cli'], requiresPlugin: 'statusline' },
+  { name: 'statusline', description: 'Choose what the bottom status bar shows', kind: 'picker', execution: 'surface-local', surfaces: ['cli'], requiresPlugin: 'statusline' },
   // CLI-local like /theme: `process.chdir` in the TUI's own process. Every request already reports the
   // client's cwd per turn, so moving the process is the whole mechanism. Meaningless on the other
   // surfaces — they have no local directory to move.
-  { name: 'cd', description: 'Change the working directory (no argument reports it)', kind: 'action', surfaces: ['cli'] },
+  { name: 'cd', description: 'Change the working directory (no argument reports it)', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-local like /theme: reads THIS machine's clipboard (xclip/wl-paste/pngpaste) and parks the
   // image as a pending attachment for the next message — never server-dispatched.
-  { name: 'paste', description: 'Attach an image from the system clipboard', kind: 'action', surfaces: ['cli'] },
+  { name: 'paste', description: 'Attach an image from the system clipboard', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-local like /theme: the TUI suspends itself and round-trips the draft through $VISUAL/$EDITOR.
-  { name: 'editor', description: 'Compose the prompt in your $EDITOR', kind: 'picker', surfaces: ['cli'] },
+  { name: 'editor', description: 'Compose the prompt in your $EDITOR', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
   // CLI-local: downloads the conversation to the launch directory (HTML transcript or JSONL). The web
   // dock has its own download buttons in the Sessions panel, so this stays CLI-only.
-  { name: 'export', description: 'Download this conversation ("html" or "jsonl")', kind: 'action', surfaces: ['cli'] },
+  { name: 'export', description: 'Download this conversation ("html" or "jsonl")', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
   // A `picker` (like `/statusline`): the CLI opens its own modal and drives the lsp plugin's REST
   // surface — `/brain/lsp` for the status rows, the plugin's config slice for the on/off flip — so it is
   // never server-dispatched through POST /brain/command. Core carries the NAME only, because a plugin
   // can contribute a prompt macro but not a native modal command; with the plugin disabled the modal
   // reports exactly that (GET /brain/lsp answers 503). adminOnly: the toggle stops/starts language
   // servers for everyone, so it stays operator-gated.
-  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'picker', surfaces: ['cli'], adminOnly: true, requiresPlugin: 'lsp' },
-  { name: 'restart', description: 'Restart the Elowen daemon', kind: 'action', adminOnly: true },
-  { name: 'help', description: 'Show the available commands', kind: 'info' },
+  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'picker', execution: 'surface-local', surfaces: ['cli'], adminOnly: true, requiresPlugin: 'lsp' },
+  // Process-wide rather than session-scoped, but daemon-owned and reached the same two ways as the rest of
+  // the control set (POST /brain/command · PlatformControlApi.restart).
+  { name: 'restart', description: 'Restart the Elowen daemon', kind: 'action', execution: 'session-control', adminOnly: true },
+  // Rendered by each surface from the menu it already holds — no daemon call at all.
+  { name: 'help', description: 'Show the available commands', kind: 'info', execution: 'surface-local' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).
-  { name: 'sessions', description: 'Pick a conversation', kind: 'picker', surfaces: ['cli'] },
-  { name: 'resume', description: 'Resume a conversation', kind: 'picker', surfaces: ['cli'] },
+  { name: 'sessions', description: 'Pick a conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
+  { name: 'resume', description: 'Resume a conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
   // Also on the web dock: it renders its own rename dialog and PATCHes /brain/sessions/:id (the same
   // metadata endpoint the history rail's rename uses).
-  { name: 'rename', description: 'Rename this conversation', kind: 'picker', surfaces: ['cli', 'web'] },
-  { name: 'delete', description: 'Delete a conversation', kind: 'picker', surfaces: ['cli'] },
-  { name: 'quit', description: 'Exit', kind: 'action', surfaces: ['cli'] },
+  { name: 'rename', description: 'Rename this conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'] },
+  { name: 'delete', description: 'Delete a conversation', kind: 'picker', execution: 'surface-local', surfaces: ['cli'] },
+  { name: 'quit', description: 'Exit', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },
 ];
 
 /** The subset a given surface shows to a given user: surface-scoped, and admin-only commands hidden
  *  from non-operators. This is what `GET /brain/commands` returns and what each surface renders. */
-export function commandsFor(surface: SlashSurface, isAdmin: boolean): SlashCommandDef[] {
+export function commandsFor(surface: SlashSurface, isAdmin: boolean): PublishedSlashCommand[] {
   return SLASH_COMMANDS.filter(
     (c) => (!c.surfaces || c.surfaces.includes(surface)) && (!c.adminOnly || isAdmin),
   );
@@ -115,7 +150,7 @@ export function commandsFor(surface: SlashSurface, isAdmin: boolean): SlashComma
  *  breakdown and the platforms' channel re-key — so this returns the FIRST match and is only safe for
  *  surface-independent questions. Anything that renders or dispatches per surface must use
  *  {@link commandsFor}, where each name resolves once. */
-export function findCommand(name: string): SlashCommandDef | undefined {
+export function findCommand(name: string): PublishedSlashCommand | undefined {
   return SLASH_COMMANDS.find((c) => c.name === name);
 }
 
@@ -128,7 +163,9 @@ export function isBuiltinCommand(name: string): boolean {
  *  still reserved: a plugin command sharing one collides with the adapter's own slash on that surface. On
  *  Discord both would land in one bulk registration payload → a 400 that drops EVERY slash command for the
  *  guild; across surfaces the shadow resolves inconsistently (Discord runs the macro, Telegram the built-in).
- *  Kept beside the built-ins so there is ONE reserved-name check. Must track the adapter-local commands. */
+ *  Kept beside the built-ins so there is ONE reserved-name check. Must track the adapter-local commands.
+ *  This negative model is what `execution:'adapter-state'` is for: once these are declared TO the catalog
+ *  (a later phase — it changes what Discord registers), the list stops needing to track anything. */
 const RESERVED_ADAPTER_COMMANDS = new Set(['voice', 'display']);
 
 /** True when `name` is a built-in OR an adapter-local reserved command — the single guard a plugin command
@@ -139,8 +176,8 @@ export function isReservedCommandName(name: string): boolean {
 
 /** A plugin-contributed prompt command as a SlashCommandDef, for merging into a surface's menu. */
 export interface PluginSlashCommand { name: string; description: string; prompt: string; surfaces?: SlashSurface[]; plugin?: string }
-function pluginCommandDef(cmd: PluginSlashCommand): SlashCommandDef {
-  return { name: cmd.name, description: cmd.description, kind: 'prompt', prompt: cmd.prompt, surfaces: cmd.surfaces, plugin: cmd.plugin };
+function pluginCommandDef(cmd: PluginSlashCommand): PublishedSlashCommand {
+  return { name: cmd.name, description: cmd.description, kind: 'prompt', execution: 'plugin-prompt', prompt: cmd.prompt, surfaces: cmd.surfaces, plugin: cmd.plugin };
 }
 
 /** The full menu for a surface/user: built-ins first, then plugin prompt commands (surface-scoped,
@@ -154,7 +191,7 @@ export function commandsWithPlugins(
   isAdmin: boolean,
   pluginCommands: PluginSlashCommand[],
   loadedPlugins: ReadonlySet<string>,
-): SlashCommandDef[] {
+): PublishedSlashCommand[] {
   const base = commandsFor(surface, isAdmin).filter((c) => !c.requiresPlugin || loadedPlugins.has(c.requiresPlugin));
   const extra = pluginCommands
     .filter((c) => (!c.surfaces || c.surfaces.includes(surface)) && !isReservedCommandName(c.name))

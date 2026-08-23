@@ -128,6 +128,45 @@ export type SlashSurface = 'cli' | 'discord' | 'whatsapp' | 'telegram' | 'msteam
  *  `picker` (surface-local chooser), `mode` (local work-mode switch), `prompt` (plugin prompt macro). */
 type SlashKind = 'action' | 'info' | 'picker' | 'mode' | 'prompt';
 
+/** WHICH MECHANISM runs a command — the question `kind` does NOT answer. `kind` is presentation (how a
+ *  surface renders the command and its result); `execution` is who performs the effect. The two are
+ *  independent, and every pair in this catalog is real: the platforms' `/context` is a `picker` (its UI is
+ *  a chooser) driven by a daemon-side channel operation, while `/maskot` is an `action` that never leaves
+ *  the CLI process.
+ *
+ *  - `session-control` — a control operation on the ADDRESSED SESSION, whose semantics belong to the
+ *    daemon. The HTTP surfaces (CLI, web dock) reach it through `POST /brain/command`
+ *    (src/api/routes/brainChat.ts) or the command's dedicated endpoint, addressing the CALLER's own
+ *    conversation. A chat adapter cannot use either: it has no user-authenticated HTTP client and its
+ *    target is the CHANNEL's session, so it goes through `PlatformControlApi` against its `ChannelRef`
+ *    (src/plugins/api.ts) — today by way of `runControlCommand` in elowen-plugin-shared.
+ *  - `surface-local` — the surface owns the execution end to end: its own overlay or modal, its own local
+ *    process/preferences, or its own dedicated endpoint driven by its own UI. There is nothing here for a
+ *    generic dispatcher to route, and nothing that another surface could run on its behalf.
+ *  - `adapter-state` — owned by a chat adapter's local per-channel state. NO catalog entry declares this
+ *    yet: `voice` and `display` are still adapter-owned names reserved AGAINST the catalog
+ *    (RESERVED_ADAPTER_COMMANDS in src/brain/slashCommands.ts). The value exists so that declaring them
+ *    TO the catalog becomes a data change rather than a contract change.
+ *  - `plugin-prompt` — a plugin's prompt macro (`kind:'prompt'`), expanded by PI itself when the raw
+ *    slash arrives. Never a catalog entry; carried by the merged menu.
+ *
+ *  Nothing DISPATCHES on this field yet. It is published so the adapters can stop dispatching on the
+ *  command NAME (their own `CONTROL_COMMANDS` set is a second, independently drifting registry). */
+export type SlashExecution = 'session-control' | 'surface-local' | 'adapter-state' | 'plugin-prompt';
+
+/** What a command accepts after its name, when that value set is the SAME on every surface that publishes
+ *  the command. Transport-specific option schemas (Discord's option definitions, Telegram's BotFather
+ *  syntax, WhatsApp's numbered menus) stay in the adapters — they are presentation, not contract.
+ *
+ *  Declared arguments are always optional: every command that takes one also has a defined bare
+ *  invocation (toggle, unsteered compaction, open the picker), so there is no `required` flag to honour. */
+export type SlashArgument =
+  /** A fixed set of portable literal values (`/fast on|off`). `open` marks a set that is deliberately NOT
+   *  exhaustive because every surface resolves additional values from equivalent live data. */
+  | { kind: 'enum'; values: readonly string[]; open?: boolean }
+  /** Free text, once every surface publishing the command forwards it with the same meaning. */
+  | { kind: 'text' };
+
 /** A chat slash command as served over `GET /brain/commands`. Defined ONCE here so the daemon's
  *  canonical list (src/brain/slashCommands.ts) and the web dock's menu can never drift — the web copy had
  *  silently lost `surfaces` (which gates visibility) and `plugin` (menu attribution). */
@@ -151,6 +190,14 @@ export interface SlashCommandDef {
    *  `plugin` above: that one MARKS a command as contributed by a plugin, this one GATES a core command
    *  on one. */
   requiresPlugin?: string;
+  /** Which mechanism executes the command. Optional HERE (an older client's copy of this shape stays
+   *  valid, and the field is additive on the wire) but REQUIRED of every entry the daemon publishes: both
+   *  the canonical catalog and the plugin-macro projection are typed as {@link SlashExecution}-carrying in
+   *  src/brain/slashCommands.ts, so a producer cannot omit it. */
+  execution?: SlashExecution;
+  /** What the command accepts after its name, when the accepted values are surface-independent. Absent
+   *  means the catalog states nothing about arguments — NOT that the command refuses them. */
+  argument?: SlashArgument;
 }
 
 /** Which approval choice an option IS, independent of the English label carried beside it. The label stays
