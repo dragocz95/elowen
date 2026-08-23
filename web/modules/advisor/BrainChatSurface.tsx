@@ -37,7 +37,7 @@ import {
   composingLabel,
   todoPreviewItems,
   type ComposeLocale,
-} from '../../../src/shared/chatPresentation.js';
+} from '../../lib/chatPresentation';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 

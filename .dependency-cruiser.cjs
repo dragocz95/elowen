@@ -46,10 +46,12 @@ module.exports = {
       name: 'web-not-to-backend',
       severity: 'error',
       comment: 'The web app (web) talks to the daemon over HTTP — it must never import src/ directly, '
-        + 'except the types-only wire contract and the importless browser-safe chat presentation rules. The '
+        + 'except the ONE types-only file src/shared/wireContract.ts (the daemon<->web wire contract). It is '
+        + 'the exception because a TYPE-ONLY import is erased before the bundler resolves it; RUNTIME code '
+        + 'here fails `next build`, which neither tsc nor vitest catches. The '
         + 'rest of src/shared/ is runtime Node code (logger, apiClient, execs, …) the web must not bundle.',
       from: { path: '^web/' },
-      to: { path: '^src/', pathNot: '^src/shared/(?:wireContract|chatPresentation)\\.ts$' },
+      to: { path: '^src/', pathNot: '^src/shared/wireContract\\.ts$' },
     },
     {
       name: 'core-not-to-plugins',
