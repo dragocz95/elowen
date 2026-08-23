@@ -36,9 +36,10 @@ describe('BrainSessionsPanel (conversation register)', () => {
   it('renders conversations as full-width rows with pagination', async () => {
     renderPanel();
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-    expect(screen.getByTestId('brain-sessions-list')).toHaveAttribute('role', 'list');
+    expect(screen.getByTestId('brain-sessions-list')).toHaveAttribute('role', 'table');
     expect(screen.getByRole('button', { name: 'Conversation 1: Actions' })).toBeInTheDocument();
-    expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(12);
+    // One header row plus a page of conversations.
+    expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(13);
     expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
@@ -111,30 +112,47 @@ describe('BrainSessionsPanel — owner, filtering and sorting', () => {
     expect(screen.getByRole('button', { name: 'Open in web chat: Mine' })).toBeInTheDocument();
   });
 
-  it('filters down to one user', async () => {
+  // The owner dropdown is gone: the search covers the owner label, so typing a name narrows the
+  // register to that person without a second control in the toolbar.
+  it('filters down to one user through the search', async () => {
     renderPanel();
     await screen.findByText('Mine');
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Owner' })); // options exist only while open
-    fireEvent.click(screen.getByRole('option', { name: 'Bob Novák' }));
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'Bob' } });
 
     await waitFor(() => expect(screen.queryByText('Mine')).not.toBeInTheDocument());
     expect(screen.getByText('Theirs')).toBeInTheDocument();
     expect(screen.getByText('Also theirs')).toBeInTheDocument();
   });
 
-  it('sorts by model instead of recency', async () => {
+  function rowTitles() {
+    return [...screen.getByTestId('brain-sessions-list').querySelectorAll('[role="row"]:not(.data-table-header)')]
+      .map((row) => row.textContent ?? '');
+  }
+
+  it('sorts by a column header instead of a sort control', async () => {
     renderPanel();
     await screen.findByText('Mine');
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Sort' }));
-    fireEvent.click(screen.getByRole('option', { name: 'By model' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }));
 
-    await waitFor(() => {
-      const titles = [...screen.getByTestId('brain-sessions-list').querySelectorAll('[role="listitem"]')]
-        .map((row) => row.textContent ?? '');
-      expect(titles[0]).toContain('Also theirs'); // aaa-model sorts first
-    });
+    await waitFor(() => expect(rowTitles()[0]).toContain('Also theirs')); // aaa-model sorts first
+    expect(screen.getByRole('columnheader', { name: 'Model' })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  // Clicking the column that already sorts must reverse it, otherwise the header can only ever
+  // express half the orders and a "largest first" question has no answer.
+  it('reverses the order when the active column is clicked again', async () => {
+    renderPanel();
+    await screen.findByText('Mine');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+    await waitFor(() => expect(rowTitles()[0]).toContain('Also theirs'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+
+    await waitFor(() => expect(rowTitles()[0]).toContain('Mine')); // gpt-5.5 sorts last ascending
+    expect(screen.getByRole('columnheader', { name: 'Model' })).toHaveAttribute('aria-sort', 'descending');
   });
 
   it('says so when the search matches nothing', async () => {

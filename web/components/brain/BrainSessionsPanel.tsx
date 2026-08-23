@@ -11,13 +11,11 @@ import { useMe } from '../../lib/queries';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { ModelIcon } from '../ui/ModelIcon';
 import { Segmented } from '../ui/Segmented';
-import { SelectMenu } from '../ui/SelectMenu';
 import { Input } from '../ui/Input';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { HelpTip } from '../ui/HelpTip';
 import { Button } from '../ui/Button';
-import { EntityList, EntityRow } from '../ui/EntityList';
-import { MotionLayoutItem, MotionPresence } from '../ui/Motion';
+import { DataTable, DataTableCell, DataTableRow, DataTableSortCell, type SortDirection } from '../ui/DataTable';
 import { ActionMenu } from '../ui/ActionMenu';
 import { ContextMenu, type ContextMenuState } from '../ui/ContextMenu';
 import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../ui/ControlSurface';
@@ -27,7 +25,14 @@ const PAGE_SIZE = 12;
 
 interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string }
 
-type SortKey = 'recent' | 'owner' | 'model' | 'tokens';
+type SortKey = 'title' | 'owner' | 'model' | 'tokens' | 'updated';
+
+/** The order a column takes when it is first clicked: text reads naturally A→Z, while a number and a
+ *  timestamp are almost always wanted biggest/newest first. */
+const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { title: 'asc', owner: 'asc', model: 'asc', tokens: 'desc', updated: 'desc' };
+
+const COLUMNS = 'minmax(0,2.4fr) minmax(0,1fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
+const COMPACT_COLUMNS = 'minmax(0,1fr) 2.25rem';
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
  *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
@@ -46,8 +51,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const [confirmAll, setConfirmAll] = useState(false);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState('');
-  const [sort, setSort] = useState<SortKey>('recent');
+  const [sort, setSort] = useState<SortKey>('updated');
+  const [direction, setDirection] = useState<SortDirection>('desc');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
@@ -57,28 +62,33 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const sessions: Row[] = view === 'all'
     ? (managed.data ?? [])
     : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }));
-  // Owners present in the data, so the filter can never offer someone with nothing to show.
-  const owners = [...new Map(sessions.filter((s) => s.ownerLabel).map((s) => [String(s.ownerId), s.ownerLabel!])).entries()]
-    .sort((a, b) => a[1].localeCompare(b[1]));
   const needle = search.trim().toLowerCase();
+  // The search covers the owner too, so narrowing to one person needs no separate filter control.
   const visible = sessions
-    .filter((s) => !ownerFilter || String(s.ownerId) === ownerFilter)
     .filter((s) => !needle || `${s.title} ${s.ownerLabel ?? ''} ${s.model}`.toLowerCase().includes(needle))
     .slice()
     .sort((a, b) => {
+      const flip = direction === 'asc' ? 1 : -1;
       switch (sort) {
+        case 'title': return flip * a.title.localeCompare(b.title) || b.updated_at.localeCompare(a.updated_at);
+        case 'owner': return flip * (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '') || b.updated_at.localeCompare(a.updated_at);
+        case 'model': return flip * a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
         // Every sort falls back to recency, so rows with an equal key keep a stable, meaningful order.
-        case 'owner': return (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '') || b.updated_at.localeCompare(a.updated_at);
-        case 'model': return a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
-        case 'tokens': return (b.tokens ?? 0) - (a.tokens ?? 0) || b.updated_at.localeCompare(a.updated_at);
-        default: return b.updated_at.localeCompare(a.updated_at);
+        case 'tokens': return flip * ((a.tokens ?? 0) - (b.tokens ?? 0)) || b.updated_at.localeCompare(a.updated_at);
+        default: return flip * a.updated_at.localeCompare(b.updated_at);
       }
     });
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
   const pageRows = visible.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
 
-  useEffect(() => { setPage(0); }, [view, search, ownerFilter, sort]);
+  useEffect(() => { setPage(0); }, [view, search, sort, direction]);
+
+  /** Clicking the active column reverses it; a different column starts at its own natural order. */
+  const sortBy = (key: SortKey) => {
+    if (key === sort) setDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSort(key); setDirection(DEFAULT_DIRECTION[key]); }
+  };
 
   const refresh = () => qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
 
@@ -143,25 +153,6 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               className="h-9 w-44 pl-7"
             />
           </label>
-          {owners.length > 1 ? (
-            <SelectMenu
-              label={t.sessionsPanel.owner}
-              value={ownerFilter}
-              onChange={setOwnerFilter}
-              options={[{ value: '', label: t.sessionsPanel.allOwners }, ...owners.map(([id, label]) => ({ value: id, label }))]}
-            />
-          ) : null}
-          <SelectMenu
-            label={t.sessionsPanel.sortLabel}
-            value={sort}
-            onChange={(v) => setSort(v as SortKey)}
-            options={[
-              { value: 'recent', label: t.sessionsPanel.sortRecent },
-              { value: 'owner', label: t.sessionsPanel.sortOwner },
-              { value: 'model', label: t.sessionsPanel.sortModel },
-              { value: 'tokens', label: t.sessionsPanel.sortTokens },
-            ]}
-          />
           {isAdmin ? (
             <Segmented
               size="sm"
@@ -187,52 +178,61 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
         : visible.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
         : (
-          <EntityList data-testid="brain-sessions-list">
-            <MotionPresence>
-              {pageRows.map((s) => {
-                // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
-                // task-worker sessions open read-only (the daemon won't let the owner post into them).
-                // A foreign conversation opens READ-ONLY: the daemon lets an admin read the transcript
-                // but never accept a post into it, so offering "continue" would just fail at send.
-                const foreign = s.ownerId !== undefined && myId !== undefined && s.ownerId !== myId;
-                const continuable = s.kind === 'conversation' && !foreign;
-                const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
-                const title = s.title || t.sessionsPanel.untitled;
-                return (
-                  <MotionLayoutItem key={s.id} layoutId={`brain-session-${s.id}`} role="listitem">
-                    <EntityRow role="presentation" className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-elevated/70">
-                          <ModelIcon name={s.model} size={24} />
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
-                          title={label}
-                          aria-label={`${label}: ${title}`}
-                          className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-                        >
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-text transition-colors group-hover:text-accent">{title}</span>
-                            {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
-                          </span>
-                          <span className="truncate font-mono text-tiny text-text-muted">
-                            {s.ownerLabel ? `${s.ownerLabel} · ` : ''}{s.tokens != null ? `${formatTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
-                          </span>
-                        </button>
-                        <ActionMenu
-                          label={`${title}: ${t.common.actions}`}
-                          items={rowActions(s)}
-                          trigger={<MoreHorizontal size={16} aria-hidden />}
-                          triggerClassName="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-                        />
-                      </div>
-                    </EntityRow>
-                  </MotionLayoutItem>
-                );
-              })}
-            </MotionPresence>
-          </EntityList>
+          <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} data-testid="brain-sessions-list">
+            <DataTableRow header>
+              <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
+              <DataTableSortCell priority="wide" active={sort === 'owner'} direction={direction} onSort={() => sortBy('owner')}>{t.sessionsPanel.owner}</DataTableSortCell>
+              <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
+              <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
+              <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>
+              <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+            </DataTableRow>
+            {pageRows.map((s) => {
+              // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
+              // task-worker sessions open read-only (the daemon won't let the owner post into them).
+              // A foreign conversation opens READ-ONLY: the daemon lets an admin read the transcript
+              // but never accept a post into it, so offering "continue" would just fail at send.
+              const foreign = s.ownerId !== undefined && myId !== undefined && s.ownerId !== myId;
+              const continuable = s.kind === 'conversation' && !foreign;
+              const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
+              const title = s.title || t.sessionsPanel.untitled;
+              return (
+                <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
+                  <DataTableCell>
+                    <button
+                      type="button"
+                      onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
+                      title={label}
+                      aria-label={`${label}: ${title}`}
+                      className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                    >
+                      <span className="truncate text-sm text-text transition-colors group-hover:text-accent">{title}</span>
+                      {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
+                    </button>
+                  </DataTableCell>
+                  <DataTableCell priority="wide" className="truncate text-xs text-text-muted" title={s.ownerLabel ?? ''}>{s.ownerLabel ?? ''}</DataTableCell>
+                  <DataTableCell priority="wide">
+                    <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
+                      <ModelIcon name={s.model} size={12} />
+                      <span className="truncate text-xs text-text-muted">{s.model}</span>
+                    </span>
+                  </DataTableCell>
+                  <DataTableCell priority="wide" className="text-right font-mono text-tiny text-text-muted">
+                    {s.tokens != null ? formatTokens(s.tokens) : ''}
+                  </DataTableCell>
+                  <DataTableCell priority="wide" className="font-mono text-tiny text-text-muted">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
+                  <DataTableCell>
+                    <ActionMenu
+                      label={`${title}: ${t.common.actions}`}
+                      items={rowActions(s)}
+                      trigger={<MoreHorizontal size={16} aria-hidden />}
+                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                    />
+                  </DataTableCell>
+                </DataTableRow>
+              );
+            })}
+          </DataTable>
         )}
 
       {/* Inside the register so the pager shares the card's horizontal inset (it used to sit as a

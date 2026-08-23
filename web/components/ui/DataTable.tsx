@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
 type TableStyle = CSSProperties & {
@@ -32,6 +33,41 @@ export function DataTableRow({ children, header = false, selected = false, inter
     >
       {children}
     </div>
+  );
+}
+
+export type SortDirection = 'asc' | 'desc';
+
+/** A column header that sorts the register when clicked, so a table needs no separate sort control.
+ *  `direction` describes the current order and is only meaningful while `active` — an inactive column
+ *  shows a neutral affordance rather than claiming an order it does not currently impose. */
+export function DataTableSortCell({ children, active, direction, onSort, priority = 'always', align = 'start', className = '', ...rest }: {
+  children: ReactNode;
+  active: boolean;
+  direction: SortDirection;
+  onSort: () => void;
+  priority?: 'always' | 'wide';
+  align?: 'start' | 'end';
+} & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'onClick'>) {
+  const Arrow = !active ? ChevronsUpDown : direction === 'asc' ? ChevronUp : ChevronDown;
+  return (
+    <DataTableCell
+      header
+      priority={priority}
+      aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={className}
+      {...rest}
+    >
+      <button
+        type="button"
+        onClick={onSort}
+        className={`group/sort -mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-text' : 'text-text-muted hover:text-text'}`}
+      >
+        <span className="truncate">{children}</span>
+        {/* The neutral arrow stays laid out but invisible, so a header does not shift when hovered. */}
+        <Arrow size={12} aria-hidden className={`shrink-0 ${active ? 'text-accent' : 'opacity-0 transition-opacity group-hover/sort:opacity-60'}`} />
+      </button>
+    </DataTableCell>
   );
 }
 
