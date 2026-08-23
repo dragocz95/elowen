@@ -2,7 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { resolveUploadTarget, sanitizeUploadName, uploadRelativeDir } from '../../src/brain/chatUploads.js';
+import { chooseUploadProject, resolveUploadTarget, sanitizeUploadName, uploadRelativeDir } from '../../src/brain/chatUploads.js';
+
+const SOURCES = { id: 1, slug: 'chetty', path: '/opt/elowen' };
+const SHARED = { id: 2, slug: 'sdilene', path: '/data/project' };
+
+describe('which project an upload belongs in', () => {
+  it('refuses when the caller has no project at all', () => {
+    expect(() => chooseUploadProject([], '/data/project')).toThrow(/ask an administrator to assign you one/);
+  });
+
+  it('takes the only project without consulting the preference', () => {
+    expect(chooseUploadProject([SHARED], '/somewhere/else')).toBe(SHARED);
+  });
+
+  it('prefers the shared workspace over a source checkout', () => {
+    // The real Chetty shape: an admin is assigned to both, and the lowest id is the live sources — the
+    // one destination an upload must never land in.
+    expect(chooseUploadProject([SOURCES, SHARED], '/data/project')).toBe(SHARED);
+    expect(chooseUploadProject([SHARED, SOURCES], '/data/project')).toBe(SHARED);
+  });
+
+  it('matches the preferred workspace regardless of a trailing separator', () => {
+    expect(chooseUploadProject([SOURCES, SHARED], '/data/project/')).toBe(SHARED);
+  });
+
+  it('fails loudly rather than guessing when nothing matches', () => {
+    // Guessing would be invisible: the file lands somewhere real and nobody notices until they look
+    // for it. The message has to name the candidates so an admin can act on it.
+    expect(() => chooseUploadProject([SOURCES, SHARED], '/data/nothing')).toThrow(/chetty, sdilene/);
+  });
+});
 
 const NOW = new Date(2026, 7, 23, 10, 30);
 

@@ -1,69 +1,55 @@
-import { downscaleImage } from '../../lib/imageDownscale';
-
-/** A staged attachment: images travel as base64 to the model's vision input; text files get their
- *  content inlined into the message (fenced), which works with any model. */
-export interface Attachment { name: string; kind: 'image' | 'text'; mimeType: string; data: string; preview?: string }
-
-export const MAX_IMAGES = 4;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TEXT_BYTES = 256 * 1024;
-/** What the vision providers actually decode (Anthropic: png/jpeg/gif/webp) — mirrors imageSchema in
- *  src/api/schemas/brain.ts and cli/chat/mentions.ts' IMAGE_MIME_BY_EXT. A browser reports plenty of
- *  other "image/*" types (heic, bmp, avif, svg…) that pass this prefix but that the provider cannot
- *  decode — forwarding one gets an opaque "Could not process image" 400 instead of a clear local error. */
-const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-/** The same four types keyed by extension. A browser does NOT always report a type: a file dragged from
- *  certain apps, or one the OS has no association for, arrives with `type: ''`. Without this it fell
- *  through to the text branch, was read as text, hit a NUL byte and was rejected as "binary" — a perfectly
- *  ordinary PNG refused with a message about the wrong thing entirely. */
-const IMAGE_TYPE_BY_EXTENSION: Record<string, string> = {
-  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
-};
-
-/** Why an attachment was refused. Distinct values because the two need different messages: one is fixed
- *  by sending a smaller file, the other by converting it — and a single message for both told the user
- *  neither. */
-export type AttachRefusal = 'too-large' | 'unsupported';
-
-/** The image type to send this file as, or null when it is not an image we can forward. */
-function imageTypeOf(file: File): string | null {
-  if (file.type.startsWith('image/')) return SUPPORTED_IMAGE_TYPES.has(file.type) ? file.type : null;
-  if (file.type) return null; // a declared non-image type — text branch
-  const ext = file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase();
-  return IMAGE_TYPE_BY_EXTENSION[ext] ?? null;
+/** A file the user attached to a conversation.
+ *
+ *  An attachment used to have to FIT IN THE MESSAGE: an image was downscaled and base64-encoded into the
+ *  request, a text file was inlined into the prompt between fences, and anything else was refused. That
+ *  is where the four-type allow-list, the 5 MB image ceiling, the 256 kB text ceiling and the "binary —
+ *  not inlinable" rejection all came from. None of them described a real limitation; they described the
+ *  cost of carrying bytes inside a chat message.
+ *
+ *  The file is now uploaded into the user's project first, and the message carries its PATH. So there is
+ *  nothing to encode, nothing to downscale and no type to admit or refuse — and the agent reads it with
+ *  the file tools it already has, which sniff the type from the content, inline images as vision blocks
+ *  and even render PDF pages. One read path instead of two.
+ */
+export interface Attachment {
+  /** Name as stored, which may differ from the file's own name when it collided or was sanitized. */
+  name: string;
+  /** Absolute path on the daemon host — what the message hands the agent. */
+  path: string;
+  /** Path within the project, for display. */
+  relative: string;
+  size: number;
 }
 
-export async function readAttachment(file: File): Promise<Attachment | AttachRefusal> {
-  const imageType = imageTypeOf(file);
-  // Anything the browser calls an image is judged as one even when we cannot forward it, so an unusable
-  // type (heic, avif, svg…) is named as such instead of being read as text and reported as binary.
-  if (imageType || file.type.startsWith('image/')) {
-    // A phone photo is routinely bigger than the provider accepts, and always has more pixels than it
-    // keeps; a phone photo may also be in a format the provider cannot read at all (heic). Both are
-    // handled by re-encoding here rather than refusing, because on a phone the user cannot convert or
-    // resize anything by hand. Null means it was not needed, or the engine could not decode it either —
-    // then the original is judged exactly as before.
-    const smaller = await downscaleImage(file, {
-      maxBytes: MAX_IMAGE_BYTES,
-      sourceType: imageType ?? file.type,
-      mustConvert: !imageType,
-    }).catch(() => null);
-    if (!imageType && !smaller) return 'unsupported';
-    const source: Blob = smaller?.blob ?? file;
-    const mimeType = smaller?.mimeType ?? imageType;
-    if (!mimeType) return 'unsupported';
-    if (source.size > MAX_IMAGE_BYTES) return 'too-large';
-    const dataUrl = await new Promise<string>((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(String(r.result));
-      r.onerror = () => rej(r.error);
-      r.readAsDataURL(source);
+/** Why an attachment did not make it. One value: there is no longer any such thing as an unsupported
+ *  type or a file that is too big, so a failure here is the transfer itself. */
+export type AttachRefusal = 'failed';
+
+/**
+ * Upload one file and return the reference to attach.
+ *
+ * The body is the file itself rather than multipart form data: the browser streams a `File` body, the
+ * BFF proxy streams it through and the daemon pipes it to disk, so nothing on the path holds the whole
+ * thing in memory. Wrapping it in multipart would make every hop materialize it instead.
+ */
+export async function uploadAttachment(file: File): Promise<Attachment | AttachRefusal> {
+  try {
+    const res = await fetch(`/api/brain/uploads?name=${encodeURIComponent(file.name || 'upload')}`, {
+      method: 'POST',
+      // The session cookie is same-origin and the BFF turns it into the daemon bearer, so no token here.
+      body: file,
+      headers: { 'content-type': file.type || 'application/octet-stream' },
     });
-    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-    return { name: file.name || 'obrazek.png', kind: 'image', mimeType, data: base64, preview: dataUrl };
+    if (!res.ok) return 'failed';
+    const body = await res.json() as Partial<Attachment>;
+    if (typeof body.path !== 'string' || typeof body.name !== 'string') return 'failed';
+    return {
+      name: body.name,
+      path: body.path,
+      relative: typeof body.relative === 'string' ? body.relative : body.name,
+      size: typeof body.size === 'number' ? body.size : 0,
+    };
+  } catch {
+    return 'failed';
   }
-  if (file.size > MAX_TEXT_BYTES) return 'too-large';
-  const text = await file.text();
-  if (text.includes('\u0000')) return 'unsupported'; // binary — not inlinable
-  return { name: file.name, kind: 'text', mimeType: file.type || 'text/plain', data: text };
 }

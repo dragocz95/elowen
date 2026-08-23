@@ -24,7 +24,7 @@ import {
   mergeBrainComposerText,
   type BrainOpenRequest,
 } from '../../lib/brainDock';
-import { MAX_IMAGES, readAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
+import { uploadAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
 import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
 
@@ -602,13 +602,15 @@ function useBrainChatController(): BrainChatValue {
     // stays live. The DAEMON renders every user turn authoritatively (the `user` stream event), so there
     // is NO optimistic local echo — a mid-turn send that queues can't drop or double-render.
     if (!typed && attachments.length === 0) return;
-    const textFiles = attachments.filter((a) => a.kind === 'text');
-    const images = attachments.filter((a) => a.kind === 'image').map((a) => ({ data: a.data, mimeType: a.mimeType }));
     // A plugin prompt command (`/review auth…`) rides RAW: the daemon hands the slash to PI, which expands
     // the template's arguments natively — same contract as the CLI. Built-ins/plain text pass through too.
+    //
+    // An attachment rides as its PATH, not its content. The file is already in the user's project by the
+    // time this runs, so the agent opens it with its ordinary file tools — which handle every type,
+    // including images, better than inlining ever did.
     const text = [
       typed || t.brainChat.attachOnly,
-      ...textFiles.map((a) => `\n\`${a.name}\`:\n\`\`\`\n${a.data}\n\`\`\``),
+      ...attachments.map((a) => `\n[📎 ${t.brainChat.attachedFile}: ${a.path}]`),
     ].join('\n');
     const shown = [typed || t.brainChat.attachOnly, ...attachments.map((a) => `📎 ${a.name}`)].join('\n');
     const submittedInput = input;
@@ -619,7 +621,9 @@ function useBrainChatController(): BrainChatValue {
     // turn) for both an immediate run and a queued delivery. `shown` rides as the clean display. The
     // binding lands the turn in THIS controller's conversation regardless of the server's active pointer.
     // If the daemon rejects the request, restore this draft unless the user already started a newer one.
-    try { await elowenClient.brainSend(text, images, shown, binding(), workMode); }
+    // No inline images any more: an attachment is a real file the agent opens, so the vision payload
+    // stays empty here. The parameter itself remains — other surfaces still deliver images inline.
+    try { await elowenClient.brainSend(text, [], shown, binding(), workMode); }
     catch {
       setInput((current) => current || submittedInput);
       setAttachments((current) => current.length ? current : submittedAttachments);
@@ -684,14 +688,12 @@ function useBrainChatController(): BrainChatValue {
   };
 
   const addFiles = async (files: Iterable<File>): Promise<void> => {
+    // Uploaded on attach rather than on send, so a large file is already on disk by the time the user
+    // finishes typing instead of stalling the send, and a failure is reported while they can still act.
     for (const f of files) {
-      const a = await readAttachment(f).catch((): AttachRefusal => 'unsupported');
-      if (a === 'unsupported') { toast(t.brainChat.attachUnsupportedType, 'error'); continue; }
-      if (a === 'too-large') { toast(t.brainChat.attachTooBig, 'error'); continue; }
-      setAttachments((cur) => {
-        if (a.kind === 'image' && cur.filter((x) => x.kind === 'image').length >= MAX_IMAGES) return cur;
-        return [...cur, a];
-      });
+      const a = await uploadAttachment(f).catch((): AttachRefusal => 'failed');
+      if (a === 'failed') { toast(t.brainChat.attachFailed, 'error'); continue; }
+      setAttachments((cur) => [...cur, a]);
     }
   };
   const removeAttachment = (index: number): void => setAttachments((cur) => cur.filter((_, j) => j !== index));

@@ -1092,10 +1092,11 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       {attachments.length > 0 ? (
         <div className={`flex flex-wrap gap-2 py-2 ${variant === 'full' ? 'chat-gutter' : 'px-3'}`}>
           {attachments.map((a, i) => (
-            <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated py-1 pl-1.5 pr-1 text-tiny text-text">
-              {a.kind === 'image' && a.preview
-                ? <img src={a.preview} alt={a.name} className="h-6 w-6 rounded object-cover" />
-                : <FileText size={13} className="text-text-muted" aria-hidden />}
+            /* No thumbnail: the file is already on the daemon, not held in the browser, so there is
+               nothing local to preview. The title names where it landed, which is what the user
+               actually needs — the file stays in their project after the conversation. */
+            <span key={i} title={a.relative} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated py-1 pl-1.5 pr-1 text-tiny text-text">
+              <FileText size={13} className="text-text-muted" aria-hidden />
               <span className="max-w-[140px] truncate">{a.name}</span>
               <button
                 type="button"

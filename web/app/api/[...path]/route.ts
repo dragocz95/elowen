@@ -32,11 +32,16 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const upstream = await fetch(`${daemonUrl()}/${path.join('/')}${search}`, {
     method: req.method,
     headers,
-    // Forward the raw bytes, not req.text(): decoding a multipart/form-data (avatar) upload as UTF-8
-    // mangles the binary image, so it reaches the daemon corrupt. arrayBuffer() is binary-safe and
-    // works for JSON bodies too (the forwarded content-type header keeps the daemon parsing correctly).
-    body: MUTATING.has(req.method) ? await req.arrayBuffer() : undefined,
-  });
+    // STREAM the body through rather than reading it into memory. It must not be req.text() — decoding
+    // a binary upload as UTF-8 mangles it — but it must not be arrayBuffer() either: that holds the
+    // whole request in this process's heap, which is fine for a JSON patch and ruinous for a file
+    // upload, whose entire point is that it is not bounded by what fits in a message. Passing the body
+    // stream keeps both cases binary-exact at constant memory.
+    body: MUTATING.has(req.method) ? req.body : undefined,
+    // Required by undici whenever the body is a stream: we are not reading the response before we
+    // finish sending the request, which is the "half duplex" case.
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' });
   const resHeaders = new Headers(upstream.headers);
   // Never relay a daemon-set cookie to the browser; the proxy is the sole owner of the session cookie.
   resHeaders.delete('set-cookie');

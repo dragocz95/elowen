@@ -19,6 +19,42 @@ import { realPathWithin } from '../plugins/pathGuard.js';
  *  room left for the ` (2)` a collision appends. */
 const MAX_NAME = 180;
 
+export interface UploadProject {
+  id: number;
+  path: string;
+  slug: string;
+}
+
+/**
+ * Which of the caller's projects an upload belongs in.
+ *
+ * A web conversation cannot answer this: `brain_sessions.work_dir` is empty for one (it exists so a CLI
+ * can find the conversation belonging to a directory), so there is no cwd to inherit. Nor can the id be
+ * assumed — the daemon's own `project` is hardcoded to id 1 while its PATH comes from the environment,
+ * and on a deployment where those disagree, trusting the id drops uploads into the source checkout.
+ *
+ * So: the caller's own projects decide. One project is unambiguous. Several are resolved by preferring
+ * the instance's configured workspace, which is the shared folder everyone is assigned to. Anything
+ * still ambiguous FAILS rather than guessing — writing somebody's file into the wrong project is not
+ * something they would notice, and silently picking the lowest id would put it in the sources.
+ */
+export function chooseUploadProject(candidates: readonly UploadProject[], preferredPath: string): UploadProject {
+  if (candidates.length === 0) {
+    throw new Error('no project to upload into — ask an administrator to assign you one');
+  }
+  const only = candidates.length === 1 ? candidates[0] : undefined;
+  if (only) return only;
+  const preferred = candidates.find((p) => samePath(p.path, preferredPath));
+  if (preferred) return preferred;
+  const names = candidates.map((p) => p.slug).join(', ');
+  throw new Error(`several projects could hold this upload (${names}) and none is the shared workspace — ask an administrator to set one`);
+}
+
+function samePath(a: string, b: string): boolean {
+  const strip = (v: string): string => (v.length > 1 && v.endsWith(sep) ? v.slice(0, -1) : v);
+  return strip(resolve(a)) === strip(resolve(b));
+}
+
 /** How many times a colliding name is suffixed before the upload is refused. A user re-sending the same
  *  file a few times is ordinary; a thousand collisions is a caller in a loop, and silently spinning
  *  through them would stat the directory forever. */

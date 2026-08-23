@@ -58,19 +58,28 @@ describe('proxy catch-all', () => {
     expect(res.headers.get('set-cookie')).toMatch(/Max-Age=0/);
   });
 
-  it('forwards a mutating body as raw bytes (binary-safe avatar upload, not UTF-8 mangled)', async () => {
+  it('streams a mutating body through, binary-exact and without buffering it', async () => {
     fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
     // Bytes that are NOT valid UTF-8 — exactly what a JPEG contains. Decoding via req.text() would
-    // replace them with U+FFFD and inflate the body; arrayBuffer() must preserve them exactly.
+    // replace them with U+FFFD and inflate the body, so the transfer has to stay binary.
     const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x80, 0xfe, 0x42]);
-    const req = new Request('https://web.test/api/auth/me/avatar', {
+    const req = new Request('https://web.test/api/brain/uploads?name=x.jpg', {
       method: 'POST',
-      headers: { cookie: 'elowen_session=tok', origin: 'https://web.test', 'content-type': 'multipart/form-data; boundary=x' },
+      headers: { cookie: 'elowen_session=tok', origin: 'https://web.test', 'content-type': 'application/octet-stream' },
       body: bytes,
     });
-    const res = await POST(req, ctx(['auth', 'me', 'avatar']));
+    const res = await POST(req, ctx(['brain', 'uploads']));
     expect(res.status).toBe(200);
-    const sent = new Uint8Array(fetchMock.mock.calls[0][1].body as ArrayBuffer);
+
+    const init = fetchMock.mock.calls[0][1] as { body: unknown; duplex?: string };
+    // The body must travel as the request's own STREAM. Reading it into an ArrayBuffer first would hold
+    // the whole upload in this process's heap, which is exactly the ceiling the upload path exists to
+    // remove — and undici refuses a streamed body without `duplex: 'half'`.
+    expect(init.body).toBeInstanceOf(ReadableStream);
+    expect(init.duplex).toBe('half');
+
+    // Still byte-for-byte what came in.
+    const sent = new Uint8Array(await new Response(init.body as ReadableStream).arrayBuffer());
     expect(Array.from(sent)).toEqual(Array.from(bytes));
   });
 

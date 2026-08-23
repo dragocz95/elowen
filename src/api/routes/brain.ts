@@ -15,6 +15,7 @@ import { registerBrainDebugRoutes } from './brainDebug.js';
 import { registerBrainProviderRoutes } from './brainProviders.js';
 import { createBrainRouteContext, messagePageOpts } from './brainRouteContext.js';
 import { registerBrainStreamRoutes } from './brainStream.js';
+import { registerBrainUploadRoutes } from './brainUploads.js';
 
 /** Opt-in pagination for the session listing: undefined when neither query param is present (the caller
  *  keeps the historical bare-array response), otherwise the clamped non-negative ints. A missing/garbage
@@ -47,6 +48,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   } : {};
 
   registerBrainDebugRoutes(app, route);
+  registerBrainUploadRoutes(app, route);
 
   app.get('/brain/status', async c => {
     if (!d.brain) return c.json({ running: false, sessionId: null, model: '', usage: null, statusline: null, project: { cwd: null, branch: null }, mcp: null });
