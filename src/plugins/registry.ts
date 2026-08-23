@@ -454,7 +454,23 @@ export class PluginRegistry {
   /** The tools ONE session may see: every permitted instance-wide tool, plus permitted tools owned by
    * `userId`. A missing account fails closed to instance-only. When an owner-scoped tool intentionally
    * reuses an instance tool's name, the personal definition wins inside that owner's session. */
-  toolsFor(userId: number | null | undefined, user?: Partial<PluginAccessUser> | null): ToolDefinition[] {
+  toolsFor(
+    userId: number | null | undefined,
+    user?: Partial<PluginAccessUser> | null,
+    opts?: {
+      /** A PLATFORM surface (Discord, Teams, WhatsApp, Telegram, cron), where the session has no single
+       *  account behind it: senders change from turn to turn, so the session cannot be composed against
+       *  anyone's grants. Grant-gated tools are therefore COMPOSED here and refused at EXECUTE time by
+       *  the acting sender's own ToolPolicy (deniedToolsForUser → gateToolAccess), which is the same
+       *  deny-list that account uses in web chat.
+       *
+       *  Composed with grants withheld, the tool was simply absent for everyone -- including the admin
+       *  who owned the cron job -- and nothing said why. This does NOT widen personal contributions: the
+       *  ownership filter below is untouched, so one person's personal tools still never appear in a room
+       *  shared with somebody else. */
+      grantsEnforcedPerTurn?: boolean;
+    },
+  ): ToolDefinition[] {
     const accessUser: PluginAccessUser = user
       ? { is_admin: user.is_admin === true, granted_plugins: user.granted_plugins ?? [] }
       : UNGRANTED_PLUGIN_USER;
@@ -463,7 +479,8 @@ export class PluginRegistry {
       const ownerUserId = this.toolOwnerUsers[i] ?? null;
       if (ownerUserId !== null && (userId == null || ownerUserId !== userId)) continue;
       const plugin = this.toolOwner.get(this.tools[i]!.name)!;
-      if (!isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) })) continue;
+      if (!opts?.grantsEnforcedPerTurn
+        && !isPluginAllowedForUser(accessUser, { name: plugin, userGrantable: this.userGrantable.has(plugin) })) continue;
       const personal = ownerUserId !== null;
       const prior = selected.get(this.tools[i]!.name);
       if (!prior || (personal && !prior.personal)) selected.set(this.tools[i]!.name, { tool: this.tools[i]!, personal });

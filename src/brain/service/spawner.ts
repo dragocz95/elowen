@@ -184,7 +184,13 @@ export class LiveSessionSpawner {
     // fail closed to the instance set.
     const contributionOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId, opts.direct === true);
     const contributionOwnerUser = contributionOwnerUserId == null ? null : this.d.users.get(contributionOwnerUserId);
-    const pluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
+    // A platform session (Discord/Teams/WhatsApp/Telegram/cron) has no single account behind it, so it
+    // cannot be composed against anyone's grants -- that is why a grant-gated tool like the shell was
+    // absent there for everyone, the cron job's own admin owner included. Compose it and let the
+    // execute-time gate refuse it per SENDER, which is what the line below already claims happens.
+    const pluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser, {
+      grantsEnforcedPerTurn: opts.channel === true,
+    }) ?? [];
     // Plugin hook point: after a permitted plugin tool's execute resolves, fan the call out to
     // `tools.call.after` subscribers (e.g. the formatters plugin). AWAITED by the tool gate before the
     // result returns, so a hook that rewrites the written file finishes before the transcript diff /

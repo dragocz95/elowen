@@ -88,3 +88,56 @@ describe('per-user plugin grants on brain tools', () => {
     });
   });
 });
+
+// A PLATFORM session (Discord, Teams, WhatsApp, Telegram, cron) has no single account behind it: the
+// sender changes from turn to turn, so `skillOwnerForSession` hands composition no owner at all. With
+// grants applied at compose time that meant a grant-gated tool -- the shell, after it became grantable
+// -- was absent for EVERYONE on those surfaces, including the admin who owned the cron job, and nothing
+// reported why. Grants move to the per-turn gate there, which is the sender-accurate place anyway.
+describe('platform sessions decide grants per turn, not per session', () => {
+  const withTools = (personalOwner: number | null = null): PluginRegistry => {
+    const r = registry();
+    for (const name of ['GatedRead', 'OpenTool']) {
+      r.tools.push({ name } as unknown as PluginRegistry['tools'][number]);
+      r.toolOwnerUsers.push(personalOwner);
+    }
+    return r;
+  };
+  const ungranted = { is_admin: false, granted_plugins: [] };
+
+  it('composes a grant-gated tool for a session that has no owner to check grants against', () => {
+    const r = withTools();
+    // How a platform session actually calls it: no owner id, no user row.
+    expect(r.toolsFor(null, null, { grantsEnforcedPerTurn: true }).map((t) => t.name))
+      .toEqual(['GatedRead', 'OpenTool']);
+    // Without the flag the same call composes nothing gated -- the behaviour that emptied the shell out
+    // of every platform surface.
+    expect(r.toolsFor(null, null).map((t) => t.name)).toEqual(['OpenTool']);
+  });
+
+  it('still refuses it at execute time for a sender who lacks the grant', () => {
+    const r = withTools();
+    // Composed...
+    expect(r.toolsFor(null, null, { grantsEnforcedPerTurn: true }).map((t) => t.name)).toContain('GatedRead');
+    // ...and simultaneously on that sender's deny-list, which is what gateToolAccess enforces per turn.
+    // Being in BOTH is the point here: composition stops deciding, the sender's own policy decides.
+    // Both of the gated plugin's tools, since the deny-list is built from the registry's ownership map
+    // rather than from what this particular session happened to compose.
+    expect(ungrantedPluginTools(ungranted, r)).toEqual(['GatedRead', 'GatedWrite']);
+    expect(ungrantedPluginTools({ is_admin: false, granted_plugins: ['gated'] }, r)).toEqual([]);
+  });
+
+  it('does not hand a shared room one person\'s personal tools', () => {
+    // The ownership filter is untouched by the flag: a personal contribution belongs to its owner's
+    // sessions, and a room shared with other people is not one of them.
+    const r = withTools(7);
+    expect(r.toolsFor(null, null, { grantsEnforcedPerTurn: true })).toEqual([]);
+    expect(r.toolsFor(7, { is_admin: false, granted_plugins: [] }, { grantsEnforcedPerTurn: true })
+      .map((t) => t.name)).toEqual(['GatedRead', 'OpenTool']);
+  });
+
+  it('leaves owner chat composing against grants as before', () => {
+    const r = withTools();
+    expect(r.toolsFor(5, ungranted).map((t) => t.name)).toEqual(['OpenTool']);
+  });
+});
