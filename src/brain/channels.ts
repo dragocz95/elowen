@@ -16,6 +16,7 @@ import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './even
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
 import { projectUserTurn } from './persistence.js';
+import { attachmentTurnNote, storeChannelAttachments, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
 import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
@@ -157,6 +158,12 @@ export interface ChannelSendOpts {
    *  execute time by the plugin-tool gate. Undefined → no restriction. */
   toolPolicy?: ToolPolicy;
   images?: { data: string; mimeType: string }[];
+  /** Non-image files attached to this message. They are written into the VERIFIED writer's project before
+   *  the turn — the same target the web upload route claims — and the turn text gains their real paths, so
+   *  a PDF dropped into a room is a file the agent can open rather than a note saying one arrived. A
+   *  refusal throws: an attachment the sender can see in the channel and the agent never receives is the
+   *  exact silence this exists to end. */
+  attachments?: ChannelAttachment[];
   /** Idle cutoff for THIS surface: a channel that went quiet longer than this before the current
    *  message has a long-expired prompt cache, so its session is rolled over (the stale transcript is
    *  archived under a fresh id and a new empty session takes its place) rather than dragging the whole
@@ -207,7 +214,11 @@ export interface ChannelServiceDeps {
   store: BrainStore;
   /** The same store-backed registry owner chat uses, so channel/sub-agent cards survive replay cleanup. */
   cards: CardRegistry;
-  users: { get(userId: number): { name?: string; username?: string } | null | undefined };
+  users: { get(userId: number): { name?: string; username?: string; is_admin?: boolean } | null | undefined };
+  /** Projects and assignments, used ONLY to decide where a room attachment is written (see
+   *  channelAttachments.ts). Absent ⇒ no candidate project exists and an attachment is refused with the
+   *  same message the web route gives, rather than silently discarded. */
+  uploads?: ChannelUploadDeps;
   /** Session composition stays in BrainService.spawnLive — this service only orchestrates. */
   spawn: (opts: SpawnOpts) => Promise<LiveBrain>;
   /** Live channel sessions cap: past this the least-recently-used one is disposed (its history stays
@@ -381,7 +392,17 @@ export class ChannelSessionService {
    *  concurrently (and must not both spawn it). */
   async send(opts: ChannelSendOpts, text: string): Promise<string> {
     const senderText = text;
-    const textWithAttachmentMarker = opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text;
+    // Files land on disk BEFORE the text is serialized, so the model and the durable row both carry the
+    // real path. Inside the envelope with the rest of the message body: the paths describe what this
+    // untrusted sender attached, and hoisting them out would present them as host-stated fact.
+    const storedFiles = opts.attachments?.length
+      ? storeChannelAttachments(this.d.uploads ?? {}, opts.writerUserId, opts.attachments)
+      : [];
+    const markers = [
+      ...(opts.images?.length ? [`[📎 ${opts.images.length}× image]`] : []),
+      ...(storedFiles.length ? [attachmentTurnNote(storedFiles)] : []),
+    ];
+    const textWithAttachmentMarker = markers.length ? `${text}\n${markers.join('\n')}` : text;
     // Prompt commands are adapter-recognized macros and stay raw for PI expansion. Every ordinary message
     // in a validated shared room is serialized once here; this exact string goes to the model and SQLite.
     const turnText = opts.identity?.conversation === 'shared' && opts.sender && !opts.promptCommand

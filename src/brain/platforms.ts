@@ -425,6 +425,7 @@ export class PlatformOrchestrator {
             idleRolloverMs: src.access.sessionIdleMs,
             toolPolicy,
             images: src.images,
+            attachments: src.attachments,
             identity,
             // The effective account view: a verified human link or host-authenticated automation relay.
             // Arbitrary actAsUserId still cannot validate `direct`; it only scopes the admitted automation.

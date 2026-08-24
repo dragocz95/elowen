@@ -685,6 +685,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         cwd: brainDir,
         projectPath: () => homeProject.path,
         projects,
+        // Only for placing a room attachment in the writer's own project (brain/channelAttachments.ts).
+        userProjects,
         chatImagesDir,
         // Bill a settled turn to the account and origin that ORDERED it — see billSettledTurn, which owns
         // the fallback rule. The pin openTurn set is consumed here, so a turn nobody requested (a cron

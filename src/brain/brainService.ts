@@ -307,6 +307,14 @@ export class BrainService {
     this.channelService = new ChannelSessionService({
       registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,
       store: d.store, cards: this.cards, users: d.users,
+      // A file dropped into a room is written into the VERIFIED writer's project, through the same
+      // decision the web upload route makes — see brain/channelAttachments.ts.
+      uploads: {
+        get projects() { return d.projects; },
+        get userProjects() { return d.userProjects; },
+        get users() { return d.users; },
+        get projectPath() { return d.projectPath; },
+      },
       maxChannels: () => this.limits().channelSessionCap,
       spawn: (o) => this.spawner.spawn(o), // composition stays in the spawner — single source
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.

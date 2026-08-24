@@ -2,7 +2,7 @@ import { createWriteStream } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { chooseUploadProject, createUploadTarget, type UploadProject } from '../../brain/chatUploads.js';
+import { chooseUploadProject, createUploadTarget, uploadCandidates, type UploadProject } from '../../brain/chatUploads.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp } from '../context.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
@@ -21,18 +21,15 @@ import type { BrainRouteContext } from './brainRouteContext.js';
 export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteContext): void {
   const { d, forbidden } = route;
 
-  /** The projects this account may write into, as upload candidates. An admin with no explicit
-   *  assignment administers every project, matching how resolvePolicy treats one for path access. */
+  /** The projects this account may write into, as upload candidates — the same decision a platform room's
+   *  attachment goes through (see brain/channelAttachments.ts), which is why the rule itself is shared. */
   const candidatesFor = (userId: number): UploadProject[] => {
     if (!d.projects) return [];
-    const all = d.projects.list();
-    const assigned = d.userProjects?.forUser(userId) ?? [];
-    if (assigned.length > 0) {
-      const wanted = new Set(assigned);
-      return all.filter((p) => wanted.has(p.id)).map((p) => ({ id: p.id, slug: p.slug, path: p.path }));
-    }
-    const isAdmin = d.users?.get(userId)?.is_admin === true;
-    return isAdmin ? all.map((p) => ({ id: p.id, slug: p.slug, path: p.path })) : [];
+    return uploadCandidates({
+      all: d.projects.list(),
+      assigned: d.userProjects?.forUser(userId) ?? [],
+      isAdmin: d.users?.get(userId)?.is_admin === true,
+    });
   };
 
   app.post('/brain/uploads', async (c) => {

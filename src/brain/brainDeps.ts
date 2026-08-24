@@ -47,6 +47,9 @@ export interface BrainDeps {
   projectPath?: () => string | undefined;
   /** Registered projects resolve a canonical client cwd to the category scope used for recall. */
   projects?: ProjectStore;
+  /** Which projects an account is assigned to. Read only where a WRITE has to choose among them: a file
+   *  attached in a platform room is stored in the writer's own project, exactly as a web upload is. */
+  userProjects?: { forUser(userId: number): number[] };
   /** Where a turn's image attachments are written so a bubble still shows them after a reload. Raw base64
    *  never enters `brain_messages`; the row keeps a reference to a file here. Absent (in-memory database)
    *  → attachments live only for their turn, exactly as before. */

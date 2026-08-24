@@ -49,6 +49,20 @@ export interface UploadProject {
   slug: string;
 }
 
+/** Which projects an account may write an upload into. An admin with no explicit assignment administers
+ *  every project, matching how resolvePolicy treats one for path access; anyone else is bounded by their
+ *  assignment, and an account with none has nowhere to put a file. Shared by the web upload route and the
+ *  platform-room path so a file dropped into a Discord thread lands exactly where the same person's
+ *  browser upload would. */
+export function uploadCandidates(input: { all: readonly UploadProject[]; assigned: readonly number[]; isAdmin: boolean }): UploadProject[] {
+  const pick = (p: UploadProject): UploadProject => ({ id: p.id, slug: p.slug, path: p.path });
+  if (input.assigned.length > 0) {
+    const wanted = new Set(input.assigned);
+    return input.all.filter((p) => wanted.has(p.id)).map(pick);
+  }
+  return input.isAdmin ? input.all.map(pick) : [];
+}
+
 /**
  * Which of the caller's projects an upload belongs in.
  *

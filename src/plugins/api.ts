@@ -210,6 +210,12 @@ export interface SessionSource {
   channelTopic?: string;
   /** Image attachments (base64), ready for a vision-capable model. Adapter-capped in count and size. */
   images?: { data: string; mimeType: string }[];
+  /** Everything else the sender attached (base64), for the host to write into the verified writer's
+   *  project so the agent gets a real path instead of a note saying a file arrived — the same thing a web
+   *  upload produces. The adapter downloads and caps; the HOST sanitizes the name and owns the
+   *  destination, so nothing here is trusted to describe where the bytes may go. An adapter that reports
+   *  a file the host cannot place gets a thrown error to relay, never a silent drop. */
+  attachments?: { name: string; data: string; mimeType?: string }[];
   /** Set when this message replays work scheduled FROM a conversation. Owner-chat origins use a bound
    *  send into `sessionId`. Direct platform origins also carry the opaque `deliveryTarget`: the host
    *  validates it against the direct session, runs through the channel path, and sends the reply through

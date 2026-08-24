@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ChannelSessionService } from '../../src/brain/channels.js';
 import { channelSessionId } from '../../src/brain/sessionId.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
@@ -123,5 +126,55 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
     await svc.send(opts, 'hello');
 
     expect(promptOf()).not.toContain('<running-subagents>');
+  });
+});
+
+/** A non-image attachment used to reach a room turn as the text note `[Attachment: x.pdf (…)]` — the agent
+ *  was told a file existed and given no way to open it, while the same file dropped into the web chat
+ *  became a real path in the sender's project. The room now takes that same upload path. */
+describe('a room attachment reaches the turn as a real path', () => {
+  const projectDir = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-room-turn-upload-'));
+    tempDirs.push(dir);
+    return dir;
+  };
+  const tempDirs: string[] = [];
+  afterEach(() => { for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  const uploadsFor = (root: string) => ({
+    projects: { list: () => [{ id: 1, slug: 'workspace', path: root }] },
+    userProjects: { forUser: () => [1] },
+    users: { get: () => ({ username: 'patricie', is_admin: false }) },
+    projectPath: () => root,
+  });
+
+  it('writes the file and puts its path in both the model prompt and the durable row', async () => {
+    const root = projectDir();
+    const { svc, opts, promptOf, store, sessionId } = setup({ uploads: uploadsFor(root) }, 'discord-attach');
+
+    await svc.send(
+      { ...opts, writerUserId: 7, attachments: [{ name: 'smlouva.pdf', data: Buffer.from('PDF').toString('base64'), mimeType: 'application/pdf' }] },
+      'co je v té smlouvě?',
+    );
+
+    const prompt = promptOf();
+    const stored = join(root, 'uploads', 'patricie');
+    expect(prompt).toContain('co je v té smlouvě?');
+    expect(prompt).toContain('smlouva.pdf (application/pdf) — saved to');
+    expect(prompt).toContain(stored);
+    // The durable row must carry the same path, or a reload strands the agent with a file it cannot find.
+    const rows = store.getMessages(sessionId);
+    expect(JSON.stringify(rows)).toContain(stored);
+  });
+
+  it('refuses out loud instead of dropping a file it cannot place', async () => {
+    const root = projectDir();
+    const { svc, opts } = setup({ uploads: uploadsFor(root) }, 'discord-attach-unlinked');
+
+    // No verified writer: an unlinked sender's bytes must not enter anybody's project.
+    await expect(svc.send(
+      { ...opts, attachments: [{ name: 'a.pdf', data: Buffer.from('x').toString('base64') }] },
+      'tady to máš',
+    )).rejects.toThrow(/verified sender/);
   });
 });
