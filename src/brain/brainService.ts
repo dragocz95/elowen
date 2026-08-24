@@ -5,7 +5,7 @@ import { PluginServiceRunner } from '../plugins/serviceRunner.js';
 import type { DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
-import type { BrainSearchHit, BrainGoalRow } from '../store/brainStore.js';
+import type { BrainSearchHit, BrainGoalRow, BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
 import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
@@ -508,11 +508,42 @@ export class BrainService {
     this.delegated.reconcileDelegationsOnBoot();
   }
 
+  // --- Boot recovery, seen from the brain. Each substrate exposes the same three steps the recovery
+  // coordinator drives (claim → order → resume; see src/brain/recovery), plus a whole-sweep method that
+  // recovers THAT substrate on its own. The sweeps are thin compositions of exactly those steps, so there
+  // is one implementation of each, not two. The daemon runs the coordinator, never the sweeps: only the
+  // coordinator can order the three substrates against each other. ---
+
+  /** `delegations` provider, CLAIM: run the synchronous boot reconcile and hand over the generic run
+   *  claims. The reconcile claims BOTH substrates in one pass, because a delegation claimed under a
+   *  claimed workflow's node session has to be superseded before either set is handed out; the workflow
+   *  half is taken by {@link claimWorkflowRecovery}, whose provider declares the dependency that orders it
+   *  after this one. */
+  claimDelegationRecovery(): RecoverableRun[] {
+    this.delegated.reconcileDelegationsOnBoot();
+    return this.delegated.takePendingRecovery();
+  }
+
+  /** `delegations` provider, ORDER: deepest first — see DelegatedSessionService.orderForRecovery. */
+  orderDelegationRecovery(runs: readonly RecoverableRun[]): RecoverableRun[] {
+    return this.delegated.orderForRecovery(runs);
+  }
+
+  /** `delegations` provider, RESUME: one claimed run — see DelegatedSessionService.recoverClaimedRun. */
+  async recoverDelegation(run: RecoverableRun): Promise<void> {
+    await this.delegated.recoverClaimedRun(run);
+  }
+
   /** Boot phase 2: respawn the delegations reconcileDelegationsOnBoot claimed, once platforms are up — see
    *  DelegatedSessionService.runDelegationRecovery. Detached from boot so a multi-minute recovery turn
    *  never blocks startup, and deliberately AFTER startPlatforms so the respawned child turns can run. */
   async runDelegationRecovery(): Promise<void> {
     await this.delegated.runDelegationRecovery();
+  }
+
+  /** `workflows` provider, CLAIM: the workflow half of the reconcile {@link claimDelegationRecovery} ran. */
+  claimWorkflowRecovery(): RecoverableWorkflow[] {
+    return this.delegated.takePendingWorkflowRecovery();
   }
 
   /** Boot phase 2, workflow half: ask the engine to take back each DAG reconcileDelegationsOnBoot claimed,
@@ -523,53 +554,63 @@ export class BrainService {
    *  completion so the origin conversation actually LEARNS the workflow died with the restart instead of
    *  discovering a silent `cancelled` badge later. */
   async runWorkflowRecovery(): Promise<void> {
-    const claimed = this.delegated.takePendingWorkflowRecovery();
-    if (claimed.length === 0) return;
-    const registry = await this.resolvePlugins();
-    for (const wf of claimed) {
-      const control = registry?.control('workflow');
-      let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
-      try {
-        if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
-          reason = 'it kept getting interrupted by repeated daemon restarts';
-        } else if (control) {
-          const outcome = await control.resumeInterrupted({
-            workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
-            hooks: {
-              emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
-              complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
-              stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
-              validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
-            },
-          });
-          if (outcome.resumed) {
-            // A successful hand-back ends the crash-loop suspicion for THIS interruption: without the
-            // reset, four ordinary deploys under one long workflow would hit the attempt cap and kill it
-            // healthy. The accepted trade-off: a workflow whose NODE reliably crashes the daemon can now
-            // re-claim on every boot — systemd's own restart limiter is the backstop for that pathology.
-            this.d.store.clearWorkflowClaimAttempts(wf.parentSessionId, wf.toolCallId);
-            logger('brain').info(`boot recovery resumed workflow ${wf.workflowId} (attempt ${wf.attempt})`);
-            continue;
-          }
-          if (outcome.reason) reason = outcome.reason;
+    for (const wf of this.claimWorkflowRecovery()) await this.resumeWorkflow(wf);
+  }
+
+  /** `workflows` provider, RESUME: hand ONE claimed DAG back to the engine, or terminalize it durably.
+   *  Everything durable about that decision — the attempt cap, the fail-closed journal boundary check, the
+   *  `cancelled` state and the completion the origin conversation actually reads — lives here, never in
+   *  the coordinator that orders the sweep. */
+  async resumeWorkflow(wf: RecoverableWorkflow): Promise<void> {
+    const control = (await this.resolvePlugins())?.control('workflow');
+    let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
+    try {
+      if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
+        reason = 'it kept getting interrupted by repeated daemon restarts';
+      } else if (control) {
+        const outcome = await control.resumeInterrupted({
+          workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
+          hooks: {
+            emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
+            complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
+            stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+            validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
+          },
+        });
+        if (outcome.resumed) {
+          // A successful hand-back ends the crash-loop suspicion for THIS interruption: without the
+          // reset, four ordinary deploys under one long workflow would hit the attempt cap and kill it
+          // healthy. The accepted trade-off: a workflow whose NODE reliably crashes the daemon can now
+          // re-claim on every boot — systemd's own restart limiter is the backstop for that pathology.
+          this.d.store.clearWorkflowClaimAttempts(wf.parentSessionId, wf.toolCallId);
+          logger('brain').info(`boot recovery resumed workflow ${wf.workflowId} (attempt ${wf.attempt})`);
+          return;
         }
-      } catch (e) {
-        reason = `resume failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 2_000)}`;
+        if (outcome.reason) reason = outcome.reason;
       }
-      logger('brain').warn(`boot recovery could not resume workflow ${wf.workflowId}: ${reason} — terminalizing`);
-      this.d.store.upsertWorkflowRun(wf.parentSessionId, terminalizeWorkflow(wf.state));
-      const done = wf.state.nodes.filter((n) => n.status === 'done').map((n) => n.id);
-      this.deliverWorkflowCompletion(wf.parentSessionId, {
-        id: wf.workflowId, toolCallId: wf.toolCallId,
-        ...(wf.state.title !== undefined ? { title: wf.state.title } : {}),
-        status: 'cancelled',
-        result: `Workflow '${wf.state.title ?? wf.workflowId}' was interrupted by a daemon restart and could not be resumed (${reason}). `
-          + (done.length > 0
-            ? `Nodes finished before the restart: ${done.join(', ')} — their session transcripts are still readable. `
-            : 'No node had finished yet. ')
-          + 'Start a new workflow to redo the remaining work if it is still needed.',
-      });
+    } catch (e) {
+      reason = `resume failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 2_000)}`;
     }
+    logger('brain').warn(`boot recovery could not resume workflow ${wf.workflowId}: ${reason} — terminalizing`);
+    this.d.store.upsertWorkflowRun(wf.parentSessionId, terminalizeWorkflow(wf.state));
+    const done = wf.state.nodes.filter((n) => n.status === 'done').map((n) => n.id);
+    this.deliverWorkflowCompletion(wf.parentSessionId, {
+      id: wf.workflowId, toolCallId: wf.toolCallId,
+      ...(wf.state.title !== undefined ? { title: wf.state.title } : {}),
+      status: 'cancelled',
+      result: `Workflow '${wf.state.title ?? wf.workflowId}' was interrupted by a daemon restart and could not be resumed (${reason}). `
+        + (done.length > 0
+          ? `Nodes finished before the restart: ${done.join(', ')} — their session transcripts are still readable. `
+          : 'No node had finished yet. ')
+        + 'Start a new workflow to redo the remaining work if it is still needed.',
+    });
+  }
+
+  /** `owner-conversations` provider, CLAIM: every conversation the last shutdown parked. The durable
+   *  claim itself is per-conversation and stays in the resume (claimParkResumeAttempt), which is what lets
+   *  the user's own message win the race against this sweep. */
+  claimParkedConversations(): BrainSessionRow[] {
+    return this.d.store.parkedSessions();
   }
 
   /** Boot phase 2, conversation half: resume every OWNER conversation the last shutdown parked at its
@@ -585,12 +626,13 @@ export class BrainService {
    *  no duplicate continuation is injected. Conversations resume concurrently — they are independent
    *  turns, exactly as they would be in normal operation. */
   async runParkedConversationRecovery(): Promise<void> {
-    const parked = this.d.store.parkedSessions();
+    const parked = this.claimParkedConversations();
     if (parked.length === 0) return;
     await Promise.allSettled(parked.map((row) => this.resumeParkedConversation(row)));
   }
 
-  private async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<void> {
+  /** `owner-conversations` provider, RESUME: continue ONE parked conversation from its own tail. */
+  async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<void> {
     const log = logger('brain');
     // Fail closed on anything the park invariant says cannot happen: only top-level owner conversations
     // ever carry a marker (the onParked wiring refuses non-user sessions), and a marker without a live

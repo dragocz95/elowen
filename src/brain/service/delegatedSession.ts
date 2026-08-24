@@ -184,20 +184,21 @@ export class DelegatedSessionService {
     return claimed;
   }
 
-  /** Boot phase 2 (ASYNCHRONOUS, after startPlatforms): respawn each claimed delegation to finish where it
-   *  was interrupted, or park it as recovery_required when replay is not safe. Runs the children serially
-   *  so a fleet of interrupted delegations does not stampede the freshly booted daemon. An unexpected turn
-   *  failure is parked with a durable parent notice instead of leaving a current-boot `recovering` claim with
-   *  no worker until another daemon restart happens to retry it. */
-  async runDelegationRecovery(): Promise<void> {
+  /** The generic-delegation twin of {@link takePendingWorkflowRecovery}: hand the phase-1 run claims to
+   *  phase 2 exactly once, so nothing can drive the same claimed run twice. */
+  takePendingRecovery(): RecoverableRun[] {
     const claimed = this.pendingRecovery;
     this.pendingRecovery = [];
-    // DEEPEST first. A parent that was blocked on its own delegation (the step-boundary drain exits in
-    // exactly that shape) must be respawned AFTER the child it was waiting on, so the child's recovered
-    // result is already in the parent's durable inbox and rides into the parent's recovery turn — in the
-    // other order the parent would re-delegate work whose answer was about to arrive. Depth is walked
-    // over the claims themselves (a claim whose parent session is another claim's child sits deeper);
-    // the visited-set guards a corrupt cyclic relation.
+    return claimed;
+  }
+
+  /** DEEPEST first. A parent that was blocked on its own delegation (the step-boundary drain exits in
+   *  exactly that shape) must be respawned AFTER the child it was waiting on, so the child's recovered
+   *  result is already in the parent's durable inbox and rides into the parent's recovery turn — in the
+   *  other order the parent would re-delegate work whose answer was about to arrive. Depth is walked over
+   *  the claims themselves (a claim whose parent session is another claim's child sits deeper); the
+   *  visited-set guards a corrupt cyclic relation. Pure: the caller's array is left untouched. */
+  orderForRecovery(claimed: readonly RecoverableRun[]): RecoverableRun[] {
     const byChild = new Map(claimed.map((run) => [run.childSessionId, run]));
     const depthOf = (run: RecoverableRun): number => {
       let depth = 0;
@@ -208,28 +209,40 @@ export class DelegatedSessionService {
       }
       return depth;
     };
-    claimed.sort((a, b) => depthOf(b) - depthOf(a));
-    for (const run of claimed) {
-      try { await this.recoverOne(run); }
-      catch (e) {
-        const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
-        logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${message}`);
-        const reason = `automatic restart recovery failed: ${message}`;
-        const parked = this.d.store.markRecoveryRequired(run.parentSessionId, run.toolCallId, reason, {
-          id: syntheticRestartResultId(run.parentSessionId, run.toolCallId),
-          toolCallId: run.toolCallId,
-          sessionId: run.childSessionId,
-          status: 'error',
-          task: run.state.task,
-          tools: run.state.tools,
-          seconds: run.state.seconds,
-          ...(run.state.tokens !== undefined ? { tokens: run.state.tokens } : {}),
-          ...(run.state.model !== undefined ? { model: run.state.model } : {}),
-          error: `${reason}. Continue the sub-agent ${run.childSessionId} with DelegateContinue after checking whether its last step completed.`,
-        });
-        if (!parked) logger('brain').error(`boot recovery of ${run.childSessionId} could not park its stale claim`);
-      }
+    return [...claimed].sort((a, b) => depthOf(b) - depthOf(a));
+  }
+
+  /** Recover ONE claimed delegation (see {@link recoverOne}), parking its stale claim with a durable parent
+   *  notice when the recovery turn itself fails unexpectedly — otherwise a current-boot `recovering` claim
+   *  would sit with no worker until another daemon restart happened to retry it. */
+  async recoverClaimedRun(run: RecoverableRun): Promise<void> {
+    try { await this.recoverOne(run); }
+    catch (e) {
+      const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
+      logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${message}`);
+      const reason = `automatic restart recovery failed: ${message}`;
+      const parked = this.d.store.markRecoveryRequired(run.parentSessionId, run.toolCallId, reason, {
+        id: syntheticRestartResultId(run.parentSessionId, run.toolCallId),
+        toolCallId: run.toolCallId,
+        sessionId: run.childSessionId,
+        status: 'error',
+        task: run.state.task,
+        tools: run.state.tools,
+        seconds: run.state.seconds,
+        ...(run.state.tokens !== undefined ? { tokens: run.state.tokens } : {}),
+        ...(run.state.model !== undefined ? { model: run.state.model } : {}),
+        error: `${reason}. Continue the sub-agent ${run.childSessionId} with DelegateContinue after checking whether its last step completed.`,
+      });
+      if (!parked) logger('brain').error(`boot recovery of ${run.childSessionId} could not park its stale claim`);
     }
+  }
+
+  /** Boot phase 2 (ASYNCHRONOUS, after startPlatforms) for this substrate on its own: respawn every claimed
+   *  delegation, deepest first and serially, so a fleet of interrupted delegations does not stampede the
+   *  freshly booted daemon. The daemon drives the same three steps through the recovery coordinator
+   *  (claim → order → resume); this is the whole-sweep entry point for a caller that has only this one. */
+  async runDelegationRecovery(): Promise<void> {
+    for (const run of this.orderForRecovery(this.takePendingRecovery())) await this.recoverClaimedRun(run);
   }
 
   /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; parks as recovery_required
