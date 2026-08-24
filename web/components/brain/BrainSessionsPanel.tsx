@@ -11,6 +11,7 @@ import { useMe } from '../../lib/queries';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
+import { PlatformIcon } from '../ui/PlatformIcon';
 import { Segmented } from '../ui/Segmented';
 import { Input } from '../ui/Input';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -33,14 +34,7 @@ const FALLBACK_PAGE_SIZE = 12;
 const MIN_PAGE_SIZE = 4;
 const FALLBACK_ROW_HEIGHT = 44;
 
-interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string; platform?: string | null; direct?: boolean }
-
-/** How a platform id is spelled to a person. Only where the technical name is genuinely misleading —
- *  `msteams` is the plugin's id, never what the product is called. Anything unmapped prints as it is,
- *  because a platform arrives from a plugin and inventing a label for one we have never seen would be a
- *  guess; an honest `discord` reads better than a wrong translation. */
-const PLATFORM_LABELS: Record<string, string> = { msteams: 'Teams' };
-const platformLabel = (platform: string): string => PLATFORM_LABELS[platform] ?? platform;
+interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string; platform?: string | null; direct?: boolean; lastWriterId?: number | null; lastWriterLabel?: string | null }
 
 /** Platforms that are MACHINE work rather than a place people talk: a delegated sub-agent and a scheduled
  *  run. The account that owns those really did start them, so they are never re-labelled as hosted. */
@@ -271,6 +265,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
               // still deserves a face, so fall back to the name the row carries.
               const owner = s.ownerId == null ? undefined
                 : userById.get(s.ownerId) ?? { id: s.ownerId, username: s.ownerLabel || String(s.ownerId) };
+              // The person who last wrote here, resolved the same way — used on a shared room, where the
+              // owner names the account hosting the transcript rather than anyone talking in it.
+              const writer = s.lastWriterId == null ? undefined
+                : userById.get(s.lastWriterId) ?? { id: s.lastWriterId, username: s.lastWriterLabel || String(s.lastWriterId) };
               return (
                 <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
                   <DataTableCell priority="wide">
@@ -288,30 +286,31 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
                     >
                       <span className="truncate text-sm text-text transition-colors group-hover:text-accent">{title}</span>
-                      {/* WHERE the conversation happened. A web chat carries no badge — it is the norm here
-                          and labelling it would add noise to every row. */}
-                      {s.platform ? (
-                        <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{platformLabel(s.platform)}</span>
-                      ) : null}
+                      {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
+                          here and labelling every row would be noise. */}
+                      {s.platform ? <PlatformIcon platform={s.platform} /> : null}
                       {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                     </button>
                   </DataTableCell>
                   <DataTableCell priority="wide">
                     {/* The account row when it is known (it carries the uploaded picture); otherwise the
                         name the session itself reported, which still yields a monogram. */}
-                    {owner ? (
-                      <span
-                        className="flex min-w-0 items-center gap-2"
-                        title={hostedRoom(s) ? t.sessionsPanel.hostHint : (s.ownerLabel ?? '')}
-                      >
+                    {/* On a SHARED room the person who writes is the useful answer, and it is NOT the
+                        owner: a room has no single author, so core anchors it on the operator. Show the
+                        writer there and mark the account as merely hosting the transcript. Everywhere
+                        else the owner IS the person talking, and nothing changes. */}
+                    {hostedRoom(s) && writer ? (
+                      <span className="flex min-w-0 items-center gap-2" title={t.sessionsPanel.hostHint.replace('{owner}', s.ownerLabel ?? '')}>
+                        <Avatar user={writer} size={20} />
+                        <span className="truncate text-xs text-text-muted">{s.lastWriterLabel}</span>
+                        <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.roomBadge}</span>
+                      </span>
+                    ) : owner ? (
+                      <span className="flex min-w-0 items-center gap-2" title={hostedRoom(s) ? t.sessionsPanel.hostHint.replace('{owner}', s.ownerLabel ?? '') : (s.ownerLabel ?? '')}>
                         <Avatar user={owner} size={20} />
                         <span className="truncate text-xs text-text-muted">{s.ownerLabel ?? ''}</span>
-                        {/* A SHARED room is deliberately filed under the operator's account, so the name
-                            here is the host of the transcript rather than the person writing in it.
-                            Without this the register reads as though the operator held every colleague's
-                            Teams conversation. */}
                         {hostedRoom(s) ? (
-                          <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.hostBadge}</span>
+                          <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.roomBadge}</span>
                         ) : null}
                       </span>
                     ) : null}

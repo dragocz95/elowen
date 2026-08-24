@@ -331,7 +331,7 @@ export class PlatformOrchestrator {
             target: keyOf(src),
           });
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
-          return this.d.channels.send({
+          const channelReply = await this.d.channels.send({
             channelId: keyOf(src),
             ownerUserId: sessionOwner,
             // Stamped on the session row so the skill resolver and the scheduled-delivery guard can tell a
@@ -366,6 +366,12 @@ export class PlatformOrchestrator {
             sender: resolved.sender,
             promptCommand: src.promptCommand === true,
           }, text);
+          // Recorded AFTER the send, because the send is what guarantees the session row exists — the very
+          // first message of a brand-new conversation creates it. A shared room is anchored on the operator
+          // (it has no single author), so without this the register could only ever name the host, and one
+          // colleague's Teams room was indistinguishable from the operator's own conversation.
+          if (accountUserId != null) this.d.channels.setLastWriter(canonicalSessionId, accountUserId);
+          return channelReply;
         };
         adapter.listen(onMessage);
         // Out-of-band channel control for slash commands (stop/status/compact/restart) and synthetic

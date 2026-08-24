@@ -238,6 +238,10 @@ function applyAdditiveMigrations(db: Db): void {
   // Direct 1:1 platform chat (see brain_sessions in schema.sql). 0 on every existing row, so nothing
   // changes until an adapter marks a conversation — a shared room keeps behaving exactly as it does now.
   addColumn(db, 'brain_sessions', 'direct', 'INTEGER NOT NULL DEFAULT 0');
+  // Who last wrote in a conversation (see brain_sessions in schema.sql). NULL on every existing row and
+  // filled from the next message onwards — the register simply shows no writer until then, rather than
+  // this needing a backfill that would have to scan brain_messages to invent one.
+  addColumn(db, 'brain_sessions', 'last_writer_user_id', 'INTEGER');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.

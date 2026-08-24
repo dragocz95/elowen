@@ -145,6 +145,43 @@ describe('BrainSessionFactory compaction settings handed to PI', () => {
   });
 });
 
+// The register sorts by "Updated", and a reader takes that to mean the conversation moved. Spawning is
+// not the conversation moving: opening the web chat, a channel waking and an evicted conversation coming
+// back all spawn against an existing row. Stamping it there put yesterday's untouched chat at the top of
+// the list with the moment the page was opened.
+describe('BrainSessionFactory session stamping', () => {
+  it('records the model on respawn without moving the conversation up the register', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-home-'));
+    dirs.push(home);
+    vi.stubEnv('HOME', home);
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
+    const sessionId = 'sess-stamp';
+    store.createSession({ id: sessionId, userId: 1, model: 'old-model', provider: 'old-provider' });
+    // Backdate it, so a same-second write cannot make this pass by accident.
+    const idle = '2026-08-01 10:00:00';
+    db.prepare('UPDATE brain_sessions SET updated_at = ? WHERE id = ?').run(idle, sessionId);
+
+    const session = { sessionId, agent: {}, subscribe: () => () => {}, messages: [], setSteeringMode: vi.fn() };
+    const factory = new BrainSessionFactory({
+      store,
+      createSession: vi.fn(async () => ({ session })) as never,
+      resourceLoaderFactory: () => undefined,
+    });
+    await factory.create({
+      sessionId, ownerUserId: 1, runtime: undefined, providerId: 'anthropic',
+      model: { id: 'new-model', provider: 'anthropic', contextWindow: 200_000 },
+      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
+      autoCompact: false, autoCompactAtPct: 80,
+    } as never);
+
+    const row = store.getSession(sessionId)!;
+    expect(row.updated_at).toBe(idle); // …the conversation did not move
+    expect(row.model).toBe('new-model'); // …but the pair a respawn restores from is current
+    expect(row.provider).toBe('anthropic');
+  });
+});
+
 describe('BrainSessionFactory context-saving installers', () => {
   async function createWithProvider(
     provider: string,

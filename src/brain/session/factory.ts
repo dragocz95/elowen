@@ -410,7 +410,11 @@ export class BrainSessionFactory {
       } else if (spec.delegatedAccess) {
         throw new Error('delegated access requires a parent session');
       }
-      this.d.store.touchSession(spec.sessionId, spec.model.id, spec.providerId);
+      // Deliberately NOT touchSession: spawning attaches a live session to an existing conversation —
+      // a page load, a channel waking, an evicted conversation coming back — and none of those are the
+      // conversation moving. Stamping it here put yesterday's untouched chat at the top of the register
+      // with today's timestamp. The model/provider pair is still recorded, so a later respawn restores it.
+      this.d.store.setSessionModel(spec.sessionId, spec.model.id, spec.providerId);
     }
     if (spec.title && !this.d.store.getSession(spec.sessionId)?.title) {
       this.d.store.setTitle(spec.sessionId, spec.title.slice(0, 60));

@@ -320,6 +320,11 @@ export class ChannelSessionService {
     return this.d.store.getSession(sessionId)?.user_id;
   }
 
+  /** Record who last wrote in a channel conversation — see {@link BrainStore.setLastWriter}. */
+  setLastWriter(sessionId: string, userId: number): void {
+    this.d.store.setLastWriter(sessionId, userId);
+  }
+
   /** Give a personal 1:1 chat back to the verified sender who actually talks in it, while it is still
    *  anchored on the operator fallback. See {@link BrainStore.adoptPersonalChat} for why this is the one
    *  case an inbound message may re-point a transcript. */

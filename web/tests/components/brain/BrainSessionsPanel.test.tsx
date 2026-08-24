@@ -57,22 +57,28 @@ describe('BrainSessionsPanel (conversation register)', () => {
   it('marks where a conversation happened, and a shared room as hosted rather than authored', async () => {
     admin = true;
     managedOverride = [
-      { ...conversations[0], id: 'brain-ch-msteams-19:room@thread.tacv2', title: 'Shared room', kind: 'channel', tokens: 10, platform: 'msteams', direct: false, ownerId: 2, ownerLabel: 'Filip' },
-      { ...conversations[1], id: 'brain-ch-msteams-a:person', title: 'Private chat', kind: 'channel', tokens: 10, platform: 'msteams', direct: true, ownerId: 2, ownerLabel: 'Michal' },
-      { ...conversations[2], id: 'brain-2-web', title: 'Web chat', kind: 'conversation', tokens: 10, platform: null, direct: false, ownerId: 2, ownerLabel: 'Filip' },
+      { ...conversations[0], id: 'brain-ch-msteams-19:room@thread.tacv2', title: 'Shared room', kind: 'channel', tokens: 10, platform: 'msteams', direct: false, ownerId: 2, ownerLabel: 'Filip', lastWriterId: 7, lastWriterLabel: 'Michal' },
+      { ...conversations[1], id: 'brain-ch-msteams-a:person', title: 'Private chat', kind: 'channel', tokens: 10, platform: 'msteams', direct: true, ownerId: 2, ownerLabel: 'Michal', lastWriterId: 7, lastWriterLabel: 'Michal' },
+      { ...conversations[2], id: 'brain-2-web', title: 'Web chat', kind: 'conversation', tokens: 10, platform: null, direct: false, ownerId: 2, ownerLabel: 'Filip', lastWriterId: null, lastWriterLabel: null },
     ];
     renderPanel();
     await screen.findByText('Shared room');
 
     const row = (title: string) => screen.getByText(title).closest('[role="row"]') as HTMLElement;
-    // Both Teams rows say Teams; the web conversation carries no badge, because that is the norm here.
-    expect(within(row('Shared room')).getByText('Teams')).toBeInTheDocument();
-    expect(within(row('Private chat')).getByText('Teams')).toBeInTheDocument();
-    expect(within(row('Web chat')).queryByText('Teams')).not.toBeInTheDocument();
-    // Only the shared room's owner is qualified as a host.
-    expect(within(row('Shared room')).getByText('host')).toBeInTheDocument();
-    expect(within(row('Private chat')).queryByText('host')).not.toBeInTheDocument();
-    expect(within(row('Web chat')).queryByText('host')).not.toBeInTheDocument();
+    const mark = (title: string) => row(title).querySelector('img[src^="/platforms/"]');
+    // Both Teams rows carry the Teams mark; the web conversation carries none, that being the norm here.
+    expect(mark('Shared room')).toHaveAttribute('src', '/platforms/msteams.svg');
+    expect(mark('Private chat')).toHaveAttribute('src', '/platforms/msteams.svg');
+    expect(mark('Web chat')).toBeNull();
+    // The shared room names the person who WROTE there (Michal), not the account it is filed under
+    // (Filip) — that is the whole complaint this fixes — and says it is a room.
+    expect(within(row('Shared room')).getByText('Michal')).toBeInTheDocument();
+    expect(within(row('Shared room')).queryByText('Filip')).not.toBeInTheDocument();
+    expect(within(row('Shared room')).getByText('room')).toBeInTheDocument();
+    // A private chat and a web conversation are genuinely their owner's: unchanged, and unmarked.
+    expect(within(row('Private chat')).queryByText('room')).not.toBeInTheDocument();
+    expect(within(row('Web chat')).getByText('Filip')).toBeInTheDocument();
+    expect(within(row('Web chat')).queryByText('room')).not.toBeInTheDocument();
   });
 
   it('offers the conversation row actions from right click', async () => {

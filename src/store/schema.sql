@@ -179,6 +179,13 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- is, so it says so per message and the flag is stamped here. Fail-closed: 0 on every legacy row and on
   -- anything the adapter did not explicitly mark, which keeps shared rooms behaving exactly as before.
   direct INTEGER NOT NULL DEFAULT 0,
+  -- The account that last WROTE here, which on a shared room is a different question from `user_id`.
+  -- A room is anchored on the instance operator because it has no single author, so the owner column
+  -- alone reported a colleague's Teams room as the operator's own conversation. Written at message time
+  -- rather than derived on read: answering it from brain_messages would mean scanning the largest table
+  -- with a per-row json_extract for every row of a listing. NULL where nobody identifiable has written
+  -- yet (an unlinked sender, or a row that predates this column).
+  last_writer_user_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -109,6 +109,12 @@ export interface ManagedSessionView {
    *  never denormalized, so renaming an account renames it throughout the history too. */
   ownerId: number;
   ownerLabel: string;
+  /** WHO last wrote here, when that is known and is not simply the owner again. On a shared room this is
+   *  the answer people actually want from the register — the owner column names the account hosting the
+   *  transcript, so without this a colleague's Teams room reads as the operator's own conversation.
+   *  Null when nobody identifiable has written yet (an unlinked sender, or a row older than the column). */
+  lastWriterId: number | null;
+  lastWriterLabel: string | null;
 }
 
 /** Answers "does the workflow ENGINE still hold this DAG?" — true/false from the engine, undefined when
@@ -441,6 +447,10 @@ export class BrainStatusService {
         direct: s.direct === 1,
         ownerId: s.user_id,
         ownerLabel: s.owner_name || s.owner_username || `#${s.user_id}`,
+        lastWriterId: s.last_writer_user_id,
+        lastWriterLabel: s.last_writer_user_id == null
+          ? null
+          : s.writer_name || s.writer_username || `#${s.last_writer_user_id}`,
       };
     });
   }

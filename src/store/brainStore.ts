@@ -42,6 +42,10 @@ export interface BrainSessionRow {
   /** 1 = a direct 1:1 platform chat rather than a shared room (see schema.sql). Legacy rows are 0, which
    *  is the safe reading: everything that widens a permission must require this to be explicitly set. */
   direct: number;
+  /** The account that last WROTE here — a different question from `user_id` on a shared room, which is
+   *  anchored on the operator because a room has no single author. NULL where nobody identifiable has
+   *  written yet (an unlinked sender, or a row older than the column). */
+  last_writer_user_id: number | null;
   created_at: string; updated_at: string;
 }
 export interface BrainMessageRow {
@@ -272,12 +276,18 @@ export class BrainStore {
    *  Deliberately a separate method rather than an optional argument on `listSessions`: a listing that
    *  crosses accounts must be asked for explicitly, never reached by forgetting to pass a user id.
    *  The name is resolved by JOIN at read time, so renaming an account renames it here too. */
-  listAllSessionsWithOwner(): (BrainSessionRow & { owner_name: string; owner_username: string })[] {
+  listAllSessionsWithOwner(): (BrainSessionRow & { owner_name: string; owner_username: string; writer_name: string; writer_username: string })[] {
+    // The writer is resolved by a SECOND join on the same users table — like the owner name it is never
+    // denormalized, so renaming an account renames it throughout the register's history too.
     return this.db.prepare(
-      `SELECT s.*, COALESCE(u.name, '') AS owner_name, COALESCE(u.username, '') AS owner_username
-         FROM brain_sessions s LEFT JOIN users u ON u.id = s.user_id
+      `SELECT s.*,
+              COALESCE(u.name, '') AS owner_name, COALESCE(u.username, '') AS owner_username,
+              COALESCE(w.name, '') AS writer_name, COALESCE(w.username, '') AS writer_username
+         FROM brain_sessions s
+         LEFT JOIN users u ON u.id = s.user_id
+         LEFT JOIN users w ON w.id = s.last_writer_user_id
         ORDER BY s.updated_at DESC, s.rowid ASC`
-    ).all() as (BrainSessionRow & { owner_name: string; owner_username: string })[];
+    ).all() as (BrainSessionRow & { owner_name: string; owner_username: string; writer_name: string; writer_username: string })[];
   }
 
   /** Token totals across every account — the cross-account counterpart of {@link tokenTotals}. */
@@ -984,6 +994,13 @@ export class BrainStore {
    *  makes this a compare-and-swap: it can only ever take the row FROM the account named, and two concurrent
    *  messages cannot transfer twice, since after the first the owner no longer matches. Nothing else has to
    *  move — messages, spills, cards and usage are keyed by session id, which does not change here. */
+  /** Record who just wrote in a conversation. Cheap on purpose — one indexed UPDATE per inbound turn —
+   *  because the alternative is answering "who talks here" on every listing by scanning brain_messages,
+   *  the largest table, with a per-row json_extract. */
+  setLastWriter(id: string, userId: number): void {
+    this.db.prepare('UPDATE brain_sessions SET last_writer_user_id = ? WHERE id = ?').run(userId, id);
+  }
+
   adoptPersonalChat(id: string, fromUserId: number, toUserId: number): boolean {
     return this.db.prepare(
       'UPDATE brain_sessions SET user_id = @to, direct = 1 WHERE id = @id AND user_id = @from'
@@ -1018,6 +1035,21 @@ export class BrainStore {
       this.db.prepare("UPDATE brain_sessions SET updated_at = datetime('now'), model = ?, provider = ? WHERE id = ?")
         .run(model, provider ?? '', id);
     }
+  }
+
+  /** Record which provider+model a conversation is now running on WITHOUT stamping it as touched.
+   *
+   *  Attaching a live session is not activity: opening the web chat, waking a channel and respawning an
+   *  evicted conversation all spawn against an existing row, and if that moved `updated_at` the register
+   *  sorted by "Updated" showed a conversation nobody had written in since yesterday at the very top,
+   *  timestamped the moment the page was opened. `updated_at` therefore moves only where a message is
+   *  actually persisted (see projectUserTurn/persistence.ts), which is what a reader takes it to mean.
+   *
+   *  Consequence worth knowing: retention windows on `updated_at` no longer treat merely OPENING an old
+   *  conversation as keeping it alive. Writing in it still does. */
+  setSessionModel(id: string, model: string, provider?: string): void {
+    this.db.prepare('UPDATE brain_sessions SET model = ?, provider = ? WHERE id = ?')
+      .run(model, provider ?? '', id);
   }
 
   /** Delete one conversation and its goal + messages atomically — a crash between the DELETEs would
