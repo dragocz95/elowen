@@ -387,6 +387,14 @@ export class ChannelSessionService {
       this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId)
     );
     let delegatedCall = false;
+    // Armed by a turn that actually produced an answer and consumed once by settleTurn below, mirroring
+    // the owner surface: a turn that threw leaves it undefined, which is how a failed exchange stays out
+    // of the writer's memory. The writer stamp and the drain are NOT gated on it — see the settle.
+    let curate: NonNullable<Parameters<typeof settleTurn>[0]['curate']> | undefined;
+    // Whether this message ran a turn of its OWN. False while it was steered into somebody else's running
+    // turn (that turn is still live, so nothing may dispose it) and false if the steer attempt itself
+    // threw, which is the same situation seen from the failing side.
+    let ranOwnTurn = false;
     if (parentSessionId) {
       if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
       const parent = this.d.store.getSession(parentSessionId);
@@ -398,6 +406,7 @@ export class ChannelSessionService {
     }
     try {
     const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
+    if (steered === null) ranOwnTurn = true;
     const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
       if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
       if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
@@ -722,30 +731,37 @@ export class ChannelSessionService {
       // between steps — so there is no post-turn flush: the running turn is the single place its words land.
       return runOne(turnText, senderMessage, opts.images, opts.onEvent);
     });
-    // The settlement side of a room turn — see settleTurn. Deliberately OUTSIDE the channel lock: the
-    // plugin reload it drains disposes live sessions, so draining it under the lock would tear down the
-    // very session that just answered. The writer stamp lands only now for the reason it always did —
-    // the turn is what guarantees the session row exists at all.
-    //
-    // A message STEERED into somebody else's running turn omits the curator (that turn curates its own
-    // exchange) and the drain (that turn is still running, so nothing may dispose it yet), while the
-    // writer stamp still lands: the person did write here.
-    settleTurn({
-      sessionId,
-      ...(steered === null && !opts.internalSystem && opts.writerUserId != null && this.d.curator
-        && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false
-        ? { curate: { curator: this.d.curator, userId: opts.writerUserId, userText: senderText, assistantText: reply } }
-        : {}),
-      ...(!opts.internalSystem && opts.writerUserId != null
-        ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
-        : {}),
-      // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
-      // never applied it: the owner surface drained the request and no room ever did.
-      ...(steered === null && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
-      // `notify` is owner-only and therefore absent: the room already received this answer.
-    });
+    // Armed only by a turn that produced an answer, exactly as the owner surface arms it.
+    if (steered === null && !opts.internalSystem && opts.writerUserId != null && this.d.curator
+        && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {
+      curate = { curator: this.d.curator, userId: opts.writerUserId, userText: senderText, assistantText: reply };
+    }
     return reply;
     } finally {
+      // The settlement side of a room turn — see settleTurn. In a `finally`, like the owner surface's, and
+      // for the same reason: a turn that THROWS after the prompt (a provider error, a parent abort landing
+      // mid-turn) is still a turn that happened. Settling it on the happy path meant a CreateSkill issued
+      // from Discord in such a turn wrote its skill to disk and the reload was never drained — the exact
+      // defect this settlement exists to close — and the register lost the writer for that message too.
+      //
+      // Deliberately OUTSIDE the channel lock: the plugin reload it drains disposes live sessions, so
+      // draining it under the lock would tear down the very session that just answered. The writer stamp
+      // lands only now for the reason it always did — the turn is what guarantees the session row exists.
+      //
+      // A message STEERED into somebody else's running turn omits the curator (that turn curates its own
+      // exchange) and the drain (that turn is still running, so nothing may dispose it yet), while the
+      // writer stamp still lands: the person did write here.
+      settleTurn({
+        sessionId,
+        ...(curate ? { curate } : {}),
+        ...(!opts.internalSystem && opts.writerUserId != null
+          ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
+          : {}),
+        // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
+        // never applied it: the owner surface drained the request and no room ever did.
+        ...(ranOwnTurn && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
+        // `notify` is owner-only and therefore absent: the room already received this answer.
+      });
       if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
     }
   }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { ChannelSessionService } from '../../src/brain/channels.js';
 import { channelSessionId } from '../../src/brain/sessionId.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
@@ -16,15 +17,21 @@ import type { BrainEvent } from '../../src/brain/events.js';
  *  A mocked channel service proves only what the orchestrator SENDS, not what lands in the database, and
  *  that gap is exactly what hid the room-ownership rollover bug. Every assertion here reads the row back. */
 
-function fakeBrain(sessionId: string) {
-  const messages: { role?: string; content?: unknown }[] = [];
+function fakeBrain(sessionId: string, providerFails = false) {
+  const messages: { role?: string; content?: unknown; stopReason?: string; errorMessage?: string }[] = [];
   const session = {
     isStreaming: false,
     isCompacting: false,
     getContextUsage: () => ({ tokens: 50, contextWindow: 8000, percent: 1 }),
     messages,
     promptTemplates: [] as { name: string }[],
-    prompt: vi.fn(async (t: string) => { messages.push({ role: 'assistant', content: `re: ${t}` }); }),
+    // PI RESOLVES prompt() on a provider error — the turn settles with an empty errored assistant, and the
+    // channel service turns that into a throw. That is the ordinary failure shape, not an exotic one.
+    prompt: vi.fn(async (t: string) => {
+      messages.push(providerFails
+        ? { role: 'assistant', content: '', stopReason: 'error', errorMessage: '' }
+        : { role: 'assistant', content: `re: ${t}` });
+    }),
     steer: vi.fn(async () => {}),
     dispose: vi.fn(() => {}),
     getAllTools: () => [] as { name: string }[],
@@ -44,7 +51,7 @@ function fakeBrain(sessionId: string) {
 }
 type Brain = ReturnType<typeof fakeBrain>;
 
-function setup(deps: Record<string, unknown> = {}, channelId = 'discord-settle') {
+function setup(deps: Record<string, unknown> = {}, channelId = 'discord-settle', providerFails = false) {
   const store = new BrainStore(openDb(':memory:'));
   const registry = new LiveSessionRegistry<Brain>();
   const cards = new CardRegistry(() => store);
@@ -52,7 +59,7 @@ function setup(deps: Record<string, unknown> = {}, channelId = 'discord-settle')
     if (!store.getSession(o.sessionId)) {
       store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     }
-    return fakeBrain(o.sessionId);
+    return fakeBrain(o.sessionId, providerFails);
   });
   const svc = new ChannelSessionService({
     registry, store, cards, users: { get: () => ({ username: 'o' }) }, spawn, ...deps,
@@ -115,6 +122,25 @@ describe('a room turn settles like an owner turn', () => {
     await svc.send(opts, 'create a skill');
 
     expect(drainPluginReload).toHaveBeenCalledOnce();
+  });
+
+  // A turn that THROWS is still a turn that happened. Settling on the happy path meant a CreateSkill
+  // issued from Discord in a turn whose final assistant errored wrote its skill to disk and the reload was
+  // never drained — the exact defect the shared settlement exists to close — and the register lost the
+  // writer for that message too.
+  it('settles a turn the provider failed, so the skill it wrote is still applied', async () => {
+    const drainPluginReload = vi.fn();
+    const curator = { run: vi.fn(async () => {}) };
+    const { store, svc, sessionId, opts } = setup(
+      { drainPluginReload, curator, userSettings: () => ({}) }, 'discord-settle', true,
+    );
+
+    await expect(svc.send(opts, 'create a skill')).rejects.toThrow('the model returned no reply (provider error)');
+
+    expect(drainPluginReload).toHaveBeenCalledOnce();
+    expect(store.getSession(sessionId)!.last_writer_user_id).toBe(2);
+    // …but a failed exchange stays out of the writer's memory, exactly as on the owner surface.
+    expect(curator.run).not.toHaveBeenCalled();
   });
 
   it('settles the turn AFTER the answer, so the reload cannot dispose the session mid-turn', async () => {
@@ -206,62 +232,149 @@ describe('room spend is attributed to the person who wrote the turn', () => {
   });
 });
 
-describe('the settlement contract', () => {
-  const read = (file: string): string => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8');
+// ---------------------------------------------------------------------------------------------------
+// Mechanical contract: one settlement, no second copies, nothing that can drift.
+//
+// Every set below is DERIVED from the source rather than hand-listed, so a surface added next year is in
+// the check by construction. The predecessor walked literal file arrays and matched substrings a comment
+// could satisfy — it passed while three of the defects these tests now cover were sitting in the files it
+// named. A check that a comment satisfies proves nothing.
+// ---------------------------------------------------------------------------------------------------
 
+const SRC = new URL('../../src/', import.meta.url).pathname;
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    return path.endsWith('.ts') ? [path] : [];
+  });
+}
+
+/** Comments discuss these effects constantly (and should). Only real CODE counts. */
+const stripComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+const modules = (): { path: string; code: string }[] => sourceFiles(SRC)
+  .map((path) => ({ path: path.slice(SRC.length), code: stripComments(readFileSync(path, 'utf-8')) }));
+
+/** The bodies of every `finally` block in `code`, brace-matched. Regex cannot answer "is this call in a
+ *  finally", and that question is the entire contract for two of the effects here: settling on the happy
+ *  path is what let a failed turn skip the writer stamp and the plugin-reload drain. */
+function finallyBlocks(code: string): string[] {
+  const blocks: string[] = [];
+  const opener = /\bfinally\s*\{/g;
+  for (let match = opener.exec(code); match; match = opener.exec(code)) {
+    let depth = 1;
+    let i = match.index + match[0].length;
+    const start = i;
+    for (; i < code.length && depth > 0; i++) {
+      if (code[i] === '{') depth++;
+      else if (code[i] === '}') depth--;
+    }
+    blocks.push(code.slice(start, i - 1));
+  }
+  return blocks;
+}
+
+/** Names the symbol at all — as a call, through a bracket lookup (`store['recordRequest']`), or in a
+ *  one-line wrapper. Deliberately stronger than matching `name(`: `recordRequest (`, the bracket form and
+ *  a re-export all defeated that, and every one of them is a second copy of the effect. */
+const names = (symbol: string): RegExp => new RegExp(`\\b${symbol}\\b`);
+
+/** The module that DEFINES the three entry points. It names every one of them by construction, so it is
+ *  never one of the surfaces a contract about callers is asking about. */
+const DEFINER = 'brain/session/turnSettled.ts';
+
+describe('the settlement contract', () => {
   // A surface that carries fewer effects must do it by passing fewer arguments, never by keeping a second
   // copy — that is how the owner chat and the room drifted into curating different text, titling from
   // different input, and (for four of the six effects) one of them not doing it at all.
-  it('is the only module either surface settles a turn through', () => {
-    for (const file of ['src/brain/channels.ts', 'src/brain/service/turnRunner.ts']) {
-      expect(read(file), `${file} must settle through the shared helper`).toContain('settleTurn(');
-    }
-    for (const file of ['src/brain/platforms.ts', 'src/brain/service/turnRunner.ts', 'src/api/routes/brainRouteContext.ts']) {
-      expect(read(file), `${file} must open a turn through the shared helper`).toContain('openTurn(');
-    }
-    for (const file of ['src/brain/channels.ts', 'src/brain/service/turnAdmission.ts']) {
-      expect(read(file), `${file} must title through the shared helper`).toContain('titleTurnConversation(');
-    }
+  //
+  // Each effect names the modules genuinely entitled to it: the storage layer that implements the write,
+  // and the ONE module that decides when it happens.
+  const EFFECTS: { effect: string; match: RegExp; owners: string[] }[] = [
+    { effect: 'the origin pin', match: names('recordRequest'), owners: ['store/usageOriginStore.ts', 'brain/session/turnSettled.ts'] },
+    { effect: 'the writer stamp', match: names('setLastWriter'), owners: ['store/brainStore.ts', 'brain/session/turnSettled.ts'] },
+    // The factory is a genuine second writer of a DIFFERENT thing: a session spawned with an explicit
+    // title (an archived branch, a restored transcript) is not a turn naming its conversation.
+    { effect: 'the provisional title', match: names('setTitle'), owners: ['store/brainStore.ts', 'brain/session/turnSettled.ts', 'brain/session/factory.ts'] },
+    { effect: 'the memory curator', match: /\bcurator\b[!?]?(?:\?\.)?\.\s*run\s*\(|\bcurator\b[^\n]{0,24}\[\s*['"`]run['"`]\s*\]/, owners: ['brain/session/turnSettled.ts'] },
+  ];
+
+  it.each(EFFECTS)('$effect is performed in exactly one place', ({ effect, match, owners }) => {
+    const holders = modules().filter(({ code }) => match.test(code)).map(({ path }) => path).sort();
+    // A rename that stopped matching would leave an empty set quietly passing.
+    expect(holders, `${effect} seems to have been renamed — this check matches nothing`).not.toEqual([]);
+    expect(holders, `${effect} has a second implementation`).toEqual([...owners].sort());
   });
 
-  it('leaves no second copy of an absorbed effect on either surface', () => {
-    const settled = read('src/brain/session/turnSettled.ts');
-    // The origin pin: one caller of the store's write side, and it is this module.
-    for (const file of [
-      'src/brain/channels.ts', 'src/brain/platforms.ts', 'src/brain/service/turnRunner.ts',
-      'src/api/routes/brainRouteContext.ts', 'src/api/routes/brainChat.ts',
-    ]) {
-      expect(read(file), `${file} pins an origin of its own`).not.toContain('recordRequest(');
-    }
-    expect(settled).toContain('recordRequest(');
+  it('every turn surface settles through the shared helper, in a finally', () => {
+    const surfaces = modules()
+      .filter(({ path }) => path !== DEFINER)
+      .filter(({ code }) => /\bsettleTurn\s*\(/.test(code));
+    expect(surfaces.map((m) => m.path).sort(), 'the surfaces this contract covers')
+      .toEqual(['brain/channels.ts', 'brain/service/turnRunner.ts', 'store/usageOriginStore.ts']);
+    // The two that RUN a turn must settle it on every exit. A turn that throws is still a turn that
+    // happened: it may have written a skill to disk, and somebody did write in the room.
+    const running = surfaces.filter((m) => m.path !== 'store/usageOriginStore.ts');
+    const offenders = running
+      .filter(({ code }) => !finallyBlocks(code).some((block) => /\bsettleTurn\s*\(/.test(block)))
+      .map(({ path }) => path);
+    expect(offenders, 'a turn settled only on the happy path skips everything when it throws').toEqual([]);
+  });
 
-    // The curator, the writer stamp and the provisional title likewise.
-    for (const file of ['src/brain/channels.ts', 'src/brain/service/turnRunner.ts']) {
-      const source = read(file);
-      expect(source, `${file} runs the curator itself`).not.toMatch(/curator\.run\(/);
-      expect(source, `${file} stamps the writer itself`).not.toContain('setLastWriter(');
-    }
-    for (const file of ['src/brain/channels.ts', 'src/brain/service/turnAdmission.ts']) {
-      expect(read(file), `${file} writes a title of its own`).not.toContain('setTitle(');
-    }
-    expect(settled).toMatch(/curator\.run\(/);
-    expect(settled).toContain('setLastWriter(');
-    expect(settled).toContain('setTitle(');
+  it('every surface that opens a turn releases it, in a finally', () => {
+    const openers = modules()
+      .filter(({ path }) => path !== DEFINER)
+      .filter(({ code }) => /\bopenTurn\s*\(/.test(code));
+    expect(openers.map((m) => m.path).sort(), 'the surfaces that open a turn')
+      .toEqual(['api/routes/brainRouteContext.ts', 'brain/platforms.ts', 'brain/service/turnRunner.ts']);
+    // A surface that HOLDS the handle owns the pin's lifetime and must give it back on every exit —
+    // otherwise the next writer in a shared room is refused a pin and their turn is billed to the
+    // previous person. The route layer deliberately does not hold one: it pins a conversation for an
+    // operation the brain runs later, so there is no turn here to close.
+    const holders = openers.filter(({ code }) => /=\s*openTurn\s*\(/.test(code));
+    expect(holders.map((m) => m.path).sort()).toEqual(['brain/platforms.ts', 'brain/service/turnRunner.ts']);
+    const offenders = holders
+      .filter(({ code }) => !finallyBlocks(code).some((block) => /\.close\s*\(\)/.test(block)))
+      .map(({ path }) => path);
+    expect(offenders, 'a pin released only on the happy path outlives the turn that set it').toEqual([]);
+  });
 
-    // The team feed left the HTTP layer entirely, so an owner turn that never arrives over HTTP is not
-    // invisible in it.
-    expect(read('src/api/routes/brainChat.ts'), 'the send route still publishes its own feed row')
-      .not.toContain("type: 'activity'");
+  it('titles a conversation through the shared helper on both surfaces', () => {
+    const titlers = modules()
+      .filter(({ path }) => path !== DEFINER)
+      .filter(({ code }) => /\btitleTurnConversation\s*\(/.test(code))
+      .map(({ path }) => path).sort();
+    expect(titlers).toEqual(['brain/channels.ts', 'brain/service/turnAdmission.ts']);
+  });
+
+  it('leaves the team feed out of the HTTP layer, so a turn that never arrives over HTTP is still in it', () => {
+    const source = stripComments(readFileSync(join(SRC, 'api/routes/brainChat.ts'), 'utf-8'));
+    expect(source, 'the send route still publishes its own feed row').not.toMatch(/type:\s*'activity'/);
   });
 
   // Owner-only effects are expressed as ABSENT arguments, not as a surface check. A branch on the surface
   // is the shape that lets the two drift again.
   it('keeps owner-only effects out of the room by omission, never by a surface branch', () => {
-    const channels = read('src/brain/channels.ts');
-    expect(channels).toContain("// `notify` is owner-only and therefore absent");
-    for (const file of ['src/brain/channels.ts', 'src/brain/platforms.ts', 'src/brain/service/turnRunner.ts']) {
-      expect(read(file), `${file} branches on the surface instead of omitting an argument`)
-        .not.toMatch(/surface\s*===/);
-    }
+    const channels = stripComments(readFileSync(join(SRC, 'brain/channels.ts'), 'utf-8'));
+    // Asserted against the CODE, not against a comment claiming it: the predecessor checked for the
+    // sentence "notify is owner-only and therefore absent", which would have passed just as happily with
+    // `notify` actually being passed one line below it.
+    expect(channels, 'a room pushes a notification of its own').not.toMatch(/\bnotify\b/);
+    // Both directions of the comparison and the `switch` form: the shape is what is banned, not one
+    // spelling of it.
+    const SURFACE_REF = String.raw`(?:\w+[.!?]*\.)*\w*[Ss]urface\w*\b`;
+    const BRANCHES_ON_SURFACE = new RegExp(
+      String.raw`\b${SURFACE_REF}\s*[!=]==?\s*['"\`]` // surface === 'web'
+      + String.raw`|['"\`][^'"\`\n]*['"\`]\s*[!=]==?\s*${SURFACE_REF}` // 'web' === surface
+      + String.raw`|\bswitch\s*\([^)]*[Ss]urface`, // switch (surface)
+    );
+    const offenders = modules()
+      .filter(({ code }) => /\b(?:settleTurn|openTurn)\s*\(/.test(code))
+      .filter(({ code }) => BRANCHES_ON_SURFACE.test(code))
+      .map(({ path }) => path);
+    expect(offenders, 'a settling surface branches on the surface instead of omitting an argument').toEqual([]);
   });
 });
