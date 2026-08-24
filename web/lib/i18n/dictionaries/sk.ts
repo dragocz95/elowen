@@ -599,7 +599,7 @@ export const sk = {
     pulseNobody: 'Zatiaľ tu nikto nebol',
     pulseTurns: '{count} ťahov / {days} dní',
     pulseAria: 'Aktivita po hodinách za posledné dva týždne',
-    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', unknown: 'neznámy klient' },
+    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', internal: 'automatizácia', unknown: 'neznámy klient' },
     ev: {
       turn: 'pracuje',
       someone: 'Niekto',

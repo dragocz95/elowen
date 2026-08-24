@@ -1,5 +1,9 @@
 import { parseDbTs } from '../../shared/time.js';
+import { logger } from '../../shared/logger.js';
+import { runCompaction } from '../events.js';
+import { sessionHasWorkInFlight, type SessionQuiescenceDeps } from '../service/sessionQuiescence.js';
 import { LONG_CACHE_TTL_MS } from './cacheTiming.js';
+import type { LiveBrain } from './liveBrain.js';
 
 /** Cold-start auto-compaction policy: the pure decision pieces behind the turn runner's
  *  pre-turn compaction (BrainTurnRunner.maybeColdStartCompaction).
@@ -110,4 +114,55 @@ export function assessColdCompaction(inputs: ColdCompactionInputs): ColdCompacti
  *  0 means no activity on record (never cold-compact). */
 export function lastActivityMs(lastMessageAt: string | undefined, interactedAt: number | undefined): number {
   return Math.max(parseDbTs(lastMessageAt), interactedAt ?? 0);
+}
+
+const coldLog = logger('brain-compaction');
+
+/** What the trigger needs beyond the live session: the store it reads the last message time from, plus
+ *  the two registries {@link sessionHasWorkInFlight} consults. Structural, so both the owner turn runner
+ *  and the channel service satisfy it with the dependencies they already hold. */
+export interface ColdStartCompactionDeps extends SessionQuiescenceDeps {
+  store: SessionQuiescenceDeps['store'] & { lastMessageAt(sessionId: string): string | undefined };
+}
+
+/** Compact the conversation at the START of a turn that follows a provably expired prompt cache — before
+ *  its first provider request, under the lock the turn already holds.
+ *
+ *  This is the ONLY automatic cold-context compaction trigger; the previous 60 s idle sweep is gone.
+ *  Timing it to the turn keeps the one genuine advantage of the idle timing (the cache is cold, so the
+ *  rewrite forfeits no warm prefix) and removes the sweep's two losses: nothing is ever paid for a
+ *  conversation nobody returns to, and the decision is made at the moment the user is provably
+ *  continuing — the moment the compacted re-cache is actually about to be bought. See the module doc
+ *  above for the break-even arithmetic.
+ *
+ *  It lives here rather than in the owner turn runner because a ROOM is where an expensive cold context
+ *  actually accumulates: a long-lived cron channel keeps one conversation for weeks. The owner surface
+ *  had the trigger and every platform channel silently did not.
+ *
+ *  Never throws and never blocks the turn on failure: a context that cannot be summarized still answers
+ *  on its full history, and the circuit breaker counts the failure through its own session subscription.
+ *  No loop guard is needed — the turn that follows appends fresh messages, which closes the gate until
+ *  the next full idle-past-TTL epoch. */
+export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live: LiveBrain): Promise<void> {
+  const assess = live.assessColdCompaction;
+  if (!assess) return;
+  if (live.session.isStreaming || live.session.isCompacting) return;
+  const lastActivity = lastActivityMs(d.store.lastMessageAt(live.sessionId), live.interactedAt);
+  if (lastActivity === 0 || Date.now() - lastActivity < coldCompactionGateMs(live.lastRequestCacheTtlMs)) return;
+  // The shared fail-closed predicate (also the teardown's): a queued message, parked question,
+  // running child/background job or armed goal means the context is not this turn's to rewrite.
+  if (sessionHasWorkInFlight(d, live.sessionId)) return;
+  const verdict = assess();
+  if (!verdict.eligible) {
+    coldLog.info(`cold-start compaction skipped on ${live.sessionId}: ${verdict.reason}`);
+    return;
+  }
+  try {
+    const result = await runCompaction(live.session);
+    if (result.compacted) {
+      coldLog.info(`cold-start compacted ${live.sessionId} (cache cold; est. ${verdict.contextTokens} → floor ~${verdict.floorTokens} tokens)`);
+    }
+  } catch (error) {
+    coldLog.warn(`cold-start compaction failed on ${live.sessionId} — running the turn on the full context`, error);
+  }
 }

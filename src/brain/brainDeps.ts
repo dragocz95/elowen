@@ -55,6 +55,10 @@ export interface BrainDeps {
    *  UsageOriginStore; absent (tests, the forked sub-agent runner) → nothing is attributed and the admin
    *  origin view simply has no rows for those turns, which is truthful rather than approximate. */
   onTurnSettled?: (sessionId: string, usage: import('./persistence.js').SettledTurnUsage) => void;
+  /** The same rollup's WRITE side: which account and address ordered the turn that is about to run. The
+   *  brain owns the pin (not the HTTP route) so a room turn is attributed to the person who wrote it
+   *  rather than to whoever happens to own the room. */
+  usageOrigins?: import('./session/turnSettled.js').TurnOriginPin;
   /** The daemon-wide shared plugin registry (lazy-loaded, memoized, invalidated on plugin toggles).
    *  Shared with the brain workers and platform adapters so ALL consumers reload together. Absent →
    *  brain runs exactly as before plugins existed. */

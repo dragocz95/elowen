@@ -59,7 +59,7 @@ export class UsageOriginStore {
    *  A pin is set by the first request of a turn and consumed by {@link settleTurn}; a request arriving
    *  while one is in flight is STEERED into that same turn, so it must not repoint the attribution.
    *  The settling turn therefore reads this without touching SQLite at all. */
-  private readonly turnOrigins = new Map<string, { origin: ClientOrigin; at: number }>();
+  private readonly turnOrigins = new Map<string, { origin: ClientOrigin; userId: number; at: number }>();
 
   constructor(private readonly db: Db) {}
 
@@ -71,7 +71,7 @@ export class UsageOriginStore {
    *  turn. Overwriting the pin would move a turn's whole spend to whoever spoke into it last. */
   recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): void {
     this.pruneStalePins(atMs);
-    if (!this.turnOrigins.has(sessionId)) this.turnOrigins.set(sessionId, { origin, at: atMs });
+    if (!this.turnOrigins.has(sessionId)) this.turnOrigins.set(sessionId, { origin, userId, at: atMs });
     this.db.prepare(
       `INSERT INTO brain_session_origins (session_id, origin, user_id, trusted, requests, first_at, last_at)
             VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -84,17 +84,22 @@ export class UsageOriginStore {
     ).run(sessionId, origin.value, userId, origin.trusted ? 1 : 0, atMs, atMs);
   }
 
-  /** Consume the pin of a settling turn: the origin of the request that ORDERED it, or `internal`.
+  /** Consume the pin of a settling turn: the origin of the request that ORDERED it, or `internal`, plus
+   *  the ACCOUNT that ordered it when one is known.
    *
-   *  `internal` is a real answer here, not a placeholder for a lookup that failed. A cron wake-up, a
-   *  Discord message, an advisor autostart and a delegation revived at boot all genuinely had no HTTP
-   *  request behind them. Deliberately NOT backed by a lookup in `brain_session_origins`: that table
-   *  says which addresses have EVER spoken into the conversation, which is a different question — using
-   *  it here would bill a scheduled job to whichever human last opened the same conversation. */
-  settleTurn(sessionId: string): ClientOrigin {
+   *  `internal` is a real answer here, not a placeholder for a lookup that failed. A cron wake-up, an
+   *  advisor autostart and a delegation revived at boot all genuinely had no request behind them.
+   *  Deliberately NOT backed by a lookup in `brain_session_origins`: that table says which addresses have
+   *  EVER spoken into the conversation, which is a different question — using it here would bill a
+   *  scheduled job to whichever human last opened the same conversation.
+   *
+   *  The account is returned alongside because in a shared room it is not the session's owner. A room is
+   *  owned by whoever opened it, so attributing the spend to the row would bill the opener for everybody
+   *  else's turns. `null` means nobody was identified, and the caller falls back to the row. */
+  settleTurn(sessionId: string): { origin: ClientOrigin; userId: number | null } {
     const pinned = this.turnOrigins.get(sessionId);
     this.turnOrigins.delete(sessionId);
-    return pinned?.origin ?? INTERNAL_ORIGIN;
+    return { origin: pinned?.origin ?? INTERNAL_ORIGIN, userId: pinned?.userId ?? null };
   }
 
   /** The pin currently held for a conversation, without consuming it. For inspection and tests. */

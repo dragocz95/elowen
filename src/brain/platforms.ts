@@ -6,6 +6,8 @@ import { narrowToolAllowList, type ToolPolicy, type TurnIdentity } from '../plug
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
 import { channelSessionId } from './sessionId.js';
+import { platformOrigin } from '../api/clientIp.js';
+import { openTurn, type TurnActivityFeed, type TurnOriginPin } from './session/turnSettled.js';
 import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
 import {
   normalizeDelegatedExecutionScope,
@@ -24,7 +26,10 @@ export interface PlatformOrchestratorDeps {
   /** Report a platform turn to the team activity feed. A CALLBACK rather than the event bus itself:
    *  the brain layer has no bus and should not grow a dependency on one for a single report. Absent in
    *  minimal wirings (tests), where the feed is simply not fed. */
-  recordActivity?: (e: { actorUserId: number | null; surface: string; target: string }) => void;
+  recordActivity?: TurnActivityFeed;
+  /** The write-time origin rollup, so a room turn's spend is attributed to the person who wrote it and to
+   *  the platform it came from. Absent in minimal wirings, which then attribute nothing. */
+  usageOrigins?: TurnOriginPin;
   /** The Elowen user that anchors platform channel sessions (the admin). */
   platformOwner?: () => number | undefined;
   /** The typed sub-agent registry, resolved when a delegate call names a `subagent_type` — turns the type
@@ -359,14 +364,37 @@ export class PlatformOrchestrator {
             policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
             toolPolicy = turnDenied.length ? { deny: new Set(turnDenied) } : undefined;
           }
-          // Team feed: a message arrived from a platform. The surface is the platform name, which IS
-          // derivable here — unlike web vs CLI, which post an identical body and must state themselves.
-          // An unlinked sender has no Elowen account, so the row carries no actor and the feed shows the
-          // platform alone rather than inventing an attribution.
-          this.d.recordActivity?.({
-            actorUserId: accountUserId ?? null,
-            surface: src.platform,
-            target: keyOf(src),
+          // Everything this turn does besides answering, opened here and settled inside channels.send —
+          // see openTurn. Immediately before the send, because both effects describe a turn that is
+          // ABOUT to run and the pin has to exist before the first provider request settles it.
+          //
+          // The origin pin is keyed on the WRITER, never on the room's owner. A room belongs to whoever
+          // opened it, so attributing its spend to that account billed one person for everybody else's
+          // turns — and because no pin existed at all, every room turn also settled as `internal`. An
+          // unlinked sender has no account to bill, so the pin is omitted and the turn settles against
+          // the room's owner exactly as before, which is the honest answer when nobody is identified.
+          //
+          // The feed's surface is the platform name, which IS derivable here — unlike web vs CLI, which
+          // post an identical body and must state themselves. An unlinked sender carries no actor, so the
+          // feed shows the platform alone rather than inventing an attribution.
+          openTurn({
+            sessionId: canonicalSessionId,
+            ...(accountUserId != null && this.d.usageOrigins
+              ? { origin: {
+                  pin: this.d.usageOrigins,
+                  userId: accountUserId,
+                  origin: platformOrigin(src.platform),
+                  atMs: Date.now(),
+                } }
+              : {}),
+            ...(this.d.recordActivity
+              ? { activity: {
+                  record: this.d.recordActivity,
+                  actorUserId: accountUserId ?? null,
+                  surface: src.platform,
+                  target: keyOf(src),
+                } }
+              : {}),
           });
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           const channelReply = await this.d.channels.send({
@@ -404,11 +432,9 @@ export class PlatformOrchestrator {
             sender: resolved.sender,
             promptCommand: src.promptCommand === true,
           }, text);
-          // Recorded AFTER the send, because the send is what guarantees the session row exists — the very
-          // first message of a brand-new conversation creates it. A shared room is anchored on the operator
-          // (it has no single author), so without this the register could only ever name the host, and one
-          // colleague's Teams room was indistinguishable from the operator's own conversation.
-          if (accountUserId != null) this.d.channels.setLastWriter(canonicalSessionId, accountUserId);
+          // The writer stamp used to be recorded here, after the send guaranteed the session row exists.
+          // It still is — one layer down, inside settleTurn, where the owner surface finally records one
+          // too instead of leaving the register's writer column empty for every CLI and web row.
           return channelReply;
         };
         adapter.listen(onMessage);

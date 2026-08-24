@@ -10,7 +10,7 @@ const log = logger('sse');
  *  are NOT: both POST /brain/send with the same shape, so the caller has to say which it is. Never
  *  inferred from User-Agent or IP — the client writes both, and the web BFF strips headers anyway.
  *  An unattributable turn stays 'unknown' rather than being guessed into a plausible lie. */
-export const ACTIVITY_SURFACES = ['web', 'cli', 'discord', 'msteams', 'telegram', 'whatsapp', 'cron', 'unknown'] as const;
+export const ACTIVITY_SURFACES = ['web', 'cli', 'discord', 'msteams', 'telegram', 'whatsapp', 'cron', 'internal', 'unknown'] as const;
 export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 
 /** What happened, in the vocabulary the team feed renders (each kind owns an icon in web/lib/eventMeta).

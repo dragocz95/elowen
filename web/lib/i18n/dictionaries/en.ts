@@ -599,7 +599,7 @@ export const en = {
     pulseNobody: 'Nobody around yet',
     pulseTurns: '{count} turns / {days} days',
     pulseAria: 'Activity by hour over the last two weeks',
-    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', unknown: 'unknown client' },
+    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', internal: 'automation', unknown: 'unknown client' },
     ev: {
       turn: 'is working',
       someone: 'Someone',

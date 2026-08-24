@@ -24,16 +24,15 @@ import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 import { queuedWithPending } from '../session/queueMirror.js';
 import { cacheTtlMs } from '../session/cacheTiming.js';
-import { coldCompactionGateMs, lastActivityMs } from '../session/coldStartCompaction.js';
-import { sessionHasWorkInFlight } from './sessionQuiescence.js';
-import { runCompaction, type SubagentCompletion, type WorkflowCompletion } from '../events.js';
+import { maybeColdStartCompaction, type ColdStartCompactionDeps } from '../session/coldStartCompaction.js';
+import { openTurn, settleTurn, type TurnActivityFeed, type TurnOriginPin } from '../session/turnSettled.js';
+import type { SubagentCompletion, WorkflowCompletion } from '../events.js';
 import { randomUUID } from 'node:crypto';
 import { isNonUserSession } from '../sessionId.js';
 import { xmlEscape } from '../../shared/xml.js';
 import { logger } from '../../shared/logger.js';
 import { steerCustomMessage } from '../session/steerCustomMessage.js';
 
-const coldLog = logger('brain-compaction');
 
 /** A durable sub-agent result is retried at most this many times before the drain gives up (leaves the
  *  row pending, no further timer). A later user turn on the parent re-triggers one more attempt. */
@@ -94,12 +93,18 @@ interface TurnRunnerDeps {
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   sendDelegatedCustom?(userId: number, sessionId: string, customType: string, content: string, resultId: string): Promise<void>;
-  /** Fired once a turn has fully settled (outside the per-conversation send lock). Lets the brain drain
-   *  deferred, session-disposing work a tool requested mid-turn (a pending plugin reload) and notify the
-   *  user their turn is done. `userInitiated` is false only for an internal goal/nudge turn; whether the
-   *  answer is being READ is a separate question, answered from `senderClientId` — the surface it came
-   *  from — so a bound CLI qualifies here and is kept quiet by still being on screen. */
-  afterTurnSettled?(userId: number, sessionId: string, userInitiated: boolean, senderClientId?: string): void;
+  /** Apply a plugin reload a tool requested mid-turn, once the send lock is released — see
+   *  {@link settleTurn}. The channel service is handed the same callback. */
+  drainPluginReload?(): void;
+  /** Tell the user their turn is done on a device that is not showing it. Owner-only by nature, so a
+   *  channel turn simply does not pass it. `userInitiated` is false only for an internal goal/nudge turn;
+   *  whether the answer is being READ is a separate question, answered from `senderClientId` — the
+   *  surface it came from — so a bound CLI qualifies here and is kept quiet by still being on screen. */
+  notifyTurnComplete?(userId: number, sessionId: string, userInitiated: boolean, senderClientId?: string): void;
+  /** The write-time origin rollup, so a turn's spend is attributed to the address that ordered it. */
+  usageOrigins?: TurnOriginPin;
+  /** The team activity feed. Absent on a minimal wiring, which then simply has no feed. */
+  recordActivity?: TurnActivityFeed;
 }
 
 /** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
@@ -340,42 +345,10 @@ export class BrainTurnRunner {
     live.replay.publish({ type: 'queue', items: queuedWithPending(live) });
   }
 
-  /** Compact the conversation at the START of a turn that follows a provably expired prompt cache —
-   *  before its first provider request, under the session lock the turn already holds.
-   *
-   *  This is the ONLY automatic cold-context compaction trigger; the previous 60 s idle sweep is gone.
-   *  Timing it to the turn keeps the one genuine advantage of the idle timing (the cache is cold, so
-   *  the rewrite forfeits no warm prefix) and removes the sweep's two losses: nothing is ever paid for
-   *  a conversation nobody returns to, and the decision is made at the moment the user is provably
-   *  continuing — the moment the compacted re-cache is actually about to be bought. See
-   *  coldStartCompaction.ts for the timing and break-even reasoning.
-   *
-   *  Never throws and never blocks the turn on failure: a context that cannot be summarized still
-   *  answers on its full history, and the circuit breaker counts the failure through its own session
-   *  subscription. No loop guard is needed — the turn that follows appends fresh messages, which closes
-   *  the gate until the next full idle-past-TTL epoch. */
-  private async maybeColdStartCompaction(live: LiveBrain): Promise<void> {
-    const assess = live.assessColdCompaction;
-    if (!assess) return;
-    if (live.session.isStreaming || live.session.isCompacting) return;
-    const lastActivity = lastActivityMs(this.d.store.lastMessageAt(live.sessionId), live.interactedAt);
-    if (lastActivity === 0 || Date.now() - lastActivity < coldCompactionGateMs(live.lastRequestCacheTtlMs)) return;
-    // The shared fail-closed predicate (also the teardown's): a queued message, parked question,
-    // running child/background job or armed goal means the context is not this turn's to rewrite.
-    if (sessionHasWorkInFlight({ store: this.d.store, sessions: this.d.sessions, elicitation: this.d.elicitation }, live.sessionId)) return;
-    const verdict = assess();
-    if (!verdict.eligible) {
-      coldLog.info(`cold-start compaction skipped on ${live.sessionId}: ${verdict.reason}`);
-      return;
-    }
-    try {
-      const result = await runCompaction(live.session);
-      if (result.compacted) {
-        coldLog.info(`cold-start compacted ${live.sessionId} (cache cold; est. ${verdict.contextTokens} → floor ~${verdict.floorTokens} tokens)`);
-      }
-    } catch (error) {
-      coldLog.warn(`cold-start compaction failed on ${live.sessionId} — running the turn on the full context`, error);
-    }
+  /** The shared cold-start compaction trigger, given the registries it consults — see
+   *  {@link maybeColdStartCompaction}. The channel service calls the same function with its own. */
+  private coldCompactionDeps(): ColdStartCompactionDeps {
+    return { store: this.d.store, sessions: this.d.sessions, elicitation: this.d.elicitation };
   }
 
   async send(request: TurnRequest): Promise<void> {
@@ -413,6 +386,26 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
+    // Before anything can steer, queue or reject this message: the pin belongs to the request that
+    // ordered the turn, and a message sent into a RUNNING turn is steered into it, so it must reach the
+    // origin ledger without repointing that turn's attribution (recordRequest owns that asymmetry).
+    // Both effects were owned by the HTTP route until now, which is why a goal kickoff, a system nudge
+    // and a cron wake-up into an owner conversation appeared in no feed at all.
+    openTurn({
+      sessionId: active.sessionId,
+      ...(request.origin && this.d.usageOrigins
+        ? { origin: { pin: this.d.usageOrigins, userId, origin: request.origin, atMs: Date.now() } }
+        : {}),
+      ...(this.d.recordActivity
+        ? { activity: {
+            record: this.d.recordActivity,
+            actorUserId: userId,
+            // An internal turn is nobody's keystroke; naming it as such is what makes it visible at all.
+            surface: internal ? 'internal' : (request.surface ?? 'unknown'),
+            target: active.sessionId,
+          } }
+        : {}),
+    });
     // Esc/stop fences the conversation before it snapshots children and clears PI's queue. Never admit a
     // message into that teardown window: the cancelled compaction/run will not drain it, so it would
     // otherwise survive as a phantom chip and execute on a later prompt.
@@ -450,6 +443,9 @@ export class BrainTurnRunner {
     // it as a pending queue chip for the compaction's duration; the blocked turn still delivers it right
     // after. Cleared when that turn starts (below) or by the finally net if it never does. Never internal.
     let pendingCompactionEchoId: string | undefined;
+    // Armed by a turn that actually produced an answer; consumed once by settleTurn below. A turn that
+    // threw leaves it undefined, which is how a failed exchange stays out of the writer's memory.
+    let curate: NonNullable<Parameters<typeof settleTurn>[0]['curate']> | undefined;
     if (!internal && active.session.isCompacting) {
       pendingCompactionEchoId = randomUUID();
       (active.pendingCompactionEchoes ??= []).push({ id: pendingCompactionEchoId, text: display ?? text });
@@ -467,7 +463,7 @@ export class BrainTurnRunner {
       // First turn after the prompt cache expired: shrink the context BEFORE the provider re-caches it
       // (see maybeColdStartCompaction). Runs before admission so the user's new message is never part
       // of what gets summarized — it follows the compacted context instead.
-      await this.maybeColdStartCompaction(live);
+      await maybeColdStartCompaction(this.coldCompactionDeps(), live);
 
       // Lock acquired means the compaction that was blocking this turn has released: the message is running
       // now, not waiting, so drop its pending chip before the turn's own user echo lands.
@@ -528,12 +524,17 @@ export class BrainTurnRunner {
           await live.session.prompt(NO_REPLY_NUDGE);
         }
       }));
-      // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
-      // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
+      // Post-turn curator: extract durable facts from this exchange. Only ARMED here, where the turn's
+      // own text and auto-save verdict are in scope; settleTurn below runs it, so the owner surface and
+      // a room cannot drift into curating different things (they already had).
       if (this.d.curator && context.autoSaveMemory) {
         const last = lastAssistant(live.session.messages as { role?: string }[]);
-        const assistantText = last ? extractText(last) : '';
-        void this.d.curator.run(userId, turnText, assistantText).catch(() => { /* curator is best-effort */ });
+        curate = {
+          curator: this.d.curator,
+          userId,
+          userText: turnText,
+          assistantText: last ? extractText(last) : '',
+        };
       }
       // Auto-compaction is PI-native (configured per session via the SettingsManager in the factory):
       // PI summarizes the context on its own once it fills past the user's %, right after this agent_end.
@@ -606,13 +607,25 @@ export class BrainTurnRunner {
       if (this.d.store.pendingSubagentResults(completedSessionId).length > 0) {
         void this.drainPendingSubagentResults(userId, completedSessionId);
       }
-      // Apply any plugin reload a tool requested during this turn (e.g. CreateSkill): the send lock is
-      // released, so respawning this session no longer races the turn that asked for it. The flag gates the
-      // phone push and means "a person asked for this", so only `internal` disqualifies a turn. It must NOT
-      // also require the absence of `client`: the web binds its sends exactly like the CLI does, so that
-      // test excluded every real chat message and the push could never fire. Whether anyone is actually
-      // reading is a separate question, answered by the watcher count — a CLI holds a stream of its own.
-      this.d.afterTurnSettled?.(userId, completedSessionId, !internal, client?.id);
+      // The settlement side of the turn — see settleTurn. The plugin reload it drains (e.g. after a
+      // CreateSkill) runs here rather than inside the turn because the send lock is released, so
+      // respawning this session no longer races the turn that asked for it.
+      //
+      // `notify` is the owner surface's own argument and a room omits it. `userInitiated` means "a person
+      // asked for this", so only `internal` disqualifies a turn: it must NOT also require the absence of
+      // `client`, because the web binds its sends exactly like the CLI does and that test excluded every
+      // real chat message. Whether anyone is actually reading is a separate question the callback answers.
+      settleTurn({
+        sessionId: completedSessionId,
+        ...(curate ? { curate } : {}),
+        // The owner IS the writer of their own chat. Without this the conversation register showed an
+        // empty writer column for every CLI and web row while platform rows carried one.
+        lastWriter: { store: this.d.store, userId },
+        ...(this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
+        ...(this.d.notifyTurnComplete
+          ? { notify: () => this.d.notifyTurnComplete!(userId, completedSessionId, !internal, client?.id) }
+          : {}),
+      });
     }
     if (internal?.kind !== 'systemNudge') this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
   }

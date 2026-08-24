@@ -188,8 +188,12 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     });
   });
 
-  it('records who wrote in a shared room, after the send that guarantees the row exists', async () => {
-    const calls: [string, number][] = [];
+  // Who WROTE the turn is recorded one layer down now (settleTurn, against a real store — see
+  // channelSettlement.test.ts). What belongs here is the other half of the same question: whose spend it
+  // is. The room's owner and its writer are different people, and until this pin existed every room turn
+  // settled as `internal` billed to the owner.
+  it('pins a room turn to the WRITER and the platform, before the turn runs', async () => {
+    const pins: [string, number, string][] = [];
     const order: string[] = [];
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
     const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
@@ -198,10 +202,16 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       platformOwner: () => 1,
       policyForUser: () => userPolicy,
       identity: linkedResolver(true), // the sender resolves to account 2
+      usageOrigins: {
+        recordRequest: (sessionId, userId, origin) => {
+          order.push('pin');
+          pins.push([sessionId, userId, origin.value]);
+        },
+      },
       channels: {
-        sessionOwnerUserId: () => 1,
+        sessionOwnerUserId: () => 1, // …while the ROOM is owned by account 1
         send: async () => { order.push('send'); return 'ok'; },
-        setLastWriter: (id: string, userId: number) => { order.push('setLastWriter'); calls.push([id, userId]); },
+        setLastWriter: () => {},
         fragmentFor: () => '',
       } as never,
       dispatch: noDispatch,
@@ -209,10 +219,10 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     await orch.startAll();
     await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], access: { admin: false, projectIds: [3] } } as never, 'hi');
 
-    expect(calls).toEqual([['brain-ch-discord-c1', 2]]);
-    // The very first message of a conversation is what creates the row, so recording earlier would write
-    // nothing and silently lose the first sender.
-    expect(order).toEqual(['send', 'setLastWriter']);
+    expect(pins).toEqual([['brain-ch-discord-c1', 2, 'platform:discord']]);
+    // Pinned BEFORE the turn: the settle that consumes the pin happens inside the send, so a pin written
+    // afterwards would be consumed by nothing and the turn would settle as `internal` anyway.
+    expect(order).toEqual(['pin', 'send']);
   });
 
   describe('a direct 1:1 chat', () => {

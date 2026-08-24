@@ -1,3 +1,4 @@
+import type { ClientOrigin } from '../../api/clientIp.js';
 import type { BrainWorkMode } from '../../shared/wireContract.js';
 
 /** One image attached to an owner-chat turn. The bytes are transient PI input; durable history stores
@@ -44,4 +45,13 @@ export interface TurnRequest {
   interruptResume?: boolean;
   /** Internal admission seam used by BrainService.startSend; never part of REST/SSE payloads. */
   onAdmitted?: (sessionId: string) => void;
+  /** Where the request that ordered this turn came from, resolved by the HTTP layer — the only layer
+   *  that can see it. Absent means nothing ordered the turn (a goal continuation, a cron wake-up, a
+   *  boot-recovered delegation), which settles honestly as `internal` rather than inheriting the last
+   *  human address that spoke into the conversation. */
+  origin?: ClientOrigin;
+  /** Which chat surface the turn was typed on, for the team activity feed. Owner chat is the one place
+   *  this cannot be derived — web and CLI post an identical body — so it stays the client's own claim
+   *  there and is validated against the known surfaces by the daemon; an internal turn states itself. */
+  surface?: string;
 }

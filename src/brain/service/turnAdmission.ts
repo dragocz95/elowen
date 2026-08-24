@@ -4,6 +4,7 @@ import { attachmentMarker, storeChatImages, toMessageImages, type StoredChatImag
 import { projectUserTurn } from '../persistence.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import { enqueueMirrored } from '../session/queueMirror.js';
+import { titleTurnConversation } from '../session/turnSettled.js';
 import type { TurnImage, TurnMode } from './turnRequest.js';
 
 interface TurnAdmissionDeps {
@@ -132,11 +133,16 @@ export class TurnAdmission {
   private publishAccepted(): void {
     if (this.admitted) return;
     const { durableId } = this.prepare();
-    const row = this.input.titleOnAdmission ? this.d.store.getSession(this.input.live.sessionId) : undefined;
-    if (row && !row.title) {
-      const provisionalTitle = this.input.text.slice(0, 60);
-      this.d.store.setTitle(this.input.live.sessionId, provisionalTitle);
-      void this.d.titler.run(this.input.live.sessionId, this.input.text, provisionalTitle);
+    // Named from the HUMAN's words, not the model-facing text: the two are the same sentence for a plain
+    // message but diverge the moment a turn carries an attachment marker or a prompt macro. The shared
+    // helper is what keeps this and the room path from drifting again — see titleTurnConversation.
+    if (this.input.titleOnAdmission) {
+      titleTurnConversation({
+        store: this.d.store,
+        titler: this.d.titler,
+        sessionId: this.input.live.sessionId,
+        senderText: this.input.display ?? this.input.text,
+      });
     }
     this.echo();
     // Arm the Esc/Stop-before-output discard for THIS turn: remember the row a discard would delete + the

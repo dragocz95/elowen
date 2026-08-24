@@ -686,16 +686,23 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         projectPath: () => homeProject.path,
         projects,
         chatImagesDir,
-        // Bill a settled turn to the origin that ordered it. The owner comes from the session row, so a
-        // channel/task/sub-agent session is attributed to whoever owns it — the same person /usage/by-day
-        // already reports that spend under. `settleTurn` CONSUMES the pin the HTTP layer set, so a turn
-        // nobody requested (cron wake-up, boot-recovered delegation, a Discord message) settles as
-        // `internal` rather than inheriting the last human address.
+        // Bill a settled turn to the account and origin that ORDERED it. `settleTurn` consumes the pin
+        // openTurn set, so a turn nobody requested (a cron wake-up, a boot-recovered delegation) settles
+        // as `internal` rather than inheriting the last human address.
+        //
+        // The pin's account wins over the session row's owner, and that is the whole point in a shared
+        // room: a room belongs to whoever opened it, so falling back to the row would keep billing the
+        // opener for every colleague's turn. The row owner remains the answer where nobody is
+        // identified — an unlinked platform sender, an instance cron — which is the same person
+        // /usage/by-day already reports that spend under.
         onTurnSettled: (sessionId, usage) => {
-          const userId = brainStore.getSession(sessionId)?.user_id;
+          const pin = usageOrigins.settleTurn(sessionId);
+          const userId = pin.userId ?? brainStore.getSession(sessionId)?.user_id;
           if (typeof userId !== 'number') return; // an unknown session has nobody to bill
-          usageOrigins.addTurn(userId, usageOrigins.settleTurn(sessionId), usage, Date.now());
+          usageOrigins.addTurn(userId, pin.origin, usage, Date.now());
         },
+        // The write side of the same rollup: the brain pins a turn's origin before it runs.
+        usageOrigins,
         // The registry swap can happen long after the toggle was saved (it waits for running work), so the
         // web learns from this event instead of polling or needing a manual page reload.
         onPluginsReloaded: () => bus.publish({ type: 'plugins' }),

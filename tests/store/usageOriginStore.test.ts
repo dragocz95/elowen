@@ -14,9 +14,9 @@ describe('UsageOriginStore attribution', () => {
   it('splits one user\'s spend across the addresses it came from', () => {
     const { store } = setup();
     store.recordRequest('brain-1', 7, ip('203.0.113.7'), AT);
-    store.addTurn(7, store.settleTurn('brain-1'), usage(1000, 2), AT);
+    store.addTurn(7, store.settleTurn('brain-1').origin, usage(1000, 2), AT);
     store.recordRequest('brain-1', 7, ip('198.51.100.44'), AT + 1000);
-    store.addTurn(7, store.settleTurn('brain-1'), usage(400, 1), AT + 1000);
+    store.addTurn(7, store.settleTurn('brain-1').origin, usage(400, 1), AT + 1000);
 
     const rows = store.topOrigins({ group: 'pair' });
     // The BREAKDOWN is the assertion, not the sum: a total of 1400 would also come out of an
@@ -33,7 +33,7 @@ describe('UsageOriginStore attribution', () => {
     const { store } = setup();
     store.recordRequest('brain-1', 7, ip('203.0.113.7'), AT);          // starts the turn
     store.recordRequest('brain-1', 7, ip('198.51.100.44'), AT + 500);  // steered INTO the running turn
-    store.addTurn(7, store.settleTurn('brain-1'), usage(900), AT + 9000);
+    store.addTurn(7, store.settleTurn('brain-1').origin, usage(900), AT + 9000);
 
     expect(store.topOrigins({ group: 'pair' }).map((r) => [r.origin, r.tokens])).toEqual([['203.0.113.7', 900]]);
     // …and the ledger still records that the second address spoke into the conversation. Attribution and
@@ -54,10 +54,10 @@ describe('UsageOriginStore attribution', () => {
     const { store } = setup();
     // A human used this conversation over HTTP earlier…
     store.recordRequest('brain-1', 7, ip('203.0.113.7'), AT);
-    store.addTurn(7, store.settleTurn('brain-1'), usage(100), AT);
+    store.addTurn(7, store.settleTurn('brain-1').origin, usage(100), AT);
     // …and later a cron wake-up runs a turn in it with no request behind it at all.
-    expect(store.settleTurn('brain-1')).toEqual(INTERNAL_ORIGIN);
-    store.addTurn(7, store.settleTurn('brain-1'), usage(500), AT + 86_400_000);
+    expect(store.settleTurn('brain-1')).toEqual({ origin: INTERNAL_ORIGIN, userId: null });
+    store.addTurn(7, store.settleTurn('brain-1').origin, usage(500), AT + 86_400_000);
 
     const rows = store.topOrigins({ group: 'pair' });
     expect(rows.find((r) => r.origin === 'internal')?.tokens).toBe(500);

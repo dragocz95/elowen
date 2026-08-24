@@ -612,6 +612,9 @@ describe('brain routes', () => {
       session: 'brain-2',
       display: 'clean prompt',
       client: { id: 'cli-a', generation: 7 },
+      // Resolved by this layer because it is the only one that can see it, and carried INTO the turn so
+      // that the brain — not the route — decides what the turn's spend is attributed to.
+      origin: { value: 'local', kind: 'local', trusted: true },
     });
   });
 
@@ -1337,33 +1340,34 @@ describe('brain process routes', () => {
   });
 });
 
-// The team activity feed is fed from the send route, and its emit is deliberately wrapped in a catch so
-// a feed failure can never fail a user's turn. That catch is exactly why these tests exist: without them
-// a broken emit would be indistinguishable from a working one.
-describe('/brain/send — team activity feed', () => {
-  it('publishes who acted and from where, but nothing from the message', async () => {
-    const { app, bus, amyTok } = setup();
+// The team activity feed and the origin pin BOTH moved out of this route and into the brain (openTurn),
+// so that a turn which never arrives over HTTP — a goal kickoff, a system nudge, a cron wake-up — is not
+// invisible in the feed and unattributed in the spend. What is left here is the pair of facts only this
+// layer can see, and these tests pin that the route still states them.
+describe('/brain/send — what the route contributes to the turn', () => {
+  it('hands the brain the claimed surface rather than publishing a feed row itself', async () => {
+    const { app, bus, amyTok, brain } = setup();
     await app.request('/brain/start', post(amyTok, {}));
     const seen: unknown[] = [];
     bus.subscribe((e) => { if (e.type === 'activity') seen.push(e); });
 
     expect((await app.request('/brain/send', post(amyTok, { text: 'hi', surface: 'web' }))).status).toBe(202);
 
-    expect(seen).toEqual([{
-      type: 'activity', kind: 'turn', actorUserId: 2, surface: 'web', target: 'brain-2',
-    }]);
+    expect(brain.turnRequests.at(-1)).toMatchObject({ surface: 'web' });
+    // The route no longer owns the feed, so it must not emit a second row of its own.
+    expect(seen).toEqual([]);
     // The message text must never reach the feed: it is instance-wide and read by the whole team.
-    expect(JSON.stringify(seen)).not.toContain('hi');
+    expect(JSON.stringify(brain.turnRequests.at(-1)?.surface)).not.toContain('hi');
   });
 
-  it('records an unidentified client honestly rather than guessing a surface', async () => {
-    const { app, bus, amyTok } = setup();
+  it('leaves an unidentified client unclaimed rather than guessing a surface', async () => {
+    const { app, amyTok, brain } = setup();
     await app.request('/brain/start', post(amyTok, {}));
-    const seen: { surface?: string }[] = [];
-    bus.subscribe((e) => { if (e.type === 'activity') seen.push(e); });
 
     await app.request('/brain/send', post(amyTok, { text: 'hi' }));
 
-    expect(seen[0]!.surface).toBe('unknown');
+    // Absent, not 'unknown': the daemon names an unclaimed surface, so the honest answer is decided in
+    // one place instead of once per client that forgets to say who it is.
+    expect(brain.turnRequests.at(-1)).not.toHaveProperty('surface');
   });
 });

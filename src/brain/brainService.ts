@@ -267,8 +267,10 @@ export class BrainService {
       sendDelegatedCustom: async (userId, sessionId, customType, content, resultId) => {
         await this.delegated.sendDelegated(userId, sessionId, content, { internalSystem: { customType, resultId } });
       },
-      afterTurnSettled: (userId, sessionId, userInitiated, senderClientId) => {
-        this.drainDeferredPluginReload();
+      get usageOrigins() { return d.usageOrigins; },
+      get recordActivity() { return d.recordActivity; },
+      drainPluginReload: () => { this.drainDeferredPluginReload(); },
+      notifyTurnComplete: (userId, sessionId, userInitiated, senderClientId) => {
         // A turn a person asked for just finished and the surface they typed on is not showing it — tell
         // their phone. The question is about the SENDER's device, not the conversation as a whole: the user
         // is wherever they wrote from, so a terminal left running on a desktop must not speak for a phone
@@ -320,6 +322,8 @@ export class BrainService {
       completeWorkflow: (parentSessionId, userId, completion) =>
         this.turnRunner.acceptWorkflowCompletion(parentSessionId, userId, completion),
       cancelWorkflows: (sessionId) => this.teardown.cancelWorkflowsFor(sessionId),
+      // The same drain the owner surface has always had, so a skill created from a room applies there too.
+      drainPluginReload: () => { this.drainDeferredPluginReload(); },
       onDelegatedEdge: (parentSessionId, childSessionId, running) =>
         this.delegatedEdgeReporter?.(parentSessionId, childSessionId, running),
       // A delegated child running in the sub-agent runner has no live record here, so `/stop` can fence
@@ -347,6 +351,7 @@ export class BrainService {
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
       recordActivity: d.recordActivity,
+      usageOrigins: d.usageOrigins,
       platformOwner: d.platformOwner,
       agents: d.agents,
       // A linked platform sender uses the same account policy and tool grant wherever they write.

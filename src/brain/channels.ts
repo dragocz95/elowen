@@ -23,6 +23,9 @@ import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
+import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
+import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
+import { cacheTtlMs } from './session/cacheTiming.js';
 import { recallMemoryBlock } from './session/memoryBlock.js';
 import { pluginContextBlock } from './session/pluginContextBlock.js';
 import { runningSubagentsBlock } from './session/runningSubagents.js';
@@ -242,6 +245,10 @@ export interface ChannelServiceDeps {
   /** Observe every delegated parent→child edge this service registers. Set only in the sub-agent runner,
    *  which mirrors its NESTED tree into the daemon's authoritative registry. */
   onDelegatedEdge?: (parentSessionId: string, childSessionId: string, running: boolean) => void;
+  /** Apply a plugin reload a tool requested during a room turn, once that turn's lock is released — see
+   *  {@link settleTurn}. The owner surface has always had it; without the same callback here a skill
+   *  created from Discord reached disk and never reached the runtime. */
+  drainPluginReload?: () => void;
   /** Reach a delegated child whose PI session lives in the sub-agent runner process. The abort TREE stays
    *  here (its fencing is synchronous in-memory read-modify-write), but only the process actually holding
    *  the session can interrupt the model call — see SubagentDispatch. No-op without a runner. */
@@ -336,11 +343,6 @@ export class ChannelSessionService {
     return this.d.store.getSession(sessionId)?.user_id;
   }
 
-  /** Record who last wrote in a channel conversation — see {@link BrainStore.setLastWriter}. */
-  setLastWriter(sessionId: string, userId: number): void {
-    this.d.store.setLastWriter(sessionId, userId);
-  }
-
   /** Give a personal 1:1 chat back to the verified sender who actually talks in it, while it is still
    *  anchored on the operator fallback. See {@link BrainStore.adoptPersonalChat} for why this is the one
    *  case an inbound message may re-point a transcript. */
@@ -396,8 +398,7 @@ export class ChannelSessionService {
     }
     try {
     const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
-    if (steered !== null) return steered;
-    return await this.d.registry.withLock(sessionId, async () => {
+    const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
       if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
       if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
       // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
@@ -508,6 +509,16 @@ export class ChannelSessionService {
       // otherwise never learn what it is, and a private DM would keep behaving like a shared room forever.
       if (opts.direct !== undefined) this.d.store.setDirect(sessionId, opts.direct);
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
+      // First turn after this room's prompt cache expired: shrink the context BEFORE the provider
+      // re-caches it. Owner chat has had this since the idle sweep was retired; a room did not, even
+      // though a room — a cron channel that keeps one conversation for weeks — is where the expensive
+      // cold context actually accumulates. Runs before the user's message is projected, so that message
+      // is never part of what gets summarized. An ordinary Discord room is rolled over long before the
+      // gate opens; this bites exactly on the long-lived channels that disable or lengthen the rollover.
+      await maybeColdStartCompaction(
+        { store: this.d.store, sessions: this.d.registry, elicitation: this.d.elicitation ?? { pendingForSession: () => null } },
+        ch,
+      );
       ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
@@ -528,12 +539,15 @@ export class ChannelSessionService {
         // and do not broadcast this marker back into their room.
         if (opts.ownerSteer && durableId) ch.replay.publish({ type: 'user', text: displayText, durableId });
         // Name a brand-new channel conversation from the sender's own words (pre-backfill, so injected
-        // channel history never leaks into the title).
-        const titleRow = this.d.store.getSession(sessionId);
-        if (!opts.internalSystem && titleRow && !titleRow.title && senderMsg.trim()) {
-          const provisionalTitle = senderMsg.slice(0, 60);
-          this.d.store.setTitle(sessionId, provisionalTitle);
-          if (this.d.titler) void this.d.titler.run(sessionId, senderMsg, provisionalTitle);
+        // channel history never leaks into the title). Same helper the owner chat titles through, called
+        // at the same moment — once this turn's user row exists.
+        if (!opts.internalSystem) {
+          titleTurnConversation({
+            store: this.d.store,
+            ...(this.d.titler ? { titler: this.d.titler } : {}),
+            sessionId,
+            senderText: senderMsg,
+          });
         }
         // Verified-sender memory recall (ephemeral, never persisted), keyed on their linked account + gated
         // by autoRecall; an unlinked sender has no writerUserId → no recall (shared-space privacy).
@@ -660,6 +674,10 @@ export class ChannelSessionService {
                 details: { source: 'elowen', resultId: opts.internalSystem.resultId },
               }, { triggerTurn: true, deliverAs: 'followUp' });
             } else await (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted));
+            // Requests provably went out under THIS process's cache retention — record the TTL they were
+            // cached with, so the cold-start gate above uses a known value instead of falling back to the
+            // longest TTL pi-ai ever uses forever (which is fail-closed, but never opens on a short one).
+            ch.lastRequestCacheTtlMs = cacheTtlMs(process.env);
             // The re-orientation counts as delivered only now, once the prompt carrying it actually
             // reached the provider — an error or abort before this must leave it pending, not consumed.
             commitOrientation();
@@ -695,10 +713,8 @@ export class ChannelSessionService {
         if (last?.stopReason === 'error' && !assistantText.trim()) {
           throw new Error(last.errorMessage?.trim() || 'the model returned no reply (provider error)');
         }
-        // Post-turn curator (fire-and-forget) for the verified sender, gated by autoSave.
-        if (!opts.internalSystem && opts.writerUserId && this.d.curator && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {
-          void this.d.curator.run(opts.writerUserId, senderMsg, assistantText).catch(() => { /* best-effort */ });
-        }
+        // The post-turn curator, the writer stamp and the plugin-reload drain all settle in send() below,
+        // outside this channel's lock — see settleTurn.
         return assistantText;
       };
 
@@ -706,6 +722,29 @@ export class ChannelSessionService {
       // between steps — so there is no post-turn flush: the running turn is the single place its words land.
       return runOne(turnText, senderMessage, opts.images, opts.onEvent);
     });
+    // The settlement side of a room turn — see settleTurn. Deliberately OUTSIDE the channel lock: the
+    // plugin reload it drains disposes live sessions, so draining it under the lock would tear down the
+    // very session that just answered. The writer stamp lands only now for the reason it always did —
+    // the turn is what guarantees the session row exists at all.
+    //
+    // A message STEERED into somebody else's running turn omits the curator (that turn curates its own
+    // exchange) and the drain (that turn is still running, so nothing may dispose it yet), while the
+    // writer stamp still lands: the person did write here.
+    settleTurn({
+      sessionId,
+      ...(steered === null && !opts.internalSystem && opts.writerUserId != null && this.d.curator
+        && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false
+        ? { curate: { curator: this.d.curator, userId: opts.writerUserId, userText: senderText, assistantText: reply } }
+        : {}),
+      ...(!opts.internalSystem && opts.writerUserId != null
+        ? { lastWriter: { store: this.d.store, userId: opts.writerUserId } }
+        : {}),
+      // Its absence here is why a CreateSkill issued from Discord wrote a skill to disk and then silently
+      // never applied it: the owner surface drained the request and no room ever did.
+      ...(steered === null && this.d.drainPluginReload ? { drainPluginReload: this.d.drainPluginReload } : {}),
+      // `notify` is owner-only and therefore absent: the room already received this answer.
+    });
+    return reply;
     } finally {
       if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
     }

@@ -3,6 +3,7 @@ import { brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSche
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp } from '../context.js';
+import { clientOrigin } from '../clientIp.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
@@ -270,20 +271,12 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     // preflightSend resolves the conversation this turn will land in (the bound session, else the active
     // one) and throws when there is none — so it is both the guard and the only place the target id is
     // known BEFORE the turn starts, which is exactly when the origin has to be captured.
-    let targetSession: string;
-    try { targetSession = brain.preflightSend(c.get('user').id, session, boundClient); }
+    try { brain.preflightSend(c.get('user').id, session, boundClient); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
-    pinOrigin(c, targetSession);
-    // Team feed: someone is working, and from where. Emitted on the bus, so the recorder persists it
-    // (folded into the current bucket) and every attached browser sees it live through the same path.
-    // Nothing about the message itself is published: only actor, surface and the model.
-    //
-    // Not wrapped: publish() isolates and logs every subscriber itself, and nothing here reads state
-    // that could throw, so a try/catch could only ever be an unreachable silent swallow.
-    d.bus.publish({
-      type: 'activity', kind: 'turn', actorUserId: c.get('user').id, surface: surface ?? 'unknown',
-      target: targetSession,
-    });
+    // The origin pin and the team-feed row are the brain's to record, not this route's — see openTurn.
+    // This layer contributes only what it alone can see: WHERE the request came from, and which of the
+    // two owner surfaces claims to have sent it (web and CLI post an identical body, so that one stays
+    // the client's own statement and the daemon validates it against the known surfaces).
     // A model/tool turn can outlive nginx/SSH proxy request timeouts while its authoritative output is
     // already flowing over SSE. Wait only until the user row + stream echo are durable, then return 202.
     // A failure before that boundary is an HTTP error; a later failure is an ordered SSE error so an
@@ -297,6 +290,8 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
       session,
       display,
       client: boundClient,
+      origin: clientOrigin(c, d.config.get().security.trustProxy),
+      ...(surface ? { surface } : {}),
     });
     void operation.completed.catch(async (error) => {
       try {

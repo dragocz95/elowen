@@ -1,4 +1,5 @@
 import { clientOrigin } from '../clientIp.js';
+import { openTurn } from '../../brain/session/turnSettled.js';
 import type { ElowenContext, RouteContext } from '../context.js';
 
 export type BrainService = NonNullable<RouteContext['d']['brain']>;
@@ -22,13 +23,23 @@ export function createBrainRouteContext(ctx: RouteContext): BrainRouteContext {
 
   /** Pin this request's origin to the conversation whose turn it is about to start, so the spend of that
    *  turn is attributed to the address that ORDERED it — read now, at request time, not at settle, when
-   *  the requester may be gone or on another network. Called on the turn-STARTING routes only; a read
-   *  route has nothing to attribute. Silent no-op where the store is unwired (minimal test wiring). */
+   *  the requester may be gone or on another network.
+   *
+   *  Only for work that starts a provider turn WITHOUT going through the brain's own opening — a manual
+   *  compaction and a hand-typed sub-agent continuation. An ordinary send carries its origin in the turn
+   *  request and is pinned by openTurn, so this route layer no longer decides anything about attribution
+   *  beyond resolving where the request came from. Silent no-op where the store is unwired. */
   const pinOrigin = (c: ElowenContext, sessionId: string): void => {
-    d.usageOrigins?.recordRequest(
-      sessionId, c.get('user').id,
-      clientOrigin(c, d.config.get().security.trustProxy), d.clock.now(),
-    );
+    if (!d.usageOrigins) return;
+    openTurn({
+      sessionId,
+      origin: {
+        pin: d.usageOrigins,
+        userId: c.get('user').id,
+        origin: clientOrigin(c, d.config.get().security.trustProxy),
+        atMs: d.clock.now(),
+      },
+    });
   };
 
   /** The prologue almost every brain route shares: 503 when the engine isn't wired, 403 for an agent-scope
