@@ -51,6 +51,19 @@ export interface StoredChannelAttachment {
   mimeType?: string;
 }
 
+/** An attachment that was NOT written, and why. Model-facing, so the agent can tell the sender something
+ *  they can act on instead of hunting for a path that does not exist. */
+export interface UnstoredChannelAttachment {
+  name: string;
+  mimeType?: string;
+  reason: string;
+}
+
+export interface ChannelAttachmentOutcome {
+  stored: StoredChannelAttachment[];
+  unstored: UnstoredChannelAttachment[];
+}
+
 export interface ChannelUploadDeps {
   /** Every registered project, for the candidate set. */
   projects?: { list(): UploadProject[] };
@@ -65,9 +78,21 @@ export interface ChannelUploadDeps {
 
 /** Store a room message's attachments in the WRITER's project and return their real paths.
  *
- *  Throws on every refusal rather than dropping the file, because a dropped attachment is precisely the
- *  defect being fixed: the sender sees their PDF in the channel, the agent never receives it, and nobody
- *  is told. The caller surfaces the message to the room.
+ *  There are two kinds of refusal here and they must not be collapsed into one, because the person in the
+ *  room experiences them completely differently.
+ *
+ *  A SECURITY refusal throws, and the caller turns the whole turn into an error. Those are the checks
+ *  below that decide whether these bytes may be written at all — an unverified sender, an unknown account,
+ *  a message claiming more or larger attachments than the transport allows, a write that failed. Softening
+ *  any of them into a note would mean the agent answers around a refusal the sender was never told about.
+ *
+ *  A PLACEMENT refusal does NOT throw. "You are assigned no project" and "you are assigned several and
+ *  none is the shared workspace" say nothing about the sender or their file: they describe how an
+ *  administrator has configured the instance, and there is nothing the sender can do about either. Failing
+ *  the turn there would replace somebody's answer with an error aimed at someone else — and before this
+ *  path existed, that same person got their answer plus a note that a file had been attached. So the file
+ *  degrades to that note and the turn goes through. Same for a zero-byte file, which several platforms
+ *  (Discord among them) will happily accept from a user: an empty file is nothing to store, not an attack.
  *
  *  `writerUserId` is the verified account behind the platform sender. There is intentionally no fallback
  *  to the room's owner: writing a stranger's file into the room opener's project under the opener's name
@@ -78,8 +103,8 @@ export function storeChannelAttachments(
   writerUserId: number | undefined,
   attachments: readonly ChannelAttachment[],
   now: Date = new Date(),
-): StoredChannelAttachment[] {
-  if (attachments.length === 0) return [];
+): ChannelAttachmentOutcome {
+  if (attachments.length === 0) return { stored: [], unstored: [] };
   if (writerUserId == null) {
     throw new Error('an attachment needs a verified sender — link your platform account first');
   }
@@ -88,19 +113,31 @@ export function storeChannelAttachments(
   }
   const account = deps.users?.get(writerUserId);
   if (!account) throw new Error('unknown account — the attachment has nowhere to go');
-  const project = chooseUploadProject(
-    uploadCandidates({
-      all: deps.projects?.list() ?? [],
-      assigned: deps.userProjects?.forUser(writerUserId) ?? [],
-      isAdmin: account.is_admin === true,
-    }),
-    deps.projectPath?.() ?? '',
-  );
+
+  let project: UploadProject;
+  try {
+    project = chooseUploadProject(
+      uploadCandidates({
+        all: deps.projects?.list() ?? [],
+        assigned: deps.userProjects?.forUser(writerUserId) ?? [],
+        isAdmin: account.is_admin === true,
+      }),
+      deps.projectPath?.() ?? '',
+    );
+  } catch (e) {
+    // The ONLY placement refusal, and it is caught here rather than around the whole function precisely so
+    // it cannot swallow one of the security checks above or a write failure below.
+    return { stored: [], unstored: attachments.map((a) => unstored(a, refusalMessage(e))) };
+  }
 
   const stored: StoredChannelAttachment[] = [];
+  const unplaced: UnstoredChannelAttachment[] = [];
   for (const attachment of attachments) {
     const bytes = Buffer.from(String(attachment.data ?? ''), 'base64');
-    if (bytes.length === 0) throw new Error(`attachment "${attachment.name}" arrived empty`);
+    if (bytes.length === 0) {
+      unplaced.push(unstored(attachment, 'the file arrived empty'));
+      continue;
+    }
     if (bytes.length > MAX_ATTACHMENT_BYTES) {
       throw new Error(`attachment "${attachment.name}" is too large (${bytes.length} bytes; the limit is ${MAX_ATTACHMENT_BYTES})`);
     }
@@ -122,7 +159,15 @@ export function storeChannelAttachments(
       ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     });
   }
-  return stored;
+  return { stored, unstored: unplaced };
+}
+
+function unstored(attachment: ChannelAttachment, reason: string): UnstoredChannelAttachment {
+  return { name: attachment.name, ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}), reason };
+}
+
+function refusalMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /** The line a stored attachment adds to the turn text. Model-facing (hence English, like every other
@@ -131,5 +176,14 @@ export function storeChannelAttachments(
 export function attachmentTurnNote(stored: readonly StoredChannelAttachment[]): string {
   return stored
     .map((f) => `[📎 ${f.name}${f.mimeType ? ` (${f.mimeType})` : ''} — saved to ${f.path}]`)
+    .join('\n');
+}
+
+/** The line an attachment that could NOT be stored adds instead. It is the note the room carried before
+ *  attachments could be stored at all, plus the reason — the agent needs to know there is no path to Read
+ *  and the sender needs to hear something they (or their administrator) can act on. */
+export function unstoredAttachmentTurnNote(unplaced: readonly UnstoredChannelAttachment[]): string {
+  return unplaced
+    .map((f) => `[Attachment: ${f.name}${f.mimeType ? ` (${f.mimeType})` : ''} — not saved: ${f.reason}]`)
     .join('\n');
 }

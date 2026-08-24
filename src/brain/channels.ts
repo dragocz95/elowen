@@ -16,7 +16,7 @@ import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './even
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
 import { projectUserTurn } from './persistence.js';
-import { attachmentTurnNote, storeChannelAttachments, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
+import { attachmentTurnNote, storeChannelAttachments, unstoredAttachmentTurnNote, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
 import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
@@ -395,12 +395,16 @@ export class ChannelSessionService {
     // Files land on disk BEFORE the text is serialized, so the model and the durable row both carry the
     // real path. Inside the envelope with the rest of the message body: the paths describe what this
     // untrusted sender attached, and hoisting them out would present them as host-stated fact.
-    const storedFiles = opts.attachments?.length
+    const files = opts.attachments?.length
       ? storeChannelAttachments(this.d.uploads ?? {}, opts.writerUserId, opts.attachments)
-      : [];
+      : { stored: [], unstored: [] };
     const markers = [
       ...(opts.images?.length ? [`[📎 ${opts.images.length}× image]`] : []),
-      ...(storedFiles.length ? [attachmentTurnNote(storedFiles)] : []),
+      ...(files.stored.length ? [attachmentTurnNote(files.stored)] : []),
+      // A file the instance had nowhere to put still reaches the turn as a note, so the person who sent it
+      // gets their answer instead of an error about somebody else's configuration. A refusal that is about
+      // whether these bytes may be written at all threw above and never gets here.
+      ...(files.unstored.length ? [unstoredAttachmentTurnNote(files.unstored)] : []),
     ];
     const textWithAttachmentMarker = markers.length ? `${text}\n${markers.join('\n')}` : text;
     // Prompt commands are adapter-recognized macros and stay raw for PI expansion. Every ordinary message

@@ -177,4 +177,44 @@ describe('a room attachment reaches the turn as a real path', () => {
       'tady to máš',
     )).rejects.toThrow(/verified sender/);
   });
+
+  /** A room member an administrator never assigned a project used to LOSE THEIR WHOLE TURN over this:
+   *  storeChannelAttachments runs before any admission check, the refusal propagated all the way out to the
+   *  adapter's catch, and the answer they would have got was replaced by an error about somebody else's
+   *  configuration. Before room attachments could be stored at all, that same person got their answer plus
+   *  a note. So a PLACEMENT problem degrades back to the note; a SECURITY refusal still throws (above). */
+  it('still answers a writer with no assigned project, carrying the file as a note instead', async () => {
+    const root = projectDir();
+    const unassigned = { ...uploadsFor(root), userProjects: { forUser: () => [] as number[] } };
+    const { svc, opts, promptOf } = setup({ uploads: unassigned }, 'discord-attach-unassigned');
+
+    const reply = await svc.send(
+      { ...opts, writerUserId: 7, attachments: [{ name: 'smlouva.pdf', data: Buffer.from('PDF').toString('base64'), mimeType: 'application/pdf' }] },
+      'co je v té smlouvě?',
+    );
+
+    expect(reply).toBeTruthy(); // the turn ran; the sender was not handed an error instead of an answer
+    const prompt = promptOf();
+    expect(prompt).toContain('co je v té smlouvě?');
+    expect(prompt).toContain('[Attachment: smlouva.pdf (application/pdf) — not saved: no project to upload into');
+    expect(prompt).not.toContain('saved to'); // no path is claimed for a file that was never written
+  });
+
+  it('still answers when one attachment is empty, and writes the ones beside it', async () => {
+    const root = projectDir();
+    const { svc, opts, promptOf } = setup({ uploads: uploadsFor(root) }, 'discord-attach-empty');
+
+    const reply = await svc.send(
+      { ...opts, writerUserId: 7, attachments: [
+        { name: 'empty.pdf', data: '' },
+        { name: 'smlouva.pdf', data: Buffer.from('PDF').toString('base64'), mimeType: 'application/pdf' },
+      ] },
+      'co je v té smlouvě?',
+    );
+
+    expect(reply).toBeTruthy();
+    const prompt = promptOf();
+    expect(prompt).toContain('[Attachment: empty.pdf — not saved: the file arrived empty]');
+    expect(prompt).toContain('smlouva.pdf (application/pdf) — saved to');
+  });
 });
