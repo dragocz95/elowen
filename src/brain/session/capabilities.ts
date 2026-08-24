@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -80,6 +80,11 @@ export interface CapabilitySpec {
    *  person-facing surface to receive them. */
   shareImage?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
+  /** name → the ONE account a composed plugin tool belongs to. Set only where a session composes several
+   *  accounts' owner-scoped tools — a shared room (see PluginRegistry.sharedRoomToolOwners). Every other
+   *  session composes one account's, so its whole tool set already belongs to whoever it was composed for
+   *  and the map is absent. */
+  personalToolOwners?: ReadonlyMap<string, number>;
   /** Observer fired after a PERMITTED plugin tool's execute resolves (never for a policy-denied call or
    *  a throwing execute). The caller typically forwards it to the plugin hook bus as `tools.call.after`.
    *  AWAITED before the tool result returns — so a hook that rewrites the just-written file (formatters)
@@ -107,10 +112,20 @@ function gateToolAccess(
   tool: ToolDefinition,
   onToolResult?: (e: PluginToolResultEvent) => void | Promise<void>,
   onToolCall?: (e: PluginToolCallEvent) => Promise<string | undefined>,
+  /** The account this tool BELONGS to, when it is one account's own (a personal MCP server composed into
+   *  a shared room). Undefined for an instance-wide tool, which belongs to everybody. */
+  personalOwnerUserId?: number,
 ): ToolDefinition {
   if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
   const run = tool.execute.bind(tool);
   const execute = (async (...args: Parameters<ToolDefinition['execute']>) => {
+    // Ownership first, and independently of the grant: a room composes every account's personal tools
+    // because its registry is fixed for the session's life, so this is what keeps them one account's. It
+    // is deliberately not expressible as a ToolPolicy — an allow-list says what an account was GRANTED,
+    // while this says whose server is on the other end of the call.
+    if (personalOwnerUserId !== undefined && currentContributionUserId() !== personalOwnerUserId) {
+      return refused(`The tool "${tool.name}" belongs to another account and is not available to you in this conversation.`);
+    }
     if (!toolPermitted(tool.name, currentToolPolicy())) {
       return { content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} };
     }
@@ -306,7 +321,8 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // owner rather than only while planning, mirroring the reference: the tool is what REFUSES outside plan
   // mode, and a tool that vanishes cannot explain itself to a model that reaches for it.
   const planTools = ownerChat ? [buildExitPlanModeTool()] : [];
-  const pluginTools = spec.pluginTools.map((t) => gateToolAccess(t, spec.onToolResult, spec.onToolCall));
+  const pluginTools = spec.pluginTools.map((t) =>
+    gateToolAccess(t, spec.onToolResult, spec.onToolCall, spec.personalToolOwners?.get(t.name)));
 
   // Build every real group exactly once BEFORE policy evaluation. This is deliberately the same ordered
   // sequence as the legacy composition with ToolSearch removed: policy observes the full registered set,
@@ -330,9 +346,24 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
  *     SessionKind) stay visible, so a channel never loses its core abilities to a narrow role grant;
  *   - a user's own `deny`-list (their `disabled_tools`) may hide ANY tool it names, plugin or not.
  *  No policy → the full set is visible. */
-export function visibleToolNames(all: string[], pluginNames: Set<string>, tp: ToolPolicy | undefined): string[] {
-  if (!tp) return all;
-  return all.filter((name) => (pluginNames.has(name) ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name))));
+export function visibleToolNames(
+  all: string[],
+  pluginNames: Set<string>,
+  tp: ToolPolicy | undefined,
+  /** Ownership of the composed tools that belong to ONE account (a shared room's composition — see
+   *  CapabilitySpec.personalToolOwners), paired with the account this turn may reach them as. A tool owned
+   *  by anybody else is withheld regardless of policy: in a room, the NAME of somebody's personal MCP
+   *  server is itself private, and advertising a tool that the execute gate will refuse merely invites the
+   *  model to spend a call finding out. */
+  personal?: { owners: ReadonlyMap<string, number>; contributionUserId: number | null },
+): string[] {
+  const ownedByOther = (name: string): boolean => {
+    const owner = personal?.owners.get(name);
+    return owner !== undefined && owner !== personal!.contributionUserId;
+  };
+  if (!tp) return personal ? all.filter((name) => !ownedByOther(name)) : all;
+  return all.filter((name) => !ownedByOther(name)
+    && (pluginNames.has(name) ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name))));
 }
 
 /** The minimal PI-session surface tool visibility needs — the SAME structural target ToolSearch uses to
@@ -363,8 +394,9 @@ export function applyToolVisibility(
   pluginNames: Set<string>,
   tp: ToolPolicy | undefined,
   deferral?: ToolDeferralState,
+  personal?: { owners: ReadonlyMap<string, number>; contributionUserId: number | null },
 ): void {
-  let desired = visibleToolNames(session.getAllTools().map((t) => t.name), pluginNames, tp);
+  let desired = visibleToolNames(session.getAllTools().map((t) => t.name), pluginNames, tp, personal);
   if (deferral && deferral.deferred.size > 0) {
     desired = desired.filter((n) => !deferral.deferred.has(n) || deferral.activated.has(n));
   }

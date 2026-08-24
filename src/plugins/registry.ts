@@ -12,7 +12,7 @@ import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
-import { currentIdentity, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentContributionUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -469,6 +469,17 @@ export class PluginRegistry {
        *  ownership filter below is untouched, so one person's personal tools still never appear in a room
        *  shared with somebody else. */
       grantsEnforcedPerTurn?: boolean;
+      /** A SHARED ROOM: compose the owner-scoped tools of EVERY account rather than of one. A room has no
+       *  session owner to select them with, so before this a colleague's personal MCP server simply did
+       *  not exist there — for them or for anyone — while the same server answered them in web chat.
+       *
+       *  It is not a widening: PI's tool registry is fixed for the life of a session, so this is the only
+       *  moment a room can be given them at all, and BOTH gates that decide who may see or call one run
+       *  per turn against {@link sharedRoomToolOwners} — the visibility pass hides another account's
+       *  personal tools (their very NAMES are private), and the execute gate refuses them. The writer's
+       *  own tool grant applies on top, unchanged, so this can never hand anyone a tool an admin did not
+       *  grant them. */
+      allOwners?: boolean;
     },
   ): ToolDefinition[] {
     const accessUser: PluginAccessUser = user
@@ -485,8 +496,48 @@ export class PluginRegistry {
       const prior = selected.get(this.tools[i]!.name);
       if (!prior || (personal && !prior.personal)) selected.set(this.tools[i]!.name, { tool: this.tools[i]!, personal });
     }
+    if (opts?.allOwners) {
+      for (const [name, entry] of this.sharedRoomOwnedTools()) {
+        if (!selected.has(name)) selected.set(name, { tool: entry.tool, personal: true });
+      }
+    }
     const filtered = [...selected.values()].map((entry) => entry.tool);
     return filtered.length === this.tools.length ? this.tools : filtered;
+  }
+
+  /** Which of the composed tools belong to ONE account, as name → that account, for a shared room. The
+   *  authority behind every per-turn ownership decision in a room, and the same index `toolsFor(…,
+   *  { allOwners: true })` composes from — one computation, so what is composed and what is gated cannot
+   *  disagree about who owns a name.
+   *
+   *  A name is dropped entirely when it is CONTESTED: two accounts whose personal servers happen to share
+   *  a name (`mcp__github__list` for each of them) cannot both be served from one registered definition,
+   *  and quietly picking one would run somebody else's server under this writer's turn. Neither gets it in
+   *  a room; both keep it in their own chat, where the session has a single owner and the ordinary
+   *  selection above applies. An instance-wide definition of the same name wins for the same reason — it
+   *  is the one that genuinely serves everybody. */
+  sharedRoomToolOwners(): ReadonlyMap<string, number> {
+    return new Map([...this.sharedRoomOwnedTools()].map(([name, entry]) => [name, entry.ownerUserId]));
+  }
+
+  private sharedRoomOwnedTools(): Map<string, { tool: ToolDefinition; ownerUserId: number }> {
+    const instanceNames = new Set<string>();
+    for (let i = 0; i < this.tools.length; i++) {
+      if ((this.toolOwnerUsers[i] ?? null) === null) instanceNames.add(this.tools[i]!.name);
+    }
+    const owned = new Map<string, { tool: ToolDefinition; ownerUserId: number } | null>();
+    for (let i = 0; i < this.tools.length; i++) {
+      const ownerUserId = this.toolOwnerUsers[i] ?? null;
+      if (ownerUserId === null) continue;
+      const name = this.tools[i]!.name;
+      if (instanceNames.has(name)) continue;
+      const prior = owned.get(name);
+      if (prior === undefined) owned.set(name, { tool: this.tools[i]!, ownerUserId });
+      else if (prior !== null && prior.ownerUserId !== ownerUserId) owned.set(name, null);
+    }
+    const out = new Map<string, { tool: ToolDefinition; ownerUserId: number }>();
+    for (const [name, entry] of owned) if (entry) out.set(name, entry);
+    return out;
   }
 
   /** The skills ONE session may see: every permitted instance-wide skill, plus permitted skills owned by
@@ -1021,6 +1072,7 @@ export class PluginRegistry {
       isAdminSession: isAllAccess,
       currentAccess,
       currentIdentity,
+      currentContributionUserId,
       currentSessionId,
       currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is

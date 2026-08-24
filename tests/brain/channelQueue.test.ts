@@ -38,7 +38,7 @@ function fakeBrain(providerId = 'moonshot', model = 'kimi', onPrompt?: () => voi
     requestProfile: { fast: false }, fastAvailable: false, thinkingLabels: {},
     pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
-    turnRecallUserId: undefined as number | null | undefined,
+    turnWriterUserId: undefined as number | null | undefined,
     listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser, afterUser: '' }),
   };
 }
@@ -771,7 +771,7 @@ describe('ChannelSessionService — whose memories a turn may recall', () => {
 
     await svc.send({ ...opts(7), writerUserId: 42 }, 'ahoj');
 
-    expect(registry.channelGet(channelId)!.turnRecallUserId).toBe(42);
+    expect(registry.channelGet(channelId)!.turnWriterUserId).toBe(42);
   });
 
   it('leaves nobody pinned for an unlinked sender rather than falling back to the channel owner', async () => {
@@ -779,7 +779,7 @@ describe('ChannelSessionService — whose memories a turn may recall', () => {
 
     await svc.send(opts(7), 'ahoj'); // no linked account → no writerUserId
 
-    expect(registry.channelGet(channelId)!.turnRecallUserId).toBeNull();
+    expect(registry.channelGet(channelId)!.turnWriterUserId).toBeNull();
   });
 
   it('re-pins on every turn, so the next sender never inherits the previous one\'s identity', async () => {
@@ -788,7 +788,7 @@ describe('ChannelSessionService — whose memories a turn may recall', () => {
 
     await svc.send({ ...opts(9), writerUserId: 8 }, 'second');
 
-    expect(registry.channelGet(channelId)!.turnRecallUserId).toBe(8);
+    expect(registry.channelGet(channelId)!.turnWriterUserId).toBe(8);
   });
 
   it('clears the pin when a linked sender is followed by an unlinked one', async () => {
@@ -797,6 +797,6 @@ describe('ChannelSessionService — whose memories a turn may recall', () => {
 
     await svc.send(opts(9), 'second');
 
-    expect(registry.channelGet(channelId)!.turnRecallUserId).toBeNull();
+    expect(registry.channelGet(channelId)!.turnWriterUserId).toBeNull();
   });
 });

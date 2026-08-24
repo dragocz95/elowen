@@ -1432,6 +1432,13 @@ export interface PluginContext {
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
+  /** WHOSE owner-scoped contributions the current turn may reach — the account id a plugin holding
+   *  per-account content (personal skills) must resolve its caller through, or null for the instance-wide
+   *  set. The host decides it once per turn from the session and its verified writer, and the SAME answer
+   *  drives what the host advertises to the model, so a tool reading this can never offer less (or more)
+   *  than the model was told about. Deliberately not `currentIdentity().elowenUserId`: a delegated child
+   *  carries no account identity yet legitimately inherits its delegating turn's contributions. */
+  currentContributionUserId(): number | null;
   /** The persisted brain-session id the current turn runs in (`brain-…`), or undefined outside a
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */

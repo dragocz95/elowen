@@ -1,4 +1,4 @@
-import { isChannelSession, isSubagentSession, skillOwnerForSession } from '../sessionId.js';
+import { resolvesContributionsPerTurn, contributionOwnerForSession, isChannelSession, isSubagentSession } from '../sessionId.js';
 import { DEFAULT_BRAND } from '../../shared/brand.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
@@ -82,17 +82,17 @@ export function liveRecallAllowed(sessionId: string, ownerUserId: number): boole
  *  allowed through {@link liveRecallAllowed}.
  *
  *  An owner conversation is always its owner's. A channel serves several senders, so it is the VERIFIED
- *  sender of the turn in flight (`turnRecallUserId`, set per turn by the channel service) and nobody at
+ *  sender of the turn in flight (`turnWriterUserId`, set per turn by the channel service) and nobody at
  *  all when that sender is unlinked — never the channel owner, whose memories would otherwise surface
  *  into a stranger's turn in a room they share. This mirrors the rule the channel's turn-start recall
  *  has always applied; the two must not drift apart. */
 export function liveRecallUserId(
   sessionId: string,
   ownerUserId: number,
-  turnRecallUserId: number | null | undefined,
+  turnWriterUserId: number | null | undefined,
 ): number | null {
   if (!isChannelSession(sessionId)) return ownerUserId > 0 ? ownerUserId : null;
-  return turnRecallUserId != null && turnRecallUserId > 0 ? turnRecallUserId : null;
+  return turnWriterUserId != null && turnWriterUserId > 0 ? turnWriterUserId : null;
 }
 
 export class LiveSessionSpawner {
@@ -121,7 +121,7 @@ export class LiveSessionSpawner {
     // or instance automation.
     //
     // That fallback is deliberately ASYMMETRIC with recall, which gives an unlinked sender NOTHING (see
-    // `turnRecallUserId` in channels.ts): memories are one person's private content, so a stranger must
+    // `turnWriterUserId` in channels.ts): memories are one person's private content, so a stranger must
     // not be answered out of them, whereas a model, a style and a threshold are how the room is
     // CONFIGURED to answer and the opener's are the only ones a room without a verified writer has. It
     // does mean a stranger's turn runs on the opener's model and bill — the same bill that room already
@@ -214,18 +214,35 @@ export class LiveSessionSpawner {
     const memCats = this.d.memoryCategoryStore;
     const memCategorizer = this.d.memoryCategorizer;
     const memProjects = this.d.projects;
-    // Tools and skills use the SAME proven session owner. A delegated child inherits personal
-    // contributions only when its parent is an owner/direct conversation; shared or unknown parents
-    // fail closed to the instance set.
-    const contributionOwnerUserId = skillOwnerForSession(sessionId, ownerUserId, opts.parentSessionId, opts.direct === true);
+    // Tools and skills use the SAME resolver every surface resolves through, so what a session is composed
+    // from and what a turn is authorised for cannot be two different answers. A SHARED room has no
+    // session-wide owner (its writer changes turn to turn) and composes the instance set here; the writer's
+    // own skills reach it per turn instead — see resolvesContributionsPerTurn below. A delegated child names the
+    // writer of the turn that spawned it, which its caller read off the parent's live record.
+    const contributionOwnerUserId = contributionOwnerForSession(sessionId, ownerUserId, {
+      ...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
+      direct: opts.direct === true,
+      ...(opts.contributionUserId != null ? { writerUserId: opts.contributionUserId } : {}),
+    });
     const contributionOwnerUser = contributionOwnerUserId == null ? null : this.d.users.get(contributionOwnerUserId);
     // A platform session (Discord/Teams/WhatsApp/Telegram/cron) has no single account behind it, so it
     // cannot be composed against anyone's grants -- that is why a grant-gated tool like the shell was
     // absent there for everyone, the cron job's own admin owner included. Compose it and let the
     // execute-time gate refuse it per SENDER, which is what the line below already claims happens.
+    //
+    // A SHARED room additionally composes EVERY account's owner-scoped tools, because PI's registry is
+    // fixed for the life of a session: this is the only moment a room can carry a colleague's personal
+    // MCP server at all, and composing one writer's would serve it to whoever writes next. Which of them
+    // the turn may SEE and CALL is decided per turn from `personalToolOwners` below, so nothing here is a
+    // widening — before it, a room simply had none of them and nothing said why.
+    const perTurnContributions = resolvesContributionsPerTurn(sessionId, opts.direct === true);
     const pluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser, {
       grantsEnforcedPerTurn: opts.channel === true,
+      allOwners: perTurnContributions,
     }) ?? [];
+    const personalToolOwners = perTurnContributions
+      ? plugins?.sharedRoomToolOwners() ?? new Map<string, number>()
+      : undefined;
     // Plugin hook point: after a permitted plugin tool's execute resolves, fan the call out to
     // `tools.call.after` subscribers (e.g. the formatters plugin). AWAITED by the tool gate before the
     // result returns, so a hook that rewrites the written file finishes before the transcript diff /
@@ -279,6 +296,9 @@ export class LiveSessionSpawner {
         buildShareFileTool({ imagesDir: this.d.chatImagesDir }),
       ],
       pluginTools,
+      // …and, in a room, which of them belong to ONE account. Absent everywhere else, where the whole
+      // composed set already belongs to whoever the session was composed for.
+      ...(personalToolOwners ? { personalToolOwners } : {}),
       // Plugin tools are gated at EXECUTE time from the turn's ToolPolicy (set in runWithPolicy), not
       // filtered at compose — one shared mechanism for owner chat and shared channels alike.
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
@@ -316,7 +336,16 @@ export class LiveSessionSpawner {
     // etc., so PI never renders it. We therefore append it ourselves so the model learns which skills
     // exist; `skills` still flows to the factory's `skillsOverride` so PI expands `/skill:name` natively.
     // `formatSkillsForPrompt` already drops disable-model-invocation skills, so the toggle is honoured.
-    const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
+    //
+    // A SHARED room omits it here and renders the same block per turn instead (ChannelSessionService),
+    // because the set it should name is the WRITER'S and the writer changes between turns. Announcing the
+    // instance set in the cached prefix and authorising the writer's set at execute time would tell the
+    // model about the wrong list either way round; this keeps announcement and authorisation on the one
+    // decision `contributionOwnerForSession` makes. Everything else — owner chat, a 1:1 DM, a sub-agent —
+    // has exactly one contribution owner for the whole session and keeps the cheap cached block.
+    const skillsBlock = skills.length && !perTurnContributions
+      ? formatSkillsForPrompt(skills)
+      : '';
     // Deferred-tools awareness: names (+ short descriptions) of the withheld MCP tools so the model knows
     // what it can fetch via ToolSearch. Stable for the session (the MCP set is fixed at spawn) → sits in the
     // cache-friendly append region, not the per-turn context. Empty string when nothing is deferred.
@@ -386,7 +415,7 @@ export class LiveSessionSpawner {
     // Resolved per pass rather than captured once: on a channel the identity belongs to the turn, not to
     // the session. Safe because the channel lock serializes turns, so it cannot change under a running
     // retrieval. The rule itself lives in liveRecallUserId, where a test can pin it.
-    const recallUserId = (): number | null => liveRecallUserId(sessionId, ownerUserId, live.turnRecallUserId);
+    const recallUserId = (): number | null => liveRecallUserId(sessionId, ownerUserId, live.turnWriterUserId);
     const listeners = new Set<(e: BrainEvent) => void>();
     // Re-attach every listener ClientAttachments still has on this session id — direct subscribe()
     // subscribers and drill-in taps alike. A respawn (model switch, restart, vision hop, idle rollover,
@@ -502,12 +531,16 @@ export class LiveSessionSpawner {
       };
     };
     live = {
-      session, sessionId, ownerUserId, settingsUserId, direct: opts.direct === true,
+      session, sessionId, ownerUserId, settingsUserId, contributionUserId: contributionOwnerUserId,
+      direct: opts.direct === true,
       model: model.id, providerId, provider: model.provider, thinkingLevel: opts.thinkingLevel,
       requestProfile, fastAvailable: capabilities.fast,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, applyCompaction, assessColdCompaction, listeners, replay, turnContext,
       pluginToolNames: new Set(pluginTools.map((t) => t.name)),
+      // Carried so each turn's visibility pass can hide the tools that belong to somebody else in the room
+      // — the same map the execute gate above was built from, never a second copy of the ownership rule.
+      ...(personalToolOwners ? { personalToolOwners } : {}),
       // The deferred-tool handle (undefined when nothing is deferred). Carried on the live so each turn's
       // visibility pass keeps already-fetched tools advertised and withheld ones hidden.
       toolSearch: toolSearchHandle,

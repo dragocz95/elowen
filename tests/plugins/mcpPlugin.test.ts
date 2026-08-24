@@ -7,7 +7,7 @@ import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import type { Db } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
-import { channelSessionId, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { channelSessionId, contributionOwnerForSession } from '../../src/brain/sessionId.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { currentIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
 // The plugin is a plain ESM module (no build step) — import it directly.
@@ -521,7 +521,9 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
     expect(visibleTools(ctx, 4).map((tool) => tool.name)).toContain('mcp__private__echo');
     expect(visibleTools(ctx, 5).map((tool) => tool.name)).not.toContain('mcp__private__echo');
 
-    const sharedChildOwner = skillOwnerForSession('brain-ch-subagent-test', 4, channelSessionId('discord-room'));
+    // A sub-agent delegated out of a shared room by an UNLINKED writer inherits nobody: the room's row
+    // owner is only whoever opened it, and taking them would run their private server for a stranger.
+    const sharedChildOwner = contributionOwnerForSession('brain-ch-subagent-test', 4, { parentSessionId: channelSessionId('discord-room') });
     expect(sharedChildOwner).toBeNull();
     expect(visibleTools(ctx, sharedChildOwner).map((tool) => tool.name)).toContain('mcp__shared__echo');
     expect(visibleTools(ctx, sharedChildOwner).map((tool) => tool.name)).not.toContain('mcp__private__echo');

@@ -146,12 +146,28 @@ export interface LiveBrain {
    *  from this SAME sender, so one member can never inject instructions into another's (or the admin's)
    *  turn and inherit its policy/toolset. */
   turnSender?: string;
-  /** OUR user id whose memories mid-turn recall may search during the turn currently in flight. A channel
-   *  sets it to the VERIFIED sender, and to null for an unlinked one so a stranger's turn recalls nothing —
-   *  never the channel owner's, which would surface their memories into someone else's turn in a shared
-   *  room. The channel lock serializes turns, so it cannot change under a pass already running. Unset on
-   *  an owner chat, which resolves the identity from its owner instead. */
-  turnRecallUserId?: number | null;
+  /** The VERIFIED Elowen account writing the turn currently in flight, and null for an unlinked sender.
+   *  Set per turn by the channel service; unset on an owner chat, which resolves its one identity from the
+   *  session owner instead. The channel lock serializes turns, so it cannot change under a pass already
+   *  running — and it is the only place a caller OUTSIDE the turn (a sub-agent being spawned by it) can
+   *  read who is speaking.
+   *
+   *  Two things derive from it, and both must be derivations rather than copies: whose memories mid-turn
+   *  recall may search ({@link liveRecallUserId}) and whose personal skills the turn may load
+   *  ({@link contributionOwnerForSession}). Never the channel owner in either case — that would surface
+   *  one person's private content into somebody else's turn in a room they share. */
+  turnWriterUserId?: number | null;
+  /** WHOSE personal contributions this session was actually COMPOSED from — the resolved answer of
+   *  `contributionOwnerForSession` at spawn, so a turn never has to re-derive it and reach a different
+   *  conclusion than the skills PI was handed and the block the system prompt already carries. Null for a
+   *  session composed from the instance set alone, which includes every SHARED room: a room has no
+   *  session-wide answer at all and resolves its writer per turn instead (see `announcesSkillsPerTurn`). */
+  contributionUserId: number | null;
+  /** name → the ONE account a composed plugin tool belongs to. Present only on a SHARED room, which is the
+   *  only session that composes several accounts' owner-scoped tools; every turn narrows the advertised
+   *  set through it so a room member is never shown (nor told the name of) somebody else's personal MCP
+   *  server. The execute gate was built from the same map at spawn. */
+  personalToolOwners?: ReadonlyMap<string, number>;
   /** Image-carrying mirror of PI's native mid-turn queue (steering + follow-up), kept in sync via the
    *  `queue_update` event. PI's public queue is text-only and clearQueue() drops image attachments, so
    *  these hold what a positional queue-remove needs to re-queue the survivors WITH their images. Ordered
@@ -264,6 +280,13 @@ export interface SpawnOpts {
    *  automation), where `ownerUserId` stands. There is deliberately no per-setting override beside it:
    *  the spawner reads every one of them from this one id, so they cannot drift apart. */
   settingsUserId?: number;
+  /** WHOSE personal skills (and any other owner-scoped plugin contribution) this session composes — set
+   *  ONLY for a delegated child, whose caller read the writer of the delegating turn off the parent's live
+   *  record. Every other session resolves its own answer from the id and its owner, and a SHARED room has
+   *  no session-wide answer at all: its writer's skills are announced per turn instead. Deliberately
+   *  separate from `settingsUserId`: preferences are how a room is configured to answer, while this
+   *  decides whose private content a session may open. */
+  contributionUserId?: number;
   /** PI's built-in auto-compaction toggle for this session (the owner's per-user setting; always on for
    *  long-lived channels). */
   autoCompact: boolean;

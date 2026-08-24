@@ -33,7 +33,7 @@ function fakeBrain(sessionId: string) {
     providerId: 'moonshot', direct: false, requestProfile: { fast: false }, fastAvailable: false,
     thinkingLabels: {}, pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
-    turnRecallUserId: undefined as number | null | undefined,
+    turnWriterUserId: undefined as number | null | undefined,
     listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser: '', afterUser: '' }),
   };
 }
@@ -75,6 +75,9 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
         hooks,
         hookOwners: ['calendar'],
         pluginCapabilities: new Map([['calendar', { mutates: ['turnContext'] }]]),
+        // A room announces its available skills with every turn, so the registry is asked for them on the
+        // same path as the hook. No skills here — this test is about the hook block alone.
+        skillsFor: () => [],
       }),
     });
 
@@ -89,7 +92,7 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
   });
 
   it('leaves the prompt alone when no plugin contributes anything', async () => {
-    const { svc, opts, promptOf } = setup({ plugins: async () => ({ hooks: [], hookOwners: [], pluginCapabilities: new Map() }) });
+    const { svc, opts, promptOf } = setup({ plugins: async () => ({ hooks: [], hookOwners: [], pluginCapabilities: new Map(), skillsFor: () => [] }) });
 
     await svc.send(opts, 'plain question');
 

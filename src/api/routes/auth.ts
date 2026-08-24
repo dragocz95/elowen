@@ -489,16 +489,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // one this account owns. Another account's personal tool (a personal MCP server's bridged tools) must
     // not be listed here at all — it can never reach this user's session, and listing it also duplicated
     // any name a personal tool deliberately shadows.
-    const chosen = new Map<string, { tool: { name: string; label?: string }; personal: boolean }>();
-    for (let i = 0; i < (registry?.tools.length ?? 0); i++) {
-      const tool = registry!.tools[i]!;
-      const ownerUserId = registry!.toolOwnerUsers[i] ?? null;
-      if (ownerUserId !== null && ownerUserId !== id) continue;
-      const personal = ownerUserId !== null;
-      const prior = chosen.get(tool.name);
-      if (!prior || (personal && !prior.personal)) chosen.set(tool.name, { tool, personal });
-    }
-    for (const { tool: t } of chosen.values()) {
+    //
+    // Asked of the registry rather than re-derived here: this used to be a second copy of that selection,
+    // and a second copy of an ownership rule is a second opinion about whose tool a name is. The plugin
+    // grant is deliberately left unapplied (`grantsEnforcedPerTurn`) because this list REPORTS it as a
+    // state below — pre-filtering it would hide from the admin the very thing they came to change.
+    const chosen = registry?.toolsFor(id, target, { grantsEnforcedPerTurn: true }) ?? [];
+    for (const t of chosen) {
       // Three independent inputs decide a plugin tool, and the account must be able to see all of them:
       //
       // `disabled` is the admin's explicit no from the older deny-list, reported FIRST even when the

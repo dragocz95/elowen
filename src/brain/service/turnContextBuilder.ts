@@ -341,6 +341,10 @@ export class TurnContextBuilder {
       permissions,
       workDir,
       memoryRecallScope: recallScope,
+      // Read off the live rather than re-derived: it is the exact id this session's skill set and its
+      // system-prompt announcement were composed from, so a tool resolving the caller through it can only
+      // ever offer what the model was already told about.
+      contributionUserId: live.contributionUserId,
       // Carried into the turn's AsyncLocalStorage so the delegation path can see it: a turn spent
       // planning may only ever spawn a read-only child (see pathGuard.currentAccess).
       mode,

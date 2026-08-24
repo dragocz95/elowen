@@ -39,7 +39,7 @@ function fakeBrain(sessionId: string, settle: () => void) {
     providerId: 'moonshot', direct: false, requestProfile: { fast: false }, fastAvailable: false,
     thinkingLabels: {}, pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
-    turnRecallUserId: undefined as number | null | undefined,
+    turnWriterUserId: undefined as number | null | undefined,
     lastRequestCacheTtlMs: undefined as number | undefined,
     listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser: '', afterUser: '' }),
     session: {

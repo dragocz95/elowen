@@ -92,32 +92,68 @@ export function isArchivedChannelSession(id: string): boolean {
   return isChannelSession(id) && /-arch-[a-z0-9]+$/.test(id);
 }
 
-/** WHOSE personal skills a session may load. A skill set is fixed at spawn, so a SHARED channel — where
- *  the sender changes from turn to turn — can only carry the instance-wide ones.
+/** WHOSE personal contributions — skills, and any owner-scoped plugin tool — a turn may reach. THE one
+ *  answer: the spawner composes a session's skill set from it, the channel service announces that set per
+ *  turn from it, and it is what every surface puts on the turn scope for `currentContributionUserId()`, so
+ *  what the model is TOLD it may load and what a tool will actually load for it cannot drift apart.
  *
- *  A sub-agent serves exactly one turn, so it may inherit personal skills — but from the turn that
- *  DELEGATED it, never from the account that happens to own its session row. Those differ precisely in
- *  the dangerous case: a child spawned out of a shared channel is owned by the row owner (the operator),
- *  so inheriting on the row would hand the operator's private skill names, descriptions and file paths to
- *  whichever channel member triggered the delegation. The parent session id is the only thing that
- *  distinguishes them here, so an unknown or channel-keyed parent (including another sub-agent, whose own
- *  answer this level cannot re-derive) resolves to the instance set. Same rule `liveRecallUserId` applies
- *  to memories one screen up, and for the same reason. */
-export function skillOwnerForSession(
+ *  An own conversation (owner chat, task worker) is its owner's, and so is a DIRECT 1:1 platform chat:
+ *  it has exactly one human in it.
+ *
+ *  A SHARED room does not belong to whoever opened it — its sender changes from turn to turn — so it has
+ *  no session-wide answer at all and resolves to the VERIFIED WRITER of the turn in flight, and to nobody
+ *  when that writer is unlinked, when the turn is a cron job running as no account, or when it is instance
+ *  automation. Never the row owner: their private skill names, descriptions and file paths would otherwise
+ *  surface for whichever colleague happens to be writing. Same rule `liveRecallUserId` applies to memories
+ *  one screen up, and for the same reason.
+ *
+ *  A sub-agent serves exactly one turn, so it may inherit personal contributions — but from the turn that
+ *  DELEGATED it, never from the account that happens to own its session row. Those differ precisely in the
+ *  dangerous case: a child spawned out of a shared room is owned by the row owner, so inheriting on the row
+ *  would hand that account's private skills to whichever room member triggered the delegation. A child of a
+ *  non-shared parent therefore takes the row owner (they are the same person), and a child of a room takes
+ *  the writer its caller read off the parent's LIVE record — never the row, and nobody when the parent is
+ *  gone or its writer unlinked. */
+export function contributionOwnerForSession(
   sessionId: string,
   ownerUserId: number | null | undefined,
-  parentSessionId?: string,
-  /** The session is a DIRECT 1:1 platform chat (see `direct` in schema.sql). Only a shared room has the
-   *  turn-to-turn sender change the rule above guards against, so a private DM keeps its owner's skills.
-   *  A sub-agent is intentionally left out: proving its PARENT is direct needs that parent's row, which
-   *  this pure predicate does not have, and guessing here is exactly the leak described above. */
-  direct = false,
+  opts: {
+    parentSessionId?: string;
+    /** The session is a DIRECT 1:1 platform chat (see `direct` in schema.sql). A sub-agent is intentionally
+     *  left out: proving its PARENT is direct needs that parent's row, which this pure predicate does not
+     *  have, and guessing here is exactly the leak described above. */
+    direct?: boolean;
+    /** The account writing THIS turn — the room's verified sender, or (for a delegated child) the writer of
+     *  the parent turn that spawned it. Absent wherever the session already has one owner. */
+    writerUserId?: number | null;
+  } = {},
 ): number | null {
+  const writer = opts.writerUserId != null && opts.writerUserId > 0 ? opts.writerUserId : null;
   if (isSubagentSession(sessionId)) {
-    return parentSessionId && !isChannelSession(parentSessionId) ? ownerUserId ?? null : null;
+    if (!opts.parentSessionId) return null;
+    return isChannelSession(opts.parentSessionId) ? writer : ownerUserId ?? null;
   }
-  if (isChannelSession(sessionId)) return direct ? ownerUserId ?? null : null;
+  if (isChannelSession(sessionId)) return opts.direct ? ownerUserId ?? null : writer;
   return ownerUserId ?? null;
+}
+
+/** Whether this session resolves WHOSE personal contributions it may reach per TURN rather than once at
+ *  spawn. True for a shared room only, and it is exactly the case {@link contributionOwnerForSession} has
+ *  no session-wide answer for. Three things follow from it, and they must follow together:
+ *
+ *   - the available-skills block is composed per turn instead of into the cached system prompt;
+ *   - the session composes EVERY account's owner-scoped plugin tools (`toolsFor(..., allOwners)`) rather
+ *     than one account's, because PI's tool registry is fixed for the life of a session and a room that
+ *     composed the first writer's tools would serve them to everyone who writes afterwards;
+ *   - and each turn then narrows both to the writer, so the model is never told about a tool or a skill
+ *     that will be refused, nor left ignorant of one it holds.
+ *
+ *  It costs the skills block's tokens on every room turn instead of once. That is the honest price: the
+ *  block lands in the per-turn region, so the cached system-prompt prefix stays byte-identical no matter
+ *  who writes — a room whose writers alternate keeps ONE warm cache rather than re-warming a prefix each
+ *  time the speaker changes, which is what composing either of these per writer would have cost. */
+export function resolvesContributionsPerTurn(sessionId: string, direct: boolean): boolean {
+  return isChannelSession(sessionId) && !isSubagentSession(sessionId) && !direct;
 }
 
 /** Recover the channel id from a `brain-ch-*` session id (inverse of {@link channelSessionId}). */

@@ -134,7 +134,7 @@ export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';
 
-interface TurnScope { policy?: Policy; workDir?: string; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope }
+interface TurnScope { policy?: Policy; workDir?: string; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; contributionUserId?: number | null }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -146,8 +146,8 @@ const store = new AsyncLocalStorage<TurnScope>();
 /** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
  *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
  *  all read at tool-execute time via the `current*()` accessors. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope }): T {
-  return store.run({ policy, workDir: opts?.workDir, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope }, fn);
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; contributionUserId?: number | null }): T {
+  return store.run({ policy, workDir: opts?.workDir, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope, contributionUserId: opts?.contributionUserId }, fn);
 }
 
 /** Run `fn` with only the caller's IDENTITY established — the shape an authenticated HTTP request has.
@@ -180,6 +180,17 @@ export function currentMemoryRecallScope(): MemoryRecallScope | undefined {
 /** The sender identity of the current prompt turn, or null when none was established. */
 export function currentIdentity(): TurnIdentity | null {
   return store.getStore()?.identity ?? null;
+}
+
+/** WHOSE personal contributions this turn may reach — see `contributionOwnerForSession`, which is the one
+ *  place the answer is decided and the only thing that writes this. A plugin holding owner-scoped content
+ *  (the skills plugin's personal skill sets) resolves the caller through THIS, not through
+ *  `currentIdentity().elowenUserId`: the two agree for an ordinary room turn, but they part company for a
+ *  delegated child, whose identity deliberately carries no account while its contributions are inherited
+ *  from the turn that spawned it. Reading identity there would tell the model about a skill and then refuse
+ *  to load it. Null (or undefined, outside a turn) means the instance-wide set and nothing personal. */
+export function currentContributionUserId(): number | null {
+  return store.getStore()?.contributionUserId ?? null;
 }
 
 /** The persisted brain-session id the current prompt turn runs in (`brain-…`), or undefined outside a

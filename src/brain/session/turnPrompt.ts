@@ -16,6 +16,11 @@
  *  every turn. Blocks that flip turn to turn — a mode directive, one-shot notices — therefore ride UNDER
  *  the message as system reminders, never in front of it. */
 export interface TurnPromptParts {
+  /** The `<available_skills>` announcement, for the one surface that cannot put it in its cached system
+   *  prompt: a shared room, whose writer — and therefore whose personal skills — changes between turns.
+   *  Absent everywhere else, where the block is composed once at spawn. First, because it says what this
+   *  turn is ABLE to do before anything says what it should do. */
+  skills?: string;
   /** Recalled long-term memory for whoever is writing THIS turn. Already framed as untrusted. */
   memory?: string;
   /** Plugin-contributed per-turn context (`appendContext`), already framed as untrusted. */
@@ -44,7 +49,7 @@ export interface TurnPromptParts {
  *  are concatenated as-is; the trailing parts are joined with a blank line each. Both rules reproduce the
  *  two original call sites byte for byte, which is what makes the extraction safe to land on its own. */
 export function composeTurnPrompt(parts: TurnPromptParts): string {
-  const lead = [parts.memory, parts.hook, parts.permissions, parts.beforeUser]
+  const lead = [parts.skills, parts.memory, parts.hook, parts.permissions, parts.beforeUser]
     .filter((part): part is string => !!part)
     .join('');
   const trail = [

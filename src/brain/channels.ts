@@ -19,11 +19,12 @@ import { projectUserTurn } from './persistence.js';
 import { attachmentTurnNote, storeChannelAttachments, unstoredAttachmentTurnNote, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
-import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
+import { resolvesContributionsPerTurn, channelSessionId, archivedChannelSessionId, contributionOwnerForSession, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
+import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
 import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
 import { cacheTtlMs } from './session/cacheTiming.js';
@@ -214,7 +215,10 @@ export interface ChannelServiceDeps {
   store: BrainStore;
   /** The same store-backed registry owner chat uses, so channel/sub-agent cards survive replay cleanup. */
   cards: CardRegistry;
-  users: { get(userId: number): { name?: string; username?: string; is_admin?: boolean } | null | undefined };
+  /** `granted_plugins` is needed as well as the display fields: the per-turn skills announcement runs the
+   *  writer through the SAME grant gate `skillsFor` applies, and a shape without it would silently answer
+   *  every grant-gated plugin with "holds nothing" and hide skills the writer really has. */
+  users: { get(userId: number): { name?: string; username?: string; is_admin?: boolean; granted_plugins?: string[] } | null | undefined };
   /** Projects and assignments, used ONLY to decide where a room attachment is written (see
    *  channelAttachments.ts). Absent ⇒ no candidate project exists and an attachment is refused with the
    *  same message the web route gives, rather than silently discarded. */
@@ -361,10 +365,28 @@ export class ChannelSessionService {
    *  Undefined when the parent is no longer live (evicted, restarted): the caller then falls back to the
    *  session owner, which is the id the child would have used anyway. */
   private parentSettingsUserId(parentSessionId: string | undefined): number | undefined {
+    return this.parentLive(parentSessionId)?.settingsUserId;
+  }
+
+  /** WHOSE personal skills a DELEGATED child may load: the verified writer of the parent TURN that spawned
+   *  it, read off the parent's live record — the one place that knows who is speaking right now.
+   *
+   *  The same hole `parentSettingsUserId` closes for preferences existed here, and it bites harder: a child
+   *  carries no account identity of its own (`delegatedExecution` refuses one), so without this "load my
+   *  checklist skill and follow it" found nothing the moment the work was handed to a sub-agent. Taking the
+   *  ROW owner instead would be the leak: a room's row belongs to whoever opened it, so the child would open
+   *  that person's private skills for whichever colleague delegated.
+   *
+   *  Undefined when the parent is no longer live (evicted, restarted) or when its writer is unlinked — the
+   *  child then composes the instance set, which is the fail-closed answer and the one it had before. */
+  private parentContributionUserId(parentSessionId: string | undefined): number | undefined {
+    return this.parentLive(parentSessionId)?.turnWriterUserId ?? undefined;
+  }
+
+  private parentLive(parentSessionId: string | undefined): LiveBrain | undefined {
     if (!parentSessionId) return undefined;
-    const parent = this.d.registry.get(parentSessionId)
+    return this.d.registry.get(parentSessionId)
       ?? (isChannelSession(parentSessionId) ? this.d.registry.channelGet(channelIdOf(parentSessionId)) : undefined);
-    return parent?.settingsUserId;
   }
 
   /** Resolve the durable owner of a prospective delegated parent. PlatformOrchestrator uses this before
@@ -545,6 +567,16 @@ export class ChannelSessionService {
           // them here would be the second opinion that let the threshold drift from the model.
           // A delegated child has no writer of its own and inherits its parent's — see parentSettingsUserId.
           settingsUserId: opts.writerUserId ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
+          // Only a DELEGATED child names one. An ordinary room deliberately composes the instance set and
+          // announces the writer's per turn: PI's skill set is fixed for the life of a session, so
+          // composing it from whoever spoke first would leave that person's private skills expandable for
+          // everyone who writes afterwards.
+          ...(parentSessionId
+            ? (() => {
+                const inherited = this.parentContributionUserId(parentSessionId);
+                return inherited != null ? { contributionUserId: inherited } : {};
+              })()
+            : {}),
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
           clientCwd: opts.clientCwd,
@@ -579,7 +611,22 @@ export class ChannelSessionService {
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
       // into a stranger's turn in a shared room.
-      ch.turnRecallUserId = opts.writerUserId ?? null;
+      ch.turnWriterUserId = opts.writerUserId ?? null;
+      // WHOSE personal skills this turn may load — announced below and authorised by the same value on the
+      // turn scope, so the model is never told about a skill a tool will then refuse to open for it.
+      //
+      // A SHARED room resolves it per turn, because the session it runs in was composed from nobody: PI's
+      // skill set is fixed for the life of a session, so a room can only ever be built from the instance
+      // set, and the writer's own skills have to arrive with the turn. Every other session HAS a
+      // session-wide answer and the live records the exact one it was composed with — re-deriving it here
+      // would be a second opinion, and it would go wrong precisely for a delegated child continued after
+      // its parent turn ended, where the writer this turn could read is no longer there to read.
+      const turnContributionUserId = resolvesContributionsPerTurn(sessionId, opts.direct === true)
+        ? contributionOwnerForSession(sessionId, ownerUserId, {
+            direct: opts.direct === true,
+            ...(opts.writerUserId != null ? { writerUserId: opts.writerUserId } : {}),
+          })
+        : ch.contributionUserId;
       // One channel turn. `turnText` is the current sender's message; any platform-history backfill was
       // seeded as separate transcript entries before this live PI session was assembled.
       // `senderMsg` is the sender's CLEAN words for the title + curator; `turnOnEvent` is the live stream
@@ -677,7 +724,14 @@ export class ChannelSessionService {
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
         try {
-          applyToolVisibility(ch.session, ch.pluginToolNames, effectiveToolPolicy, ch.toolSearch);
+          // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
+          // The two are different questions and both have to be asked: the grant says what an admin gave
+          // this account, while ownership says whose personal MCP server is on the other end of a name the
+          // room composed for everybody. Absent on every session composed for a single account.
+          applyToolVisibility(
+            ch.session, ch.pluginToolNames, effectiveToolPolicy, ch.toolSearch,
+            ch.personalToolOwners ? { owners: ch.personalToolOwners, contributionUserId: turnContributionUserId } : undefined,
+          );
           // Granular permissions without an approval channel: ordinary platform turns read the verified
           // sender (else their channel owner) fresh, but a delegated child MUST use its immutable captured
           // boundary. Resolving `writerUserId ?? ownerUserId` here would let an idle child inherit the
@@ -708,6 +762,15 @@ export class ChannelSessionService {
               // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
               // permission summary are owner-chat concepts, and a room has neither.
               prompted = composeTurnPrompt({
+                // Absent on every surface whose skill announcement already sits in its cached system
+                // prompt; a shared room is the one that cannot have it there — see resolvesContributionsPerTurn.
+                skills: resolvesContributionsPerTurn(sessionId, opts.direct === true)
+                  ? await turnSkillsBlock({
+                      ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
+                      users: this.d.users,
+                      contributionUserId: turnContributionUserId,
+                    })
+                  : '',
                 memory: memoryBlock,
                 hook: await pluginContextBlock({
                   ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
@@ -747,7 +810,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: ch.workDir, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: ch.workDir, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, contributionOwnerForSession, resolvesContributionsPerTurn } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the four id shapes', () => {
@@ -30,35 +30,52 @@ describe('brain session id conventions', () => {
     expect(channelIdOf(channelSessionId('discord-1'))).toBe('discord-1');
   });
 
-  // A personal skill is a briefing its owner asked for. A shared channel serves whoever writes next, so
-  // it may only ever load the instance-wide set; a sub-agent serves exactly one owner, so it keeps his.
-  it('skillOwnerForSession: own conversations and sub-agents keep the owner, a shared channel does not', () => {
-    expect(skillOwnerForSession(defaultUserSessionId(7), 7)).toBe(7);
-    expect(skillOwnerForSession(taskSessionId('t1'), 7)).toBe(7);
-    // A sub-agent inherits from the turn that delegated it: yes out of an owner conversation, never out
-    // of a shared channel (there the row owner is the operator, not the person who asked).
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, defaultUserSessionId(7))).toBe(7);
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, channelSessionId('discord-1'))).toBe(null);
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, 'brain-ch-subagent-parent')).toBe(null);
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7)).toBe(null);
-    expect(skillOwnerForSession(channelSessionId('discord-1'), 7)).toBe(null);
-    // No account behind the turn (an unlinked sender, a cron job) → the instance set.
-    expect(skillOwnerForSession(defaultUserSessionId(7), null)).toBe(null);
-    expect(skillOwnerForSession(defaultUserSessionId(7), undefined)).toBe(null);
+  // A personal skill is a briefing its owner asked for. A shared room serves whoever writes next, so it
+  // has no session-wide owner at all and resolves the WRITER of the turn in flight; a sub-agent serves
+  // exactly one turn, so it keeps whoever delegated it.
+  it('contributionOwnerForSession: own conversations keep the owner, a shared room follows the writer', () => {
+    expect(contributionOwnerForSession(defaultUserSessionId(7), 7)).toBe(7);
+    expect(contributionOwnerForSession(taskSessionId('t1'), 7)).toBe(7);
+    // A sub-agent inherits from the turn that delegated it: the row owner out of an owner conversation
+    // (they are the same person), and out of a room the writer its caller read off the parent's live
+    // record — never the row owner there, who is only whoever opened the room.
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7, { parentSessionId: defaultUserSessionId(7) })).toBe(7);
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7, { parentSessionId: channelSessionId('discord-1') })).toBe(null);
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7, { parentSessionId: channelSessionId('discord-1'), writerUserId: 9 })).toBe(9);
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7, { parentSessionId: 'brain-ch-subagent-parent' })).toBe(null);
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7)).toBe(null);
+    // The room itself: the verified writer, and the row owner NEVER.
+    expect(contributionOwnerForSession(channelSessionId('discord-1'), 7)).toBe(null);
+    expect(contributionOwnerForSession(channelSessionId('discord-1'), 7, { writerUserId: 9 })).toBe(9);
+    // No account behind the turn (an unlinked sender, a cron job, instance automation) → the instance set.
+    expect(contributionOwnerForSession(channelSessionId('cron-job-4'), 7, { writerUserId: null })).toBe(null);
+    expect(contributionOwnerForSession(defaultUserSessionId(7), null)).toBe(null);
+    expect(contributionOwnerForSession(defaultUserSessionId(7), undefined)).toBe(null);
   });
 
   // A 1:1 platform chat carries a `brain-ch-*` id like a shared room does, but only one person can ever
   // write in it — so the reason the blanket rule exists (the sender changes from turn to turn) does not
   // apply, and the owner's personal skills may load.
-  it('skillOwnerForSession: a DIRECT platform chat keeps its owner, a shared room still does not', () => {
+  it('contributionOwnerForSession: a DIRECT platform chat keeps its owner, a shared room still does not', () => {
     const dm = channelSessionId('msteams-personal-1');
-    expect(skillOwnerForSession(dm, 7, undefined, true)).toBe(7);
-    expect(skillOwnerForSession(dm, 7, undefined, false)).toBe(null);
-    expect(skillOwnerForSession(dm, 7)).toBe(null); // fail-closed: unmarked reads as shared
+    expect(contributionOwnerForSession(dm, 7, { direct: true })).toBe(7);
+    expect(contributionOwnerForSession(dm, 7, { direct: false })).toBe(null);
+    expect(contributionOwnerForSession(dm, 7)).toBe(null); // fail-closed: unmarked reads as shared
     // Being direct never invents an owner where the turn has no account.
-    expect(skillOwnerForSession(dm, null, undefined, true)).toBe(null);
+    expect(contributionOwnerForSession(dm, null, { direct: true })).toBe(null);
     // A sub-agent is deliberately NOT widened: proving its parent is direct needs that parent's row.
-    expect(skillOwnerForSession('brain-ch-subagent-abc', 7, channelSessionId('msteams-personal-1'), true)).toBe(null);
+    expect(contributionOwnerForSession('brain-ch-subagent-abc', 7, { parentSessionId: channelSessionId('msteams-personal-1'), direct: true })).toBe(null);
+  });
+
+  // Which surface must announce its skills with every turn rather than once in its cached system prompt —
+  // exactly the one that has no session-wide contribution owner above.
+  it('resolvesContributionsPerTurn: a shared room, and only a shared room', () => {
+    expect(resolvesContributionsPerTurn(channelSessionId('discord-1'), false)).toBe(true);
+    expect(resolvesContributionsPerTurn(channelSessionId('cron-job-4'), false)).toBe(true);
+    expect(resolvesContributionsPerTurn(channelSessionId('msteams-personal-1'), true)).toBe(false);
+    expect(resolvesContributionsPerTurn('brain-ch-subagent-abc', false)).toBe(false);
+    expect(resolvesContributionsPerTurn(defaultUserSessionId(7), false)).toBe(false);
+    expect(resolvesContributionsPerTurn(taskSessionId('t1'), false)).toBe(false);
   });
 
   // Delivering INTO a conversation and MANAGING it are different rights, so the two predicates differ on
