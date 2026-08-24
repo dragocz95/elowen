@@ -273,7 +273,9 @@ export class PlatformOrchestrator {
           // and running processes) at another account is a migration, not something an incoming message
           // may do behind the user's back. Only a BRAND-NEW direct conversation is anchored on its sender.
           const canonicalSessionId = channelSessionId(keyOf(src));
-          const existingOwner = claimsDirect ? this.d.channels.sessionOwnerUserId(canonicalSessionId) : undefined;
+          // Read for EVERY platform turn, not just the direct path: the room anchoring below has to send
+          // the row's real owner back, and it is one lookup by primary key.
+          const existingOwner = this.d.channels.sessionOwnerUserId(canonicalSessionId);
           // …which is exactly why the flag also requires the row to be THIS sender's. Personal skills and
           // bound delivery are resolved from the session's owner, so marking a conversation owned by
           // somebody else as direct would serve that owner's private context to whoever writes here.
@@ -295,7 +297,28 @@ export class PlatformOrchestrator {
           // this account's, so nothing is re-pointed. Ownership intentionally carries usage attribution,
           // account-deletion cleanup and the account-scoped managed-session view with it; personal search
           // and the ordinary web conversation list continue to exclude every channel session.
+          // After a successful adoption the row belongs to the sender, so the pre-adoption read is stale.
+          const rowOwner = adopted ? linkedUserId : existingOwner;
           if (directChat) sessionOwner = linkedUserId;
+          // A ROOM belongs to whoever opened it, not to whoever happens to run the instance. It used to be
+          // anchored on the operator unconditionally, so a room a colleague started in Teams was filed
+          // under the operator's name and the register had to explain that away in a tooltip.
+          //
+          // Two halves, and the first is useless without the second. A brand-new row is created with its
+          // sender as owner. An EXISTING row keeps the owner it was created with — and that owner is what
+          // must be sent back, because `ownerUserId` is not merely the value a fresh row is stamped with:
+          // channels.send compares it against the live channel and disposes/respawns on a mismatch, and
+          // the auto-compaction threshold and the permission fallback are both resolved from it. Sending
+          // the operator for a row owned by somebody else would respawn the channel on every single turn.
+          //
+          // The anchor never moves within a session, so this is not a transcript being re-pointed behind
+          // anyone's back. It does not need to move either: an idle channel is rolled over by renaming its
+          // row to the archived id (channels.ts), which frees the canonical id, so the next person to write
+          // opens a genuinely new session and owns that one.
+          //
+          // An unlinked sender has no account to name, and the accountless instance cron has none either,
+          // so both keep the operator.
+          else sessionOwner = rowOwner ?? linkedUserId ?? owner;
           const identity: TurnIdentity = {
             ...resolved.identity,
             conversation: directChat ? 'direct' : 'shared',

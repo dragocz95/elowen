@@ -46,7 +46,7 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
     policyForUser: () => userPolicy,
     disabledToolsFor: () => ['DiscordApi'], // Amy disabled this tool in her Elowen account
     identity: linkedResolver(opts.linked),
-    channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+    channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
     dispatch: noDispatch,
   });
   await orch.startAll();
@@ -95,6 +95,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       disabledToolsFor: () => ['DiscordApi'],
       identity: linkedResolver(false),
       channels: {
+          sessionOwnerUserId: () => undefined,
         send: async (opts: ChannelSendOpts, text: string) => { sent = opts; message = text; return 'target reply'; },
         fragmentFor: () => '', setLastWriter: () => {},
       } as never,
@@ -150,6 +151,42 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
   // A shared room is anchored on the operator because it has no single author, so the owner column alone
   // reported a colleague's Teams room as the operator's own conversation. The writer is recorded per turn
   // instead of being derived on read, which would mean scanning the message table for every listing.
+  // A room belongs to whoever opened it. Anchoring it on the operator filed a colleague's Teams room
+  // under the operator's name; the register then needed a tooltip to explain the discrepancy away.
+  describe('a shared room', () => {
+    const spawn = async (existingOwner: number | undefined): Promise<number | undefined> => {
+      let sentOwner: number | undefined;
+      let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+      const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+      const orch = new PlatformOrchestrator({
+        plugins: async () => ({ platforms: [adapter] }) as never,
+        platformOwner: () => 1, // the instance operator
+        policyForUser: () => userPolicy,
+        identity: linkedResolver(true), // the sender resolves to account 2
+        channels: {
+          sessionOwnerUserId: () => existingOwner,
+          send: async (o: { ownerUserId: number }) => { sentOwner = o.ownerUserId; return 'ok'; },
+          setLastWriter: () => {},
+          fragmentFor: () => '',
+        } as never,
+        dispatch: noDispatch,
+      });
+      await orch.startAll();
+      await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], access: { admin: false, projectIds: [3] } } as never, 'hi');
+      return sentOwner;
+    };
+
+    it('is opened by its first writer, not by the operator who happens to host the instance', async () => {
+      expect(await spawn(undefined)).toBe(2);
+    });
+
+    // The other half of the rule, and the half that actually bites: `ownerUserId` is compared against the
+    // live channel, so sending the operator for a row owned by somebody else respawns it every turn.
+    it('keeps sending the owner the row already has, so the live channel is not rebuilt every turn', async () => {
+      expect(await spawn(7)).toBe(7);
+    });
+  });
+
   it('records who wrote in a shared room, after the send that guarantees the row exists', async () => {
     const calls: [string, number][] = [];
     const order: string[] = [];
@@ -605,6 +642,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       platformOwner: () => 1,
       identity: linkedResolver(false),
       channels: {
+          sessionOwnerUserId: () => undefined,
         send: async (opts: ChannelSendOpts, text: string) => { sent = opts; message = text; return 'instance reply'; },
         fragmentFor: () => '', setLastWriter: () => {},
       } as never,
@@ -641,7 +679,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       identity,
-      channels: { send: async () => { sends++; return 'must not run'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+      channels: { sessionOwnerUserId: () => undefined, send: async () => { sends++; return 'must not run'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
       originSend: async () => null,
     });
@@ -670,7 +708,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       identity: linkedResolver(false),
-      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+      channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
       originSend: async (userId, sessionId, text) => { originCalls.push([userId, sessionId!, text]); return 'bound reply'; },
     });
@@ -699,6 +737,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       disabledToolsFor: () => ['DiscordApi'],
       identity: linkedResolver(false),
       channels: {
+          sessionOwnerUserId: () => undefined,
         mayDeliverDirectSession: (userId: number, sessionId: string, channelId: string) =>
           userId === 2 && sessionId === 'brain-ch-discord-dm-7' && channelId === 'discord-dm-7',
         send: async (opts: ChannelSendOpts) => { sent = opts; return 'scheduled reply'; },
@@ -739,6 +778,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       policyForUser: () => userPolicy,
       identity: linkedResolver(false),
       channels: {
+          sessionOwnerUserId: () => undefined,
         mayDeliverDirectSession: () => true,
         send: async () => 'scheduled reply',
         fragmentFor: () => '', setLastWriter: () => {},
@@ -764,7 +804,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       platformOwner: () => 1,
       policyForUser: () => userPolicy,
       identity: linkedResolver(false),
-      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+      channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
       originSend: async () => null, // ownership check failed host-side
     });
@@ -785,7 +825,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       identity: linkedResolver(false),
-      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+      channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
       originSend: async () => null,
     });
@@ -806,7 +846,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         plugins: async () => ({ platforms: adapters.map((a) => ({ ...a, listen: () => {}, connect: async () => {} })) }) as never,
         platformOwner: () => 1,
         identity: linkedResolver(false),
-        channels: { send: async () => 'ok', fragmentFor: () => '', setLastWriter: () => {} } as never,
+        channels: { sessionOwnerUserId: () => undefined, send: async () => 'ok', fragmentFor: () => '', setLastWriter: () => {} } as never,
         dispatch: noDispatch,
       });
       await orch.startAll();
@@ -891,7 +931,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       policyForUser: () => userPolicy,
       disabledToolsFor: () => [], // nothing disabled
       identity: linkedResolver(true),
-      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
+      channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
     });
     await orch.startAll();
