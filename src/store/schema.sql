@@ -202,6 +202,22 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_brain_sessions_user ON brain_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_brain_sessions_debug_updated ON brain_sessions(updated_at DESC, id DESC);
+
+-- Durable resume envelope for the platform channel turn currently in flight (channels.ts,
+-- PlatformTurnResumeEnvelope). Written when an ordinary platform turn starts and DELETED when it
+-- settles, so a surviving row means exactly one thing: the process died (or will one day park) with
+-- this turn unfinished. Its own table rather than a brain_sessions column on purpose: the lifecycle
+-- is per-TURN (replaced each turn, gone on settle) while the session row is per-conversation,
+-- `getSession` is a hot `SELECT *` that must not drag a verbatim multi-KB prompt blob into every
+-- read, and "no row" is an honest absent state that no session-write path can accidentally clobber.
+-- The envelope carries prompt INPUTS verbatim (byte-stability) and the ACCOUNT identity only —
+-- authority is re-derived from that account at read time (resolvePlatformTurnAuthority), never
+-- replayed from this row, so a stored permission set can never widen behind the operator's back.
+CREATE TABLE IF NOT EXISTS brain_platform_turn_envelopes (
+  session_id  TEXT PRIMARY KEY,
+  envelope    TEXT NOT NULL,
+  captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 -- `pending` marks a row written MID-TURN, straight off PI's `message_end`, before the turn settled.
 -- Without those rows a daemon restart in the middle of a long turn threw away every tool call and every
 -- word the agent had produced: the settled `agent_end` was the only thing that ever reached SQLite. They

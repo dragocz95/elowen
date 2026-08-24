@@ -78,6 +78,186 @@ export function serializePlatformEnvelope(envelope: PlatformEnvelope): string {
   return JSON.stringify(envelope);
 }
 
+/** Everything a later boot needs to reconstruct an ordinary platform channel turn faithfully — the
+ *  durable foundation such turns need before they can ever be parked and resumed. Captured by send()
+ *  when the turn starts, deleted when it settles, so a surviving row names an interrupted turn.
+ *
+ *  Two rules govern this shape:
+ *  - AUTHORITY IS NEVER STORED. Only the verified ACCOUNT id is carried; the policy is re-derived from
+ *    that account at resume time by {@link resolvePlatformTurnAuthority}, and an account that no longer
+ *    resolves REFUSES the resume instead of falling back to anyone else's authority. The one permission
+ *    field replayed is the deny union, because a deny can only narrow.
+ *  - PROMPT INPUTS ARE VERBATIM. `promptAppend` (plugin platform prompts + the room fragment) and
+ *    `turnText` (the exact serialized string the model and the durable user row received) are captured
+ *    byte-for-byte, never recomputed on resume: a recompute against live state — a renamed room, a
+ *    reloaded plugin — would change an already-cached prefix and re-bill the whole context. */
+export interface PlatformTurnResumeEnvelope {
+  v: 1;
+  platform: string;
+  /** The orchestrator's registry channel key (`<platform>-<thread-or-channel>`), from which the durable
+   *  session id is re-derived (channelSessionId). */
+  channelId: string;
+  /** The session owner resolved for THIS turn (post-rollover): prompt composition (personal skills,
+   *  account instructions, auto-compact threshold) keys on it. */
+  ownerUserId: number;
+  direct: boolean;
+  /** The live turn ran as trusted-channel (admin ROOM role). Recorded because it shaped the live
+   *  session's composition, but it is a room-role fact that storage cannot re-verify — the authority
+   *  resolver deliberately ignores it and returns the account's own policy. */
+  trusted: boolean;
+  scheduled: boolean;
+  /** The verified Elowen account behind the turn. null = unlinked sender or accountless instance
+   *  automation, which is never resumable (the resolver refuses it). */
+  accountUserId: number | null;
+  sender?: { id: string; name: string };
+  identity: {
+    platform: string;
+    userId: string;
+    elowenUserId?: number;
+    elowenUsername?: string;
+    admin: boolean;
+    owner: boolean;
+    conversation: 'direct' | 'shared';
+  };
+  /** Spawn-time prompt append, VERBATIM bytes. */
+  promptAppend?: string[];
+  /** The deny union in effect on the live turn (account denies + turn-level `access.denyTools`).
+   *  Replay-safe: the resolver unions it with the account's CURRENT denies, so it only ever narrows. */
+  deniedTools?: string[];
+  model?: { provider?: string; model?: string };
+  thinkingLevel?: string;
+  fast?: boolean;
+  idleRolloverMs?: number;
+  /** Opaque outbound destination — present only for verified direct chats, exactly as on the live turn. */
+  deliveryTarget?: string;
+  historyPlatform?: string;
+  promptCommand: boolean;
+  /** The EXACT string that went to the model and the durable user row (attachment marker and shared-room
+   *  serialization included) — never re-serialized on resume. */
+  turnText: string;
+  /** The sender's clean words (title/curator input). */
+  senderText: string;
+  /** Image attachments ride only the live prompt (base64, never persisted here) — the count records that
+   *  a resume cannot reproduce them. */
+  imageCount?: number;
+  capturedAt: string;
+}
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const isOptionalString = (value: unknown): value is string | undefined => value === undefined || typeof value === 'string';
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+const isAccountId = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value);
+
+/** Validate a stored envelope read back from SQLite. The row is durable data parsed long after the code
+ *  that wrote it, so everything is checked structurally; anything malformed or of an unknown version is
+ *  null — callers fail closed rather than resuming a turn they cannot faithfully reconstruct. Unknown
+ *  keys are dropped, known keys are copied field-by-field so the result is exactly the declared shape. */
+export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeEnvelope | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const e = raw as Record<string, unknown>;
+  if (e.v !== 1) return null;
+  if (!isNonEmptyString(e.platform) || !isNonEmptyString(e.channelId)) return null;
+  if (!isAccountId(e.ownerUserId)) return null;
+  if (typeof e.direct !== 'boolean' || typeof e.trusted !== 'boolean' || typeof e.scheduled !== 'boolean') return null;
+  if (e.accountUserId !== null && !isAccountId(e.accountUserId)) return null;
+  const sender = e.sender as Record<string, unknown> | undefined;
+  if (sender !== undefined && (typeof sender !== 'object' || sender === null
+    || !isNonEmptyString(sender.id) || typeof sender.name !== 'string')) return null;
+  const identity = e.identity as Record<string, unknown> | null;
+  if (typeof identity !== 'object' || identity === null
+    || !isNonEmptyString(identity.platform) || !isNonEmptyString(identity.userId)
+    || !isOptionalString(identity.elowenUsername)
+    || (identity.elowenUserId !== undefined && !isAccountId(identity.elowenUserId))
+    || typeof identity.admin !== 'boolean' || typeof identity.owner !== 'boolean'
+    || (identity.conversation !== 'direct' && identity.conversation !== 'shared')) return null;
+  if (e.promptAppend !== undefined && !isStringArray(e.promptAppend)) return null;
+  if (e.deniedTools !== undefined && !isStringArray(e.deniedTools)) return null;
+  const model = e.model as Record<string, unknown> | undefined;
+  if (model !== undefined && (typeof model !== 'object' || model === null
+    || !isOptionalString(model.provider) || !isOptionalString(model.model))) return null;
+  if (!isOptionalString(e.thinkingLevel)) return null;
+  if (e.fast !== undefined && typeof e.fast !== 'boolean') return null;
+  if (e.idleRolloverMs !== undefined && !(typeof e.idleRolloverMs === 'number' && Number.isFinite(e.idleRolloverMs))) return null;
+  if (!isOptionalString(e.deliveryTarget) || !isOptionalString(e.historyPlatform)) return null;
+  if (typeof e.promptCommand !== 'boolean') return null;
+  if (typeof e.turnText !== 'string' || typeof e.senderText !== 'string') return null;
+  if (e.imageCount !== undefined && !(typeof e.imageCount === 'number' && Number.isInteger(e.imageCount) && e.imageCount >= 0)) return null;
+  if (!isNonEmptyString(e.capturedAt)) return null;
+  return {
+    v: 1,
+    platform: e.platform,
+    channelId: e.channelId,
+    ownerUserId: e.ownerUserId,
+    direct: e.direct,
+    trusted: e.trusted,
+    scheduled: e.scheduled,
+    accountUserId: e.accountUserId,
+    ...(sender ? { sender: { id: sender.id as string, name: sender.name as string } } : {}),
+    identity: {
+      platform: identity.platform as string,
+      userId: identity.userId as string,
+      ...(identity.elowenUserId !== undefined ? { elowenUserId: identity.elowenUserId as number } : {}),
+      ...(identity.elowenUsername !== undefined ? { elowenUsername: identity.elowenUsername } : {}),
+      admin: identity.admin,
+      owner: identity.owner,
+      conversation: identity.conversation,
+    },
+    ...(e.promptAppend !== undefined ? { promptAppend: [...e.promptAppend] } : {}),
+    ...(e.deniedTools !== undefined ? { deniedTools: [...e.deniedTools] } : {}),
+    ...(model !== undefined ? { model: {
+      ...(model.provider !== undefined ? { provider: model.provider as string } : {}),
+      ...(model.model !== undefined ? { model: model.model as string } : {}),
+    } } : {}),
+    ...(e.thinkingLevel !== undefined ? { thinkingLevel: e.thinkingLevel } : {}),
+    ...(e.fast !== undefined ? { fast: e.fast } : {}),
+    ...(e.idleRolloverMs !== undefined ? { idleRolloverMs: e.idleRolloverMs } : {}),
+    ...(e.deliveryTarget !== undefined ? { deliveryTarget: e.deliveryTarget } : {}),
+    ...(e.historyPlatform !== undefined ? { historyPlatform: e.historyPlatform } : {}),
+    promptCommand: e.promptCommand,
+    turnText: e.turnText,
+    senderText: e.senderText,
+    ...(e.imageCount !== undefined ? { imageCount: e.imageCount } : {}),
+    capturedAt: e.capturedAt,
+  };
+}
+
+/** How a resume derives WHO a captured turn runs as. `policyForUser` must return undefined when the
+ *  account no longer resolves — deleted, unlinked, whatever — which this seam turns into a refusal.
+ *  Deliberately a different contract from the orchestrator's live `policyForUser` (which assumes an
+ *  authenticated inbound sender): here the account is a stored claim that must be re-proven. */
+export interface PlatformTurnAuthorityDeps {
+  policyForUser: (userId: number) => Policy | undefined;
+  disabledToolsFor?: (userId: number) => string[];
+}
+
+/** Re-derive a captured platform turn's authority from its ACCOUNT — never from the envelope. An
+ *  envelope with no verified account, or whose account no longer resolves, throws: the correct answer
+ *  to unresolvable authority is refusal, not a fallback to operator (or any other) authority. The
+ *  stored `trusted` room-role elevation is deliberately NOT honored here — a room role cannot be
+ *  re-verified from storage, so a resumed turn gets the account's own policy and nothing wider. */
+export function resolvePlatformTurnAuthority(
+  envelope: PlatformTurnResumeEnvelope,
+  deps: PlatformTurnAuthorityDeps,
+): { accountUserId: number; policy: Policy; toolPolicy?: ToolPolicy } {
+  if (envelope.accountUserId === null) {
+    throw new Error('captured platform turn has no verified account — refusing to resume it');
+  }
+  const policy = deps.policyForUser(envelope.accountUserId);
+  if (!policy) {
+    throw new Error(`captured platform turn account ${envelope.accountUserId} no longer resolves — refusing to resume it`);
+  }
+  const denied = new Set([
+    ...(deps.disabledToolsFor?.(envelope.accountUserId) ?? []),
+    ...(envelope.deniedTools ?? []),
+  ]);
+  return {
+    accountUserId: envelope.accountUserId,
+    policy,
+    ...(denied.size ? { toolPolicy: { deny: denied } } : {}),
+  };
+}
+
 /** Convert adapter history into real transcript messages. Every body is a JSON envelope so provenance is
  *  explicit and arbitrary platform text cannot masquerade as a fresh unframed request. */
 function platformHistorySeed(history: PlatformHistory, platform: string, channelId: string): SeededSessionMessage[] {
@@ -702,9 +882,68 @@ export class ChannelSessionService {
         return assistantText;
       };
 
-      // A same-sender follow-up sent DURING this turn is steered into it (see send()'s top) — PI folds it in
-      // between steps — so there is no post-turn flush: the running turn is the single place its words land.
-      return runOne(turnText, senderMessage, opts.images, opts.onEvent);
+      // Durable resume foundation: capture everything a later boot would need to reconstruct THIS turn
+      // faithfully, synchronously before the turn's first model call, and drop it once the turn settles
+      // — so a surviving row names exactly the turn a process death (or a future park) interrupted.
+      // Ordinary platform turns only: a delegated child has the durable delegation store, an owner-steer
+      // or hidden system turn is not a platform sender's turn, and a `delegated` conversation never
+      // reaches here anyway (parentSessionId). Everything volatile is captured VERBATIM; authority is
+      // captured as the ACCOUNT id alone and re-derived at resume (resolvePlatformTurnAuthority).
+      const resumable = !parentSessionId && !opts.internalSystem && !opts.ownerSteer
+        && opts.identity !== undefined
+        && (opts.identity.conversation === 'direct' || opts.identity.conversation === 'shared');
+      if (resumable) {
+        const identity = opts.identity!;
+        const denied = opts.toolPolicy?.deny ? [...opts.toolPolicy.deny].sort() : [];
+        const envelope: PlatformTurnResumeEnvelope = {
+          v: 1,
+          platform: identity.platform,
+          channelId: opts.channelId,
+          ownerUserId,
+          direct: opts.direct === true,
+          trusted: opts.trusted === true,
+          scheduled: opts.scheduled === true,
+          accountUserId: opts.writerUserId ?? null,
+          ...(opts.sender ? { sender: { id: opts.sender.id, name: opts.sender.name } } : {}),
+          identity: {
+            platform: identity.platform,
+            userId: identity.userId,
+            ...(identity.elowenUserId !== undefined ? { elowenUserId: identity.elowenUserId } : {}),
+            ...(identity.elowenUsername !== undefined ? { elowenUsername: identity.elowenUsername } : {}),
+            admin: identity.admin,
+            owner: identity.owner,
+            conversation: identity.conversation as 'direct' | 'shared',
+          },
+          ...(opts.promptAppend?.length ? { promptAppend: [...opts.promptAppend] } : {}),
+          ...(denied.length ? { deniedTools: denied } : {}),
+          ...(opts.model ? { model: {
+            ...(opts.model.provider !== undefined ? { provider: opts.model.provider } : {}),
+            ...(opts.model.model !== undefined ? { model: opts.model.model } : {}),
+          } } : {}),
+          ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
+          ...(opts.fast !== undefined ? { fast: opts.fast } : {}),
+          // `Infinity` (cron's "never roll over") does not survive JSON — omitted, like unset.
+          ...(opts.idleRolloverMs !== undefined && Number.isFinite(opts.idleRolloverMs)
+            ? { idleRolloverMs: opts.idleRolloverMs } : {}),
+          ...(opts.deliveryTarget !== undefined ? { deliveryTarget: opts.deliveryTarget } : {}),
+          ...(opts.historyPlatform !== undefined ? { historyPlatform: opts.historyPlatform } : {}),
+          promptCommand: opts.promptCommand === true,
+          turnText,
+          senderText,
+          ...(opts.images?.length ? { imageCount: opts.images.length } : {}),
+          capturedAt: new Date().toISOString(),
+        };
+        this.d.store.savePlatformTurnEnvelope(sessionId, JSON.stringify(envelope));
+      }
+      try {
+        // A same-sender follow-up sent DURING this turn is steered into it (see send()'s top) — PI folds
+        // it in between steps — so there is no post-turn flush: the running turn is the single place its
+        // words land.
+        return await runOne(turnText, senderMessage, opts.images, opts.onEvent);
+      } finally {
+        // The turn settled (reply or error already back with the adapter) — nothing left to resume.
+        if (resumable) this.d.store.clearPlatformTurnEnvelope(sessionId);
+      }
     });
     } finally {
       if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);

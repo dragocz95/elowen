@@ -267,6 +267,39 @@ export class BrainStore {
     ).run(id).changes > 0;
   }
 
+  /** Capture (or replace) the durable resume envelope for a platform channel turn that is about to run
+   *  (see brain_platform_turn_envelopes in schema.sql). Written synchronously before the turn's first
+   *  async boundary so a process death mid-turn always leaves the row behind. The payload is an opaque
+   *  JSON string here on purpose: its shape and validation belong to the brain layer
+   *  (normalizePlatformTurnEnvelope), mirroring how delegated_access is stored. */
+  savePlatformTurnEnvelope(sessionId: string, envelope: string): void {
+    this.db.prepare(
+      `INSERT INTO brain_platform_turn_envelopes (session_id, envelope) VALUES (?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET envelope = excluded.envelope, captured_at = datetime('now')`,
+    ).run(sessionId, envelope);
+  }
+
+  /** The raw captured envelope for one channel session, or undefined when none is in flight — which is
+   *  also what every pre-upgrade session reads (the table exists but has no row for it). */
+  platformTurnEnvelope(sessionId: string): string | undefined {
+    const row = this.db.prepare('SELECT envelope FROM brain_platform_turn_envelopes WHERE session_id = ?')
+      .get(sessionId) as { envelope: string } | undefined;
+    return row?.envelope;
+  }
+
+  /** Drop a settled turn's envelope. Idempotent — the settle path calls it unconditionally. */
+  clearPlatformTurnEnvelope(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_platform_turn_envelopes WHERE session_id = ?').run(sessionId);
+  }
+
+  /** Every envelope left behind by an interrupted turn — a boot sweep's worklist. */
+  platformTurnEnvelopes(): { sessionId: string; envelope: string; capturedAt: string }[] {
+    return (this.db.prepare(
+      'SELECT session_id, envelope, captured_at FROM brain_platform_turn_envelopes ORDER BY captured_at ASC, session_id ASC',
+    ).all() as { session_id: string; envelope: string; captured_at: string }[])
+      .map((row) => ({ sessionId: row.session_id, envelope: row.envelope, capturedAt: row.captured_at }));
+  }
+
   /** Read a child's immutable delegation boundary. Both legacy NULL rows and malformed DB JSON are
    * deliberately returned as undefined so callers fail closed before executing a continuation. */
   delegatedAccessFor(sessionId: string): DelegatedExecutionScope | undefined {
