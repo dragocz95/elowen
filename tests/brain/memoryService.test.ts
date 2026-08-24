@@ -330,31 +330,34 @@ describe('MemoryService.findSimilar', () => {
     expect(hits[0]!.similarity).toBeGreaterThan(0.85);
   });
 
-  // The threshold used to be 0.85, which is ABOVE the highest cosine any two memories in the real store
-  // reach (measured: 4005 pairs, p99 0.539, max 0.765) — so this never fired and every add became a new
-  // row. These two cases pin it to the measured geometry: 0.765 is the real duplicate pair (two write-ups
-  // of one incident), 0.719 is the closest NON-duplicate pair (two related but distinct supplier facts).
-  it('flags the real store\'s duplicate pair at 0.765', async () => {
+  // Both cases below are pinned to a measurement of the real store, and that measurement has been redone
+  // once already — which is the point of keeping them. The first calibration read 0.765 as "the duplicate
+  // pair" off a store of 4005 pairs whose maximum WAS 0.765. Re-measured 24 Aug 2026 over 54946 pairs, the
+  // maximum is 0.911 and reading the top pairs by hand found no restatement anywhere: two distinct findings
+  // about one supplier reach 0.911, and pairs that are merely both long average 0.535 with a p99 of 0.774.
+  // So these now pin the OPPOSITE geometry — related-but-distinct goes as high as the store's maximum, and
+  // only near-identical text counts. Re-measure again after an embedding-model change.
+  it('leaves the most similar pair the real store actually contains, at 0.911, alone', async () => {
+    const table = {
+      'two distinct findings about one supplier': [1, 0, 0],
+      probe: [0.911, Math.sqrt(1 - 0.911 ** 2), 0],
+    };
+    addWithVec(store, 1, 'two distinct findings about one supplier', table);
+    const svc = makeService(store, table);
+
+    expect(await svc.findSimilar(1, 'probe')).toEqual([]);
+  });
+
+  it('flags a genuine restatement, which sits above anything the store reaches', async () => {
     const table = {
       'the incident write-up': [1, 0, 0],
-      probe: [0.765, Math.sqrt(1 - 0.765 ** 2), 0],
+      probe: [0.96, Math.sqrt(1 - 0.96 ** 2), 0],
     };
     const dup = addWithVec(store, 1, 'the incident write-up', table);
     const svc = makeService(store, table);
 
     const hits = await svc.findSimilar(1, 'probe');
     expect(hits.map((h) => h.memory.id)).toEqual([dup]);
-  });
-
-  it('leaves the closest NON-duplicate pair at 0.719 alone', async () => {
-    const table = {
-      'a related but distinct fact': [1, 0, 0],
-      probe: [0.719, Math.sqrt(1 - 0.719 ** 2), 0],
-    };
-    addWithVec(store, 1, 'a related but distinct fact', table);
-    const svc = makeService(store, table);
-
-    expect(await svc.findSimilar(1, 'probe')).toEqual([]);
   });
 
   it('returns empty when embeddings are not configured', async () => {

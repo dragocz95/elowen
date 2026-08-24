@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildMemoryTools } from '../../src/brain/tools/memoryTools.js';
 import { openDb } from '../../src/store/db.js';
-import { MemoryStore } from '../../src/store/memoryStore.js';
+import { MemoryStore, hashBody } from '../../src/store/memoryStore.js';
 import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../../src/brain/memoryCategorizer.js';
 import { MemoryService } from '../../src/brain/memoryService.js';
@@ -112,6 +112,36 @@ describe('buildMemoryTools', () => {
     const id = store.list(1)[0]!.id;
     // Deliberately fire-and-forget: storing a fact must not wait on a model round-trip.
     await vi.waitFor(() => expect(store.get(1, id)?.category_id).toBe(catId));
+  });
+
+  it('MemoryAdd keeps a fact that resembles a stored one, and names the neighbour instead of dropping the write', async () => {
+    // This used to return the existing id WITHOUT writing, so a false positive cost the whole fact — and
+    // on a store of long, uniformly written notes a high cosine marks a shared topic, not a restatement.
+    // Storing and reporting keeps the failure recoverable: MemoryMerge can still fold a real duplicate.
+    const db = openDb(':memory:');
+    const store = new MemoryStore(db);
+    const categories = new MemoryCategoryStore(db);
+    // Every body embeds to the same vector, so findSimilar fires at any threshold — the point under test
+    // is what the tool DOES with a hit, not where the threshold sits.
+    const embeddings = { embed: async () => Float32Array.from([1, 0, 0]) } as unknown as EmbeddingService;
+    const service = new MemoryService({ store, categories, embeddings, embeddingConfig: () => ({ providerId: 'p', model: 'm' }) });
+    const categorizer = new MemoryCategorizer({ categories, memories: store, inference: () => null });
+    const byName = (n: string) => buildMemoryTools({ store, service, categories, categorizer }).find((t) => t.name === n)!;
+
+    const firstBody = 'Chetty runs natively under systemd.';
+    const first = await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: firstBody }));
+    const firstId = Number(/#(\d+)/.exec(txt(first))![1]);
+    // The write path does not embed: indexing is a separate pass, and findSimilar only ever compares
+    // against memories that already carry a CURRENT vector, so the neighbour has to be indexed to exist.
+    store.setEmbedding(1, firstId, {
+      provider: 'p', model: 'm', dimensions: 3,
+      vector: Float32Array.from([1, 0, 0]), contentHash: hashBody(firstBody),
+    });
+    const second = await run(OWNER, () => byName('MemoryAdd').execute('c2', { body: 'Chetty deploys with rsync, not Docker.' }));
+
+    expect(store.list(1)).toHaveLength(2);
+    expect(txt(second)).toContain(`resembles #${firstId}`);
+    expect(txt(second)).toContain('MemoryMerge');
   });
 
   it('a non-owner channel turn cannot touch categories', async () => {

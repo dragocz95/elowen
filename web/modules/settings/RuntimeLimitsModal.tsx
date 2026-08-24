@@ -12,7 +12,7 @@ import type { RuntimeConfig, RuntimeLimits } from '../../lib/types';
 /** Fallback for seeding the Runtime form before the daemon's config arrives (it always sends real values). */
 export const RUNTIME_LIMIT_DEFAULTS: RuntimeLimits = {
   localShellTimeoutMs: 30000, memorySemanticFloorPerMille: 200,
-  memoryDuplicatePerMille: 720, memoryParaphrasePerMille: 700,
+  memoryDuplicatePerMille: 930, memoryParaphrasePerMille: 700,
   memoryImportanceWeightPerMille: 100, memoryVitalityWeightPerMille: 100, memoryCuratorMaxOps: 2,
   toolDeferThreshold: 10, eventRetentionDays: 30, originIpRetentionDays: 30,
   streamSilenceLimitMs: 75000, streamReviveSilenceLimitMs: 45000, toastDurationMs: 4500,

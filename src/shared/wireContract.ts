@@ -514,9 +514,11 @@ export interface RuntimeLimits {
   localShellTimeoutMs: number;
   memorySemanticFloorPerMille: number;
   /** Cosine (per mille, same reason as the floor above) at which a NEW memory counts as a near-duplicate
-   *  of an existing one, so the curator and MemoryAdd update that one instead of adding a paraphrase.
-   *  Deliberately separate from the recall-side threshold below: a false positive here REWRITES a stored
-   *  memory, whereas there it only drops a search result, so this one is set the more cautious of the two. */
+   *  of an existing one, so the curator updates that one instead of adding a paraphrase and MemoryAdd
+   *  names it alongside the memory it stored. Deliberately separate from the recall-side threshold below:
+   *  a false positive here REWRITES a stored memory, whereas there it only drops a search result, so this
+   *  one is set the more cautious of the two. It is tied to the embedding model AND to how large and how
+   *  uniform the store has grown — see the measurement note on the default in configStore. */
   memoryDuplicatePerMille: number;
   /** Cosine (per mille) at which an already-picked memory makes a lower-ranked one redundant, so recall
    *  does not spend two of its slots on two write-ups of the same fact. */

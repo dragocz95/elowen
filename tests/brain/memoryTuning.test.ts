@@ -106,14 +106,17 @@ describe('MemoryService — operator-tunable dedup thresholds', () => {
     expect(loose.memories.map((m) => m.body).sort()).toEqual(['first', 'second']);
   });
 
-  it('treats a 0.75-cosine body as a duplicate at the default threshold and as new once it is raised', async () => {
+  // 0.75 is deliberately on the "distinct" side of the default now: measuring the live store found that
+  // two unrelated long notes reach that cosine easily, so treating it as a restatement is what caused the
+  // curator to overwrite memories that were about different things.
+  it('leaves a 0.75-cosine body alone at the default threshold and calls it a duplicate once it is lowered', async () => {
     addWithVec('stored', 3);
 
     const builtIn = await serviceWith().findSimilar(1, 'incoming');
-    expect(builtIn.map((s) => s.memory.body)).toEqual(['stored']);
+    expect(builtIn).toEqual([]);
 
-    const strict = await serviceWith({ dedupe: () => ({ duplicate: 800, paraphrase: 700 }) }).findSimilar(1, 'incoming');
-    expect(strict).toEqual([]);
+    const loose = await serviceWith({ dedupe: () => ({ duplicate: 700, paraphrase: 700 }) }).findSimilar(1, 'incoming');
+    expect(loose.map((s) => s.memory.body)).toEqual(['stored']);
   });
 });
 

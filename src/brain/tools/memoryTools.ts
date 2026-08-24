@@ -89,9 +89,9 @@ function memoryAdd(d: MemoryToolDeps) {
       + 'having in a future conversation. Use it the moment such a fact is discovered or confirmed; do NOT '
       + 'store chit-chat, greetings, secrets, transient task state or anything already obvious from the '
       + 'code. To correct or re-rank a fact that already exists use MemoryUpdate, and to fold several '
-      + 'overlapping ones together use MemoryMerge — this tool refuses to pile up paraphrases: before '
-      + 'inserting it looks for a near-duplicate and, if one exists, it does NOT insert and returns the '
-      + 'existing id instead. `body` must be self-contained (it is read without this conversation), `kind` '
+      + 'overlapping ones together use MemoryMerge. The memory is always stored; if a very similar one '
+      + 'already exists the result names its id as well, so you can merge or delete afterwards when it '
+      + 'really was the same fact. `body` must be self-contained (it is read without this conversation), `kind` '
       + 'labels the fact and `importance` (1..5) biases later recall. The memory is filed into a category '
       + 'in the background — inside a project conversation it falls back to that project\'s own category — '
       + 'because an uncategorized memory is never recalled. Memory is per-user and private, so this is '
@@ -106,13 +106,14 @@ function memoryAdd(d: MemoryToolDeps) {
       if (userId === null) return text(LOCKED);
       const body = p.body.trim();
       if (body === '') return text('Cannot add an empty memory.');
+      // The similarity check REPORTS, it does not veto. It used to return here without writing, which made
+      // a false positive cost the whole memory: the fact was never stored, and the model — told only that
+      // something similar exists — had no reason to try again. Measurement (24 Aug 2026, see
+      // DEFAULT_SIMILAR_THRESHOLD) showed the signal cannot carry that weight, because on long notes in one
+      // voice a high cosine marks a shared topic rather than a restatement. Storing and naming the neighbour
+      // points the failure the recoverable way: a redundant memory can still be folded in with MemoryMerge,
+      // a memory that was never written is simply gone.
       const near = await d.service.findSimilar(userId, body);
-      if (near.length > 0) {
-        const top = near[0]!;
-        return text(`A near-duplicate memory already exists (#${top.memory.id}, similarity `
-          + `${top.similarity.toFixed(2)}): "${top.memory.body}". Prefer MemoryUpdate #${top.memory.id} `
-          + 'or MemoryMerge instead of adding a duplicate.');
-      }
       const row = d.store.add(
         userId,
         { body, kind: p.kind, importance: p.importance, source: 'user' },
@@ -135,7 +136,13 @@ function memoryAdd(d: MemoryToolDeps) {
       } else {
         d.categorizer.classifyNewMemory(userId, row.id, `user:${userId}`);
       }
-      return text(`Stored memory #${row.id}.`);
+      if (near.length === 0) return text(`Stored memory #${row.id}.`);
+      // Named, not quoted: the neighbour can be thousands of characters, and the model needs the id to act
+      // on it, not the text to re-read. MemorySearch fetches the body if the decision actually needs it.
+      const top = near[0]!;
+      return text(`Stored memory #${row.id}. It resembles #${top.memory.id} (similarity `
+        + `${top.similarity.toFixed(2)}) — if this restates the same fact rather than adding a new one, `
+        + `fold them together with MemoryMerge, or drop this one with MemoryDelete.`);
     },
   });
 }

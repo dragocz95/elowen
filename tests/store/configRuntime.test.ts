@@ -13,7 +13,7 @@ describe('ConfigStore runtime limits', () => {
       limits: {
         localShellTimeoutMs: 30_000,      // LOCAL_SHELL_TIMEOUT_MS
         memorySemanticFloorPerMille: 200, // MIN_SEMANTIC 0.2
-        memoryDuplicatePerMille: 720,     // DEFAULT_SIMILAR_THRESHOLD 0.72
+        memoryDuplicatePerMille: 930,     // DEFAULT_SIMILAR_THRESHOLD 0.93
         memoryParaphrasePerMille: 700,    // DEDUPE_COSINE 0.70
         memoryImportanceWeightPerMille: 100, // W_IMPORTANCE 0.1
         memoryVitalityWeightPerMille: 100,   // W_VITALITY 0.1

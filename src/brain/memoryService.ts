@@ -52,12 +52,20 @@ const MIN_SEMANTIC = 0.3;
 const PER_MILLE = 1000;
 
 /** Default for findSimilar(): the cosine at which two bodies count as near-duplicates for the curator
- *  and the MemoryAdd tool. Set slightly ABOVE {@link DEDUPE_COSINE} because the consequences differ — a
- *  false positive here makes the curator UPDATE one memory with another's content (data loss), whereas
- *  in packing it only drops a result. Same measured distribution: 0.72 catches both genuine duplicate
- *  pairs (0.765, 0.756) and stops short of the next pair down (0.719), which is two related but distinct
- *  facts. Re-measure after an embedding-model change. */
-const DEFAULT_SIMILAR_THRESHOLD = 0.72;
+ *  and the MemoryAdd tool. Set well ABOVE {@link DEDUPE_COSINE} because the consequences differ — a false
+ *  positive here makes the curator UPDATE one memory with another's content (data loss), whereas in
+ *  packing it only drops a result.
+ *
+ *  RE-MEASURED 24 Aug 2026 (332 memories, 54946 pairs, qwen3-embedding-8b). The old 0.72 was read off a
+ *  store whose largest pair was 0.765; the corpus has grown past that, and the two pairs it was calibrated
+ *  on are no longer the top of the distribution. Hand-reading the highest pairs found no true restatement
+ *  at any cosine the store reaches — the maximum, 0.911, is two distinct findings about one supplier — so
+ *  on long technical notes in a consistent voice this measures shared TOPIC, not duplication. Length alone
+ *  lifts it: pairs where both sides are merely long average 0.535 against 0.484 for short ones, with a p99
+ *  of 0.774. The value is therefore a lower bound from observed distinct pairs and has no upper
+ *  calibration, which is exactly why the MemoryAdd tool warns instead of refusing. Re-measure after an
+ *  embedding-model change or substantial growth of the store. */
+const DEFAULT_SIMILAR_THRESHOLD = 0.93;
 const DEFAULT_SIMILAR_LIMIT = 5;
 
 export interface RetrieveOpts {

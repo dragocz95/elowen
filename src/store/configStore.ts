@@ -358,10 +358,20 @@ const DEFAULT_RUNTIME_LIMITS: RuntimeLimits = {
   // Measured against the live store's pair distribution (p50 0.216), a floor of 0.30 discards the
   // majority of genuine matches; the duplicate/paraphrase thresholds above do the precision work.
   memorySemanticFloorPerMille: 200,
-  // Both calibrated against the measured pair distribution of the live store rather than picked by feel
-  // (p50 0.216, p90 0.383, p99 0.539, max 0.765): the previous hard-coded 0.85/0.97 sat above every pair
-  // that exists, so neither check had ever fired once. Re-measure after changing the embedding model.
-  memoryDuplicatePerMille: 720,
+  // RE-MEASURED 24 Aug 2026 against the live store (332 memories, 54946 pairs, qwen3-embedding-8b): the
+  // previous 720 was calibrated when the largest pair in the store was 0.765, and the corpus has since
+  // grown past it — max is now 0.911 and 1030 pairs sit above 720. Reading the top pairs by hand found NO
+  // true restatement anywhere, not even at 0.911 (two distinct findings about one supplier), so on long
+  // technical notes written in one voice this cosine separates topic, not duplication: the p99 of pairs
+  // where BOTH sides are merely long is already 0.774. 930 is therefore bounded from below by observation
+  // — above every pair known to be distinct — and cannot be bounded from above, since the store holds no
+  // duplicate to calibrate against. That asymmetry is why MemoryAdd only WARNS on a hit (memoryTools.ts):
+  // too high costs a redundant memory the model can still merge, too low costs a curator overwrite.
+  // Re-measure after changing the embedding model OR after the store grows substantially.
+  memoryDuplicatePerMille: 930,
+  // Recall-side, deliberately left alone: a false positive here only drops a search result. Worth
+  // re-measuring on the same evidence though — 700 is below the 0.774 p99 above, so recall may be
+  // spending its breadth on this check too.
   memoryParaphrasePerMille: 700,
   // 0.10 each, leaving 0.80 for semantic similarity.
   memoryImportanceWeightPerMille: 100,
