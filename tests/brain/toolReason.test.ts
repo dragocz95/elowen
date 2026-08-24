@@ -87,6 +87,35 @@ describe('toolReason.stripReason', () => {
   });
 });
 
+describe('toolReason.extractReason JSON-escaped notes', () => {
+  // Observed live: claude-opus-5 wrote the note as JSON text a second time, so every accented character
+  // reached the spinner as a literal `\u00e1` run while the SAME call's other arguments kept their
+  // diacritics. The note is a display string, so it is decoded where it is read.
+  it('decodes a note whose non-ASCII characters arrived as literal \\uXXXX escapes', () => {
+    expect(extractReason({ _reason: 'Zad\\u00e1v\\u00e1m obnovu konverzac\\u00ed…', id: 'dlg-1' }))
+      .toBe('Zadávám obnovu konverzací…');
+    expect(extractReason({ reason: 'Zad\\u00e1v\\u00e1m…' })).toBe('Zadávám…'); // legacy key decodes too
+  });
+
+  it('rebuilds a surrogate pair instead of two replacement characters, and decodes the other escapes', () => {
+    expect(extractReason({ _reason: 'Nasazuji \\ud83d\\ude80 \\u2026' })).toBe('Nasazuji 🚀 …');
+    expect(extractReason({ _reason: 'P\\u00ed\\u0161u \\"a.ts\\" a b\\\\c\\u2026' })).toBe('Píšu "a.ts" a b\\c…');
+  });
+
+  it('drops a tail the stream has not finished — a half-written escape or a split surrogate pair', () => {
+    expect(extractReason({ _reason: 'Zad\\u00e1v\\u00e1m obnovu\\u00' })).toBe('Zadávám obnovu');
+    expect(extractReason({ _reason: 'Zad\\u00e1v\\u00e1m\\' })).toBe('Zadávám');
+    expect(extractReason({ _reason: 'Nasazuji \\u2026\\ud83d' })).toBe('Nasazuji …');
+  });
+
+  it('leaves a note without a complete escape run exactly as authored', () => {
+    expect(extractReason({ _reason: 'Zadávám obnovu konverzací…' })).toBe('Zadávám obnovu konverzací…');
+    expect(extractReason({ _reason: 'Čtu C:\\temp\\file…' })).toBe('Čtu C:\\temp\\file…'); // no \t → tab
+    // A raw quote cannot close into a string literal; the note stays verbatim rather than being dropped.
+    expect(extractReason({ _reason: 'P\\u00ed\\u0161u "a.ts"…' })).toBe('P\\u00ed\\u0161u "a.ts"…');
+  });
+});
+
 describe('toolReason.extractReason', () => {
   it('returns a non-empty string note, else undefined', () => {
     expect(extractReason({ _reason: 'Čtu konfiguraci', path: 'x' })).toBe('Čtu konfiguraci');

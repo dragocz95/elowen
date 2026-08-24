@@ -67,11 +67,37 @@ export function stripReason(tool: ToolDefinition): ToolDefinition {
   return { ...tool, execute };
 }
 
+/** A complete JSON `\uXXXX` run, and a run cut short by the end of the stream. */
+const UNICODE_ESCAPE = /\\u[0-9a-fA-F]{4}/;
+const TRAILING_PARTIAL_ESCAPE = /(?<!\\)\\(?:u[0-9a-fA-F]{0,3})?$/;
+
+/** Decode a note whose non-ASCII characters arrived written OUT as JSON escapes — `Zad\u00e1v\u00e1m…`
+ *  instead of `Zadávám…`. The provider transports the note fine (the same call's other arguments keep
+ *  their diacritics); the escapes are in the model's own tokens, which write the note as JSON text a
+ *  second time, so the backslash survives the provider's parse and reaches the spinner verbatim.
+ *
+ *  JSON does the decoding: closing the note into a string literal and parsing it gets `\n`, `\"`, `\\`
+ *  and surrogate pairs (emoji) right, which a hand-rolled `\uXXXX` replacer would not. Only a note that
+ *  actually carries a complete escape run is decoded, so a legitimate `C:\temp…` cannot silently gain a
+ *  tab. A note that is still streaming can end mid-run or between the halves of a surrogate pair — both
+ *  tails are dropped for that frame rather than rendered as a stray escape or U+FFFD — and anything that
+ *  still fails to parse (a raw quote in the note) is left exactly as the model authored it. */
+function decodeJsonEscapes(note: string): string {
+  if (!UNICODE_ESCAPE.test(note)) return note;
+  let decoded: unknown;
+  try { decoded = JSON.parse(`"${note.replace(TRAILING_PARTIAL_ESCAPE, '')}"`); }
+  catch { return note; }
+  if (typeof decoded !== 'string') return note;
+  return /[\uD800-\uDBFF]$/.test(decoded) ? decoded.slice(0, -1) : decoded;
+}
+
 /** The model-authored status note on a streaming tool call's partial arguments, when present and non-empty.
  *  Validated as unknown→string at this boundary — partial JSON can hold anything mid-stream. */
 export function extractReason(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const a = args as Record<string, unknown>;
   const r = a[REASON_KEY] ?? a[LEGACY_REASON_KEY];
-  return typeof r === 'string' && r.trim() ? r : undefined;
+  if (typeof r !== 'string') return undefined;
+  const note = decodeJsonEscapes(r);
+  return note.trim() ? note : undefined;
 }
