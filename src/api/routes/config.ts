@@ -28,6 +28,7 @@ import {
 } from '../../brain/toolSearch/deferralPolicy.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import type { RuntimeConfig, ToolLoadingMode } from '../../shared/wireContract.js';
+import { PLATFORM_SURFACES } from '../../shared/platformIdentity.js';
 
 export interface ToolDeferralGroup {
   sourceId: string;
@@ -399,7 +400,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       ...(memoryConfigured ? {} : { hint: 'Optional — enable memory in `elowen setup` or Settings → Brain.' }) });
 
     // platforms — informational: which messaging plugins are enabled.
-    const messaging = ['discord', 'msteams', 'whatsapp', 'telegram'].filter((p) => cfg.plugins.enabled.includes(p));
+    const messaging = PLATFORM_SURFACES.filter((p) => cfg.plugins.enabled.includes(p));
     checks.push({ id: 'platforms', label: 'Platforms', ok: true, detail: messaging.length ? messaging.join(', ') : 'none',
       hint: 'Connect Discord, Microsoft Teams, WhatsApp or Telegram in Settings → Plugins.' });
 

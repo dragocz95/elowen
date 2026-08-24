@@ -14,7 +14,8 @@ import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
 import { UserPromptStore } from '../store/userPromptStore.js';
-import { TeamsIdConflictError, UserSettingStore } from '../store/userSettingStore.js';
+import { PlatformLinkConflictError, UserSettingStore } from '../store/userSettingStore.js';
+import { platformIdentity } from '../shared/platformIdentity.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import { isPluginAllowedForUser } from '../shared/pluginAccess.js';
 import { PromptService } from '../prompts/promptService.js';
@@ -289,41 +290,42 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     allowedProjectIds: new Set(ids),
     allowedPaths: () => ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p),
   });
+  // WHO a platform sender is. Driven entirely by the identity descriptors (src/shared/platformIdentity.ts)
+  // — a platform literal here is precisely the duplication that left Telegram unlinkable while core
+  // supported it end to end. A platform with no descriptor resolves to NOBODY rather than to a guess.
+  //
+  // Order is the trust ladder, and it is the same for every platform: an explicit durable link always
+  // wins, then — only where the descriptor earns a bootstrap — the OAuth binding a sign-in established,
+  // and only when neither exists may an adapter-VERIFIED e-mail bootstrap a unique profile match. That
+  // last match is persisted, so it survives later e-mail changes. A platform without `bootstrap` stops
+  // at the explicit link, so no amount of e-mail evidence can self-link a Discord/WhatsApp/Telegram
+  // sender: those platforms report a sender id and nothing anyone has vouched for.
   const resolvePlatformUser = (platform: string, platformUserId: string, verifiedEmail?: string) => {
     if (!platformUserId) return null;
-    const linkedUser = (id: number | null) => {
-      const u = id != null ? users.get(id) : undefined;
-      return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
-    };
-    // Teams reports `from.aadObjectId || from.id`. An explicit durable link always wins, then the OAuth
-    // binding this subject established by signing in. Only when neither exists may the adapter-verified UPN
-    // bootstrap a unique profile-email match; that final match is persisted against later e-mail changes.
-    if (platform === 'msteams') {
-      const value = platformUserId.trim().toLowerCase();
-      if (!value) return null;
-      const explicit = linkedUser(userSettings.userIdBySetting('msteamsUserId', value));
-      if (explicit) return explicit;
-      const bound = users.externalIdentityBySubject('msteams', value);
-      if (bound) return { id: bound.id, name: bound.name || bound.username, username: bound.username, admin: !!bound.is_admin };
-      const email = verifiedEmail?.trim().toLowerCase() ?? '';
-      if (!email) return null;
-      const matched = users.userByUniqueEmail(email);
-      if (!matched) return null;
-      try { userSettings.setCliSettings(matched.id, { msteamsUserId: value }); }
-      catch (error) {
-        if (error instanceof TeamsIdConflictError) return null;
-        throw error;
-      }
-      return { id: matched.id, name: matched.name || matched.username, username: matched.username, admin: !!matched.is_admin };
-    }
-    let key: 'discordUserId' | 'whatsappNumber' | 'telegramUserId';
-    let value: string;
-    if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
-    else if (platform === 'whatsapp') { key = 'whatsappNumber'; value = platformUserId.replace(/[@:].*$/, '').replace(/[^\d]/g, ''); }
-    else if (platform === 'telegram') { key = 'telegramUserId'; value = platformUserId.replace(/[^\d]/g, ''); }
-    else return null;
+    const descriptor = platformIdentity(platform);
+    if (!descriptor) return null;
+    const value = descriptor.normalize(platformUserId);
     if (!value) return null;
-    return linkedUser(userSettings.userIdBySetting(key, value));
+    const asLinked = (u: { id: number; name: string; username: string; is_admin?: number | boolean } | undefined | null) =>
+      u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
+    const explicitId = userSettings.userIdBySetting(descriptor.linkSettingKey, value);
+    const explicit = asLinked(explicitId != null ? users.get(explicitId) : undefined);
+    if (explicit) return explicit;
+    const bootstrap = descriptor.bootstrap;
+    if (!bootstrap) return null;
+    const bound = asLinked(users.externalIdentityBySubject(bootstrap.externalProvider, value));
+    if (bound) return bound;
+    if (!bootstrap.verifiedEmailUnique) return null;
+    const email = verifiedEmail?.trim().toLowerCase() ?? '';
+    if (!email) return null;
+    const matched = users.userByUniqueEmail(email);
+    if (!matched) return null;
+    try { userSettings.setPlatformLink(matched.id, descriptor.platform, value); }
+    catch (error) {
+      if (error instanceof PlatformLinkConflictError) return null;
+      throw error;
+    }
+    return asLinked(matched);
   };
   // The brain's model runtime: a file-backed credential store (OAuth tokens persist + pi refreshes them
   // in place) plus the built-in model catalog. Elowen's OWN store rather than pi's default AuthStorage:

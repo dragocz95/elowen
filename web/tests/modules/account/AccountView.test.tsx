@@ -60,6 +60,29 @@ describe('AccountView', () => {
     await waitFor(() => expect(patched).toEqual({ discordUserId: '123456789012345678' }));
   });
 
+  // The bug this closes: the daemon supported `telegramUserId` end to end, but Account rendered three
+  // hard-coded link fields and Telegram was not one of them — so nobody could ever link a Telegram
+  // sender and every Telegram turn was dropped for having no account behind it.
+  it('renders a field for every platform link, so a Telegram id can actually be saved', async () => {
+    let patched: Record<string, unknown> | null = null;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '' })),
+      http.patch('*/api/auth/me/cli-settings', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json({}); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    for (const label of ['Discord ID', 'Microsoft Teams identity', 'Telegram ID', 'WhatsApp number']) {
+      expect(await screen.findByRole('textbox', { name: label })).toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByRole('textbox', { name: 'Telegram ID' }), { target: { value: '123456789' } });
+    // Only the edited link goes out — the other three keep following the server.
+    await waitFor(() => expect(patched).toEqual({ telegramUserId: '123456789' }));
+  });
+
   it('shows the user identity, and saves a default worker picked in the manage modal', async () => {
     let patched: Record<string, unknown> | null = null;
     server.use(

@@ -1,9 +1,24 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, MessageSquareText } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal, MessageSquareText, Send } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
-import type { ProfilePatch } from '../../lib/types';
+import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
+
+/** The platform links this form edits, keyed exactly like the daemon's `CliSettings`. */
+type PlatformLinks = Partial<Record<PlatformLinkKey, string>>;
+/** The input shape of each link field. A `Record` over the daemon's link keys, so it is EXHAUSTIVE by
+ *  type: a platform added to the identity descriptors fails this build until it has a field here. The
+ *  keys are spelled out rather than imported because the descriptor module is daemon runtime code and
+ *  this app takes TYPES only from `src/` — the type is what enforces the set, not the spelling. */
+const PLATFORM_LINK_INPUTS: Record<PlatformLinkKey, { placeholder: string; icon: LucideIcon }> = {
+  discordUserId: { placeholder: '123456789012345678', icon: AtSign },
+  msteamsUserId: { placeholder: '00000000-0000-0000-0000-000000000000', icon: MessageSquareText },
+  telegramUserId: { placeholder: '123456789', icon: Send },
+  whatsappNumber: { placeholder: '420778433908', icon: MessageCircle },
+};
+/** Render and save order — the declaration order above, never a second list to keep in step. */
+const PLATFORM_LINK_ORDER = Object.keys(PLATFORM_LINK_INPUTS) as PlatformLinkKey[];
 import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
@@ -156,10 +171,10 @@ export function AccountView() {
   const [elowenSel, setElowenSel] = useState('');
   const [elowenSeeded, setElowenSeeded] = useState(false);
   // Platform account links live in cliSettings; Teams is normally filled automatically from verified UPN.
-  const [discordUserId, setDiscordUserId] = useState('');
-  const [whatsappNumber, setWhatsappNumber] = useState('');
-  const [msteamsUserId, setMsteamsUserId] = useState('');
-  const [linksBase, setLinksBase] = useState<{ discordUserId: string; whatsappNumber: string; msteamsUserId: string } | null>(null);
+  // Held as ONE map keyed by the daemon's platform-link keys rather than a state hook per platform, so
+  // a platform added to the identity descriptors gets its field here instead of being silently missing.
+  const [links, setLinks] = useState<PlatformLinks>({});
+  const [linksBase, setLinksBase] = useState<PlatformLinks | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -225,27 +240,21 @@ export function AccountView() {
   useEffect(() => {
     if (cli.data && !elowenSeeded) {
       setElowenSel(cli.data.model ? `${cli.data.modelProvider ?? ''}::${cli.data.model}` : '');
-      const links = {
-        discordUserId: cli.data.discordUserId ?? '',
-        whatsappNumber: cli.data.whatsappNumber ?? '',
-        msteamsUserId: cli.data.msteamsUserId ?? '',
-      };
-      setDiscordUserId(links.discordUserId);
-      setWhatsappNumber(links.whatsappNumber);
-      setMsteamsUserId(links.msteamsUserId);
-      setLinksBase(links);
+      const seeded = Object.fromEntries(PLATFORM_LINK_ORDER.map((key) => [key, cli.data?.[key] ?? ''])) as PlatformLinks;
+      setLinks(seeded);
+      setLinksBase(seeded);
       setElowenSeeded(true);
     }
   }, [cli.data, elowenSeeded]);
   // Autosave only links changed in this form. In particular, a Teams TOFU link may appear server-side
   // while this page is open; saving an unrelated Discord field must not send the stale empty Teams value.
-  const linksPatch: { discordUserId?: string; whatsappNumber?: string; msteamsUserId?: string } = {};
+  const linksPatch: PlatformLinks = {};
   if (linksBase) {
-    if (discordUserId !== linksBase.discordUserId) linksPatch.discordUserId = discordUserId;
-    if (whatsappNumber !== linksBase.whatsappNumber) linksPatch.whatsappNumber = whatsappNumber;
-    if (msteamsUserId !== linksBase.msteamsUserId) linksPatch.msteamsUserId = msteamsUserId;
+    for (const key of PLATFORM_LINK_ORDER) {
+      if (links[key] !== linksBase[key]) linksPatch[key] = links[key] ?? '';
+    }
   }
-  const linksSave = useAutoSaveStatus([discordUserId, whatsappNumber, msteamsUserId], async () => {
+  const linksSave = useAutoSaveStatus([links], async () => {
     try {
       await saveLinks.mutateAsync(linksPatch);
       setLinksBase((current) => current ? { ...current, ...linksPatch } : current);
@@ -479,22 +488,30 @@ export function AccountView() {
             />
           </SpatialRow>
         );
-        // Platform account links map authenticated sender identities to this Elowen account.
-        const rowDiscord = (
-          <SpatialRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
-            <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="font-mono sm:w-72" aria-label={t.account.discordId} />
-          </SpatialRow>
-        );
-        const rowWhatsapp = (
-          <SpatialRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
-            <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="font-mono sm:w-72" aria-label={t.account.whatsappNumber} />
-          </SpatialRow>
-        );
-        const rowMsteams = (
-          <SpatialRow title={t.account.msteamsIdentity} icon={MessageSquareText} description={t.help.accountMsteamsIdentity}>
-            <Input value={msteamsUserId} onChange={(e) => setMsteamsUserId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className="font-mono sm:w-72" aria-label={t.account.msteamsIdentity} />
-          </SpatialRow>
-        );
+        // Platform account links map authenticated sender identities to this Elowen account. Presentation
+        // is a Record over the daemon's link keys, so it is EXHAUSTIVE by type: a platform added to the
+        // identity descriptors fails this build until it has a label, a help text and a field here.
+        const linkCopy: Record<PlatformLinkKey, { title: string; description: string }> = {
+          discordUserId: { title: t.account.discordId, description: t.help.accountDiscordId },
+          msteamsUserId: { title: t.account.msteamsIdentity, description: t.help.accountMsteamsIdentity },
+          telegramUserId: { title: t.account.telegramId, description: t.help.accountTelegramId },
+          whatsappNumber: { title: t.account.whatsappNumber, description: t.help.accountWhatsappNumber },
+        };
+        const linkRows = PLATFORM_LINK_ORDER.map((key) => {
+          const { title, description } = linkCopy[key];
+          const { placeholder, icon } = PLATFORM_LINK_INPUTS[key];
+          return (
+            <SpatialRow key={key} title={title} icon={icon} description={description}>
+              <Input
+                value={links[key] ?? ''}
+                onChange={(e) => setLinks((current) => ({ ...current, [key]: e.target.value }))}
+                placeholder={placeholder}
+                className="font-mono sm:w-72"
+                aria-label={title}
+              />
+            </SpatialRow>
+          );
+        });
         return (
           <div className="flex min-w-0 flex-col gap-6">
             <SpatialIdentity actions={(
@@ -516,7 +533,7 @@ export function AccountView() {
             </SpatialIdentity>
 
             <SpatialGroup>
-              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{rowDiscord}{rowWhatsapp}{rowMsteams}
+              {rowWorker}{rowElowen}{rowName}{rowEmail}{rowUiScale}{rowEffects}{linkRows}
             </SpatialGroup>
           </div>
         );

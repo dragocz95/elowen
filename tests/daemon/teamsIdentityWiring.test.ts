@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildBrainCore } from '../../src/daemon/brainCore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
-import { TeamsIdConflictError } from '../../src/store/userSettingStore.js';
+import { PlatformLinkConflictError } from '../../src/store/userSettingStore.js';
 
 interface LinkedUser { id: number; name: string; username?: string; admin: boolean }
 type ResolvePlatformUser = (platform: string, platformUserId: string, verifiedEmail?: string) => LinkedUser | null;
@@ -105,13 +105,62 @@ describe('buildBrainCore Microsoft Teams identity resolution', () => {
     const { core, owner, resolve } = await setup();
     try {
       core.users.setProfile(owner.id, { email: 'owner@example.com' });
-      const original = core.userSettings.setCliSettings.bind(core.userSettings);
-      core.userSettings.setCliSettings = ((userId, patch) => {
-        if (patch.msteamsUserId) throw new TeamsIdConflictError(patch.msteamsUserId);
-        original(userId, patch);
-      }) as typeof core.userSettings.setCliSettings;
+      core.userSettings.setPlatformLink = ((_userId: number, platform: string, value: string) => {
+        throw new PlatformLinkConflictError(platform, 'msteamsUserId', value, 'conflict');
+      }) as typeof core.userSettings.setPlatformLink;
       expect(resolve('msteams', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'owner@example.com')).toBeNull();
       expect(core.userSettings.cliSettings(owner.id).msteamsUserId).toBe('');
+    } finally { core.db.close(); }
+  });
+});
+
+describe('buildBrainCore descriptor-driven platform identity', () => {
+  // The bug this phase closes: Telegram was supported end to end in the daemon but had no account-view
+  // field, so no Telegram sender could ever be linked and every Telegram turn was dropped unattributed
+  // (platforms.ts refuses a human platform sender with no account). A linked sender must RESOLVE.
+  it('resolves a linked Telegram sender through the same path as every other platform', async () => {
+    const { core, bob, resolve } = await setup();
+    try {
+      core.userSettings.setCliSettings(bob.id, { telegramUserId: '123456789' });
+      expect(resolve('telegram', '123456789')).toMatchObject({ id: bob.id });
+      // The adapter may report the id with decoration; the descriptor's normalize is what makes the
+      // sender and the stored link the same string.
+      expect(resolve('telegram', ' 123456789 ')).toMatchObject({ id: bob.id });
+      expect(resolve('telegram', '987654321')).toBeNull();
+    } finally { core.db.close(); }
+  });
+
+  it('carries a WhatsApp JID onto the stored number', async () => {
+    const { core, bob, resolve } = await setup();
+    try {
+      core.userSettings.setCliSettings(bob.id, { whatsappNumber: '+420 778 433 908' });
+      expect(resolve('whatsapp', '420778433908@s.whatsapp.net')).toMatchObject({ id: bob.id });
+      expect(resolve('whatsapp', '420778433908:12@s.whatsapp.net')).toMatchObject({ id: bob.id });
+    } finally { core.db.close(); }
+  });
+
+  // Only a platform whose descriptor EARNS a bootstrap may self-link. Discord/Telegram/WhatsApp report a
+  // sender id and no third-party evidence, so verified-looking e-mail must not bind them to an account.
+  it('never self-links a platform without a bootstrap, however good the e-mail evidence looks', async () => {
+    const { core, owner, resolve } = await setup();
+    try {
+      core.users.setProfile(owner.id, { email: 'owner@example.com' });
+      for (const platform of ['discord', 'telegram', 'whatsapp']) {
+        expect(resolve(platform, '123456789012345', 'owner@example.com')).toBeNull();
+      }
+      expect(core.userSettings.cliSettings(owner.id).discordUserId).toBe('');
+      expect(core.userSettings.cliSettings(owner.id).telegramUserId).toBe('');
+    } finally { core.db.close(); }
+  });
+
+  // A platform with no identity descriptor resolves to NOBODY. Anything else would let an unknown
+  // adapter name pick up whichever account happened to hold a matching value under another key.
+  it('resolves an unknown platform to nobody', async () => {
+    const { core, bob, resolve } = await setup();
+    try {
+      core.userSettings.setCliSettings(bob.id, { telegramUserId: '123456789' });
+      expect(resolve('signal', '123456789')).toBeNull();
+      expect(resolve('', '123456789')).toBeNull();
     } finally { core.db.close(); }
   });
 });

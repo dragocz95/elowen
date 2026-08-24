@@ -4,11 +4,14 @@ import { sanitizeTerminalSettings, mergeTerminalSettings, type TerminalSettings 
 import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAction, type PermissionScope, type PermissionSettings } from '../brain/toolPermissions.js';
 import { sanitizeNavSettings, mergeNavSettings, type NavSettings } from './navSettings.js';
 import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
+import { PLATFORM_IDENTITIES, platformIdentity, type PlatformIdentityDescriptor, type PlatformLinkKey } from '../shared/platformIdentity.js';
 
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
- *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; msteamsUserId: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean }
+ *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph).
+ *  The platform link fields are DERIVED from the identity descriptors, so a new platform gets its
+ *  setting field, its validation and its account-view input from one declaration. */
+export interface CliSettings extends Record<PlatformLinkKey, string> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; personalityBody: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoLiveRecall default to true so upgrading users keep the prior always-on memory behaviour.
 // autoCompact is on because the alternative is a conversation that dies at the context limit instead of
@@ -18,46 +21,27 @@ export interface ProjectModelPreference { provider: string; model: string }
 // by REMOVING the key, so a non-empty default would make that choice unreachable — and the account UI
 // resets the level to empty whenever the active model does not offer it, which would then loop against a
 // default that model cannot honour. The level belongs per model, not in the fallback.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false };
+const emptyLinks = Object.fromEntries(PLATFORM_IDENTITIES.map((d) => [d.linkSettingKey, ''])) as Record<PlatformLinkKey, string>;
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', ...emptyLinks, autoRecall: true, autoLiveRecall: true, autoSave: false };
 
-/** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
- *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
-export class DiscordIdConflictError extends Error {
-  constructor(public readonly discordUserId: string) {
-    super(`discord id ${discordUserId} is already linked to another user`);
-    this.name = 'DiscordIdConflictError';
+/** The defaults a caller with no settings store falls back to. Exported so nobody has to re-list the
+ *  fields — a hand-written copy is exactly how `telegramUserId` went missing from the account view. */
+export function cliSettingsDefaults(): CliSettings {
+  return { ...CLI_DEFAULTS, autoCompactAtByModel: {} };
+}
+
+/** Raised when a user tries to link a platform identity another user has already claimed. ONE class for
+ *  every platform, carrying the descriptor's key and its user-facing message, so the route answers 409
+ *  without a per-platform branch. The identity link stays with the original owner. */
+export class PlatformLinkConflictError extends Error {
+  constructor(public readonly platform: string, public readonly linkSettingKey: string, public readonly value: string, public readonly userMessage: string) {
+    super(`${platform} identity ${value} is already linked to another user`);
+    this.name = 'PlatformLinkConflictError';
   }
 }
 
-/** Raised when a user tries to link a WhatsApp number another user has already claimed. Mirrors
- *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
-export class WhatsAppNumberConflictError extends Error {
-  constructor(public readonly whatsappNumber: string) {
-    super(`whatsapp number ${whatsappNumber} is already linked to another user`);
-    this.name = 'WhatsAppNumberConflictError';
-  }
-}
-
-/** Raised when a user tries to link a Telegram numeric user id another user has already claimed. Mirrors
- *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
-export class TelegramIdConflictError extends Error {
-  constructor(public readonly telegramUserId: string) {
-    super(`telegram id ${telegramUserId} is already linked to another user`);
-    this.name = 'TelegramIdConflictError';
-  }
-}
-
-/** Raised when a user tries to link a Microsoft Teams identity another user has already claimed. Mirrors
- *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
-export class TeamsIdConflictError extends Error {
-  constructor(public readonly msteamsUserId: string) {
-    super(`teams id ${msteamsUserId} is already linked to another user`);
-    this.name = 'TeamsIdConflictError';
-  }
-}
-
-/** True for a better-sqlite3 UNIQUE-constraint violation — here, the partial index that keeps a Discord
- *  snowflake owned by a single user. Lets the store reject a squatter without a check-then-act race. */
+/** True for a better-sqlite3 UNIQUE-constraint violation — here, the partial index that keeps a platform
+ *  identity owned by a single user. Lets the store reject a squatter without a check-then-act race. */
 function isUniqueViolation(err: unknown): boolean {
   return !!err && typeof err === 'object' && 'code' in err
     && (err as { code?: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE';
@@ -150,10 +134,7 @@ export class UserSettingStore {
       autoCompactAtByModel: autoCompactThresholds(all.autoCompactAtByModel ?? null),
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       personalityBody: all.personalityBody ?? CLI_DEFAULTS.personalityBody,
-      discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
-      whatsappNumber: all.whatsappNumber ?? CLI_DEFAULTS.whatsappNumber,
-      telegramUserId: all.telegramUserId ?? CLI_DEFAULTS.telegramUserId,
-      msteamsUserId: all.msteamsUserId ?? CLI_DEFAULTS.msteamsUserId,
+      ...(Object.fromEntries(PLATFORM_IDENTITIES.map((d) => [d.linkSettingKey, all[d.linkSettingKey] ?? ''])) as Record<PlatformLinkKey, string>),
       autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
       autoLiveRecall: all.autoLiveRecall !== undefined ? all.autoLiveRecall === 'true' : CLI_DEFAULTS.autoLiveRecall,
       autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
@@ -161,8 +142,8 @@ export class UserSettingStore {
   }
 
   /** Apply a partial CLI-settings patch (only the provided fields are written). Runs in a transaction so
-   *  a rejected Discord link (see below) rolls the whole patch back instead of leaving a partial write.
-   *  Throws {@link DiscordIdConflictError} when the requested Discord snowflake is already linked to a
+   *  a rejected platform link (see below) rolls the whole patch back instead of leaving a partial write.
+   *  Throws {@link PlatformLinkConflictError} when a requested platform identity is already linked to a
    *  DIFFERENT user — enforced atomically by the partial UNIQUE index, so there is no check-then-act race. */
   setCliSettings(userId: number, patch: Partial<CliSettings>): void {
     this.db.transaction(() => {
@@ -189,67 +170,37 @@ export class UserSettingStore {
       // Global agent instructions. The persisted key stays `personalityBody` for downgrade compatibility;
       // the API exposes the semantic `userInstructions` name. Empty is a valid clear operation.
       if (patch.personalityBody !== undefined) this.set(userId, 'personalityBody', patch.personalityBody);
-      // A Discord snowflake is digits-only; anything else (or empty) clears the link. A snowflake already
-      // claimed by ANOTHER user is refused — otherwise a squatter could claim the operator's id and have
-      // that account's Discord messages (and its memory namespace / admin flag) attributed to themselves.
-      // The partial UNIQUE index on (value WHERE key='discordUserId') rejects the write; we surface that
-      // as a typed conflict so the route can answer 409. Re-setting one's OWN id stays idempotent.
-      if (patch.discordUserId !== undefined) {
-        const v = String(patch.discordUserId).trim();
-        if (!/^\d{5,25}$/.test(v)) this.remove(userId, 'discordUserId');
-        else {
-          try { this.set(userId, 'discordUserId', v); }
-          catch (e) {
-            if (isUniqueViolation(e)) throw new DiscordIdConflictError(v);
-            throw e;
-          }
-        }
-      }
-      // A WhatsApp number links a phone (digits only, international form without +) to this account, same
-      // squatter protection as Discord via a partial UNIQUE index on (value WHERE key='whatsappNumber').
-      if (patch.whatsappNumber !== undefined) {
-        const v = String(patch.whatsappNumber).replace(/[^\d]/g, '');
-        if (!/^\d{6,15}$/.test(v)) this.remove(userId, 'whatsappNumber');
-        else {
-          try { this.set(userId, 'whatsappNumber', v); }
-          catch (e) {
-            if (isUniqueViolation(e)) throw new WhatsAppNumberConflictError(v);
-            throw e;
-          }
-        }
-      }
-      // A Telegram numeric user id links a Telegram account to this Elowen account, same squatter
-      // protection as Discord via a partial UNIQUE index on (value WHERE key='telegramUserId').
-      if (patch.telegramUserId !== undefined) {
-        const v = String(patch.telegramUserId).trim();
-        if (!/^\d{5,25}$/.test(v)) this.remove(userId, 'telegramUserId');
-        else {
-          try { this.set(userId, 'telegramUserId', v); }
-          catch (e) {
-            if (isUniqueViolation(e)) throw new TelegramIdConflictError(v);
-            throw e;
-          }
-        }
-      }
-      // A Microsoft Teams identity links a Teams sender to this Elowen account. The adapter reports
-      // `from.aadObjectId || from.id`, so BOTH shapes are accepted: an Entra object id (GUID) and a
-      // Teams user id (`29:…`). Stored lower-cased because Entra returns a GUID in either case and the
-      // partial UNIQUE index compares bytes — otherwise the same person could claim two rows. Same
-      // squatter protection as Discord.
-      if (patch.msteamsUserId !== undefined) {
-        const v = String(patch.msteamsUserId).trim().toLowerCase();
-        const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
-        const teamsId = /^29:[\w-]{10,250}$/.test(v);
-        if (!guid && !teamsId) this.remove(userId, 'msteamsUserId');
-        else {
-          try { this.set(userId, 'msteamsUserId', v); }
-          catch (e) {
-            if (isUniqueViolation(e)) throw new TeamsIdConflictError(v);
-            throw e;
-          }
-        }
+      // Platform links, one loop over the identity descriptors. A value that does not normalise into a
+      // plausible identity (including empty) clears the link.
+      for (const descriptor of PLATFORM_IDENTITIES) {
+        const raw = patch[descriptor.linkSettingKey];
+        if (raw !== undefined) this.writePlatformLink(userId, descriptor, raw);
       }
     })();
+  }
+
+  /** Persist ONE platform link. An identity already claimed by ANOTHER user is refused — otherwise a
+   *  squatter could claim the operator's id and have that account's messages (and its memory namespace
+   *  and admin flag) attributed to themselves. The descriptor's partial UNIQUE index rejects the write
+   *  atomically, so there is no check-then-act race; we surface it as a typed conflict the route can
+   *  answer 409 to. Re-setting one's OWN id stays idempotent. */
+  private writePlatformLink(userId: number, descriptor: PlatformIdentityDescriptor, raw: string): void {
+    const value = descriptor.normalize(String(raw));
+    if (!descriptor.validate(value)) { this.remove(userId, descriptor.linkSettingKey); return; }
+    try { this.set(userId, descriptor.linkSettingKey, value); }
+    catch (e) {
+      if (isUniqueViolation(e)) throw new PlatformLinkConflictError(descriptor.platform, descriptor.linkSettingKey, value, descriptor.conflictMessage);
+      throw e;
+    }
+  }
+
+  /** Link a platform sender id to an account, by platform rather than by setting field — what the
+   *  inbound identity resolver needs when it bootstraps a link it has just established. Unknown
+   *  platforms are a no-op: an identity model we do not have cannot be persisted into one we do. */
+  setPlatformLink(userId: number, platform: string, rawValue: string): void {
+    const descriptor = platformIdentity(platform);
+    if (!descriptor) return;
+    this.db.transaction(() => { this.writePlatformLink(userId, descriptor, rawValue); })();
   }
 
   /** A user's explicitly selected provider/model for one canonical Git project root. The JSON map is

@@ -299,10 +299,10 @@ describe('slash command registry', () => {
         'new:action:*',
         'clear:action:cli,web',
         'stop:action:*',
-        'status:info:discord,whatsapp,telegram,msteams',
+        'status:info:discord,msteams,telegram,whatsapp',
         'compact:action:*',
-        'context:picker:discord,whatsapp,telegram,msteams',
-        'fast:action:cli,discord,whatsapp,telegram,msteams,web',
+        'context:picker:discord,msteams,telegram,whatsapp',
+        'fast:action:cli,web,discord,msteams,telegram,whatsapp',
         'restart:action:*',
       ]);
       for (const c of SLASH_COMMANDS) {

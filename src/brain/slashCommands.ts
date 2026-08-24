@@ -7,6 +7,7 @@ import { createSyntheticSourceInfo, type PromptTemplate } from '@earendil-works/
 // SlashCommandDef/SlashSurface live in the shared wire contract so the web dock's menu can't drift from
 // this canonical list. Re-exported here for the daemon/CLI importers that expect them.
 import type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface } from '../shared/wireContract.js';
+import { PLATFORM_SURFACES } from '../shared/platformIdentity.js';
 
 export type { SlashArgument, SlashCommandDef, SlashExecution, SlashSurface };
 
@@ -41,7 +42,7 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `session-control` even though it only READS: the answer is `PlatformControlApi.status(ref)` over the
   // channel's live session, which is exactly why POST /brain/command (actions only) cannot serve it and
   // why this survived the CLI/web removal — the mechanism, not the catalog, kept it alive.
-  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', execution: 'session-control', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
+  { name: 'status', description: 'Session info — model, context and usage', kind: 'info', execution: 'session-control', surfaces: [...PLATFORM_SURFACES] },
   // The ONE session-info command on the CLI and the web dock: conversation usage, per-model totals and the
   // context breakdown, plus the session rows (model, reasoning, mode, project, goal) `/status` used to own.
   { name: 'stats', description: 'Usage stats — this conversation and per-model totals', kind: 'info', execution: 'surface-local', surfaces: ['cli', 'web'] },
@@ -87,10 +88,10 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // own name; keeping it off `web` is also what keeps this name resolving once per surface.
   // `picker` (rendering) + `session-control` (execution): the chooser is drawn per surface, but listing and
   // binding are daemon operations on the CHANNEL session (PlatformControlApi.listContext/bindContext).
-  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', execution: 'session-control', surfaces: ['discord', 'whatsapp', 'telegram', 'msteams'] },
+  { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', execution: 'session-control', surfaces: [...PLATFORM_SURFACES] },
   // `on`/`off` is the value set every surface honours (the CLI's extra local `status` read is CLI chrome,
   // not part of the contract). Bare `/fast` toggles.
-  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off'] }, surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'msteams', 'web'] },
+  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off'] }, surfaces: ['cli', 'web', ...PLATFORM_SURFACES] },
   // Every surface wires its own picker: the CLI TUI's overlay, a native /reasoning command on Discord,
   // WhatsApp, Telegram and Teams, and the web dock's ReasoningModal. The CLI/web-only `show` behaviour is
   // not a cross-surface argument, and effort levels come from the active model, so no portable enum exists.

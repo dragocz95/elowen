@@ -1,0 +1,125 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { PLATFORM_IDENTITIES, PLATFORM_SURFACES, PLATFORM_LINK_KEYS, platformIdentity } from '../../src/shared/platformIdentity.js';
+import { ACTIVITY_SURFACES } from '../../src/api/sse.js';
+import { SLASH_COMMANDS } from '../../src/brain/slashCommands.js';
+
+const SRC = fileURLToPath(new URL('../../src', import.meta.url));
+const DESCRIPTOR_MODULE = join(SRC, 'shared', 'platformIdentity.ts');
+
+function tsFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) return tsFiles(path);
+    return path.endsWith('.ts') ? [path] : [];
+  });
+}
+
+/** Every quoted occurrence of `needle` — the shape a re-listed platform literal actually takes. */
+function quotedLiterals(source: string, needle: string): RegExpMatchArray[] {
+  return [...source.matchAll(new RegExp(`['"\`]${needle}['"\`]`, 'g'))];
+}
+
+/** Prose naming a platform is fine; CODE re-listing one is what drifts. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+describe('platform identity is data, not literals', () => {
+  // The whole point of the descriptor set: a file that CONSUMES it must not also re-list what it
+  // consumes. The file set is DERIVED from the import graph rather than written out here, so a new
+  // consumer is covered the moment it imports, and this cannot pass by having stopped covering anything.
+  it('no consumer of the descriptors re-lists a platform or a link key', () => {
+    const consumers = tsFiles(SRC)
+      .filter((path) => path !== DESCRIPTOR_MODULE)
+      .map((path) => ({ path, code: withoutComments(readFileSync(path, 'utf8')) }))
+      .filter(({ code }) => code.includes('shared/platformIdentity.js'));
+    expect(consumers.length).toBeGreaterThanOrEqual(6);
+    const offenders = consumers.flatMap(({ path, code }) => {
+      // An identity KEY is unambiguous: naming one is always re-listing an identity model. A platform
+      // ID is not — `db.ts` legitimately lists the plugins that carry a `visionModel` config, which is
+      // a different set that happens to be spelled with the same words. So the platform half of the
+      // rule applies to the files that took the generated surface list, which are exactly the files
+      // that used to spell the union out by hand.
+      const needles = code.includes('PLATFORM_SURFACES') ? [...PLATFORM_SURFACES, ...PLATFORM_LINK_KEYS] : [...PLATFORM_LINK_KEYS];
+      return needles.flatMap((needle) => quotedLiterals(code, needle).map(() => `${path.slice(SRC.length + 1)}: '${needle}'`));
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  // `resolvePlatformUser` decides WHO a sender is; a platform literal in it is the exact shape of the
+  // defect this phase removes (Telegram supported in three files and absent from a fourth).
+  it('resolvePlatformUser contains no platform literal at all', () => {
+    const source = readFileSync(join(SRC, 'daemon', 'brainCore.ts'), 'utf8');
+    const start = source.indexOf('const resolvePlatformUser =');
+    expect(start).toBeGreaterThan(-1);
+    const end = source.indexOf('\n  };', start);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    // It must actually go through the descriptor lookup, not merely avoid the words.
+    expect(body).toContain('platformIdentity(platform)');
+    for (const needle of [...PLATFORM_SURFACES, ...PLATFORM_LINK_KEYS]) {
+      expect(quotedLiterals(body, needle), `resolvePlatformUser mentions '${needle}'`).toEqual([]);
+    }
+  });
+
+  // The surface unions must be GENERATED from the descriptor set. Spreading is what makes the next
+  // platform reach the activity feed and every slash-command surface without a second edit.
+  it('the surface unions spread the descriptor set instead of re-listing it', () => {
+    const sse = readFileSync(join(SRC, 'api', 'sse.ts'), 'utf8');
+    expect(sse).toMatch(/ACTIVITY_SURFACES = \[[^\]]*\.\.\.PLATFORM_SURFACES/);
+    const wire = readFileSync(join(SRC, 'shared', 'wireContract.ts'), 'utf8');
+    expect(wire).toMatch(/type SlashSurface = [^;]*PlatformSurface/);
+    // `wireContract.ts` must import nothing (tests/contract/wireContractIsolation.test.ts), so the
+    // platform union is DECLARED there and the descriptors are typed against it. That makes a platform
+    // with no union member a compile error — but a union member with no descriptor would be a platform
+    // nobody can link, which is the original defect. Pin the two together by reading the union back.
+    const union = wire.match(/export type PlatformSurface = ([^;]+);/)?.[1];
+    expect(union, 'wireContract no longer declares PlatformSurface').toBeTruthy();
+    const declared = [...(union ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect([...declared].sort()).toEqual([...PLATFORM_SURFACES].sort());
+    // …and the generated values really do carry every platform.
+    for (const platform of PLATFORM_SURFACES) {
+      expect(ACTIVITY_SURFACES as readonly string[]).toContain(platform);
+    }
+    // A platform-facing slash command reaches every platform, never a subset somebody typed out.
+    const status = SLASH_COMMANDS.find((c) => c.name === 'status');
+    expect(status?.surfaces).toEqual([...PLATFORM_SURFACES]);
+  });
+
+  // The partial UNIQUE indexes are the backstop against two accounts claiming one identity. They are
+  // created per descriptor, under the names live databases already carry, so no data migration is owed.
+  it('creates one partial unique index per descriptor, under its pinned name', () => {
+    const db = readFileSync(join(SRC, 'store', 'db.ts'), 'utf8');
+    expect(db).toMatch(/for \(const d of PLATFORM_IDENTITIES\)/);
+    const schema = readFileSync(join(SRC, 'store', 'schema.sql'), 'utf8');
+    for (const d of PLATFORM_IDENTITIES) {
+      // The declarative baseline a fresh database is built from must agree with the descriptors, or a
+      // new install would silently be the one instance where squatting is possible.
+      expect(schema, `schema.sql is missing ${d.indexName}`).toContain(`CREATE UNIQUE INDEX IF NOT EXISTS ${d.indexName} ON user_settings(value) WHERE key = '${d.linkSettingKey}'`);
+    }
+  });
+
+  // Bootstrap is an authentication-grade claim: a platform may bind a sender with NO pre-existing link.
+  // Only Microsoft Teams earns it, because only the Bot Framework hands the daemon an e-mail it has
+  // itself validated. Everything else must be linked explicitly by the account holder.
+  it('only a platform that authenticates its sender carries a bootstrap', () => {
+    expect(PLATFORM_IDENTITIES.filter((d) => d.bootstrap).map((d) => d.platform)).toEqual(['msteams']);
+    expect(platformIdentity('msteams')?.bootstrap).toEqual({ verifiedEmailUnique: true, externalProvider: 'msteams' });
+  });
+
+  // Normalisation runs on BOTH the value a user types and the id an adapter reports, so it has to be
+  // idempotent — otherwise a link stored from the account view would not match the same person's turns.
+  it('every descriptor normalises idempotently and refuses an empty identity', () => {
+    const samples = ['', '   ', '123456789012345678', ' 123 456 789 ', '420778433908@s.whatsapp.net', 'AAAA-bbbb', '29:abcdefghijklmnop'];
+    for (const d of PLATFORM_IDENTITIES) {
+      for (const sample of samples) {
+        const once = d.normalize(sample);
+        expect(d.normalize(once), `${d.platform} normalize is not idempotent for '${sample}'`).toBe(once);
+      }
+      expect(d.validate(''), `${d.platform} accepts an empty identity`).toBe(false);
+    }
+  });
+});

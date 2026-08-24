@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Db } from './dbTypes.js';
 import { renameDocsTool, renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
 import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
+import { PLATFORM_IDENTITIES } from '../shared/platformIdentity.js';
 import { installBrainUsageRollup } from './brainUsageRollup.js';
 
 export type { Db } from './dbTypes.js';
@@ -311,12 +312,13 @@ function applyAdditiveMigrations(db: Db): void {
             error_message = COALESCE(error_message, 'Provider request interrupted by daemon restart')
       WHERE status = 'pending'`
   );
-  // A linked Discord snowflake is an identity key — enforce one-owner-per-id with a partial UNIQUE index
-  // so a squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs.
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId'");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_whatsapp_number ON user_settings(value) WHERE key = 'whatsappNumber'");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_telegram_id ON user_settings(value) WHERE key = 'telegramUserId'");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_msteams_id ON user_settings(value) WHERE key = 'msteamsUserId'");
+  // A linked platform id is an identity key — enforce one-owner-per-id with a partial UNIQUE index so a
+  // squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs, and
+  // derived per identity descriptor: the index NAME and the key are pinned in the descriptor, so this
+  // recreates exactly the indexes live databases already carry and needs no data migration.
+  for (const d of PLATFORM_IDENTITIES) {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${d.indexName} ON user_settings(value) WHERE key = '${d.linkSettingKey}'`);
+  }
   ensureUniqueUserEmailIndex(db);
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");

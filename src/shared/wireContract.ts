@@ -120,9 +120,17 @@ export type BrainWorkMode = 'build' | 'plan' | 'workflow';
  *  it is absent only for a call PI minted no id for, where the plan text is the key instead. */
 export interface BrainPendingPlan { id?: string; plan: string }
 
+/** A chat platform a sender can write from. THE definition of the platform set, spelled out here only
+ *  because this file must import nothing (see tests/contract/wireContractIsolation.test.ts) — every
+ *  identity descriptor is typed against it, so a platform that is not listed here cannot have one, and
+ *  tests/contract/platformIdentityContract.test.ts fails if the descriptor set and this union diverge. */
+export type PlatformSurface = 'discord' | 'msteams' | 'telegram' | 'whatsapp';
+
 /** Which chat surface exposes a slash command. Part of the wire contract because `GET /brain/commands`
- *  serves the filtered list to every surface (CLI, web dock, platform bots). */
-export type SlashSurface = 'cli' | 'discord' | 'whatsapp' | 'telegram' | 'msteams' | 'web';
+ *  serves the filtered list to every surface (CLI, web dock, platform bots). The platform half follows
+ *  the platform set, so the next platform reaches every slash-command surface from one declaration; the
+ *  CLI and the web dock are named separately because neither has a platform identity. */
+export type SlashSurface = 'cli' | 'web' | PlatformSurface;
 
 /** How a surface handles a command once picked: `action` (server effect), `info` (fetch+render),
  *  `picker` (surface-local chooser), `mode` (local work-mode switch), `prompt` (plugin prompt macro). */

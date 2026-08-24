@@ -108,6 +108,8 @@ import type {
   BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
   CommitFileChange, CommitLogEntry,
 } from '../../src/shared/wireContract.js';
+import type { PlatformLinkKey } from '../../src/shared/platformIdentity.js';
+export type { PlatformLinkKey };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
 export type { ToolOutputView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, RuntimeLimits, BrainUsage, CommitFileChange, CommitLogEntry };
 export type {
@@ -255,8 +257,12 @@ export interface UserPatch { is_admin?: boolean; name?: string; username?: strin
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
 /** Per-user CLI/brain settings surfaced in Account. `model` empty → the configured brain default.
- *  `userInstructions` is the semantic field; `personalityBody` is a temporary legacy-client alias. */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; discordUserId: string; whatsappNumber: string; telegramUserId?: string; msteamsUserId?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
+ *  `userInstructions` is the semantic field; `personalityBody` is a temporary legacy-client alias.
+ *  The platform link fields follow the daemon's identity descriptors (type-only, so nothing of that
+ *  module reaches the bundle): a platform added there is a compile error here until Account renders it,
+ *  which is precisely how Telegram stayed unlinkable while the daemon supported it. Optional because an
+ *  older daemon omits a key the current web knows about. */
+export interface CliSettings extends Partial<Record<PlatformLinkKey, string>> { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; compactModel: string; compactModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; autoCompactAtByModel: Record<string, number>; advisorStyle: string; userInstructions?: string; personalityBody?: string; autoRecall: boolean; autoLiveRecall: boolean; autoSave: boolean; serverDefault?: string }
 
 /** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
  *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,

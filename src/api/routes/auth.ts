@@ -12,9 +12,10 @@ import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { toolPermitted } from '../../plugins/policyContext.js';
-import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
+import { ADVISOR_STYLES } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
-import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError, TeamsIdConflictError } from '../../store/userSettingStore.js';
+import { PlatformLinkConflictError, cliSettingsDefaults } from '../../store/userSettingStore.js';
+import { PLATFORM_IDENTITIES, type PlatformLinkKey } from '../../shared/platformIdentity.js';
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
 import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import { sanitizeNavSettings } from '../../store/navSettings.js';
@@ -129,7 +130,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, autoCompactAtByModel: {}, advisorStyle: DEFAULT_ADVISOR_STYLE, personalityBody: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: true };
+    const s = d.userSettings?.cliSettings(u.id) ?? { ...cliSettingsDefaults(), autoCompact: false, autoSave: true };
     return c.json({ ...s, userInstructions: s.personalityBody, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
@@ -153,10 +154,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoLiveRecall === 'boolean') patch.autoLiveRecall = b.autoLiveRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
-    if (typeof b.discordUserId === 'string') patch.discordUserId = b.discordUserId.trim(); // store validates the snowflake shape
-    if (typeof b.whatsappNumber === 'string') patch.whatsappNumber = b.whatsappNumber.trim(); // store normalizes to digits
-    if (typeof b.telegramUserId === 'string') patch.telegramUserId = b.telegramUserId.trim(); // store validates the numeric-id shape
-    if (typeof b.msteamsUserId === 'string') patch.msteamsUserId = b.msteamsUserId.trim(); // store validates the GUID / `29:…` shape
+    // Platform links, one loop over the identity descriptors: the route only checks that a string was
+    // sent — the descriptor's own normalize/validate decides what is stored and what clears the link.
+    const links: Partial<Record<PlatformLinkKey, string>> = {};
+    for (const descriptor of PLATFORM_IDENTITIES) {
+      const value = (b as Record<string, unknown>)[descriptor.linkSettingKey];
+      if (typeof value === 'string') links[descriptor.linkSettingKey] = value;
+    }
     // Communication style: only accept a known style; anything else is silently ignored.
     if (typeof b.advisorStyle === 'string' && ADVISOR_STYLES.includes(b.advisorStyle as never)) patch.advisorStyle = b.advisorStyle;
     // Global account instructions appended to the system prompt on every platform. `personalityBody` is a
@@ -183,25 +187,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json({ error: 'model not allowed' }, 400);
     }
     try {
-      d.userSettings.setCliSettings(u.id, patch);
+      d.userSettings.setCliSettings(u.id, { ...patch, ...links });
     } catch (e) {
-      // A Discord snowflake may belong to only one Elowen account — reject a squatter cleanly instead of
-      // redirecting the first owner's identity/memory namespace.
-      if (e instanceof DiscordIdConflictError) {
-        console.warn(`cli-settings: user ${u.id} tried to link Discord id already claimed by another user`);
-        return c.json({ error: 'Toto Discord ID už má propojené jiný uživatel.' }, 409);
-      }
-      if (e instanceof WhatsAppNumberConflictError) {
-        console.warn(`cli-settings: user ${u.id} tried to link WhatsApp number already claimed by another user`);
-        return c.json({ error: 'Toto WhatsApp číslo už má propojené jiný uživatel.' }, 409);
-      }
-      if (e instanceof TelegramIdConflictError) {
-        console.warn(`cli-settings: user ${u.id} tried to link Telegram id already claimed by another user`);
-        return c.json({ error: 'Toto Telegram ID už má propojené jiný uživatel.' }, 409);
-      }
-      if (e instanceof TeamsIdConflictError) {
-        console.warn(`cli-settings: user ${u.id} tried to link Teams id already claimed by another user`);
-        return c.json({ error: 'Tuto identitu Microsoft Teams už má propojenou jiný uživatel.' }, 409);
+      // A platform identity may belong to only one Elowen account — reject a squatter cleanly instead of
+      // redirecting the first owner's identity/memory namespace. The message rides on the descriptor.
+      if (e instanceof PlatformLinkConflictError) {
+        console.warn(`cli-settings: user ${u.id} tried to link a ${e.platform} identity already claimed by another user`);
+        return c.json({ error: e.userMessage }, 409);
       }
       throw e;
     }

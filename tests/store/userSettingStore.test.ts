@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { UserSettingStore, DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError, TeamsIdConflictError } from '../../src/store/userSettingStore.js';
+import { UserSettingStore, PlatformLinkConflictError } from '../../src/store/userSettingStore.js';
+import { PLATFORM_IDENTITIES } from '../../src/shared/platformIdentity.js';
 
 describe('UserSettingStore', () => {
   it('defaults CLI settings when nothing is stored', () => {
@@ -130,7 +131,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { discordUserId: '123456789012345678' }); // user 1 links it first
     // user 2 tries to squat → rejected with a typed conflict, the link stays with user 1
-    expect(() => s.setCliSettings(2, { discordUserId: '123456789012345678' })).toThrow(DiscordIdConflictError);
+    expect(() => s.setCliSettings(2, { discordUserId: '123456789012345678' })).toThrow(PlatformLinkConflictError);
     expect(s.cliSettings(2).discordUserId).toBe('');
     expect(s.userIdBySetting('discordUserId', '123456789012345678')).toBe(1);
     // The original owner can re-set their own link idempotently.
@@ -143,7 +144,7 @@ describe('UserSettingStore', () => {
     s.setCliSettings(1, { discordUserId: '123456789012345678' }); // user 1 owns the snowflake
     // user 2's patch bundles a model change with a squatting Discord id — the conflict must undo both.
     expect(() => s.setCliSettings(2, { model: 'squat-model', discordUserId: '123456789012345678' }))
-      .toThrow(DiscordIdConflictError);
+      .toThrow(PlatformLinkConflictError);
     expect(s.cliSettings(2).model).toBe('');
     expect(s.cliSettings(2).discordUserId).toBe('');
   });
@@ -162,7 +163,7 @@ describe('UserSettingStore', () => {
   it('refuses a WhatsApp number already claimed by another user (no squatting)', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { whatsappNumber: '420778433908' });
-    expect(() => s.setCliSettings(2, { whatsappNumber: '420778433908' })).toThrow(WhatsAppNumberConflictError);
+    expect(() => s.setCliSettings(2, { whatsappNumber: '420778433908' })).toThrow(PlatformLinkConflictError);
     expect(s.cliSettings(2).whatsappNumber).toBe('');
     expect(s.userIdBySetting('whatsappNumber', '420778433908')).toBe(1);
   });
@@ -180,7 +181,7 @@ describe('UserSettingStore', () => {
   it('refuses a Telegram id already claimed by another user (no squatting)', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { telegramUserId: '123456789' });
-    expect(() => s.setCliSettings(2, { telegramUserId: '123456789' })).toThrow(TelegramIdConflictError);
+    expect(() => s.setCliSettings(2, { telegramUserId: '123456789' })).toThrow(PlatformLinkConflictError);
     expect(s.cliSettings(2).telegramUserId).toBe('');
     expect(s.userIdBySetting('telegramUserId', '123456789')).toBe(1);
   });
@@ -191,8 +192,42 @@ describe('UserSettingStore', () => {
     s.setCliSettings(1, { msteamsUserId: id });
     expect(s.cliSettings(1).msteamsUserId).toBe(id.toLowerCase());
     expect(s.userIdBySetting('msteamsUserId', id.toLowerCase())).toBe(1);
-    expect(() => s.setCliSettings(2, { msteamsUserId: id })).toThrow(TeamsIdConflictError);
+    expect(() => s.setCliSettings(2, { msteamsUserId: id })).toThrow(PlatformLinkConflictError);
     expect(s.cliSettings(2).msteamsUserId).toBe('');
+  });
+
+  // DERIVED from the identity descriptors, so a platform added there is covered here without anybody
+  // remembering to write a test: every link normalises, round-trips, reverse-looks-up, clears on a value
+  // its own validator rejects, and refuses a second owner with the descriptor's own message.
+  it.each(PLATFORM_IDENTITIES.map((d) => [d.platform, d] as const))('links, clears and protects a %s identity', (_platform, d) => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    // A value each descriptor accepts once normalised, in a shape a user might actually paste. A new
+    // platform with no sample fails HERE rather than quietly running the case against undefined.
+    const samples: Record<string, string> = {
+      discord: '123456789012345678',
+      msteams: 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE',
+      telegram: ' 123 456 789 ',
+      whatsapp: '+420 778 433 908',
+    };
+    const raw = samples[d.platform];
+    expect(typeof raw, `add a sample identity for ${d.platform}`).toBe('string');
+    const stored = d.normalize(raw);
+    expect(d.validate(stored)).toBe(true);
+    s.setCliSettings(1, { [d.linkSettingKey]: raw });
+    expect(s.cliSettings(1)[d.linkSettingKey]).toBe(stored);
+    expect(s.userIdBySetting(d.linkSettingKey, stored)).toBe(1);
+
+    // A second account cannot squat the identity, and the rejection rolls the WHOLE patch back.
+    expect(() => s.setCliSettings(2, { model: 'squat-model', [d.linkSettingKey]: raw }))
+      .toThrow(PlatformLinkConflictError);
+    expect(s.cliSettings(2).model).toBe('');
+    expect(s.cliSettings(2)[d.linkSettingKey]).toBe('');
+    expect(s.userIdBySetting(d.linkSettingKey, stored)).toBe(1);
+
+    // Anything the descriptor refuses clears the link rather than storing garbage.
+    s.setCliSettings(1, { [d.linkSettingKey]: 'nonsense' });
+    expect(s.cliSettings(1)[d.linkSettingKey]).toBe('');
+    expect(s.userIdBySetting(d.linkSettingKey, stored)).toBeNull();
   });
 
   it('permission settings: empty defaults, sanitized round-trip, corrupt blob degrades cleanly', () => {

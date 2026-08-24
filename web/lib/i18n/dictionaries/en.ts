@@ -985,6 +985,7 @@ export const en = {
     discordId: 'Discord ID',
     whatsappNumber: 'WhatsApp number',
     msteamsIdentity: 'Microsoft Teams identity',
+    telegramId: 'Telegram ID',
   },
   accountMemory: {
     recallTitle: 'Auto-recall',
@@ -1957,6 +1958,7 @@ export const en = {
     accountDiscordId: "Your Discord user ID. When set, the assistant recognizes your Discord messages as your account (right-click your profile → Copy User ID).",
     accountWhatsappNumber: "Your WhatsApp number in international format, digits only (e.g. 420778433908). When set, the assistant recognizes your WhatsApp messages as your account, with your tools and owner access.",
     accountMsteamsIdentity: "Your Microsoft Teams sender identity (Entra object ID or 29:… ID). It is normally linked automatically from your platform-verified e-mail; edit it only to correct the resolved link.",
+    accountTelegramId: "Your numeric Telegram user ID (send /start to @userinfobot). When set, the assistant recognizes your Telegram messages as your account, with your tools and owner access.",
     accountUiScale: "The interface adapts to the window width. This slider sets its size relative to normal (100% is the default) on this device.",
     memoryRecall: "After you send a message, automatically search your memory and add the most relevant memories as context for the reply.",
     memoryLiveRecall: "Let the assistant search its memory again while it works, guided by what it is actually doing — the files it opens, the tools it runs, the errors it hits. Without this, recall is driven only by your opening message, which may say little about where the work then goes.",

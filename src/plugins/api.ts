@@ -5,7 +5,8 @@ import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { DelegatingTurnAccess } from '../brain/delegatedScope.js';
-import type { SlashCommandDef } from '../brain/slashCommands.js';
+import type { SlashCommandDef, SlashSurface } from '../brain/slashCommands.js';
+import type { PlatformSurface } from '../shared/platformIdentity.js';
 import type { DelegatedChildSummary } from '../store/brainDelegationStore.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
 import type { ElowenEvent } from '../api/sse.js';
@@ -1205,7 +1206,7 @@ export interface PluginCommand {
   /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`. */
   prompt: string;
   /** Which surfaces expose it (default: all). */
-  surfaces?: ('cli' | 'discord' | 'whatsapp' | 'telegram' | 'msteams' | 'web')[];
+  surfaces?: SlashSurface[];
 }
 
 /** Placement of volatile plugin context relative to the user's own text. Context is always ephemeral:
@@ -1286,7 +1287,7 @@ export interface PluginContext {
   /** Core chat command metadata for a platform: built-ins + plugin prompt commands, each with its `kind`
    *  (so an adapter can tell a native/control command from a plugin `prompt` macro it must route RAW).
    *  Adapters own presentation only; names/help/kind live once in the canonical slash-command catalog. */
-  chatCommands(surface: 'discord' | 'whatsapp' | 'telegram' | 'msteams'): { name: string; description: string; kind: SlashCommandDef['kind']; adminOnly?: boolean }[];
+  chatCommands(surface: PlatformSurface): { name: string; description: string; kind: SlashCommandDef['kind']; adminOnly?: boolean }[];
   /** Append a chunk of instructions to the brain's system prompt, after the Elowen persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;

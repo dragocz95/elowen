@@ -3,14 +3,16 @@
 // producers into a plugin; this import must not drag the subsystem back into the core graph).
 import type { SignalSink, DerivedSignal, PlanJobStatus, Phase } from '../shared/agentEvents.js';
 import { logger } from '../shared/logger.js';
+import { PLATFORM_SURFACES } from '../shared/platformIdentity.js';
 
 const log = logger('sse');
 
 /** WHERE a turn came from. The channel platforms are derivable from the session id, but web and CLI
  *  are NOT: both POST /brain/send with the same shape, so the caller has to say which it is. Never
  *  inferred from User-Agent or IP — the client writes both, and the web BFF strips headers anyway.
- *  An unattributable turn stays 'unknown' rather than being guessed into a plausible lie. */
-export const ACTIVITY_SURFACES = ['web', 'cli', 'discord', 'msteams', 'telegram', 'whatsapp', 'cron', 'internal', 'unknown'] as const;
+ *  An unattributable turn stays 'unknown' rather than being guessed into a plausible lie.
+ *  The platforms come from the identity descriptors; the rest are surfaces with no platform identity. */
+export const ACTIVITY_SURFACES = ['web', 'cli', ...PLATFORM_SURFACES, 'cron', 'internal', 'unknown'] as const;
 export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 
 /** What happened, in the vocabulary the team feed renders (each kind owns an icon in web/lib/eventMeta).

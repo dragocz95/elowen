@@ -4,6 +4,7 @@ import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp } from '../context.js';
 import { clientOrigin } from '../clientIp.js';
+import { PLATFORM_SURFACES } from '../../shared/platformIdentity.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
@@ -206,7 +207,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   app.get('/brain/commands', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const q = c.req.query('surface');
-    const surface: SlashSurface = q === 'cli' || q === 'discord' || q === 'whatsapp' || q === 'telegram' || q === 'msteams' ? q : 'web';
+    const surface: SlashSurface = q === 'cli' || (!!q && (PLATFORM_SURFACES as readonly string[]).includes(q)) ? (q as SlashSurface) : 'web';
     // Built-ins + any plugin-contributed prompt commands from the live registry (surface-scoped; a plugin
     // can never shadow a built-in — enforced both at registration and in commandsWithPlugins).
     const registry = await d.plugins?.get().catch(() => null);
