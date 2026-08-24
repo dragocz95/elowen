@@ -64,11 +64,17 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         data-elowen-modal
+        // `focus:outline-none` on the dialog itself: the overlay focuses this element on open
+        // (overlayStack.ts) so the focus trap and screen readers have an anchor, but it is `tabIndex={-1}`
+        // and not interactive, so the browser's focus ring around the whole window says nothing. Opening a
+        // modal from the keyboard — a slash command, for instance — made `:focus-visible` match and drew a
+        // bright outline around the entire dialog that vanished on the first click inside. Controls INSIDE
+        // keep their own rings; this only silences the container's.
         className={drawer
-          ? 'animate-drawer-in flex h-full w-[min(38rem,calc(100vw-3rem))] flex-col rounded-l-lg border-l border-border'
+          ? 'animate-drawer-in flex h-full w-[min(38rem,calc(100vw-3rem))] flex-col rounded-l-lg border-l border-border focus:outline-none'
           : fullscreen
-            ? 'animate-pop-in relative flex min-h-0 w-full flex-col border border-border bg-surface sm:rounded-lg'
-            : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border ${SIZES[size]}`}
+            ? 'animate-pop-in relative flex min-h-0 w-full flex-col border border-border bg-surface focus:outline-none sm:rounded-lg'
+            : `animate-pop-in flex flex-col rounded-lg bg-surface border border-border focus:outline-none ${SIZES[size]}`}
         // Drawers share the workspace detail rail's near-black document tone, not the lighter
         // surface tone of centered windows.
         style={drawer
