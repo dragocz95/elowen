@@ -82,6 +82,9 @@ export function resumeDeliveryTarget(envelope: PlatformTurnResumeEnvelope): stri
  *  - cron turns never park (their results ride the scheduler's own delivery contract, not a room);
  *  - a scheduled/unattended turn never parks for the same reason, whatever platform fired it;
  *  - an unlinked sender's turn never parks (the authority resolver would refuse it at boot anyway);
+ *  - a turn carrying image attachments never parks: the bytes ride only the live prompt (they are never
+ *    persisted), so a resumed model would see a text placeholder where the live turn saw the picture —
+ *    and the rehydrated transcript would no longer be the cached prefix's bytes;
  *  - a turn with no nameable outbound target never parks (its answer could not be delivered). */
 export function platformTurnParkEligible(
   store: { platformTurnEnvelope(sessionId: string): string | undefined },
@@ -95,6 +98,7 @@ export function platformTurnParkEligible(
   try { envelope = normalizePlatformTurnEnvelope(JSON.parse(raw)); } catch { return false; }
   if (!envelope || channelSessionId(envelope.channelId) !== sessionId) return false;
   if (envelope.scheduled || envelope.accountUserId === null) return false;
+  if (envelope.imageCount) return false;
   return resumeDeliveryTarget(envelope) !== null;
 }
 
@@ -110,6 +114,9 @@ export interface PlatformTurnRecoveryDeps {
   };
   /** Account existence check — a policy resolver alone does not prove the account still exists. */
   users: { get(userId: number): unknown | null | undefined };
+  /** Re-proves the platform sender → account binding (the daemon's live link resolver). null = the
+   *  identity is no longer linked; wired fail-closed, so a wiring without a resolver refuses resumes. */
+  resolvePlatformUser: (platform: string, platformUserId: string) => { id: number } | null;
   policyForUser?: (userId: number) => Policy;
   disabledToolsFor?: (userId: number) => string[];
   /** The ordinary channel turn pipeline (ChannelSessionService.send) — the resume is one more send. */
@@ -175,6 +182,15 @@ export async function resumePlatformTurn(
     terminalize();
     return;
   }
+  // The park gate refuses image-bearing turns, but an envelope is durable data from an earlier build —
+  // re-check here. The bytes were never persisted, so the durable transcript cannot reproduce what the
+  // live turn saw; resuming would answer about a picture the model can no longer see.
+  if (envelope.imageCount) {
+    terminalize();
+    log.error(`parked platform turn ${row.id}: the interrupted turn carried ${envelope.imageCount} image(s) the durable transcript cannot reproduce — giving up; the sender must re-send`);
+    await notice(RESUME_GIVE_UP_NOTICE);
+    return;
+  }
   if (row.park_attempts >= MAX_PLATFORM_RESUME_ATTEMPTS) {
     // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
     // conversation itself is told it needs a re-send — the same shape the owner sweep pushes to a phone.
@@ -189,6 +205,7 @@ export async function resumePlatformTurn(
   let authority: ReturnType<typeof resolvePlatformTurnAuthority>;
   try {
     authority = resolvePlatformTurnAuthority(envelope, {
+      resolvePlatformUser: deps.resolvePlatformUser,
       policyForUser: (userId) => (deps.users.get(userId) ? deps.policyForUser?.(userId) : undefined),
       ...(deps.disabledToolsFor ? { disabledToolsFor: deps.disabledToolsFor } : {}),
     });

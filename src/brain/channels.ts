@@ -222,11 +222,14 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
   };
 }
 
-/** How a resume derives WHO a captured turn runs as. `policyForUser` must return undefined when the
- *  account no longer resolves — deleted, unlinked, whatever — which this seam turns into a refusal.
- *  Deliberately a different contract from the orchestrator's live `policyForUser` (which assumes an
- *  authenticated inbound sender): here the account is a stored claim that must be re-proven. */
+/** How a resume derives WHO a captured turn runs as. `resolvePlatformUser` re-proves the platform
+ *  sender → account binding (the daemon's own link resolver; null = no longer linked), and
+ *  `policyForUser` must return undefined when the account no longer resolves — deleted, unlinked,
+ *  whatever — which this seam turns into a refusal. Deliberately a different contract from the
+ *  orchestrator's live `policyForUser` (which assumes an authenticated inbound sender): here both the
+ *  binding and the account are stored claims that must be re-proven. */
 export interface PlatformTurnAuthorityDeps {
+  resolvePlatformUser: (platform: string, platformUserId: string) => { id: number } | null;
   policyForUser: (userId: number) => Policy | undefined;
   disabledToolsFor?: (userId: number) => string[];
 }
@@ -242,6 +245,15 @@ export function resolvePlatformTurnAuthority(
 ): { accountUserId: number; policy: Policy; toolPolicy?: ToolPolicy } {
   if (envelope.accountUserId === null) {
     throw new Error('captured platform turn has no verified account — refusing to resume it');
+  }
+  // The captured account id is a stored CLAIM about who the platform sender was. The live path proves
+  // that binding on every inbound message (resolvePlatformUser); a resume must prove it again, because
+  // the sender may have unlinked — or the platform id may have been claimed by a different account —
+  // while the daemon was down. An account row merely existing is not that proof.
+  const linked = deps.resolvePlatformUser(envelope.identity.platform, envelope.identity.userId);
+  if (!linked || linked.id !== envelope.accountUserId) {
+    throw new Error(`captured platform identity ${envelope.identity.platform}/${envelope.identity.userId} `
+      + `no longer links to account ${envelope.accountUserId} — refusing to resume it`);
   }
   const policy = deps.policyForUser(envelope.accountUserId);
   if (!policy) {

@@ -92,6 +92,8 @@ function setup(channelId = 'discord-ops') {
   const deps: PlatformTurnRecoveryDeps = {
     store,
     users,
+    resolvePlatformUser: vi.fn((platform: string, platformUserId: string) =>
+      (platform === 'discord' && platformUserId === '42' ? { id: 7 } : null)),
     policyForUser: () => anyPolicy,
     disabledToolsFor: () => [],
     send: (opts, text) => svc.send(opts, text),
@@ -133,6 +135,14 @@ describe('platformTurnParkEligible — a platform turn parks only where a faithf
     // An unlinked sender's turn would be refused by the authority resolver at boot — never park it.
     park({ ...envelopeFor(), accountUserId: null });
     expect(platformTurnParkEligible(store, sessionId)).toBe(false);
+    // A turn with image attachments cannot be resumed faithfully: the bytes ride only the live prompt
+    // (never the durable row), so the resumed model would see a text placeholder where the live turn saw
+    // the picture — and the rehydrated prefix would no longer be the cached bytes. Never park it.
+    park({ ...envelopeFor(), imageCount: 1 });
+    expect(platformTurnParkEligible(store, sessionId)).toBe(false);
+    // A zero count is the same as no images at all.
+    park({ ...envelopeFor(), imageCount: 0 });
+    expect(platformTurnParkEligible(store, sessionId)).toBe(true);
     // Cron sessions never park — even under a self-consistent, otherwise-eligible envelope (unscheduled,
     // verified account, encodable target), so this cannot pass for any OTHER fail-closed reason.
     const cronSession = channelSessionId('cron-job-1');
@@ -199,6 +209,56 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     expect(delivered).toHaveLength(1);
     expect(delivered[0]!.text).toMatch(/could not be resumed/);
     expect(delivered[0]!.text).not.toBe('resumed answer');
+  });
+
+  it('re-proves the platform identity → account binding: an unlinked sender refuses, without a model turn', async () => {
+    const { store, spawn, brains, sessionId, delivered, deps, park } = setup();
+    const row = park(envelopeFor());
+    // The Discord sender unlinked their Elowen account while the daemon was down. The account row still
+    // exists — only the binding is gone — so the users.get existence check alone would let this through.
+    deps.resolvePlatformUser = vi.fn(() => null);
+
+    await resumePlatformTurn(deps, row);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(brains).toHaveLength(0);
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toMatch(/could not be resumed/);
+  });
+
+  it('refuses a platform identity relinked to a DIFFERENT account instead of resuming as the old one', async () => {
+    const { store, spawn, brains, sessionId, delivered, deps, park } = setup();
+    const row = park(envelopeFor());
+    // Between park and boot the platform id was claimed by another Elowen account. Resuming as the
+    // captured account 7 would run (and answer) with an account the sender no longer is.
+    deps.resolvePlatformUser = vi.fn(() => ({ id: 9 }));
+
+    await resumePlatformTurn(deps, row);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(brains).toHaveLength(0);
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toMatch(/could not be resumed/);
+    expect(delivered[0]!.text).not.toBe('resumed answer');
+  });
+
+  it('an envelope carrying image attachments fails closed at resume: no model turn, visible give-up', async () => {
+    const { store, spawn, sessionId, delivered, deps, park } = setup();
+    // Written by an older build (or by hand): the park gate refuses these now, but the resume must not
+    // trust that — the durable transcript cannot reproduce the image the live turn saw.
+    const row = park({ ...envelopeFor(), imageCount: 2 });
+
+    await resumePlatformTurn(deps, row);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toMatch(/re-send/);
   });
 
   it('a message that arrived between park and boot wins: admission clears the marker and the sweep stands down', async () => {

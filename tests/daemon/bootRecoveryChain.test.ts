@@ -27,6 +27,8 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
     resumeWorkflow: async () => { trace.push('resume:workflows'); },
     claimParkedConversations: () => { trace.push('claim:conversations'); return [{ id: 's' }]; },
     resumeParkedConversation: async () => { trace.push('resume:conversations'); },
+    claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'p' }]; },
+    resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); },
     startPlatforms: async () => { trace.push('startPlatforms'); },
     notify: async () => { trace.push('announceBoot'); },
     pendingChatImageFiles: () => [],
@@ -70,15 +72,15 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
     const stop = startChain(trace);
     try {
       // Everything up to the platforms is synchronous — that is the point of the claim pass.
-      expect(trace).toEqual(['reconcileGoals', 'claim:delegations', 'claim:workflows', 'claim:conversations']);
-      for (let i = 0; i < 50 && !trace.includes('resume:conversations'); i += 1) {
+      expect(trace).toEqual(['reconcileGoals', 'claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform']);
+      for (let i = 0; i < 50 && !trace.includes('resume:platform'); i += 1) {
         await new Promise((r) => setTimeout(r, 5));
       }
       expect(trace).toEqual([
         'reconcileGoals',
-        'claim:delegations', 'claim:workflows', 'claim:conversations',
+        'claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform',
         'pluginReconcile', 'startPlatforms', 'announceBoot',
-        'resume:delegations', 'resume:workflows', 'resume:conversations',
+        'resume:delegations', 'resume:workflows', 'resume:conversations', 'resume:platform',
       ]);
     } finally { stop(); }
   });

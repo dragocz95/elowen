@@ -225,10 +225,13 @@ describe('platform turn resume envelope', () => {
       capturedAt: '2026-08-24T00:00:00Z',
     };
     const accountPolicy: Policy = { allowedProjectIds: new Set([3]), allowedPaths: () => [] };
+    const stillLinked = (platform: string, platformUserId: string) =>
+      (platform === 'discord' && platformUserId === '42' ? { id: 7 } : null);
 
     // The happy path: the ACCOUNT's current policy — never the stored trusted/admin elevation — plus
     // the deny union of the account's fresh denies and the captured turn denies (narrow-only replay).
     const resolved = resolvePlatformTurnAuthority(envelope, {
+      resolvePlatformUser: stillLinked,
       policyForUser: (id) => (id === 7 ? accountPolicy : undefined),
       disabledToolsFor: () => ['Bash'],
     });
@@ -237,13 +240,36 @@ describe('platform turn resume envelope', () => {
     expect([...resolved.toolPolicy!.deny!].sort()).toEqual(['Bash', 'Write']);
 
     // An account that no longer resolves REFUSES — no operator fallback, no ambient policy.
-    expect(() => resolvePlatformTurnAuthority(envelope, { policyForUser: () => undefined }))
+    expect(() => resolvePlatformTurnAuthority(envelope, { resolvePlatformUser: stillLinked, policyForUser: () => undefined }))
       .toThrow(/no longer resolves — refusing/);
 
     // A turn with no verified account was never resumable; the account resolver is not even consulted.
     const policyForUser = vi.fn(() => anyPolicy);
-    expect(() => resolvePlatformTurnAuthority({ ...envelope, accountUserId: null }, { policyForUser }))
+    expect(() => resolvePlatformTurnAuthority({ ...envelope, accountUserId: null }, { resolvePlatformUser: stillLinked, policyForUser }))
       .toThrow(/no verified account — refusing/);
     expect(policyForUser).not.toHaveBeenCalled();
+  });
+
+  it('re-proves the platform binding: an unlinked or relinked identity refuses before any policy is read', () => {
+    const envelope: PlatformTurnResumeEnvelope = {
+      v: 1, platform: 'discord', channelId: 'discord-x', ownerUserId: 1,
+      direct: false, trusted: false, scheduled: false, accountUserId: 7,
+      identity: { platform: 'discord', userId: '42', admin: false, owner: false, conversation: 'shared' },
+      promptCommand: false, turnText: 't', senderText: 't', capturedAt: '2026-08-24T00:00:00Z',
+    };
+    // The captured account id is a stored CLAIM about who the platform sender was. The binding must be
+    // re-proven at resume — unlinked (null) and relinked-to-another-account both refuse, and neither may
+    // even consult the account's policy on the way out.
+    const policyForUser = vi.fn(() => anyPolicy);
+    expect(() => resolvePlatformTurnAuthority(envelope, { resolvePlatformUser: () => null, policyForUser }))
+      .toThrow(/no longer links to account 7 — refusing/);
+    expect(() => resolvePlatformTurnAuthority(envelope, { resolvePlatformUser: () => ({ id: 9 }), policyForUser }))
+      .toThrow(/no longer links to account 7 — refusing/);
+    expect(policyForUser).not.toHaveBeenCalled();
+    // The binding is looked up by the envelope's OWN platform identity, not anything wider.
+    const resolvePlatformUser = vi.fn((platform: string, platformUserId: string) =>
+      (platform === 'discord' && platformUserId === '42' ? { id: 7 } : null));
+    expect(resolvePlatformTurnAuthority(envelope, { resolvePlatformUser, policyForUser }).accountUserId).toBe(7);
+    expect(resolvePlatformUser).toHaveBeenCalledWith('discord', '42');
   });
 });

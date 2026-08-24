@@ -720,6 +720,9 @@ export class BrainService {
     await resumePlatformTurn({
       store: this.d.store,
       users: this.d.users,
+      // Fail-closed on purpose: a wiring without the daemon's link resolver cannot re-prove the platform
+      // sender → account binding, so it refuses resumes rather than trusting the stored claim.
+      resolvePlatformUser: (platform, platformUserId) => this.d.resolvePlatformUser?.(platform, platformUserId) ?? null,
       ...(this.d.policy ? { policyForUser: this.d.policy } : {}),
       disabledToolsFor: (userId) => deniedToolsForUser(this.d, userId),
       send: (opts, text) => this.channelService.send(opts, text),
