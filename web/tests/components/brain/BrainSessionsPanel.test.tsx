@@ -64,7 +64,7 @@ describe('BrainSessionsPanel (conversation register)', () => {
     renderPanel();
     await screen.findByText('Shared room');
 
-    const row = (title: string) => screen.getByText(title).closest('[role="row"]')!;
+    const row = (title: string) => screen.getByText(title).closest('[role="row"]') as HTMLElement;
     // Both Teams rows say Teams; the web conversation carries no badge, because that is the norm here.
     expect(within(row('Shared room')).getByText('Teams')).toBeInTheDocument();
     expect(within(row('Private chat')).getByText('Teams')).toBeInTheDocument();
