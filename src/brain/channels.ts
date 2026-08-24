@@ -17,6 +17,7 @@ import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
 import { projectUserTurn } from './persistence.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
+import { markDelegationInCurrentTool } from './stepDrain.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
 import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
@@ -283,6 +284,10 @@ export class ChannelSessionService {
     if (!children) { children = new Map(); this.delegatedCalls.set(parentSessionId, children); }
     children.set(childSessionId, (children.get(childSessionId) ?? 0) + 1);
     this.d.registry.setChildRunning(parentSessionId, childSessionId, true);
+    // Tell the step-boundary shutdown drain that the tool call running this dispatch is a DELEGATION:
+    // a parent blocked only on delegated children is safe to leave at a restart (boot recovery respawns
+    // the child and the durable outbox re-answers the parent). Ambient no-op outside a tool execution.
+    markDelegationInCurrentTool();
     this.d.onDelegatedEdge?.(parentSessionId, childSessionId, true);
   }
 

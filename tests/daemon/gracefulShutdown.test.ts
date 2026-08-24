@@ -185,6 +185,48 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     expect(exited[0]).toBe(0);
   });
 
+  it('exits at the STEP boundary while whole turns are still live, instead of burning the budget on them', async () => {
+    // The step-boundary drain: busy() keeps reporting a live turn (it IS live — parked at its boundary),
+    // but midStepWork() says nothing is mid-step, so leaving is safe (boot recovery resumes the turn from
+    // its answered pending tail). Under the old whole-turn predicate this scenario waited the entire
+    // 60 s budget — which is what made every deploy under a long agent turn a ten-minute outage.
+    const midStepSequence = [1, 1, 0];
+    let midStepReads = 0;
+    const { brain, state } = brainBusy([{ turns: 1, children: 1 }]);
+    (brain as unknown as { midStepWork: () => Promise<number> }).midStepWork =
+      async () => midStepSequence[Math.min(midStepReads++, midStepSequence.length - 1)]!;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // nowhere near the budget the old drain consumed
+    expect(midStepReads).toBe(3); // it waited for the mid-step count, not for busy() to reach zero
+    expect(state.reads).toBeGreaterThan(1);
+  }, 40_000);
+
+  it('still waits (and falls back to the budget) while a turn is genuinely mid-step', async () => {
+    // A wedged model call or local tool never reaches its boundary; the full budget remains the fallback.
+    const { brain } = brainBusy([{ turns: 1, children: 0 }]);
+    (brain as unknown as { midStepWork: () => Promise<number> }).midStepWork = async () => 1;
+    const exited = await runSignal(brain, { drainMs: 20 });
+    expect(exited).toEqual([0]);
+  });
+
+  it('latches the step drain in the runner pool too (beginDrain reaches the brain exactly once)', async () => {
+    // The daemon-side latch is what parks turns; BrainService.beginDrain also broadcasts to the pool.
+    // Here we only pin that the shutdown handler calls it before polling — the broadcast itself is
+    // BrainService wiring.
+    const order: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 0, children: 0, undelivered: 0 }),
+      beginDrain: () => order.push('beginDrain'),
+      midStepWork: async () => { order.push('poll'); return 0; },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    await runSignal(brain);
+    expect(order[0]).toBe('beginDrain');
+    expect(order).toContain('poll');
+  });
+
   it('says what it is waiting for, so the stop is visible where only the boot used to be', async () => {
     const sent: string[] = [];
     const { brain } = brainBusy([{ turns: 2, children: 3 }, { turns: 0, children: 0 }], sent);

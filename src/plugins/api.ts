@@ -1,7 +1,7 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ZodTypeAny } from 'zod';
 import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowCompletionEmitter, WorkflowEmitter } from './policyContext.js';
-import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, WorkflowCompletion, WorkflowUpdate } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import type { DelegatingTurnAccess } from '../brain/delegatedScope.js';
@@ -969,6 +969,28 @@ export interface WorkflowExpansionControl {
   }): WorkflowAddNodesRpcResult;
 }
 
+/** Boot resume of a restart-orphaned workflow. Core claims the durable `running` DAG row at boot
+ *  (reconcileDelegationsOnBoot) and asks the engine to take it back from the engine's own recovery
+ *  journal — the durable row alone cannot drive a resume, its previews are clipped for display. The hooks
+ *  replace the turn-scoped emitters a live WorkflowStart would have provided: `emit` persists fresh DAG
+ *  snapshots, `complete` delivers the final summary through the durable delegated-result inbox (the
+ *  origin's blocking turn did not survive the restart, so every resumed workflow completes as background
+ *  work), `stopChild` is the ownership-guarded node teardown WorkflowStop needs. `{ resumed: false }`
+ *  (missing/invalid journal, run handler not connected) tells core to terminalize the row exactly as the
+ *  pre-resume boot sweep always did. */
+export interface WorkflowRecoveryControl {
+  resumeInterrupted(input: {
+    workflowId: string;
+    parentSessionId: string;
+    toolCallId: string;
+    hooks: {
+      emit: (update: WorkflowUpdate) => void;
+      complete: (completion: WorkflowCompletion) => void;
+      stopChild: (childSessionId: string) => Promise<{ stopped: boolean }>;
+    };
+  }): Promise<{ resumed: boolean; reason?: string }>;
+}
+
 /** One MCP server as the plugin's live table reports it. Core reads only the two fields a chat client's
  *  telemetry rail renders; the plugin's own admin surface serves the full record (tools, last error). */
 export interface McpServerState { name: string; status: string }
@@ -1175,7 +1197,7 @@ export interface KnownControls {
   subagent: DetachControl & ActiveCountControl;
   terminal: DetachControl & KillForegroundControl;
   cron: PendingWakeupControl;
-  workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl;
+  workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl & WorkflowRecoveryControl;
   mcp: McpListControl;
   missions: MissionsDomainControl;
   lsp: LspStateControl;

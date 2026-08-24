@@ -350,6 +350,11 @@ CREATE TABLE IF NOT EXISTS brain_workflows (
   workflow_id TEXT NOT NULL,
   state TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Which process wrote the last running snapshot (mirrors brain_subagent_runs.owner_boot_id): a
+  -- `running` row owned by a DEAD boot is a restart orphan the boot reconcile may claim for resume.
+  -- attempt bounds resume retries so a workflow that keeps crashing its own recovery caps out.
+  owner_boot_id TEXT,
+  attempt INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 -- Display panels a plugin pushed via ctx.emitCard (the todo checklist is the canonical one). They are

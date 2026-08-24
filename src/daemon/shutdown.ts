@@ -96,6 +96,10 @@ export function installGracefulShutdown(
       const at = brain?.busy() ?? { turns: 0, children: 0, undelivered: 0 };
       const busy = at.turns > 0 || at.children > 0 || at.undelivered > 0;
       log.info(`${cause} — draining (${at.turns} turn(s), ${at.children} sub-agent(s), ${at.undelivered} undelivered result(s))`);
+      // Name WHICH children hold claims, so a drain that waits (or a post-mortem of one that waited) can
+      // tell a live delegation from a leaked claim instead of staring at a bare count.
+      const childIds = at.children > 0 ? brain?.activeChildSessionIds?.() ?? [] : [];
+      if (childIds.length > 0) log.info(`active delegated children at drain start: ${childIds.join(', ')}`);
       if (opts?.notify !== false && code !== RESTART_EXIT_CODE) {
         // Only worth a message when something is actually being waited for; an idle restart already
         // announces itself on the way back up, and saying it twice is noise. A restart has already said
@@ -109,6 +113,16 @@ export function installGracefulShutdown(
       const deadline = started + drainMs;
       for (;;) {
         const now = brain?.busy() ?? { turns: 0, children: 0, undelivered: 0 };
+        // STEP-BOUNDARY drain: wait only until every live turn is parked at its next step boundary (or
+        // blocked purely on delegated children) — see stepDrain.ts. A parked turn's durable pending tail
+        // is fully answered, so boot recovery resumes it from exactly there; nothing is lost by leaving.
+        // The full drainMs stays as the FALLBACK for a turn stuck mid-step (a model call that will not
+        // return, a wedged local tool), where cutting earlier would repeat or lose that step's work.
+        // `undefined` = no coordinator wired (minimal test daemon) → the historical whole-turn predicate.
+        // `?.` on both hops: scripted test brains stub only busy()/beginDrain(), and a missing method
+        // must mean "no coordinator", not a crashed drain.
+        const midStep = brain ? await brain.midStepWork?.() : 0;
+        const workLeft = midStep !== undefined ? midStep > 0 : now.turns > 0 || now.children > 0;
         // An undelivered result gets its OWN, much shorter budget. Delivery hands the result to the parent
         // as a steer, but the row only flips to `acknowledged` once that message appears in the parent's
         // transcript — which takes another TURN, and this drain refuses new turns by design. So the count
@@ -116,9 +130,12 @@ export function installGracefulShutdown(
         // already finished has nobody left to deliver it to: one such orphan from 18 Aug made every restart
         // since burn the full ten minutes. The results are durable and the outbox redelivers them after the
         // restart, so the short window is only there to let a just-finished child hand its answer over.
-        const stillWaiting = now.turns > 0 || now.children > 0
+        const stillWaiting = workLeft
           || (now.undelivered > 0 && Date.now() - started < UNDELIVERED_GRACE_MS);
         if (!stillWaiting) {
+          if (now.turns > 0 || now.children > 0) {
+            log.info(`drained at the step boundary — leaving ${now.turns} parked turn(s) and ${now.children} sub-agent(s) to boot recovery`);
+          }
           if (now.undelivered > 0) {
             log.info(`drained, leaving ${now.undelivered} undelivered result(s) to the durable outbox — they redeliver on the next boot`);
           }

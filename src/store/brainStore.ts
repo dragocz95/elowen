@@ -28,7 +28,7 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 // brainService + tests: syntheticRestartResultId). BrainSubagentRun/BrainSubagentResult have no external
 // importer (consumed structurally), so they are not re-exported.
 export { syntheticRestartResultId } from './brainDelegationStore.js';
-export type { BrainWorkflowRun, RecoverableRun } from './brainDelegationStore.js';
+export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
 
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
@@ -820,6 +820,18 @@ export class BrainStore {
     return this.delegation.claimRecoverableRuns(leaseMs);
   }
 
+  /** Claim every restart-orphaned workflow for this boot — see
+   *  {@link BrainDelegationStore.claimRecoverableWorkflows}. */
+  claimRecoverableWorkflows(): ReturnType<BrainDelegationStore['claimRecoverableWorkflows']> {
+    return this.delegation.claimRecoverableWorkflows();
+  }
+
+  /** Release a run claim superseded by boot workflow resume — see
+   *  {@link BrainDelegationStore.supersedeClaimedRun}. */
+  supersedeClaimedRun(parentSessionId: string, toolCallId: string, reason: string): boolean {
+    return this.delegation.supersedeClaimedRun(parentSessionId, toolCallId, reason);
+  }
+
   /** Park a claimed run as recovery_required — see {@link BrainDelegationStore.markRecoveryRequired}. */
   markRecoveryRequired(parentSessionId: string, toolCallId: string, reason: string, raw: unknown): boolean {
     return this.delegation.markRecoveryRequired(parentSessionId, toolCallId, reason, raw);
@@ -854,12 +866,6 @@ export class BrainStore {
    *  {@link BrainDelegationStore.workflowStatus}. */
   workflowStatus(parentSessionId: string, workflowId: string): ReturnType<BrainDelegationStore['workflowStatus']> {
     return this.delegation.workflowStatus(parentSessionId, workflowId);
-  }
-
-  /** Parent sessions with a durable delegation row still marked `running` (the boot reconcile's input) —
-   *  see {@link BrainDelegationStore.runningDelegationParentSessionIds}. */
-  runningDelegationParentSessionIds(): string[] {
-    return this.delegation.runningDelegationParentSessionIds();
   }
 
   /** Append a display-only session-event marker (model/mode/rename/reasoning change). Insertion order

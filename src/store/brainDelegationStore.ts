@@ -39,6 +39,17 @@ export interface RecoverableRun {
  *  purpose: a `workflow` event carries the WHOLE DAG, so the durable row IS the snapshot and the row,
  *  the event and the state attached to the tool item cannot drift apart. Bounded display data only. */
 export type BrainWorkflowRun = WorkflowUpdate;
+/** One restart-orphaned workflow claimed for resume at boot. The snapshot is display-grade (clipped
+ *  previews) — the engine's own recovery journal, not this row, carries what a resume actually needs; the
+ *  claim is what makes exactly one boot responsible for either resuming or terminalizing the DAG.
+ *  `attempt` is post-increment, mirroring RecoverableRun. */
+export interface RecoverableWorkflow {
+  parentSessionId: string;
+  toolCallId: string;
+  workflowId: string;
+  attempt: number;
+  state: BrainWorkflowRun;
+}
 /** One delegated child of a conversation, as its PARENT sees it: enough to recognise which sub-agent
  *  this was and decide whether to continue it. `task`/`status`/`model` come from the child's
  *  brain_subagent_runs row and are absent for a child the engine never recorded one for (a workflow
@@ -507,12 +518,16 @@ export class BrainDelegationStore {
         'SELECT workflow_id FROM brain_workflows WHERE parent_session_id = ? AND tool_call_id = ?'
       ).get(parentSessionId, state.toolCallId) as { workflow_id: string } | undefined;
       if (prior && prior.workflow_id !== state.id) return false;
+      // owner_boot_id mirrors the sub-agent run claim: a running snapshot is stamped with THIS boot so a
+      // later boot can tell an orphan (owner dead) from live work; a terminal snapshot clears it so the
+      // row is never claimable again. attempt is untouched here — only the boot reconcile bumps it.
+      const ownerBootId = state.status === 'running' ? (this.bootId || null) : null;
       this.db.prepare(
-        `INSERT INTO brain_workflows (parent_session_id, tool_call_id, workflow_id, state)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO brain_workflows (parent_session_id, tool_call_id, workflow_id, state, owner_boot_id)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(parent_session_id, tool_call_id) DO UPDATE SET
-           state = excluded.state, updated_at = datetime('now')`
-      ).run(parentSessionId, state.toolCallId, state.id, JSON.stringify(state));
+           state = excluded.state, owner_boot_id = excluded.owner_boot_id, updated_at = datetime('now')`
+      ).run(parentSessionId, state.toolCallId, state.id, JSON.stringify(state), ownerBootId);
       return true;
     });
   }
@@ -567,22 +582,6 @@ export class BrainDelegationStore {
       const status = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).status : undefined;
       return status === 'running' || status === 'done' || status === 'error' || status === 'cancelled' ? status : undefined;
     } catch { return undefined; }
-  }
-
-  /** Every parent session holding a sub-agent run or workflow row still marked `running`. Read ONCE at
-   *  daemon boot, where such a row is by definition a restart orphan — the in-memory registrations that
-   *  drove it died with the process. Deliberately not scoped to a user: the boot reconcile must reach the
-   *  channel and task sessions no owner `start()` ever visits. The `json_valid` guard is load-bearing —
-   *  `json_extract` THROWS on a malformed row, which would fail the query for every other session too. */
-  runningDelegationParentSessionIds(): string[] {
-    const rows = this.db.prepare(
-      `SELECT DISTINCT parent_session_id AS id FROM brain_subagent_runs
-        WHERE json_valid(state) AND json_extract(state, '$.status') = 'running'
-       UNION
-       SELECT DISTINCT parent_session_id AS id FROM brain_workflows
-        WHERE json_valid(state) AND json_extract(state, '$.status') = 'running'`
-    ).all() as { id: string }[];
-    return rows.map((row) => row.id);
   }
 
   /** Persist a terminal child result before any attempt to wake the parent. Stable result/tool ids make
@@ -850,6 +849,65 @@ export class BrainDelegationStore {
         }];
       });
     });
+  }
+
+  /** Atomically CLAIM every restart-orphaned workflow for THIS boot, returning what to resume. Called
+   *  exactly once at boot, mirroring {@link claimRecoverableRuns}: a `running` DAG owned by a previous
+   *  boot (or by no boot — a pre-upgrade row) is by definition an orphan, because the in-memory engine
+   *  that drove it died with its process. This replaces the old boot sweep that terminalized every such
+   *  row as `cancelled` — and unlike that sweep it scans brain_workflows DIRECTLY, so a running workflow
+   *  with no nested delegation in flight (which runningDelegationParentSessionIds never surfaced) can no
+   *  longer escape reconciliation and sit `running` forever. No lease column: workflows are resumed by
+   *  the boot reconcile only, which a singleton daemon runs once, so owner_boot_id alone is the fence. */
+  claimRecoverableWorkflows(): RecoverableWorkflow[] {
+    const cur = this.bootId;
+    if (!cur) return []; // no boot identity (unit test store) -> nothing is ours to claim
+    return withWriteLock(this.db, () => {
+      // Select-then-claim, atomically under the write lock. Unlike the runs claim there is no lifecycle
+      // column to tell "just claimed" from "owned live by this boot" (upsertWorkflowRun stamps the current
+      // boot on every running snapshot), so the orphan predicate itself picks the rows and the UPDATE is
+      // scoped to exactly those keys.
+      const rows = this.db.prepare(
+        `SELECT parent_session_id, tool_call_id, workflow_id, attempt, state
+           FROM brain_workflows
+          WHERE json_valid(state) AND json_extract(state, '$.status') = 'running'
+            AND (owner_boot_id IS NULL OR owner_boot_id != ?)`
+      ).all(cur) as { parent_session_id: string; tool_call_id: string; workflow_id: string; attempt: number; state: string }[];
+      const claim = this.db.prepare(
+        'UPDATE brain_workflows SET owner_boot_id = ?, attempt = attempt + 1 WHERE parent_session_id = ? AND tool_call_id = ?'
+      );
+      return rows.flatMap((r) => {
+        let raw: unknown;
+        try { raw = JSON.parse(r.state); } catch { return []; }
+        const state = normalizeWorkflowState(raw);
+        if (!state) return [];
+        claim.run(cur, r.parent_session_id, r.tool_call_id);
+        return [{
+          parentSessionId: r.parent_session_id, toolCallId: r.tool_call_id,
+          workflowId: r.workflow_id, attempt: r.attempt + 1, state,
+        }];
+      });
+    });
+  }
+
+  /** Release a run claim WITHOUT recovering it, terminalizing the row as `error`. Used when boot workflow
+   *  resume supersedes the generic recovery of a delegation nested INSIDE a claimed workflow's node: the
+   *  resumed node re-issues its Delegate call itself, so respawning the old child would run the same work
+   *  twice and wake the node session with a duplicate answer. Deliberately does NOT enqueue a result —
+   *  the row's parent is a node session whose interrupted turn is being replaced wholesale. Guarded by
+   *  the claim, like every other transition out of `recovering`. */
+  supersedeClaimedRun(parentSessionId: string, toolCallId: string, reason: string): boolean {
+    const cur = this.bootId;
+    if (!parentSessionId || !toolCallId) return false;
+    return withWriteLock(this.db, () => this.db.prepare(
+      `UPDATE brain_subagent_runs
+          SET lifecycle = 'error', owner_boot_id = NULL, lease_until = NULL,
+              state = CASE WHEN json_valid(state)
+                THEN json_set(state, '$.status', 'error', '$.detail', ?)
+                ELSE state END,
+              updated_at = datetime('now')
+        WHERE parent_session_id = ? AND tool_call_id = ? AND owner_boot_id = ? AND lifecycle = 'recovering'`
+    ).run(bounded(reason, 2_000), parentSessionId, toolCallId, cur).changes === 1);
   }
 
   /** Park a claimed run as `recovery_required`: recovery could not safely replay it (an unanswered

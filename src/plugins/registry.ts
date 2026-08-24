@@ -58,7 +58,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   subagent: ['detachForeground', 'activeCount'],
   terminal: ['detachForeground', 'killForeground'],
   cron: ['pendingWakeupOriginSessionIds'],
-  workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession'],
+  workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
   missions: ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'advisor', 'onTaskClosed'],

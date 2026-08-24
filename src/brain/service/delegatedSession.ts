@@ -1,4 +1,4 @@
-import type { BrainStore, RecoverableRun } from '../../store/brainStore.js';
+import type { BrainStore, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
 import { syntheticRestartResultId } from '../../store/brainStore.js';
 import { settlePartialTurn, outstandingToolCalls } from '../persistence.js';
 import { deniedToolsForUser } from '../brainDeps.js';
@@ -12,8 +12,7 @@ import { extractText } from '../messageView.js';
 import type { BrainModelSelection } from '../providers.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
-import { channelIdOf, isSubagentSession } from '../sessionId.js';
-import { terminalizeWorkflow } from '../workflowRuns.js';
+import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
 import type { DelegatedContinueResult, SubagentProgressEvent } from '../../plugins/api.js';
 import { logger } from '../../shared/logger.js';
 
@@ -102,13 +101,20 @@ export class DelegatedSessionService {
    *  actually run a turn. */
   private pendingRecovery: RecoverableRun[] = [];
 
+  /** Workflows this boot CLAIMED for resume, the workflow twin of {@link pendingRecovery}: stashed by
+   *  phase 1, taken by BrainService.runWorkflowRecovery in phase 2 (the resume needs the plugin registry,
+   *  which this service deliberately has no access to). */
+  private pendingWorkflowRecovery: RecoverableWorkflow[] = [];
+
   /** Boot phase 1 (SYNCHRONOUS, before startPlatforms): atomically CLAIM every restart-orphaned delegation
-   *  for this boot and stash it for phase 2. The compare-and-swap in claimRecoverableRuns is what makes the
-   *  blanket "everything running is a zombie" rule safe even with the sub-agent runner: a row owned by a
-   *  PREVIOUS boot is the orphan, a row this boot owns is live. Workflows keep the old treatment — a
-   *  WorkflowStart BLOCKS, so a restart killed its whole turn and nobody waits on a result; the row only has
-   *  to stop claiming the DAG runs. Nothing is respawned here: the actual recovery turns need the platforms
-   *  up and must not run before any client can attach, so they are deferred to runDelegationRecovery. */
+   *  AND workflow for this boot and stash them for phase 2. The compare-and-swap in the claim calls is what
+   *  makes the blanket "everything running is a zombie" rule safe even with the sub-agent runner: a row
+   *  owned by a PREVIOUS boot is the orphan, a row this boot owns is live. A delegation nested INSIDE a
+   *  claimed workflow's node session is dropped from generic recovery here — the resumed node re-runs from
+   *  its trimmed transcript and re-issues that Delegate call itself, so respawning the old child too would
+   *  do the same work twice and wake the node with a duplicate answer. Nothing is respawned here: the
+   *  actual recovery turns need the platforms up and must not run before any client can attach, so they are
+   *  deferred to runDelegationRecovery / runWorkflowRecovery. */
   reconcileDelegationsOnBoot(): void {
     // Retire results addressed to a sub-agent that has already finished. Delivery needs a parent TURN to
     // acknowledge it, and a terminal sub-agent is never prompted again, so such a row stays pending for
@@ -123,12 +129,30 @@ export class DelegatedSessionService {
     if (this.pendingRecovery.length > 0) {
       logger('brain').info(`boot recovery claimed ${this.pendingRecovery.length} interrupted delegation(s) for respawn`);
     }
-    for (const sessionId of this.d.store.runningDelegationParentSessionIds()) {
-      for (const run of this.d.store.getWorkflowRuns(sessionId)) {
-        if (run.status !== 'running') continue;
-        this.d.store.upsertWorkflowRun(sessionId, terminalizeWorkflow(run));
-      }
+    this.pendingWorkflowRecovery = this.d.store.claimRecoverableWorkflows();
+    if (this.pendingWorkflowRecovery.length > 0) {
+      logger('brain').info(`boot recovery claimed ${this.pendingWorkflowRecovery.length} interrupted workflow(s) for resume`);
     }
+    // Node channels are minted as `wf-<workflowId>-<nodeId>-<uuid>`, so a claimed workflow's node
+    // sessions all share this prefix (see workflow.mjs). Anything generic recovery claimed UNDER one of
+    // them is superseded by the workflow resume.
+    const nodePrefixes = this.pendingWorkflowRecovery.map((wf) => subagentSessionId(`wf-${wf.workflowId}-`));
+    this.pendingRecovery = this.pendingRecovery.filter((run) => {
+      if (!nodePrefixes.some((prefix) => run.parentSessionId.startsWith(prefix))) return true;
+      this.d.store.supersedeClaimedRun(
+        run.parentSessionId, run.toolCallId,
+        'superseded by boot workflow resume: the interrupted node re-runs and re-issues this delegation itself'
+      );
+      logger('brain').info(`boot recovery: delegation ${run.childSessionId} superseded by its workflow's resume`);
+      return false;
+    });
+  }
+
+  /** Hand the phase-1 workflow claims to phase 2 exactly once (BrainService.runWorkflowRecovery). */
+  takePendingWorkflowRecovery(): RecoverableWorkflow[] {
+    const claimed = this.pendingWorkflowRecovery;
+    this.pendingWorkflowRecovery = [];
+    return claimed;
   }
 
   /** Boot phase 2 (ASYNCHRONOUS, after startPlatforms): respawn each claimed delegation to finish where it

@@ -256,6 +256,7 @@ describe('BrainService', () => {
       activeCount: workflowCount,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const reset = vi.fn();
@@ -371,6 +372,7 @@ describe('BrainService', () => {
       activeCount: () => 5,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
@@ -1978,6 +1980,7 @@ describe('BrainService', () => {
       activeCount: () => 0,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
@@ -5253,10 +5256,12 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
   });
 
-  it('boot reconcile terminalizes a workflow on a channel session no owner start() ever opens', async () => {
-    // The lazy per-session sweep hung off start(), which a channel/task session never reaches — its row
-    // stayed 'running' in the DB forever and only a display transform hid it, so the phantom came back the
-    // moment the origin went live again. A boot reconcile repairs the row itself.
+  it('boot claims a running workflow and terminalizes it with a durable notice when resume is unavailable', async () => {
+    // The old sweep terminalized every running workflow in phase 1 (and only reached sessions that also
+    // held a delegation row). Now phase 1 CLAIMS the row — on a channel session no owner start() ever
+    // opens, and even with no nested delegation in flight, the old gating bug — and phase 2 asks the
+    // engine to resume it. With no engine (plugins unwired) the workflow is terminalized exactly as
+    // before, PLUS a durable completion so the origin conversation actually learns it died.
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
     d.store.upsertWorkflowRun('brain-ch-discord-general', {
@@ -5264,11 +5269,92 @@ describe('sub-agent abort sparing + restart reconcile', () => {
       nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [] }],
     });
 
-    new BrainService(d as never).reconcileDelegationsOnBoot();
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    // Phase 1 only claims — the row must not be terminalized before the engine had its chance to resume.
+    expect(d.store.getWorkflowRuns('brain-ch-discord-general')[0]?.status).toBe('running');
+    await restarted.runWorkflowRecovery();
 
     const stored = d.store.getWorkflowRuns('brain-ch-discord-general')[0];
     expect(stored?.status).toBe('cancelled');
     expect(stored?.nodes[0]?.status).toBe('error');
+    // The durable notice: an inbox row against the WorkflowStart call, so the parent is woken with the truth.
+    const results = d.store.pendingSubagentResults('brain-ch-discord-general');
+    expect(results).toHaveLength(1);
+    expect(results[0]?.kind).toBe('workflow');
+    expect(results[0]?.status).toBe('error');
+    expect(results[0]?.result).toContain('interrupted by a daemon restart');
+  });
+
+  it('boot resume hands a claimed workflow back to the engine instead of terminalizing it', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    const resumeCalls: unknown[] = [];
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async (input: unknown) => { resumeCalls.push(input); return { resumed: true }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.upsertWorkflowRun('brain-ch-discord-general', {
+      id: 'wf-2', toolCallId: 'call-wf2', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [] }],
+    });
+
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    await restarted.runWorkflowRecovery();
+
+    expect(resumeCalls).toHaveLength(1);
+    expect(resumeCalls[0]).toMatchObject({ workflowId: 'wf-2', parentSessionId: 'brain-ch-discord-general', toolCallId: 'call-wf2' });
+    // A resumed workflow keeps its running row (the engine's own snapshots drive it from here) and gets
+    // no synthetic interruption notice.
+    expect(d.store.getWorkflowRuns('brain-ch-discord-general')[0]?.status).toBe('running');
+    expect(d.store.pendingSubagentResults('brain-ch-discord-general')).toHaveLength(0);
+  });
+
+  it('boot workflow resume supersedes generic recovery of a delegation nested inside a claimed node', async () => {
+    // A node's own Delegate child has a brain_subagent_runs row under the NODE session. Respawning it
+    // generically AND re-running the node would do the same work twice — the resumed node re-issues the
+    // call itself — so the claim is released as terminal instead.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: true }),
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const nodeSession = 'brain-ch-subagent-wf-wf-3-n1-abc';
+    const nestedChild = 'brain-ch-subagent-sub-dlg-nested';
+    d.store.createSession({ id: 'origin-1', userId: 1, model: 'm' });
+    d.store.createSession({ id: nodeSession, userId: 1, model: 'm' });
+    d.store.createSession({ id: nestedChild, userId: 1, model: 'm', parentSessionId: nodeSession });
+    d.store.upsertWorkflowRun('origin-1', {
+      id: 'wf-3', toolCallId: 'call-wf3', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [], sessionId: nodeSession }],
+    });
+    d.store.upsertSubagentRun(nodeSession, { id: 'nested-call', sessionId: nestedChild, status: 'running', task: 'sub', tools: 1, seconds: 1 });
+
+    const restarted = new BrainService(d as never);
+    restarted.reconcileDelegationsOnBoot();
+    await restarted.runDelegationRecovery();
+    await restarted.runWorkflowRecovery();
+
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'nested-call'").get() as { lifecycle: string };
+    // Not 'recovering' (respawned) and not left claimed: superseded as terminal error, without waking the
+    // node session with a synthetic result.
+    expect(row.lifecycle).toBe('error');
+    expect(d.store.pendingSubagentResults(nodeSession)).toHaveLength(0);
   });
 
   it('boot reconcile survives a corrupt delegation row and still repairs every other session', async () => {

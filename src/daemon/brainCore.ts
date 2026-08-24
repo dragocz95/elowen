@@ -26,6 +26,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
 import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { BrainService } from '../brain/brainService.js';
+import { StepDrainCoordinator } from '../brain/stepDrain.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -675,6 +676,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Bounded ring of recent mutating-hook execution records. The brain's owner-chat hook runner is the
   // sole writer (via the audit sink below); the admin plugins API reads it (per-plugin hook-audit view).
   const hookAudit = new HookAuditBuffer();
+  // One step-boundary shutdown coordinator per PROCESS (daemon and each runner build their own core, so
+  // each gets exactly one). The factory installs its holds/bookkeeping on every spawned session; the
+  // shutdown drain reads it through BrainService.midStepWork.
+  const stepDrain = new StepDrainCoordinator();
   // Per-user embedded brain (the new advisor engine): an in-process PI agent session. Wired only when
   // a provider is configured (reuses the relay endpoint) and not for the in-memory test DB. Coexists
   // with the spawn-CLI advisor — routes degrade to 503 when left unwired.
@@ -737,6 +742,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // Present only in the daemon: a runner builds its core without one and therefore always runs a
         // nested delegation itself.
         ...(opts.subagentRunner ? { subagentRunner: opts.subagentRunner } : {}),
+        stepDrain,
+        // The remote half of the step-boundary drain, only where a runner pool exists and speaks the seam.
+        ...(opts.subagentRunner?.beginDrain && opts.subagentRunner.midStepWork ? {
+          remoteStepDrain: {
+            begin: () => opts.subagentRunner?.beginDrain?.(),
+            midStepWork: () => opts.subagentRunner?.midStepWork?.() ?? Promise.resolve(0),
+          },
+        } : {}),
         // The typed sub-agent registry, resolved host-side when a delegate call names a subagent_type.
         agents: () => getAgentRegistry(),
         // Private long-term memory: the owner-chat memory tools + per-turn retrieval injection + the

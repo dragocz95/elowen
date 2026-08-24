@@ -90,6 +90,10 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       // platforms are up so their turns can actually run. After announceBoot, with its own catch, so a
       // recovery failure neither blocks the boot announcement nor is misreported as a startPlatforms error.
       .then(() => deps.brain?.runDelegationRecovery().catch((e) => deps.log.error('delegation recovery failed', e)))
+      // Workflow half of phase 2: hand each DAG claimed above back to the engine to resume from its
+      // recovery journal (or terminalize it with a durable notice). After the generic respawns so their
+      // results queue first; failures land here, never on the boot announcement.
+      .then(() => deps.brain?.runWorkflowRecovery().catch((e) => deps.log.error('workflow recovery failed', e)))
       .catch((e) => deps.log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.

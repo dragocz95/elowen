@@ -22,7 +22,8 @@ import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegated
 import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
-import type { AskAnswer, BrainEvent, CompactResult } from './events.js';
+import type { AskAnswer, BrainEvent, CompactResult, WorkflowCompletion } from './events.js';
+import { terminalizeWorkflow } from './workflowRuns.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
@@ -67,6 +68,11 @@ export type { BrainDeps } from './brainDeps.js';
  *  the deferred flag re-arms and the next settled turn applies the change and announces it. */
 const PLUGIN_RELOAD_DRAIN_MS = 2_000;
 const PLUGIN_RELOAD_POLL_MS = 100;
+
+/** A workflow whose resume keeps getting interrupted (a restart crash loop) is given up after this many
+ *  boot claims — the workflow twin of delegatedSession's MAX_RECOVERY_ATTEMPTS. attempt is bumped by each
+ *  boot's claimRecoverableWorkflows, so the cap bounds respawns, not nodes. */
+const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
  *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI.
@@ -173,7 +179,7 @@ export class BrainService {
     d.store.setDelegationBootId(randomUUID());
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
-    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
+    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory, stepDrain: d.stepDrain });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
     // Built before the channel service so it can share the SAME curator instance — channel and
@@ -442,9 +448,36 @@ export class BrainService {
    *  refused (turnRunner.send / channelService.send) so {@link busy} can fall to zero and the drain can
    *  exit — otherwise fresh input arriving through the drain window keeps it busy for the full budget.
    *  One-way: a draining daemon is on its way out, never back to admitting. Delegation and result
-   *  delivery take other seams, so they keep running and the drain still waits for them. */
+   *  delivery take other seams, so they keep running and the drain still waits for them.
+   *
+   *  Also latches the STEP-BOUNDARY drain: every live turn is parked at its next boundary (see
+   *  stepDrain.ts) here and in the runner pool, and parked questions are cancelled — an elicitation is a
+   *  tool execution that can wait on a human for minutes, and a daemon on its way out has no business
+   *  holding the exit for an answer it could not act on anyway (the cancel lets the turn reach its
+   *  boundary and park; the question is re-askable after the restart). */
   beginDrain(): void {
     this.draining = true;
+    if (this.d.stepDrain) {
+      this.d.stepDrain.begin();
+      this.d.remoteStepDrain?.begin();
+      this.elicitation.cancelAll('daemon restarting');
+    }
+  }
+
+  /** How many live turns are still MID-STEP, across this process and the runner pool — what the
+   *  step-boundary shutdown drain actually waits on. Undefined when no coordinator is wired (minimal
+   *  test daemons), which tells the drain to fall back to whole-turn waiting. */
+  async midStepWork(): Promise<number | undefined> {
+    if (!this.d.stepDrain) return undefined;
+    const local = this.d.stepDrain.unsafeCount(this.sessions.activeTurnSessionIds());
+    const remote = await (this.d.remoteStepDrain?.midStepWork() ?? Promise.resolve(0));
+    return local + remote;
+  }
+
+  /** The delegated children currently claimed live — the drain-start log's identity companion to
+   *  busy().children, so a blocked drain names WHICH child it is waiting on instead of a bare count. */
+  activeChildSessionIds(): string[] {
+    return this.sessions.allChildSessionIds();
   }
 
   /** One-shot boot sweep for restart-zombie goals — see GoalLoopService.reconcileGoalsOnBoot. */
@@ -463,6 +496,68 @@ export class BrainService {
    *  never blocks startup, and deliberately AFTER startPlatforms so the respawned child turns can run. */
   async runDelegationRecovery(): Promise<void> {
     await this.delegated.runDelegationRecovery();
+  }
+
+  /** Boot phase 2, workflow half: ask the engine to take back each DAG reconcileDelegationsOnBoot claimed,
+   *  resuming it from the engine's own recovery journal. Runs AFTER startPlatforms for the same reason as
+   *  runDelegationRecovery — a resumed node is an ordinary delegated turn — and after the generic respawns
+   *  so their durable results queue first. Anything the engine cannot take back (no journal, plugin
+   *  disabled, attempt cap) is terminalized as `cancelled` — exactly the old boot sweep — plus a durable
+   *  completion so the origin conversation actually LEARNS the workflow died with the restart instead of
+   *  discovering a silent `cancelled` badge later. */
+  async runWorkflowRecovery(): Promise<void> {
+    const claimed = this.delegated.takePendingWorkflowRecovery();
+    if (claimed.length === 0) return;
+    const registry = await this.resolvePlugins();
+    for (const wf of claimed) {
+      const control = registry?.control('workflow');
+      let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
+      try {
+        if (wf.attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) {
+          reason = 'it kept getting interrupted by repeated daemon restarts';
+        } else if (control) {
+          const outcome = await control.resumeInterrupted({
+            workflowId: wf.workflowId, parentSessionId: wf.parentSessionId, toolCallId: wf.toolCallId,
+            hooks: {
+              emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
+              complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
+              stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+            },
+          });
+          if (outcome.resumed) {
+            logger('brain').info(`boot recovery resumed workflow ${wf.workflowId} (attempt ${wf.attempt})`);
+            continue;
+          }
+          if (outcome.reason) reason = outcome.reason;
+        }
+      } catch (e) {
+        reason = `resume failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 2_000)}`;
+      }
+      logger('brain').warn(`boot recovery could not resume workflow ${wf.workflowId}: ${reason} — terminalizing`);
+      this.d.store.upsertWorkflowRun(wf.parentSessionId, terminalizeWorkflow(wf.state));
+      const done = wf.state.nodes.filter((n) => n.status === 'done').map((n) => n.id);
+      this.deliverWorkflowCompletion(wf.parentSessionId, {
+        id: wf.workflowId, toolCallId: wf.toolCallId,
+        ...(wf.state.title !== undefined ? { title: wf.state.title } : {}),
+        status: 'cancelled',
+        result: `Workflow '${wf.state.title ?? wf.workflowId}' was interrupted by a daemon restart and could not be resumed (${reason}). `
+          + (done.length > 0
+            ? `Nodes finished before the restart: ${done.join(', ')} — their session transcripts are still readable. `
+            : 'No node had finished yet. ')
+          + 'Start a new workflow to redo the remaining work if it is still needed.',
+      });
+    }
+  }
+
+  /** Deliver a workflow completion durably to its origin conversation on behalf of boot resume, where no
+   *  turn-scoped completion emitter exists. Same ingress as a live background workflow's finish. */
+  private deliverWorkflowCompletion(parentSessionId: string, completion: WorkflowCompletion): void {
+    const row = this.d.store.getSession(parentSessionId);
+    if (!row) {
+      logger('brain').warn(`workflow ${completion.id}: origin session ${parentSessionId} vanished; completion dropped`);
+      return;
+    }
+    this.turnRunner.acceptWorkflowCompletion(parentSessionId, row.user_id, completion);
   }
 
   /** The model id the CURRENT config resolves to (readiness), or null — see BrainStatusService. */

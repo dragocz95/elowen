@@ -261,6 +261,44 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
     });
   }
 
+  /** Tell the runner the daemon began its shutdown drain, so its own StepDrainCoordinator parks every
+   *  turn at the next step boundary too. One-way — {@link midStepWork} polls convergence. */
+  beginDrain(): void {
+    const child = this.child;
+    if (child) this.post(child, { type: 'drain' });
+  }
+
+  /** This runner's mid-step turn count, for the daemon's step-boundary drain. Same request/response
+   *  shape and timeout as {@link activeCount}; fails CLOSED (1) on a live-but-unresponsive child so the
+   *  drain keeps waiting rather than exiting under a turn it could not observe, and open (0) on a dead
+   *  child — a runner that exited holds no work. */
+  async midStepWork(): Promise<number> {
+    const child = this.child;
+    if (!child || !this.ready) return 0;
+    const drainId = randomUUID();
+    return new Promise<number>((resolve) => {
+      let settled = false;
+      const finish = (count: number): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+        resolve(count);
+      };
+      const onMessage = (raw: unknown): void => {
+        const msg = parseRunnerMessage(raw);
+        if (msg?.type === 'drainStatus' && msg.drainId === drainId) finish(msg.midStep);
+      };
+      const onExit = (): void => finish(0);
+      const timer = setTimeout(() => finish(1), ACTIVITY_TIMEOUT_MS);
+      timer.unref();
+      child.on('message', onMessage);
+      child.once('exit', onExit);
+      if (!this.post(child, { type: 'drainStatus', drainId })) finish(1);
+    });
+  }
+
   reset(reason: string): void {
     const child = this.child;
     if (!child) return;

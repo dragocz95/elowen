@@ -6,7 +6,7 @@
 // workflow node never doubles up in the flat sub-agent panel.
 import { AsyncResource } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
@@ -162,6 +162,43 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
    *  tool to fix. A repository path stays perfectly valid — this is the default, not a restriction. */
   const workflowDir = join(ctx.dataDir(), 'workflows');
   try { mkdirSync(workflowDir, { recursive: true }); } catch { /* surfaces on first write instead */ }
+
+  /** Recovery journals: one JSON file per RUNNING workflow, the engine's own restart survival kit. The
+   *  durable brain_workflows snapshot cannot drive a resume — its task/result previews are clipped for
+   *  display — so everything a resume actually needs (full node tasks and results, channel ids, the
+   *  captured access boundary, shared context, the origin principal) lives here, written on structural
+   *  transitions only (start, node session, node terminal, expansion, resume) rather than on every tool
+   *  tick. Deleted when the workflow reaches a terminal state: a journal on disk at boot IS the marker of
+   *  an interrupted run. Best-effort by design — a failed write costs resumability, never the live run. */
+  const journalDir = join(workflowDir, 'state');
+  try { mkdirSync(journalDir, { recursive: true }); } catch { /* surfaces on first journal write instead */ }
+  const journalPath = (workflowId) => join(journalDir, `${workflowId}.json`);
+  const writeJournal = (wf) => {
+    try {
+      writeFileSync(journalPath(wf.id), JSON.stringify({
+        v: 1,
+        id: wf.id,
+        toolCallId: wf.toolCallId,
+        ...(wf.title ? { title: wf.title } : {}),
+        background: wf.background === true,
+        ...(wf.sharedContext ? { sharedContext: wf.sharedContext } : {}),
+        originSessionId: wf.originSessionId,
+        originPrincipal: wf.originPrincipal,
+        parentAccess: wf.parentAccess ?? null,
+        parentModel: wf.parentModel ?? null,
+        parentCwd: wf.parentCwd ?? null,
+        nodes: wf.nodes,
+        nodeParentAccess: [...wf.nodeParentAccess],
+        nodeParentModel: [...wf.nodeParentModel],
+        state: [...wf.state],
+      }));
+    } catch (e) {
+      ctx.logger.warn(`workflow ${wf.id}: recovery journal write failed: ${errorText(e)}`);
+    }
+  };
+  const deleteJournal = (workflowId) => {
+    try { unlinkSync(journalPath(workflowId)); } catch { /* already gone — the common case for a clean finish */ }
+  };
 
   const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, startedAt: undefined, result: undefined, error: undefined });
 
@@ -411,6 +448,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           wf.stopChild(e.sessionId)?.catch((err) => ctx.logger.warn(
             `workflow ${wf.id}: node "${node.id}" child ${e.sessionId} could not be stopped after cancellation: ${errorText(err)}`));
         }
+        writeJournal(wf); // the channel/session pair is what lets a boot resume re-enter this node's conversation
         snapshot(wf);
       }
       else if (e.type === 'tool' && e.name) { ns.tools += 1; ns.detail = e.detail ? `${e.name} ${e.detail}` : e.name; ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
@@ -445,6 +483,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ns.error = clip(errorText(e), MAX_RESULT_CHARS);
     }
     ns.seconds = Math.round((Date.now() - (ns.startedAt ?? Date.now())) / 1000);
+    writeJournal(wf); // node terminal: the FULL result must reach the journal — snapshots only carry a preview
     snapshot(wf);
     tick(wf);
   };
@@ -507,6 +546,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         wf.finishedAt = Date.now();
         snapshot(wf);
       }
+      // Terminal either way (done/error above, cancelled settled by cancelWorkflow): the journal's job is
+      // over — a journal on disk at boot is precisely the marker of an INTERRUPTED run.
+      deleteJournal(wf.id);
       return summarize(wf);
     });
   };
@@ -601,9 +643,94 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         if (callerModel) wf.nodeParentModel.set(node.id, callerModel);
       }
     }
+    writeJournal(wf);
     snapshot(wf);
     tick(wf);
     return { added: nodes.map((node) => node.id) };
+  };
+
+  /** Boot resume of a restart-orphaned workflow (see WorkflowRecoveryControl in core's api.ts). Core has
+   *  already CLAIMED the durable `running` row; this rebuilds the in-memory workflow from the recovery
+   *  journal and re-runs it with WorkflowResume's exact semantics — DONE nodes keep their (full,
+   *  journaled) results and feed their dependents, everything else is retried, a node that had a session
+   *  resumes into it via its journaled channel id. Two deliberate differences from a live resume: the
+   *  access boundary is REPLAYED from the journal rather than re-captured (there is no current turn at
+   *  boot; the journal was captured by this same daemon from a genuine turn, and an exact match is what
+   *  lets node sessions respawn at all), and the workflow is forced to BACKGROUND — the origin's blocking
+   *  turn died with the restart, so the hook-provided durable sink is the only path its summary has. */
+  const resumeInterrupted = async ({ workflowId, parentSessionId, toolCallId, hooks }) => {
+    if (!getRun()) return { resumed: false, reason: 'the delegated run handler is not connected' };
+    if (workflows.has(workflowId)) return { resumed: false, reason: 'already held in memory' };
+    let raw;
+    try { raw = JSON.parse(readFileSync(journalPath(workflowId), 'utf8')); }
+    catch (e) { return { resumed: false, reason: `no usable recovery journal (${errorText(e)})` }; }
+    if (!isRecord(raw) || raw.v !== 1 || raw.id !== workflowId || raw.toolCallId !== toolCallId
+      || raw.originSessionId !== parentSessionId || typeof raw.originPrincipal !== 'string' || !raw.originPrincipal
+      || !isRecord(raw.parentAccess) || !Array.isArray(raw.nodes) || !Array.isArray(raw.state)) {
+      deleteJournal(workflowId); // mismatched/corrupt — it can never resume anything, so stop it lingering
+      return { resumed: false, reason: 'recovery journal does not match the claimed workflow' };
+    }
+    pruneWorkflows();
+    if ([...workflows.values()].filter((w) => w.finishedAt === undefined).length >= MAX_WORKFLOWS) {
+      return { resumed: false, reason: `too many workflows (${MAX_WORKFLOWS}) are already running` };
+    }
+    const wf = {
+      id: workflowId,
+      toolCallId,
+      title: typeof raw.title === 'string' && raw.title ? raw.title : undefined,
+      status: 'running',
+      nodes: raw.nodes,
+      state: new Map(),
+      nodeParentAccess: new Map(Array.isArray(raw.nodeParentAccess) ? raw.nodeParentAccess : []),
+      nodeParentModel: new Map(Array.isArray(raw.nodeParentModel) ? raw.nodeParentModel : []),
+      parentAccess: raw.parentAccess,
+      parentModel: isRecord(raw.parentModel) ? raw.parentModel : undefined,
+      parentCwd: typeof raw.parentCwd === 'string' && raw.parentCwd ? raw.parentCwd : undefined,
+      emit: (update) => hooks.emit(update),
+      sharedContext: typeof raw.sharedContext === 'string' && raw.sharedContext ? raw.sharedContext : undefined,
+      originSessionId: parentSessionId,
+      originPrincipal: raw.originPrincipal,
+      // No origin turn exists at boot; the hook is core's ownership-guarded stop for the origin's children.
+      stopChild: (sessionId) => hooks.stopChild(sessionId),
+      childSessions: new Set(),
+      finished: false,
+      finishedAt: undefined,
+      resolveDone: undefined,
+      background: true,
+      emitCompletion: (completion) => hooks.complete(completion),
+      resolveDetached: undefined,
+    };
+    const journaled = new Map(raw.state.filter((entry) =>
+      Array.isArray(entry) && typeof entry[0] === 'string' && isRecord(entry[1])));
+    let done = 0;
+    for (const n of wf.nodes) {
+      const prev = journaled.get(n.id);
+      if (prev?.sessionId && typeof prev.sessionId === 'string') wf.childSessions.add(prev.sessionId);
+      if (prev?.status === 'done') {
+        wf.state.set(n.id, { ...freshNodeState(), ...prev });
+        done += 1;
+        continue;
+      }
+      // WorkflowResume's reset, under a boundary that matches by construction (same journaled access):
+      // a node that ran resumes inside its own conversation; one that never launched starts clean.
+      const next = freshNodeState();
+      if (prev?.sessionId) {
+        if (typeof prev.channelId === 'string' && prev.channelId) { next.channelId = prev.channelId; next.taskNote = RESUME_NOTE; }
+        else next.taskNote = RESTART_NOTE;
+      }
+      wf.state.set(n.id, next);
+    }
+    workflows.set(wf.id, wf);
+    writeJournal(wf);
+    const completion = runToCompletion(wf).catch((e) => {
+      wf.status = 'error';
+      wf.finished = true;
+      wf.finishedAt = Date.now();
+      return `Error: workflow failed: ${errorText(e)}`;
+    });
+    void completion.then((summary) => deliverCompletion(wf, summary));
+    ctx.logger.info(`workflow ${wf.id} resumed from its recovery journal (${done}/${wf.nodes.length} node(s) already done)`);
+    return { resumed: true };
   };
 
   const cancelForSession = (sessionId) => {
@@ -649,6 +776,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     // from a daemon-minted active turn before this method is reachable; the IPC payload carries neither.
     addNodesFromSession: ({ callerSessionId, callerAccess, callerModel, workflowId, nodes }) =>
       addNodesFromSession(workflowId, nodes, callerSessionId, callerAccess, callerModel),
+    resumeInterrupted,
   });
 
   /** A plugin reload replaces THIS closure: the fresh instance registers its own empty `workflows` map,
@@ -768,6 +896,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         resolveDetached: undefined,
       };
       workflows.set(wf.id, wf);
+      writeJournal(wf);
       // Start the DAG once. This promise settles the terminal status, finishes the row and yields the
       // summary — a foreground blocking call and a detach/background call ride this SAME run.
       const completion = runToCompletion(wf).catch((e) => {
@@ -858,6 +987,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       wf.emit = ctx.workflowEmitter();
       wf.emitCompletion = ctx.workflowCompletionEmitter?.() ?? undefined;
       wf.parentAccess = access;
+      writeJournal(wf); // the finish deleted the journal; the resumed run is interruptible again
       const completion = runToCompletion(wf).catch((e) => {
         wf.status = 'error';
         wf.finished = true;
