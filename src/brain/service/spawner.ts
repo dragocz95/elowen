@@ -125,9 +125,24 @@ export class LiveSessionSpawner {
     // first provider in LIST order, not anyone's default — which once dropped a session on an
     // image-only model that cannot hold a conversation. Both parts must be set together: model ids are
     // not globally unique, so a bare model id could resolve under another provider's credentials.
-    const chatSel = settings?.model && settings.modelProvider
+    const storedSel = settings?.model && settings.modelProvider
       ? { provider: settings.modelProvider, model: settings.model }
       : undefined;
+    // A STORED preference is a fallback, not an instruction for this run. When its provider has been
+    // removed the session must still open — on the instance default — instead of refusing to start, which
+    // is the same rule the compaction pick above follows and the reason deleting a provider cannot lock
+    // anyone out of their own conversation. An EXPLICIT `opts.selection` keeps the opposite treatment:
+    // resolveBrainModelRoute refuses to substitute a provider someone actually named.
+    //
+    // Dropping it is never silent, and the stored row is deliberately left untouched: a provider removed by
+    // mistake (or re-added later) restores the account's own choice, whereas rewriting the row here would
+    // spend the user's configuration on what may be a temporary state.
+    const chatSel = storedSel && !cfg.providers.some((p) => p.id === storedSel.provider)
+      ? undefined
+      : storedSel;
+    if (storedSel && !chatSel) {
+      logger('brain').warn(`account ${ownerUserId}: model preference ${storedSel.provider}/${storedSel.model} names a provider that is no longer configured — starting this session on the default instead`);
+    }
     const selection = opts.selection.provider || opts.selection.model ? opts.selection : chatSel;
     const route = resolveBrainModelRoute(registry, cfg, selection, compactSel);
     const { model } = route;

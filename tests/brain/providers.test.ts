@@ -34,6 +34,26 @@ describe('brain providers', () => {
     expect(resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }).id).toBe('kimi');
   });
 
+  // A selection naming a provider this installation no longer has (deleted in Settings, or restored from a
+  // backup that predates it) used to fall through `?? cfg.providers[0]` and run on the FIRST provider in
+  // list order — under that provider's credentials and billing, carrying the dead provider's model id. A
+  // cron pinned to `alibaba/qwen3.8-max-preview` therefore kept firing, silently, against another account.
+  // Naming a provider is an explicit instruction: when it cannot be honoured the only safe answer is to
+  // say so. An EMPTY selection is a different fact — "no preference" — and still defaults (test below).
+  it('refuses to substitute another provider when the named one is gone', () => {
+    const reg = buildBrainRegistry(cfg, runtime);
+    expect(() => resolveBrainModelRoute(reg, cfg, { provider: 'alibaba', model: 'qwen3.8-max-preview' }))
+      .toThrow(/alibaba/);
+    expect(() => resolveBrainModelRoute(reg, cfg, { provider: 'alibaba', model: 'qwen3.8-max-preview' }))
+      .toThrow(/not configured/);
+  });
+
+  it('still defaults to the first provider when the selection names none', () => {
+    const reg = buildBrainRegistry(cfg, runtime);
+    expect(resolveBrainModelRoute(reg, cfg, { model: 'kimi' }).providerId).toBe('relay');
+    expect(resolveBrainModelRoute(reg, cfg, {}).providerId).toBe('relay');
+  });
+
   it('resolves a distinct configured OAuth default only for compaction recovery', () => {
     const oauth: BrainRuntimeConfig = { providers: [{
       id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',

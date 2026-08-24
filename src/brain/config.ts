@@ -51,3 +51,27 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
   }
   return { providers, contextWindows: config.get().brain.modelContextWindows };
 }
+
+/**
+ * Every brain provider id this installation is configured to reach — the registry a stored model
+ * reference is judged against, and the reason a deleted provider's models stop existing everywhere at
+ * once instead of having to be hunted down row by row.
+ *
+ * Deliberately WIDER than `brain.providers` alone and deliberately narrower than "whatever answered last":
+ *  - an explicit entry always counts, even while its OAuth credential is missing or its endpoint is down.
+ *    A provider that fails to LOAD is not a provider that was DELETED, and only the second may cost anyone
+ *    their configuration. This is the one distinction the whole design rests on, so it is made here rather
+ *    than left to each caller.
+ *  - a connected OAuth account with NO explicit entry counts too: brainConfigFromElowen serves its models
+ *    under that synthetic id, so a picker offers them and the gate has to recognise them or fail closed on
+ *    a perfectly valid setup.
+ *  - the relay fallback counts on the same grounds.
+ *
+ * Feed this to `isOfferableExec` / `isExecAllowedForUser` / `isModelVisibleForUser` so the offered set and
+ * the enforced set are computed from one source and cannot drift apart.
+ */
+export function configuredBrainProviderIds(config: ConfigStore, creds?: BrainCredentialAccess): string[] {
+  const explicit = config.brainProviders().map((p) => p.id);
+  const reachable = brainConfigFromElowen(config, creds)?.providers.map((p) => p.id) ?? [];
+  return [...new Set([...explicit, ...reachable])];
+}

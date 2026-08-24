@@ -66,6 +66,39 @@ describe('UserDetailPane', () => {
     expect(rows.every((r) => r.textContent?.includes('elowen:'))).toBe(false);
   });
 
+  // The reported bug: deleting the `alibaba` provider left its models behind in the global `allowedExecs`
+  // list, and this pane built its rows straight from that list — so `alibaba/…` stayed listed and stayed
+  // selectable long after the provider was gone. A brain row must come from the LIVE catalog, which is
+  // built from the configured providers and therefore cannot contain a dead one. CLI worker execs
+  // (`sonnet`, `codex:…`) keep coming from the global list, which is where they legitimately live.
+  it('drops brain models whose provider is gone, and keeps CLI worker execs', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    // `alibaba/qwen3.8-max` is exactly the shape the operator's config is in: still in allowedExecs,
+    // no longer backed by any provider, so absent from /brain/models.
+    mount(user(), [], ['sonnet', 'anthropic/claude-opus-5', 'alibaba/qwen3.8-max']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    expect(await screen.findByRole('button', { name: /claude-opus-5/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /qwen3\.8-max/ })).toBeNull();
+  });
+
+  // Reducing the offered set must never reduce what the admin can SEE they granted. A user still carrying
+  // a dead model has to keep reading as restricted, or the pane would claim "all models allowed" — the one
+  // reading that would make a permission list look wider than it is.
+  it('does not read a user restricted to a dead model as unrestricted', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+    );
+    mount(user({ allowed_execs: ['alibaba/qwen3.8-max'] }), [], ['sonnet', 'alibaba/qwen3.8-max']);
+    expect(await screen.findByText(/1 models/)).toBeTruthy();
+  });
+
   it('saving the models modal PATCHes allowed_execs', async () => {
     let patched: { id?: string; body?: unknown } = {};
     server.use(

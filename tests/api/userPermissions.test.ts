@@ -58,6 +58,27 @@ describe('PATCH /users/:id — admin manages permissions', () => {
     expect((await res.json()).allowed_execs).toEqual(['sonnet']);
   });
 
+  // The "stops being stored" half of the reported bug. Deleting a provider does not touch the global
+  // `allowedExecs` list, so its models linger there — and this filter used to accept a brain exec on the
+  // strength of that stale entry alone. An admin could therefore keep granting `alibaba/…` to a user long
+  // after the `alibaba` provider was removed, which is what kept the dead models alive in user records.
+  it('drops a brain exec whose provider is gone, even while allowedExecs still lists it', async () => {
+    const { app, db, adminTok, bob } = await setup();
+    const config = new ConfigStore(db);
+    config.update({
+      allowedExecs: ['sonnet', 'alibaba/qwen3.8-max', 'live/model'],
+      brain: { providers: [{ id: 'live', label: 'Live', type: 'openai', baseUrl: 'https://live.example/v1', models: ['model'], apiKey: 'k' }] },
+    });
+
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, {
+      allowed_execs: ['sonnet', 'live/model', 'alibaba/qwen3.8-max'],
+    }));
+
+    expect(res.status).toBe(200);
+    // The CLI exec and the brain exec on a LIVE provider survive; only the dead one is refused.
+    expect((await res.json()).allowed_execs).toEqual(['sonnet', 'live/model']);
+  });
+
   it('a non-admin cannot edit anyone (403)', async () => {
     const { app, bobTok, bob } = await setup();
     expect((await app.request(`/users/${bob.id}`, patch(bobTok, { allowed_execs: ['sonnet'] }))).status).toBe(403);

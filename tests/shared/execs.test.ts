@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 /** The brain providers this installation has configured. A brain exec only skips the global
- *  allow-list when its provider is one of these — see isConfiguredBrainExec. */
+ *  allow-list when its provider is one of these — see isOfferableExec. */
 const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov'];
 
 import {
@@ -132,6 +132,24 @@ describe('shared/execs', () => {
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:other/m', PROVIDERS)).toBe(false);
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['elowen:relay/kimi'] }, globalExecs, 'elowen:relay/kimi', PROVIDERS)).toBe(true);
     });
+
+    // The reported bug. `allowedExecs` is the CLI-agent list; a brain exec is bounded by the configured
+    // PROVIDERS instead. But the old guard was one `&&`, so a brain exec whose provider had been deleted
+    // failed the provider test and then got waved through by the stale `allowedExecs` entry the same
+    // deletion left behind. Deleting the `alibaba` provider therefore changed nothing: `alibaba/…` stayed
+    // allowed, stayed offered, and stayed storable. A brain exec must be judged by the live registry ALONE.
+    it('refuses a brain exec whose provider is gone, even when allowedExecs still lists it', () => {
+      const stale = ['sonnet', 'alibaba/qwen3.8-max'];
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
+      // …not even when the user's own whitelist names it, which is the shape the operator's DB is in.
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['alibaba/qwen3.8-max'] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
+      // The legacy `elowen:` spelling is the same fact and must not be a way around it.
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, ['elowen:alibaba/q'], 'elowen:alibaba/q', PROVIDERS)).toBe(false);
+    });
+
+    it('keeps admitting a brain exec whose provider is still configured', () => {
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'anthropic/claude-opus-5', PROVIDERS)).toBe(true);
+    });
   });
 
   describe('isModelVisibleForUser (picker display filter)', () => {
@@ -147,6 +165,16 @@ describe('shared/execs', () => {
     it('null user = open mode (all global CLI + all brain)', () => {
       expect(isModelVisibleForUser(null, globalExecs, 'sonnet', PROVIDERS)).toBe(true);
       expect(isModelVisibleForUser(undefined, globalExecs, 'elowen:x/y', PROVIDERS)).toBe(true); // brain always visible in open mode
+    });
+
+    // The display point must reach the same verdict as the permission gate above — the whole symptom was a
+    // picker offering something the runtime would refuse. Open mode is where a stale `allowedExecs` entry
+    // did the most damage: with no user to narrow it, the dead model was simply offered to everyone.
+    it('hides a brain exec whose provider is gone, in every mode', () => {
+      const stale = ['sonnet', 'alibaba/qwen3.8-max'];
+      expect(isModelVisibleForUser(null, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
+      expect(isModelVisibleForUser({ allowed_execs: [] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
+      expect(isModelVisibleForUser({ allowed_execs: ['alibaba/qwen3.8-max'] }, stale, 'alibaba/qwen3.8-max', PROVIDERS)).toBe(false);
     });
   });
 });

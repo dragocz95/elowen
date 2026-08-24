@@ -198,6 +198,37 @@ function includesExec(list: readonly string[], spec: string): boolean {
 }
 
 /**
+ * Whether this installation may OFFER or STORE an exec at all — the shared bound applied before any
+ * per-user narrowing, and the single answer to "does this model still exist here?".
+ *
+ * The two programs are bounded by DIFFERENT registries, and keeping them apart is the whole point. A CLI
+ * agent's models are the operator-curated `allowedExecs` list. A brain model, by contrast, exists only as
+ * long as its provider does — the model list is BUILT from the provider set, so a provider that is gone
+ * has no models by construction.
+ *
+ * Judging a brain exec against `allowedExecs` as a fallback (which the previous single `&&` guard did) is
+ * what made deleting a provider a no-op: the deletion left the provider's models behind in `allowedExecs`,
+ * and that stale entry then admitted every one of them. So a brain exec is judged by the live provider
+ * registry ALONE — no configured provider, no exec, whatever any stored list still claims. This can only
+ * ever narrow what is offered; nothing here can admit an exec that the provider set does not back.
+ *
+ * Membership in the provider set is also what separates a real brain model from a well-shaped string:
+ * since the canonical spelling is bare `<provider>/<model>`, ANY slash-shaped value parses as a brain
+ * exec, so "is this the brain?" would wave `bogus/model` straight past the bound that exists to stop it.
+ */
+export function isOfferableExec(
+  exec: ExecInput,
+  globalExecs: readonly string[],
+  brainProviders: readonly string[],
+): boolean {
+  const ref = parseExecRef(exec);
+  if (!ref) return false;
+  if (ref.program === 'elowen') return brainProviders.includes(ref.provider);
+  const spec = execSpecOf(exec);
+  return spec !== null && includesExec(globalExecs, spec);
+}
+
+/**
  * Per-user exec permission, shared by the API routes and the brain: admins may use anything;
  * everyone else is bounded by the global allow-list AND their personal whitelist (an empty
  * personal list means "everything the global list allows"). `user` null/undefined = open mode.
@@ -212,26 +243,8 @@ export function isExecAllowedForUser(
   if (!user || user.is_admin) return true;
   const spec = execSpecOf(exec);
   if (spec === null) return false;
-  // Brain execs are bounded by the configured brain PROVIDERS (the model list is built only from them),
-  // NOT by `KNOWN_EXECS`/allowedExecs, which cover CLI-agent specs only. So a brain exec skips the global
-  // bound — else non-admins get an empty brain-model picker. Only the per-user allow-list still narrows
-  // it. CLI execs keep the global bound.
-  if (!isConfiguredBrainExec(exec, brainProviders) && !includesExec(globalExecs, spec)) return false;
+  if (!isOfferableExec(exec, globalExecs, brainProviders)) return false;
   return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
-}
-
-/**
- * Whether a value names a brain model on a provider this installation actually has configured.
- *
- * This is the test that may skip the global allow-list, and it is deliberately narrower than
- * `isElowenExec`. Since the canonical brain spelling is bare `<provider>/<model>`, ANY slash-shaped
- * string now parses as a brain exec — so asking only "is this the brain?" would let `bogus/model`
- * through the bound that exists to stop exactly that. Membership in the configured provider set is
- * what separates a real model from a well-shaped string.
- */
-export function isConfiguredBrainExec(input: ExecInput, brainProviders: readonly string[]): boolean {
-  const ref = parseExecRef(input);
-  return ref?.program === 'elowen' && brainProviders.includes(ref.provider);
 }
 
 /**
@@ -248,8 +261,9 @@ export function isModelVisibleForUser(
 ): boolean {
   const spec = execSpecOf(exec);
   if (spec === null) return false;
-  // Brain execs are bounded by configured providers, not KNOWN_EXECS — see isExecAllowedForUser.
-  if (!isConfiguredBrainExec(exec, brainProviders) && !includesExec(globalExecs, spec)) return false;
+  // The SAME bound the permission gate applies — a picker that offers what the runtime would refuse is
+  // exactly the bug this shared predicate exists to prevent.
+  if (!isOfferableExec(exec, globalExecs, brainProviders)) return false;
   if (!user) return true;
   return user.allowed_execs.length === 0 || includesExec(user.allowed_execs, spec);
 }
