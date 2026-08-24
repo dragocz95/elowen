@@ -83,8 +83,10 @@ export interface BrainModelOption {
 }
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean }
-/** A row in the admin session-management panel (all brain sessions the operator anchors). */
-export interface ManagedSession { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number; ownerId: number; ownerLabel: string }
+/** A row in the admin session-management panel (all brain sessions the operator anchors). `platform` says
+ *  WHERE it happened (null for web/CLI) and `direct` whether `ownerId` is the person talking there or only
+ *  the account hosting a shared room — see ManagedSessionView in src/brain/service/statusService.ts. */
+export interface ManagedSession { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number; platform: string | null; direct: boolean; ownerId: number; ownerLabel: string }
 /** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands.
  *  `kind:'prompt'` is a plugin prompt macro: the surface sends the RAW `/name args` slash and PI expands
  *  the template's arguments ($ARGUMENTS/$1..$9) on the daemon; `prompt` is kept for menu/identification. */

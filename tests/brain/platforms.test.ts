@@ -151,10 +151,31 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     /** One inbound direct message, against a channel store whose row is owned by `rowOwner`
      *  (undefined = the conversation does not exist yet). */
     const runDirect = async (rowOwner: number | undefined): Promise<ChannelSendOpts> => {
+      const sent = await runDirectWithAdoption(rowOwner);
+      return sent.opts;
+    };
+
+    /** As {@link runDirect}, but also reporting what was asked of the store. `adoptPersonalChat` mirrors the
+     *  real compare-and-swap: it only reports a transfer while the row still sits on the account named. */
+    const runDirectWithAdoption = async (
+      rowOwner: number | undefined,
+    ): Promise<{ opts: ChannelSendOpts; adoptCalls: [string, number, number][] }> => {
       let sent: ChannelSendOpts | undefined;
       let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+      const adoptCalls: [string, number, number][] = [];
+      let owner = rowOwner;
       const adapter = { name: 'discord', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
-      const channels = { sessionOwnerUserId: () => rowOwner, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '' };
+      const channels = {
+        sessionOwnerUserId: () => rowOwner,
+        adoptPersonalChat: (sessionId: string, from: number, to: number) => {
+          adoptCalls.push([sessionId, from, to]);
+          if (owner !== from) return false;
+          owner = to;
+          return true;
+        },
+        send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; },
+        fragmentFor: () => '',
+      };
       const orch = new PlatformOrchestrator({
         plugins: async () => ({ platforms: [adapter] }) as never,
         platformOwner: () => 1,
@@ -166,7 +187,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       });
       await orch.startAll();
       await handler!({ platform: 'discord', userId: 'D9', channelId: 'c1', roleIds: [], direct: true, access: { admin: false, projectIds: [3] } } as never, 'hi');
-      return sent!;
+      return { opts: sent!, adoptCalls };
     };
 
     it('anchors a brand-new one on its own sender and exposes only the validated direct identity', async () => {
@@ -178,15 +199,26 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       expect(sent.deliveryTarget).toBe('destination:discord:c1');
     });
 
-    // The row lands on the operator when an UNLINKED stranger opens the chat. If linking later flipped it
-    // to direct without moving ownership, personal skills and bound delivery — both resolved from the
-    // session's owner — would serve the OPERATOR's private context to whoever writes here.
-    it('stays shared while the row still belongs to somebody else', async () => {
-      const sent = await runDirect(1);
-      expect(sent?.direct).toBe(false);
-      expect(sent?.ownerUserId).toBe(1); // and the transcript is NOT re-pointed behind the owner's back
-      expect(sent?.identity?.conversation).toBe('shared');
-      expect(sent?.deliveryTarget).toBeUndefined();
+    // A private chat lands on the operator when its sender had not linked their account yet, or when the
+    // bot opened the chat proactively and there was no sender to anchor on. That fallback used to be
+    // permanent, so a colleague's DM stayed filed under the operator's name for good.
+    it('takes a chat back off the operator fallback once its sender is verified', async () => {
+      const { opts, adoptCalls } = await runDirectWithAdoption(1);
+      expect(adoptCalls).toEqual([['brain-ch-discord-c1', 1, 2]]);
+      expect(opts).toMatchObject({ direct: true, ownerUserId: 2 });
+      expect(opts.identity?.conversation).toBe('direct');
+      expect(opts.deliveryTarget).toBe('destination:discord:c1');
+    });
+
+    // The operator anchor is a PLACEHOLDER, so handing it over is safe. A row already belonging to a real
+    // person is not: personal skills and bound delivery both resolve from the session's owner, so letting
+    // a message move it would serve that person's private context to whoever writes here next.
+    it('never takes a chat away from a third party', async () => {
+      const { opts, adoptCalls } = await runDirectWithAdoption(3);
+      expect(adoptCalls).toEqual([]);
+      expect(opts?.direct).toBe(false);
+      expect(opts?.identity?.conversation).toBe('shared');
+      expect(opts?.deliveryTarget).toBeUndefined();
     });
 
     it('is direct again once the row is the sender\'s own', async () => {

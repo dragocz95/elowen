@@ -125,6 +125,20 @@ export function channelIdOf(id: string): string {
   return id.slice(CHANNEL_PREFIX.length);
 }
 
+/** WHICH platform a channel session came from (`msteams`, `discord`, `subagent`, `cron`, …), or null when
+ *  the id is not a channel session at all.
+ *
+ *  A channel id is minted as `<platform>-<channelId>` (`keyOf` in platforms.ts) and no platform name
+ *  contains a hyphen, so the first segment IS the platform. Deliberately DERIVED rather than stored: the
+ *  session id already records where a conversation came from, and a second copy on the row could drift
+ *  out of agreement with the id the router actually keys on. */
+export function platformOfSession(id: string): string | null {
+  if (!isChannelSession(id)) return null;
+  const channelId = channelIdOf(id);
+  const cut = channelId.indexOf('-');
+  return cut > 0 ? channelId.slice(0, cut) : null;
+}
+
 /** Not a user conversation — excluded from the user's session list / resume / delete. */
 export function isNonUserSession(id: string): boolean {
   return isChannelSession(id) || isTaskSession(id);

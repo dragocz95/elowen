@@ -33,7 +33,24 @@ const FALLBACK_PAGE_SIZE = 12;
 const MIN_PAGE_SIZE = 4;
 const FALLBACK_ROW_HEIGHT = 44;
 
-interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string }
+interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string; platform?: string | null; direct?: boolean }
+
+/** How a platform id is spelled to a person. Only where the technical name is genuinely misleading —
+ *  `msteams` is the plugin's id, never what the product is called. Anything unmapped prints as it is,
+ *  because a platform arrives from a plugin and inventing a label for one we have never seen would be a
+ *  guess; an honest `discord` reads better than a wrong translation. */
+const PLATFORM_LABELS: Record<string, string> = { msteams: 'Teams' };
+const platformLabel = (platform: string): string => PLATFORM_LABELS[platform] ?? platform;
+
+/** Platforms that are MACHINE work rather than a place people talk: a delegated sub-agent and a scheduled
+ *  run. The account that owns those really did start them, so they are never re-labelled as hosted. */
+const MACHINE_PLATFORMS = new Set(['subagent', 'cron']);
+
+/** Whether this row's owner merely HOSTS the transcript instead of being the person talking in it — a
+ *  shared platform room, which core deliberately anchors on the instance operator because a room has no
+ *  single author (see `direct` on ManagedSessionView). A direct 1:1 chat is genuinely its owner's. */
+const hostedRoom = (s: Row): boolean =>
+  s.kind === 'channel' && !!s.platform && !s.direct && !MACHINE_PLATFORMS.has(s.platform);
 
 type SortKey = 'title' | 'owner' | 'model' | 'tokens' | 'updated';
 
@@ -271,6 +288,11 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                       className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
                     >
                       <span className="truncate text-sm text-text transition-colors group-hover:text-accent">{title}</span>
+                      {/* WHERE the conversation happened. A web chat carries no badge — it is the norm here
+                          and labelling it would add noise to every row. */}
+                      {s.platform ? (
+                        <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{platformLabel(s.platform)}</span>
+                      ) : null}
                       {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                     </button>
                   </DataTableCell>
@@ -278,9 +300,19 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                     {/* The account row when it is known (it carries the uploaded picture); otherwise the
                         name the session itself reported, which still yields a monogram. */}
                     {owner ? (
-                      <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
+                      <span
+                        className="flex min-w-0 items-center gap-2"
+                        title={hostedRoom(s) ? t.sessionsPanel.hostHint : (s.ownerLabel ?? '')}
+                      >
                         <Avatar user={owner} size={20} />
                         <span className="truncate text-xs text-text-muted">{s.ownerLabel ?? ''}</span>
+                        {/* A SHARED room is deliberately filed under the operator's account, so the name
+                            here is the host of the transcript rather than the person writing in it.
+                            Without this the register reads as though the operator held every colleague's
+                            Teams conversation. */}
+                        {hostedRoom(s) ? (
+                          <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.hostBadge}</span>
+                        ) : null}
                       </span>
                     ) : null}
                   </DataTableCell>

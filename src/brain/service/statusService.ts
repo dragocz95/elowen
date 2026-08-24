@@ -13,7 +13,7 @@ import type { LiveBrain } from '../session/liveBrain.js';
 import { queuedWithPending } from '../session/queueMirror.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
-import { isNonUserSession, isChannelSession, isTaskSession, channelIdOf, defaultUserSessionId } from '../sessionId.js';
+import { isNonUserSession, isChannelSession, isTaskSession, channelIdOf, platformOfSession, defaultUserSessionId } from '../sessionId.js';
 import { terminalizeWorkflow } from '../workflowRuns.js';
 import { withTimeout } from '../../shared/withTimeout.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -94,6 +94,16 @@ export interface ManagedSessionView {
   active: boolean;
   kind: 'conversation' | 'channel' | 'task';
   tokens: number;
+  /** WHERE the conversation happened (`msteams`, `discord`, `subagent`, …), or null for an ordinary web
+   *  or CLI conversation. `kind` alone cannot tell a Teams room from a Discord one, and the panel has to,
+   *  because the meaning of `ownerId` differs per surface (see {@link ManagedSessionView.direct}). */
+  platform: string | null;
+  /** A DIRECT 1:1 platform chat rather than a shared room. This is what decides how `ownerId` READS: on a
+   *  direct chat it names the person who actually talks there, while a shared room is deliberately
+   *  anchored on the instance operator (see platforms.ts), so there it names the account HOSTING the
+   *  transcript and not its author. Presenting the two identically is what makes a colleague's Teams room
+   *  look like the operator's own conversation. */
+  direct: boolean;
   /** Whose conversation this is. The register spans every account, so a row without an owner label
    *  would be unreadable. `ownerLabel` is resolved by JOIN at read time (name, username fallback) and
    *  never denormalized, so renaming an account renames it throughout the history too. */
@@ -427,6 +437,8 @@ export class BrainStatusService {
         id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
         kind: channel ? 'channel' as const : isTaskSession(s.id) ? 'task' as const : 'conversation' as const,
         tokens: tokens[s.id] ?? 0,
+        platform: platformOfSession(s.id),
+        direct: s.direct === 1,
         ownerId: s.user_id,
         ownerLabel: s.owner_name || s.owner_username || `#${s.user_id}`,
       };

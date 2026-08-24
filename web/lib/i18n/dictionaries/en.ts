@@ -495,6 +495,8 @@ export const en = {
     tab: 'Conversations',
     searchLabel: 'Search',
     owner: 'Owner',
+    hostBadge: 'host',
+    hostHint: 'A shared room is filed under this account, but the people writing in it are its participants — not its author.',
     colTitle: 'Conversation',
     colModel: 'Model',
     colTokens: 'Tokens',

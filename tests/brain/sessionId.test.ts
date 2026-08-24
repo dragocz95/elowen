@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId, taskSessionId, isNonUserSession, isChannelSession, isTaskSession, isSubagentSession, isArchivedChannelSession, channelIdOf, platformOfSession, isOwnedUserSession, mayDeliverToSession, skillOwnerForSession } from '../../src/brain/sessionId.js';
 
 describe('brain session id conventions', () => {
   it('builds the four id shapes', () => {
@@ -79,6 +79,23 @@ describe('brain session id conventions', () => {
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, 'brain-ch-subagent-job')).toBe(false); // delegated
     expect(mayDeliverToSession({ user_id: 7, direct: 1 }, 7, archivedChannelSessionId('msteams-personal-1'))).toBe(false); // archive
     expect(mayDeliverToSession({ user_id: 7, direct: 0 }, 7, own)).toBe(true); // an ordinary conversation is unaffected
+  });
+
+  // The register tells a Teams room from a web chat with this, and the ONLY record of where a conversation
+  // came from is its id — so the real id shapes have to survive the split, including a Teams conversation
+  // id that is itself full of punctuation and an archived transcript's random tail.
+  it('platformOfSession reads the platform back out of a channel id', () => {
+    expect(platformOfSession(channelSessionId('msteams-a:1uAUssTAR-rJYOk6#4'))).toBe('msteams');
+    expect(platformOfSession(channelSessionId('msteams-19:defb1085@thread.tacv2;messageid=1787559885863#0'))).toBe('msteams');
+    expect(platformOfSession(archivedChannelSessionId('msteams-a:1uAUss#4'))).toBe('msteams');
+    expect(platformOfSession(channelSessionId('discord-123'))).toBe('discord');
+    expect(platformOfSession('brain-ch-subagent-sub-dlg-c06bc20d')).toBe('subagent');
+    // Not a channel at all: an ordinary conversation and a task worker have no platform to report.
+    expect(platformOfSession(defaultUserSessionId(7))).toBeNull();
+    expect(platformOfSession(freshUserSessionId(7))).toBeNull();
+    expect(platformOfSession(taskSessionId('t42'))).toBeNull();
+    // A channel id with nothing after the platform is malformed; claiming a platform anyway would invent one.
+    expect(platformOfSession(channelSessionId('discord'))).toBeNull();
   });
 
   it('isOwnedUserSession: owner AND a real conversation AND the row exists (and narrows the row type)', () => {

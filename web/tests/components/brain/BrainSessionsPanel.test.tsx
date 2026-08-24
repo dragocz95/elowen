@@ -19,12 +19,17 @@ const conversations = Array.from({ length: 13 }, (_, index) => ({
   running: index === 0,
   active: index === 0,
 }));
+/** Set by a test that needs specific register rows (platform/ownership shapes) instead of the plain
+ *  thirteen conversations the pagination and sorting tests rely on. */
+let managedOverride: Record<string, unknown>[] | null = null;
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: admin } })),
   http.get('*/api/brain/sessions', () => HttpResponse.json(conversations)),
-  http.get('*/api/brain/managed-sessions', () => HttpResponse.json(conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 1200 })) )),
+  http.get('*/api/brain/managed-sessions', () => HttpResponse.json(
+    managedOverride ?? conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 1200 })),
+  )),
 );
-beforeEach(() => { admin = false; localStorage.clear(); });
+beforeEach(() => { admin = false; managedOverride = null; localStorage.clear(); });
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
 function renderPanel() {
@@ -44,6 +49,30 @@ describe('BrainSessionsPanel (conversation register)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument());
+  });
+
+  // The register spans every account, so a row has to say WHERE it happened and whether the owner column
+  // names the person talking or merely the account a shared room is filed under. Without the second one a
+  // colleague's Teams room reads exactly like the operator's own conversation.
+  it('marks where a conversation happened, and a shared room as hosted rather than authored', async () => {
+    admin = true;
+    managedOverride = [
+      { ...conversations[0], id: 'brain-ch-msteams-19:room@thread.tacv2', title: 'Shared room', kind: 'channel', tokens: 10, platform: 'msteams', direct: false, ownerId: 2, ownerLabel: 'Filip' },
+      { ...conversations[1], id: 'brain-ch-msteams-a:person', title: 'Private chat', kind: 'channel', tokens: 10, platform: 'msteams', direct: true, ownerId: 2, ownerLabel: 'Michal' },
+      { ...conversations[2], id: 'brain-2-web', title: 'Web chat', kind: 'conversation', tokens: 10, platform: null, direct: false, ownerId: 2, ownerLabel: 'Filip' },
+    ];
+    renderPanel();
+    await screen.findByText('Shared room');
+
+    const row = (title: string) => screen.getByText(title).closest('[role="row"]')!;
+    // Both Teams rows say Teams; the web conversation carries no badge, because that is the norm here.
+    expect(within(row('Shared room')).getByText('Teams')).toBeInTheDocument();
+    expect(within(row('Private chat')).getByText('Teams')).toBeInTheDocument();
+    expect(within(row('Web chat')).queryByText('Teams')).not.toBeInTheDocument();
+    // Only the shared room's owner is qualified as a host.
+    expect(within(row('Shared room')).getByText('host')).toBeInTheDocument();
+    expect(within(row('Private chat')).queryByText('host')).not.toBeInTheDocument();
+    expect(within(row('Web chat')).queryByText('host')).not.toBeInTheDocument();
   });
 
   it('offers the conversation row actions from right click', async () => {

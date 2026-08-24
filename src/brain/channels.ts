@@ -320,6 +320,13 @@ export class ChannelSessionService {
     return this.d.store.getSession(sessionId)?.user_id;
   }
 
+  /** Give a personal 1:1 chat back to the verified sender who actually talks in it, while it is still
+   *  anchored on the operator fallback. See {@link BrainStore.adoptPersonalChat} for why this is the one
+   *  case an inbound message may re-point a transcript. */
+  adoptPersonalChat(sessionId: string, fromUserId: number, toUserId: number): boolean {
+    return this.d.store.adoptPersonalChat(sessionId, fromUserId, toUserId);
+  }
+
   /** Validate an opaque scheduled-delivery target against the durable direct session it claims to name. */
   mayDeliverDirectSession(userId: number, sessionId: string, channelId: string): boolean {
     return sessionId === channelSessionId(channelId)

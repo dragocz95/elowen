@@ -495,6 +495,8 @@ export const cs = {
     tab: 'Konverzace',
     searchLabel: 'Hledat',
     owner: 'Vlastník',
+    hostBadge: 'hostitel',
+    hostHint: 'Sdílená místnost je vedená pod tímto účtem, ale píšou do ní její účastníci — účet není jejím autorem.',
     colTitle: 'Konverzace',
     colModel: 'Model',
     colTokens: 'Tokeny',

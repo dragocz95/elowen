@@ -964,9 +964,30 @@ export class BrainStore {
    *  CONVERSATION, not of the moment the row happened to be minted: rows created before this column
    *  existed would otherwise stay 0 forever and a private DM would keep behaving like a shared room.
    *  Deliberately does NOT touch `user_id` — re-pointing an existing transcript (with its usage, spills and
-   *  processes) at a different account is not something a routine message should do silently. */
+   *  processes) at a different account is not something a routine message should do silently. The single
+   *  narrow exception is {@link adoptPersonalChat}, which states its own case. */
   setDirect(id: string, direct: boolean): void {
     this.db.prepare('UPDATE brain_sessions SET direct = ? WHERE id = ?').run(direct ? 1 : 0, id);
+  }
+
+  /** Hand a DIRECT 1:1 platform chat to the account that actually talks in it, but ONLY while the row is
+   *  still anchored on `fromUserId`. Returns whether the transfer happened.
+   *
+   *  A private chat can end up anchored on the instance operator through no fault of its owner, because the
+   *  row is minted when the FIRST message lands: a sender who had not linked their account yet, or a chat
+   *  the bot opened proactively (which carries no sender at all), both fall back to the operator. Without
+   *  this the row stayed there permanently and the admin register showed one colleague's private DM as
+   *  another person's conversation.
+   *
+   *  Safe because a 1:1 chat is between the bot and exactly ONE person, so the operator can never be a
+   *  participant in somebody else's — the anchor is a fallback, not a claim. The `user_id = @from` predicate
+   *  makes this a compare-and-swap: it can only ever take the row FROM the account named, and two concurrent
+   *  messages cannot transfer twice, since after the first the owner no longer matches. Nothing else has to
+   *  move — messages, spills, cards and usage are keyed by session id, which does not change here. */
+  adoptPersonalChat(id: string, fromUserId: number, toUserId: number): boolean {
+    return this.db.prepare(
+      'UPDATE brain_sessions SET user_id = @to, direct = 1 WHERE id = @id AND user_id = @from'
+    ).run({ id, from: fromUserId, to: toUserId }).changes > 0;
   }
 
   /** Set a session's display title (derived from its first user message; set once). */

@@ -272,13 +272,25 @@ export class PlatformOrchestrator {
           // An existing row keeps its owner on purpose: re-pointing a transcript (with its usage, spills
           // and running processes) at another account is a migration, not something an incoming message
           // may do behind the user's back. Only a BRAND-NEW direct conversation is anchored on its sender.
-          const existingOwner = claimsDirect ? this.d.channels.sessionOwnerUserId(channelSessionId(keyOf(src))) : undefined;
+          const canonicalSessionId = channelSessionId(keyOf(src));
+          const existingOwner = claimsDirect ? this.d.channels.sessionOwnerUserId(canonicalSessionId) : undefined;
           // …which is exactly why the flag also requires the row to be THIS sender's. Personal skills and
           // bound delivery are resolved from the session's owner, so marking a conversation owned by
-          // somebody else as direct would serve that owner's private context to whoever writes here — the
-          // case that arises when an unlinked sender opens a chat (the row lands on the operator) and only
-          // links their account afterwards. Such a conversation stays shared until it is migrated.
-          const directChat = claimsDirect && (existingOwner === undefined || existingOwner === linkedUserId);
+          // somebody else as direct would serve that owner's private context to whoever writes here.
+          //
+          // The one case that is NOT somebody else's conversation is a row still sitting on the operator
+          // fallback. A private chat lands there when its sender had not linked their account yet at the
+          // moment the row was minted, or when the bot opened the chat proactively and there was no sender
+          // to anchor on at all. Both used to be permanent: linking afterwards changed nothing, so a
+          // colleague's private DM kept showing up as the operator's own conversation. Hand it over instead
+          // — a 1:1 chat has exactly one human in it, so the operator is a placeholder here, never a
+          // participant. Bounded to a SINGLE transfer by the compare-and-swap in the store: once the row
+          // belongs to a real person, the clause below is what applies and it is never re-pointed again.
+          const adopted = claimsDirect
+            && existingOwner === owner
+            && linkedUserId !== owner
+            && this.d.channels.adoptPersonalChat(canonicalSessionId, owner, linkedUserId!);
+          const directChat = claimsDirect && (existingOwner === undefined || existingOwner === linkedUserId || adopted);
           // Safe unconditionally BECAUSE of that check: the row either does not exist yet or is already
           // this account's, so nothing is re-pointed. Ownership intentionally carries usage attribution,
           // account-deletion cleanup and the account-scoped managed-session view with it; personal search
