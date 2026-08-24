@@ -91,12 +91,35 @@ export interface ToolPolicy { allow?: Set<string>; deny?: Set<string> }
  *  a prefix. The wildcard exists for tool families whose members are only known at runtime — bridged MCP
  *  tools are named `mcp__<server>__<tool>`, so no static list can enumerate them. Applied to `deny` as
  *  well as `allow`, because a wildcard that could only ever widen would be a way to slip past a deny. */
-function listCovers(list: ReadonlySet<string>, name: string): boolean {
-  if (list.has(name)) return true;
+export function listCovers(list: Iterable<string>, name: string): boolean {
   for (const entry of list) {
+    if (entry === name) return true;
     if (entry.endsWith('*') && name.startsWith(entry.slice(0, -1))) return true;
   }
   return false;
+}
+
+/** Narrow one allow-list by another, honouring a trailing `*` ON BOTH SIDES. The result is what a holder
+ *  of `by` may still reach out of `list` — never more, so it is safe wherever an allow-list is intersected
+ *  (a delegated preset against the caller's grant, a captured child scope against the account's current
+ *  one). A plain `Array.includes`/`Set.has` intersection is wrong in two directions here, and both occur
+ *  in production: the column default is the `*` marker, so pre-migration EVERY non-admin grant is
+ *  literally `['*']` and an exact intersection yields nothing at all; and `mcp__*` — the only way to name
+ *  a bridged MCP family, whose members exist only at runtime — can never equal a concrete granted name.
+ *
+ *  An entry survives whole when `by` covers it. A WILDCARD entry `by` does not cover contributes instead
+ *  the entries of `by` that IT covers, which is the narrowest honest answer: `mcp__*` narrowed by
+ *  `['mcp__github__issue']` is `['mcp__github__issue']`, not `mcp__*` (too wide) and not nothing (the
+ *  bug). Everything else drops. */
+export function narrowToolAllowList(list: Iterable<string>, by: Iterable<string>): string[] {
+  const limit = [...by];
+  const out: string[] = [];
+  for (const entry of list) {
+    if (listCovers(limit, entry)) { out.push(entry); continue; }
+    if (!entry.endsWith('*')) continue;
+    for (const held of limit) if (listCovers([entry], held)) out.push(held);
+  }
+  return [...new Set(out)];
 }
 
 /** Whether a plugin tool name is permitted under a ToolPolicy (undefined policy → always permitted). */
