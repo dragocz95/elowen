@@ -61,7 +61,8 @@ describe('TeamPulseTile — presence rail', () => {
     expect(rail?.className).toContain('border-accent/50');
     // Somebody merely seen today must not be dressed up as working.
     expect(screen.getByText('Michal').closest('li')?.className).not.toContain('border-accent/50');
-    expect(screen.getByText('M')).toBeInTheDocument();
+    // A one-word label keeps two letters — 'MI' tells people apart where a lone 'M' would not.
+    expect(screen.getByText('MI')).toBeInTheDocument();
   });
 
   it('says so plainly when nobody has been around', async () => {

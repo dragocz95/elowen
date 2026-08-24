@@ -18,7 +18,7 @@ describe('plugin Avatar runtime adapter', () => {
     render(<Avatar name="Alex Rivera" size="lg" />);
 
     const avatar = screen.getByLabelText('Alex Rivera');
-    expect(avatar).toHaveTextContent('AL');
+    expect(avatar).toHaveTextContent('AR');
     expect(avatar).toHaveStyle({ width: '44px', height: '44px' });
   });
 

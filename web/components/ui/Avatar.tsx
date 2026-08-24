@@ -4,10 +4,19 @@ import { elowenClient } from '../../lib/elowenClient';
 
 // Deterministic monogram colour so a given user always gets the same chip.
 const COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
-/** Initials of the first two WORDS, so "Filip Džudža" reads as FD rather than FI. `slice(0, 2)` also cut
- *  UTF-16 units, which halves an astral first letter; taking code points avoids that. */
-const initialsOf = (s: string) =>
-  s.trim().split(/\s+/).slice(0, 2).map((w) => [...w][0] ?? '').join('').toUpperCase() || '?';
+/** Two letters, chosen by what the label actually is. A full name gives one initial per word, so
+ *  "Filip Džudža" reads as FD — plain `slice(0, 2)` said FI, which is why the team rail kept its own
+ *  copy of this. A single word (a bare username) has no second word to draw from, so it keeps its first
+ *  two letters: "alex" as AL is more distinguishable than a lone A. Everything is taken by CODE POINT;
+ *  slicing UTF-16 units halves an astral first letter. */
+const initialsOf = (s: string) => {
+  const words = s.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  const letters = words.length === 1
+    ? [...words[0]!].slice(0, 2)
+    : words.slice(0, 2).map((w) => [...w][0] ?? '');
+  return letters.join('').toUpperCase() || '?';
+};
 const colorFor = (s: string) => COLORS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
 
 /** A user's avatar: the uploaded image when present, else a coloured initials monogram. */
