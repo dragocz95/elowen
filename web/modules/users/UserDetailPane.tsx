@@ -312,7 +312,7 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
         <DetailBlock icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></DetailBlock>
         <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></DetailBlock>
         <DetailBlock icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></DetailBlock>
-        <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills userId={user.id} /></DetailBlock>
+        <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills user={user} /></DetailBlock>
       </div>
     </div>
   );

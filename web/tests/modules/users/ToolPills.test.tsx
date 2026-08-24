@@ -6,7 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { ToolPills } from '../../../modules/users/ToolPills';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
-import type { UserToolPill } from '../../../lib/types';
+import type { User, UserToolPill } from '../../../lib/types';
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
@@ -14,11 +14,35 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 const tool = (over: Partial<UserToolPill>): UserToolPill =>
   ({ name: 'x', label: 'X', icon: null, plugin: null, group: 'plugin', state: 'allowed', toggleable: true, ...over });
 
-function mountWith(tools: UserToolPill[]) {
+/** The account row the panel holds. `allowed_tools` is the grant the save starts from. */
+const account = (over: Partial<User> = {}): User => ({
+  id: 1, username: 'bob', name: '', email: '', avatar: '', created_at: '2026-01-02', is_admin: false,
+  allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [],
+  default_exec: '', advisor_exec: '', advisor_autostart: false, ...over,
+});
+
+function mountWith(tools: UserToolPill[], user: User = account()) {
   server.use(http.get('*/api/users/1/tools', () => HttpResponse.json(tools)));
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><ToolPills userId={1} /></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><ToolPills user={user} /></ToastProvider></Wrapper>);
 }
+
+/** Mounts against a fixed pill list and captures the PATCH body the save sends. */
+function mountForSave(tools: UserToolPill[], user: User) {
+  const captured: { body: UserPatchBody | null } = { body: null };
+  server.use(
+    http.get('*/api/users/1/tools', () => HttpResponse.json(tools)),
+    http.patch('*/api/users/1', async ({ request }) => {
+      captured.body = await request.json() as UserPatchBody;
+      return HttpResponse.json({ id: 1 });
+    }),
+  );
+  const { wrapper: Wrapper } = createWrapper();
+  render(<Wrapper><ToastProvider><ToolPills user={user} /></ToastProvider></Wrapper>);
+  return captured;
+}
+
+type UserPatchBody = { allowed_tools?: string[]; disabled_tools?: string[] };
 
 describe('ToolPills', () => {
   it('summarizes enabled vs total tools and the plugin count', async () => {
@@ -80,38 +104,59 @@ describe('ToolPills', () => {
     expect(screen.getByText('built-in')).toBeTruthy();
   });
 
-  it('unchecking a plugin tool and saving PATCHes it into disabled_tools', async () => {
-    let patched: { disabled_tools?: string[] } | null = null;
-    server.use(
-      http.get('*/api/users/1/tools', () => HttpResponse.json([
-        tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
-        tool({ name: 'discord_gone', plugin: 'discord', state: 'unavailable' }),
-      ])),
-      http.patch('*/api/users/1', async ({ request }) => { patched = await request.json() as { disabled_tools?: string[] }; return HttpResponse.json({ id: 1 }); }),
-    );
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><ToolPills userId={1} /></ToastProvider></Wrapper>);
+  it('unchecking a plugin tool and saving shrinks allowed_tools', async () => {
+    const captured = mountForSave([
+      tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
+      tool({ name: 'discord_read', plugin: 'discord', state: 'allowed' }),
+    ], account({ allowed_tools: ['discord_send', 'discord_read'] }));
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    // Only the changed toggle lands in the deny-list — the untouched `unavailable` tool stays out.
-    await waitFor(() => expect(patched?.disabled_tools).toEqual(['discord_send']));
+    await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_read']));
+    // The deny-list was not involved in this change and must not be rewritten.
+    expect(captured.body?.disabled_tools).toBeUndefined();
   });
 
-  it('re-checking a disabled tool removes it from disabled_tools', async () => {
-    let patched: { disabled_tools?: string[] } | null = null;
-    server.use(
-      http.get('*/api/users/1/tools', () => HttpResponse.json([
-        tool({ name: 'discord_send', plugin: 'discord', state: 'disabled' }),
-        tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
-      ])),
-      http.patch('*/api/users/1', async ({ request }) => { patched = await request.json() as { disabled_tools?: string[] }; return HttpResponse.json({ id: 1 }); }),
-    );
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><ToolPills userId={1} /></ToastProvider></Wrapper>);
+  it('re-checking a withheld tool grants it and clears the older deny-list entry', async () => {
+    const captured = mountForSave([
+      tool({ name: 'discord_send', plugin: 'discord', state: 'disabled' }),
+      tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
+    ], account({ allowed_tools: [], disabled_tools: ['discord_send', 'discord_read'] }));
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(patched?.disabled_tools).toEqual(['discord_read']));
+    await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_send']));
+    // The deny-list is still honoured at turn time, so a checked box has to leave it too — otherwise the
+    // grant is overruled and the tool stays dead.
+    expect(captured.body?.disabled_tools).toEqual(['discord_read']);
+  });
+
+  // A tool whose plugin is disabled or whose MCP server is offline is reported `unavailable` and cannot be
+  // toggled. Saving the checked set would drop it from the grant, so switching that plugin off and on
+  // again would silently cost the account a tool an admin deliberately granted.
+  it('keeps the grant of an unavailable tool across an unrelated save', async () => {
+    const captured = mountForSave([
+      tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
+      tool({ name: 'discord_gone', plugin: 'discord', state: 'unavailable', toggleable: false }),
+    ], account({ allowed_tools: ['discord_send', 'discord_gone'] }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_gone']));
+  });
+
+  // `['*']` is the pre-migration "unrestricted" marker, not a tool named `*`. Writing it back would leave
+  // the account unrestricted however many boxes the admin unchecked.
+  it('converts a wildcard grant into a concrete list instead of writing `*` back', async () => {
+    const captured = mountForSave([
+      tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
+      tool({ name: 'discord_read', plugin: 'discord', state: 'allowed' }),
+      tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
+    ], account({ allowed_tools: ['*'] }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    // Only the plugin tools become concrete: the inherited built-in is not part of the grant.
+    await waitFor(() => expect(captured.body?.allowed_tools).toEqual(['discord_read']));
   });
 });

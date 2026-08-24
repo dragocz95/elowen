@@ -8,7 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
-import type { UserToolPill } from '../../lib/types';
+import type { User, UserPatch, UserToolPill } from '../../lib/types';
 import { LoadingLine } from '../../components/ui/states';
 
 function Icon({ tool }: { tool: UserToolPill }) {
@@ -16,9 +16,14 @@ function Icon({ tool }: { tool: UserToolPill }) {
 }
 
 /** The user's effective tool access: a compact summary (enabled vs total + plugin count) with a
- *  manage modal grouped by plugin. Plugin tools toggle on/off for THIS user's own brain sessions;
- *  built-ins (memory, control-plane) are fixed and render as disabled rows. */
-export function ToolPills({ userId }: { userId: number }) {
+ *  manage modal grouped by plugin. A checked plugin tool MEANS "in this account's grant"; built-ins
+ *  (memory, image) are inherited, fixed, and render as disabled rows.
+ *
+ *  The account row is the prop rather than a bare id because the save needs the account's RAW
+ *  `allowed_tools`/`disabled_tools`, and the row the panel already holds is where they live — asking the
+ *  pills route for them too would put the same grant behind two sources of truth. */
+export function ToolPills({ user }: { user: User }) {
+  const userId = user.id;
   const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -58,19 +63,34 @@ export function ToolPills({ userId }: { userId: number }) {
   // drifted apart, an untouched row looked changed and silently entered the deny-list.
   const isChecked = (x: UserToolPill) => x.state !== 'disabled' && x.state !== 'unavailable';
 
-  // The PATCH replaces the deny-list wholesale. Start from the current deny-set (exactly the
-  // toggleable tools reported `disabled`) and apply only the CHANGED toggles, so tools the admin
-  // didn't touch (e.g. `unavailable` ones) keep their current membership.
+  // The PATCH replaces the grant wholesale, so the save starts from the account's CURRENT grant and
+  // applies only the CHANGED toggles. Sending the checked set instead would silently revoke every tool
+  // this list cannot show as checked — the `unavailable` ones, whose plugin is disabled or whose MCP
+  // server is offline — so toggling a plugin off and on again would quietly cost the account its grant.
+  //
+  // Checking a tool also clears it from the older deny-list, which is still honoured at turn time: the
+  // grant would otherwise be overruled and the box would spring back. Unchecking only shrinks the grant;
+  // the deny-list never grows from here, since the grant is now what expresses the admin's "no".
   const handleSave = async (next: Set<string>) => {
-    const deny = new Set(all.filter((x) => x.toggleable && x.state === 'disabled').map((x) => x.name));
+    // `['*']` is the pre-migration "unrestricted" marker, not a tool named `*`. Saving converts it to the
+    // concrete plugin tools this account can see, exactly as the deploy migration does.
+    const wildcard = user.allowed_tools.includes('*');
+    const allow = new Set(wildcard ? all.filter((x) => x.group === 'plugin').map((x) => x.name) : user.allowed_tools);
+    const deny = new Set(user.disabled_tools);
+    let denyChanged = false;
     for (const x of all) {
       if (!x.toggleable) continue;
       const isOn = next.has(x.name);
       if (isOn === isChecked(x)) continue;
-      if (isOn) deny.delete(x.name); else deny.add(x.name);
+      if (isOn) {
+        allow.add(x.name);
+        denyChanged = deny.delete(x.name) || denyChanged;
+      } else allow.delete(x.name);
     }
+    const patch: UserPatch = { allowed_tools: [...allow] };
+    if (denyChanged) patch.disabled_tools = [...deny];
     try {
-      await update.mutateAsync({ id: userId, patch: { disabled_tools: [...deny] } });
+      await update.mutateAsync({ id: userId, patch });
       qc.invalidateQueries({ queryKey: ['user-tools', userId] });
     } catch (e) {
       toast(String(e) || t.users.updateError, 'error');

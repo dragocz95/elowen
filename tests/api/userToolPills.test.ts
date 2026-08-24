@@ -28,6 +28,7 @@ function registryWith(strangerId: number | null): PluginRegistry {
 
 async function pillsFor(
   grants: string[], isAdmin = false, denied: string[] = [], strangerId: number | null = null,
+  allowedTools: string[] = ['*'],
 ): Promise<Map<string, Pill>> {
   const reg = registryWith(strangerId);
   const { app, deps } = await makeTestApp({
@@ -40,6 +41,9 @@ async function pillsFor(
   if (grants.length) deps.users.setGrantedPlugins(target.id, grants);
   if (isAdmin) deps.users.setAdmin(target.id, true);
   if (denied.length) deps.users.setDisabledTools(target.id, denied);
+  // A locally created account starts with an EMPTY grant, so every case that is not about the grant
+  // itself hands the account the pre-migration `*` marker and stays about the plugin grant alone.
+  deps.users.setAllowedTools(target.id, allowedTools);
   const res = await app.request(`/users/${target.id}/tools`, {
     headers: { authorization: `Bearer ${deps.users.issueToken(admin.id)}` },
   });
@@ -76,6 +80,24 @@ describe('the tool list an admin sees for one account', () => {
     const pills = await pillsFor([], false, ['Bash']);
     expect(pills.get('Bash')?.state).toBe('disabled');
     expect(pills.get('Bash')?.toggleable).toBe(true);
+  });
+
+  // The tool grant is the account's positive authority, and this list is its editor: a tool the admin
+  // never granted has to read as an unchecked box, not as one the account holds.
+  it('reports a tool outside the account grant as disabled, and a granted one as allowed', async () => {
+    const pills = await pillsFor([], false, [], null, ['OpenTool']);
+    expect(pills.get('OpenTool')?.state).toBe('allowed');
+    expect(pills.get('OpenTool')?.toggleable).toBe(true);
+    const empty = await pillsFor([], false, [], null, []);
+    expect(empty.get('OpenTool')?.state).toBe('disabled');
+    expect(empty.get('OpenTool')?.toggleable).toBe(true);
+  });
+
+  // An admin bypasses the grant entirely (toolAuthorityForUser), so an empty one must not read as "no
+  // tools" here either — that would show the operator a panel full of unchecked boxes they still hold.
+  it('ignores an empty grant for an administrator', async () => {
+    const pills = await pillsFor([], true, [], null, []);
+    expect(pills.get('OpenTool')?.state).toBe('allowed');
   });
 
   // Another account's personal tool can never reach this user's session, so it must not be listed as

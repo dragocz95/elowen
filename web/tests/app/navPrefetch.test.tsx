@@ -12,7 +12,7 @@ class FakeES { onmessage = null; addEventListener() {} close() {} constructor(pu
 (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 
 const asUser = (over: Partial<User>): User => ({
-  id: 1, username: 'admin', created_at: '2026-01-01', is_admin: false, allowed_execs: [], disabled_tools: [],
+  id: 1, username: 'admin', created_at: '2026-01-01', is_admin: false, allowed_execs: [], disabled_tools: [], allowed_tools: [],
   granted_plugins: [], name: '', email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false,
   ...over,
 });

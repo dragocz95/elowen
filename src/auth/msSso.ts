@@ -52,7 +52,7 @@ interface MicrosoftSsoConfig {
   defaultModels: string[];
   defaultModel: string;
   defaultPlugins: string[];
-  disabledTools: string[];
+  allowedTools: string[];
 }
 
 interface MicrosoftSsoCatalogs {
@@ -65,7 +65,7 @@ interface ResolvedProvisioningDefaults {
   allowedModels: string[];
   defaultModel: string;
   plugins: string[];
-  disabledTools: string[];
+  allowedTools: string[];
 }
 
 export interface MicrosoftOidcDiscovery {
@@ -396,7 +396,7 @@ export class MicrosoftSsoService {
         defaultModels: stringList(raw.ssoDefaultModels),
         defaultModel: text(raw.ssoDefaultModel),
         defaultPlugins: stringList(raw.ssoDefaultPlugins),
-        disabledTools: stringList(raw.ssoDisabledTools),
+        allowedTools: stringList(raw.ssoAllowedTools),
       };
     } catch {
       this.log.warn('Microsoft SSO disabled: ssoRedirectBase must be an absolute HTTPS URL');
@@ -513,19 +513,22 @@ export class MicrosoftSsoService {
       plugins = cfg.defaultPlugins.filter((value) => knownPlugins.has(value));
     }
 
-    let disabledTools: string[] = [];
-    if (cfg.disabledTools.length > 0) {
-      const knownTools = await this.knownDefaults('tool', cfg.disabledTools, this.d.catalogs?.tools);
-      disabledTools = cfg.disabledTools.filter((value) => knownTools.has(value));
+    let allowedTools: string[] = [];
+    if (cfg.allowedTools.length > 0) {
+      const knownTools = await this.knownDefaults('tool', cfg.allowedTools, this.d.catalogs?.tools);
+      allowedTools = cfg.allowedTools.filter((value) => knownTools.has(value));
     }
-    return { allowedModels, defaultModel, plugins, disabledTools };
+    return { allowedModels, defaultModel, plugins, allowedTools };
   }
 
   private applyProvisioningDefaults(userId: number, defaults: ResolvedProvisioningDefaults): void {
     if (defaults.allowedModels.length > 0) this.d.users.setAllowedExecs(userId, defaults.allowedModels);
     if (defaults.defaultModel) this.d.users.setProfile(userId, { default_exec: defaults.defaultModel });
     if (defaults.plugins.length > 0) this.d.users.setGrantedPlugins(userId, defaults.plugins);
-    if (defaults.disabledTools.length > 0) this.d.users.setDisabledTools(userId, defaults.disabledTools);
+    // The tool grant is written AT CREATION and only there: a new account is born with an empty grant,
+    // so without this default an SSO-provisioned user would have no plugin tool at all until an admin
+    // opened the users panel for them.
+    if (defaults.allowedTools.length > 0) this.d.users.setAllowedTools(userId, defaults.allowedTools);
   }
 
   private async knownDefaults(

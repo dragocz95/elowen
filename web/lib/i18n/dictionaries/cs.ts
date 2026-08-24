@@ -901,7 +901,7 @@ export const cs = {
     grantedPluginsUpdated: 'Povolené pluginy uloženy',
     grantedPluginsEmpty: 'Žádný plugin se nepovoluje jednotlivým uživatelům.',
     tools: 'Nástroje',
-    toolsHint: 'Nástroje, ke kterým má uživatel přístup ve vlastním chatu. Kliknutím na nástroj pluginu jej pro tohoto uživatele zapnete nebo vypnete; nástroje paměti a obrázků jsou zděděné a nelze je zde vypnout. Nástroj z pluginu, který uživateli nebyl přidělen, je uveden jako nedostupný — změníte to přidělením pluginu. Sdílené kanály na Discordu řídí rolová politika pluginu, nikoli tento seznam.',
+    toolsHint: 'Nástroje, ke kterým má uživatel přístup ve vlastním chatu. Zaškrtnutý nástroj pluginu znamená, že jste mu jej přidělili: nově vytvořený účet nemá zpočátku žádné nástroje pluginů, dokud mu je správce nepřidělí, a správci nejsou omezeni. Nástroje paměti a obrázků jsou zděděné a nelze je zde vypnout. Nástroj z pluginu, který uživateli nebyl přidělen, je uveden jako nedostupný — změníte to přidělením pluginu. Sdílené kanály na Discordu řídí rolová politika pluginu, nikoli tento seznam.',
     toolsEmpty: 'Žádné nástroje k dispozici',
     overview: 'Přehled',
     statMemories: 'Paměti',

@@ -47,7 +47,7 @@ interface SetupOptions {
   ssoDefaultModels?: string[];
   ssoDefaultModel?: string;
   ssoDefaultPlugins?: string[];
-  ssoDisabledTools?: string[];
+  ssoAllowedTools?: string[];
   knownModels?: string[];
   knownPlugins?: string[];
   knownTools?: string[];
@@ -82,7 +82,7 @@ function setup(options: SetupOptions = {}) {
           ssoDefaultModels: options.ssoDefaultModels,
           ssoDefaultModel: options.ssoDefaultModel,
           ssoDefaultPlugins: options.ssoDefaultPlugins,
-          ssoDisabledTools: options.ssoDisabledTools,
+          ssoAllowedTools: options.ssoAllowedTools,
         },
       },
     },
@@ -569,7 +569,7 @@ describe('Microsoft SSO routes', () => {
       ssoDefaultModels: ['relay/gpt-5', 'elowen:removed/model'],
       ssoDefaultModel: 'relay/gpt-5',
       ssoDefaultPlugins: ['agents', 'removed-plugin'],
-      ssoDisabledTools: ['Bash', 'RemovedTool'],
+      ssoAllowedTools: ['Bash', 'RemovedTool'],
       knownModels: ['relay/gpt-5'],
       knownPlugins: ['agents'],
       knownTools: ['Bash'],
@@ -593,7 +593,7 @@ describe('Microsoft SSO routes', () => {
       allowed_execs: ['relay/gpt-5'],
       default_exec: 'relay/gpt-5',
       granted_plugins: ['agents'],
-      disabled_tools: ['Bash'],
+      allowed_tools: ['Bash'],
     });
     expect(userProjects.forUser(body.user.id)).toEqual([1]);
     expect(db.prepare('SELECT 1 FROM user_projects WHERE project_id = 999').get()).toBeUndefined();
@@ -667,13 +667,13 @@ describe('Microsoft SSO routes', () => {
       ssoDefaultModels: ['relay/gpt-5'],
       ssoDefaultModel: 'relay/gpt-5',
       ssoDefaultPlugins: ['agents'],
-      ssoDisabledTools: ['Bash'],
+      ssoAllowedTools: ['Bash'],
       knownModels: ['relay/gpt-5'],
       knownPlugins: ['agents'],
       knownTools: ['Bash'],
     });
     users.setAllowedExecs(user!.id, ['sonnet']);
-    users.setDisabledTools(user!.id, ['Read']);
+    users.setAllowedTools(user!.id, ['Read']);
     users.setGrantedPlugins(user!.id, ['work']);
     users.setProfile(user!.id, { default_exec: 'opus' });
     const flow = await start();
@@ -684,7 +684,7 @@ describe('Microsoft SSO routes', () => {
     expect(response.status).toBe(200);
     expect(users.get(user!.id)).toMatchObject({
       allowed_execs: ['sonnet'],
-      disabled_tools: ['Read'],
+      allowed_tools: ['Read'],
       granted_plugins: ['work'],
       default_exec: 'opus',
     });

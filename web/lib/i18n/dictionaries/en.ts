@@ -901,7 +901,7 @@ export const en = {
     grantedPluginsUpdated: 'Granted plugins saved',
     grantedPluginsEmpty: 'No plugin is handed out per user.',
     tools: 'Tools',
-    toolsHint: 'Tools available to this user in their own chat. Select a plugin tool to enable or disable it for this user. Memory and image tools are inherited and cannot be switched off here. A tool whose plugin has not been granted to this user is listed as unavailable: grant the plugin to change that. Shared Discord channels are governed by the plugin\'s role policies, not this list.',
+    toolsHint: 'Tools available to this user in their own chat. A checked plugin tool is one you have granted them: a newly created account starts with no plugin tools at all until an admin grants some, and administrators are unrestricted. Memory and image tools are inherited and cannot be switched off here. A tool whose plugin has not been granted to this user is listed as unavailable: grant the plugin to change that. Shared Discord channels are governed by the plugin\'s role policies, not this list.',
     toolsEmpty: 'No tools available',
     overview: 'Overview',
     statMemories: 'Memories',
