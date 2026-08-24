@@ -22,6 +22,7 @@ import { channelSessionId, archivedChannelSessionId, isChannelSession, isSubagen
 import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
+import { composeTurnPrompt } from './session/turnPrompt.js';
 import { applyToolVisibility } from './session/capabilities.js';
 import { buildPermissionRuleset, noninteractiveTurnPermissions } from './toolPermissions.js';
 import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
@@ -619,14 +620,21 @@ export class ChannelSessionService {
             let commitOrientation = (): void => {};
             if (!(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
               const turnContext = ch.turnContext();
-              // Channel turns compose their prompt here rather than through TurnContextBuilder, so the
-              // post-compaction re-orientation needs its own drain — wiring it only into the builder
-              // would leave it working in the CLI and silently doing nothing on every channel.
+              // The drain stays per-surface (it is stateful and commits only once the prompt reached the
+              // provider), but the ORDER and framing of the blocks no longer live here: composeTurnPrompt
+              // is the single source for that, so a block added for the owner chat cannot silently skip
+              // every channel the way this composition used to allow.
               const { block: postCompaction, commit } = drainPostCompactionContext(this.d.store, ch);
               commitOrientation = commit;
-              prompted = memoryBlock + turnContext.beforeUser + turnText
-                + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '')
-                + (postCompaction ? `\n\n${postCompaction}` : '');
+              // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
+              // permission summary are owner-chat concepts, and a room has neither.
+              prompted = composeTurnPrompt({
+                memory: memoryBlock,
+                beforeUser: turnContext.beforeUser,
+                text: turnText,
+                afterUser: turnContext.afterUser,
+                postCompaction,
+              });
             }
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             if (opts.internalSystem) {

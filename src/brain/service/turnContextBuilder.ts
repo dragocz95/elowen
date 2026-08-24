@@ -27,6 +27,7 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import type { TurnMode, TurnRequest } from './turnRequest.js';
 import { clientDir, turnWorkDir } from './workDir.js';
 import { drainPostCompactionContext } from '../continuity/postCompactionContext.js';
+import { composeTurnPrompt } from '../session/turnPrompt.js';
 import { EXIT_PLAN_MODE_TOOL } from '../../shared/planTool.js';
 import { planFilePath } from '../../shared/paths.js';
 import { ensurePlanDir, readPlan } from '../continuity/planStore.js';
@@ -182,13 +183,18 @@ export class TurnContextBuilder {
           // rides UNDER the user message as a <system-reminder> — alongside runningSubagents — rather than
           // prefixing the user's words. Keeps the user message body stable/contiguous across mode switches
           // and matches how every other per-turn directive is injected.
-          prompt = memoryBlock + hookBlock + permissionsBlock + turnContext.beforeUser
-            + request.text
-            + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '')
-            + (sessionChanges ? `\n\n${sessionChanges}` : '')
-            + (postCompaction ? `\n\n${postCompaction}` : '')
-            + (modeReminder ? `\n\n${modeReminder}` : '')
-            + (runningSubagents ? `\n\n${runningSubagents}` : '');
+          prompt = composeTurnPrompt({
+            memory: memoryBlock,
+            hook: hookBlock,
+            permissions: permissionsBlock,
+            beforeUser: turnContext.beforeUser,
+            text: request.text,
+            afterUser: turnContext.afterUser,
+            sessionChanges,
+            postCompaction,
+            modeReminder,
+            runningSubagents,
+          });
         }
         const result = await operation(prompt);
         commitOrientation();
