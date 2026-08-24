@@ -24,6 +24,10 @@ import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
 import { recallMemoryBlock } from './session/memoryBlock.js';
+import { pluginContextBlock } from './session/pluginContextBlock.js';
+import { runningSubagentsBlock } from './session/runningSubagents.js';
+import type { PluginRegistry } from '../plugins/registry.js';
+import type { HookAuditBuffer } from '../shared/hookAudit.js';
 import { applyToolVisibility } from './session/capabilities.js';
 import { buildPermissionRuleset, noninteractiveTurnPermissions } from './toolPermissions.js';
 import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
@@ -225,6 +229,11 @@ export interface ChannelServiceDeps {
    *  for the VERIFIED sender (writerUserId), falling back to the channel owner for unlinked senders —
    *  but never wire an approval channel, so only `deny` rules bite here (ask → allow, see send()). */
   permissions?: (userId: number) => PermissionSettings;
+  /** Plugin registry, so `brain.turn.contextBuilt` fires on a room's turns exactly as it does in an owner
+   *  chat. Without it a plugin's per-turn context reaches the CLI and web and silently skips every
+   *  platform channel. Absent ⇒ no plugin context block. */
+  plugins?: () => Promise<PluginRegistry | undefined>;
+  hookAudit?: HookAuditBuffer;
   completeSubagent?: (parentSessionId: string, userId: number, completion: SubagentCompletion) => void;
   completeWorkflow?: (parentSessionId: string, userId: number, completion: WorkflowCompletion) => void;
   /** Stop the workflow engine for an aborted origin session (see BrainService.cancelWorkflowsFor) —
@@ -625,10 +634,18 @@ export class ChannelSessionService {
               // permission summary are owner-chat concepts, and a room has neither.
               prompted = composeTurnPrompt({
                 memory: memoryBlock,
+                hook: await pluginContextBlock({
+                  ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
+                  ...(this.d.hookAudit ? { hookAudit: this.d.hookAudit } : {}),
+                  text: senderMsg,
+                }),
                 beforeUser: turnContext.beforeUser,
                 text: turnText,
                 afterUser: turnContext.afterUser,
                 postCompaction,
+                // A room's turns are minutes apart with other people's messages in between, so an agent
+                // that delegated here needs the reminder more than the owner chat does, not less.
+                runningSubagents: runningSubagentsBlock(this.d.registry, this.d.store, ch.sessionId),
               });
             }
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');

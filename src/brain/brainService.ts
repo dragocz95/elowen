@@ -312,6 +312,9 @@ export class BrainService {
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
       titler: this.titler, // name a brand-new channel conversation, same as owner chat
       permissions: d.permissions, // deny rules apply to channel turns too (asks follow unattendedAsks there)
+      // Same plugin hook as owner chat: a plugin's per-turn context must not skip platform rooms.
+      plugins: () => this.resolvePlugins(),
+      get hookAudit() { return d.hookAudit; },
       completeSubagent: (parentSessionId, userId, completion) =>
         this.turnRunner.acceptSubagentCompletion(parentSessionId, userId, completion),
       completeWorkflow: (parentSessionId, userId, completion) =>
