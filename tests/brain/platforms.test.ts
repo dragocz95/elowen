@@ -666,6 +666,39 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity).toMatchObject({ platform: 'cron', admin: true, owner: true });
   });
 
+  // Instance automation is not a user account, so there is nobody to hold a grant against. The
+  // accountless cron shape must stay DENY-only — expressed as an omitted allow-list, not as an empty one,
+  // which would silently strip every plugin tool from the instance's own scheduled work.
+  it('gives the accountless instance cron no allow-list, whatever the account resolver would answer', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      // Wired, and deliberately narrow: reaching for it here would clamp the instance job to one account's
+      // grant — and reaching for the OPERATOR's would hand instance authority to whoever holds account 1.
+      toolAuthorityFor: () => ({ allow: new Set(['Read']), deny: new Set(['DiscordApi']) }),
+      identity: linkedResolver(false),
+      channels: {
+        sessionOwnerUserId: () => undefined,
+        send: async (o: ChannelSendOpts) => { sent = o; return 'instance reply'; },
+        fragmentFor: () => '', setLastWriter: () => {},
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-instance', roleIds: [],
+      access: { admin: true, projectIds: [], scheduled: true, denyTools: ['BlockedForTurn'] },
+    } as never, 'run instance maintenance');
+
+    expect(sent?.writerUserId).toBeUndefined();
+    expect(sent?.toolPolicy).toEqual({ deny: new Set(['BlockedForTurn']) });
+    expect(sent?.toolPolicy?.allow).toBeUndefined();
+  });
+
   it('does not widen stale owned or origin cron shapes into instance authority', async () => {
     let sends = 0;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;

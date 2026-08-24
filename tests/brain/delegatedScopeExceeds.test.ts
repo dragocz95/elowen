@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scopeExceedsCurrentAccess, type DelegatedExecutionScope } from '../../src/brain/delegatedScope.js';
+import { delegatedToolPolicy, scopeExceedsCurrentAccess, type DelegatedExecutionScope } from '../../src/brain/delegatedScope.js';
 import { buildReadOnlyBoundary } from '../../src/brain/agents/readOnlyBoundary.js';
 import type { NoninteractivePermissionBoundary, PermissionRule } from '../../src/brain/toolPermissions.js';
 
@@ -154,5 +154,44 @@ describe('scopeExceedsCurrentAccess', () => {
         )).toMatch(/permission/i);
       });
     });
+  });
+});
+
+/** A delegated child is a DURABLE handle: its scope was minted from what the spawning account held at
+ *  spawn time and then frozen. Rehydrating it must therefore intersect that frozen scope with the
+ *  account's grant as it stands NOW — a child that could out-live a revocation would be a way to keep
+ *  using a tool an admin took away. */
+describe('delegatedToolPolicy', () => {
+  const child = (over: Partial<DelegatedExecutionScope> = {}): DelegatedExecutionScope =>
+    scope({ toolPolicy: { allow: ['Read', 'Bash'] }, ...over });
+
+  it('intersects the captured scope with the spawning account\'s current grant', () => {
+    expect(delegatedToolPolicy(child(), [], ['Read', 'Write']))
+      .toEqual({ allow: new Set(['Read']) }); // Write is granted but was never in the child's scope
+  });
+
+  it('stops handing the child a tool the account has since lost', () => {
+    // Bash was legitimately captured at spawn; the admin has since revoked it from the account.
+    expect(delegatedToolPolicy(child(), [], ['Read'])).toEqual({ allow: new Set(['Read']) });
+    // Revoke everything and the child reaches no plugin tool at all, rather than falling back to its scope.
+    expect(delegatedToolPolicy(child(), [], [])).toEqual({ allow: new Set() });
+  });
+
+  it('never lets an account grant WIDEN what the child was spawned with', () => {
+    expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['Read'] } }), [], ['Read', 'Bash', 'Write']))
+      .toEqual({ allow: new Set(['Read']) });
+  });
+
+  it('narrows an unrestricted child to the account grant, and leaves it alone when there is none', () => {
+    // A scope with no allow-list is unrestricted; an account grant is still authority over it.
+    expect(delegatedToolPolicy(scope(), [], ['Read'])).toEqual({ allow: new Set(['Read']) });
+    // No grant at all (an admin parent) → the captured scope stands unchanged.
+    expect(delegatedToolPolicy(child(), [])).toEqual({ allow: new Set(['Read', 'Bash']) });
+    expect(delegatedToolPolicy(scope(), [])).toBeUndefined();
+  });
+
+  it('applies the account\'s current denies on top of the intersection', () => {
+    expect(delegatedToolPolicy(child(), ['Bash'], ['Read', 'Bash']))
+      .toEqual({ allow: new Set(['Read', 'Bash']), deny: new Set(['Bash']) });
   });
 });
