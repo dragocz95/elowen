@@ -15,6 +15,8 @@ export interface BootRecoveryHost {
   resumeWorkflow(workflow: RecoverableWorkflow): Promise<void>;
   claimParkedConversations(): readonly BrainSessionRow[];
   resumeParkedConversation(row: BrainSessionRow): Promise<void>;
+  claimParkedPlatformTurns(): readonly BrainSessionRow[];
+  resumeParkedPlatformTurn(row: BrainSessionRow): Promise<void>;
 }
 
 /** The daemon's boot recovery chain. Built by the daemon's boot layer only — the sub-agent runner has no
@@ -64,6 +66,21 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     // Concurrent: these are independent owner turns, exactly as they would be in normal operation.
     parallel: true,
     resume: (row) => host.resumeParkedConversation(row),
+  });
+
+  // Ordinary platform channel turns the last shutdown parked: the same marker on the session row (the
+  // two claims partition it — owner rows there, non-owner rows here) plus the turn's durable resume
+  // envelope, resumed at the transcript's tail and DELIVERED back to the exact room or DM through the
+  // adapters' notification contract — see platformTurnRecovery.ts.
+  coordinator.register<BrainSessionRow>({
+    id: 'platform-conversations',
+    // Same reasoning as owner conversations: a parked channel turn may be waiting on a delegation's or a
+    // workflow's result, which those sweeps queue durably first.
+    dependsOn: ['delegations', 'workflows'],
+    claim: () => host.claimParkedPlatformTurns(),
+    // Concurrent: independent rooms, exactly as their turns would run in normal operation.
+    parallel: true,
+    resume: (row) => host.resumeParkedPlatformTurn(row),
   });
 
   return coordinator;

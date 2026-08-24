@@ -4,10 +4,12 @@ import { StepDrainCoordinator, markDelegationInCurrentTool } from '../../src/bra
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-// A turn parks only where a boot resume exists: delegated sub-agent sessions (run-row/journal recovery)
-// and top-level OWNER conversations (durable park marker + boot resume sweep). Channel/cron sessions and
-// non-session serial keys have no resume and must always read mid-step. The delegation-safe rule stays
-// sub-agent-only.
+// A turn parks only where a boot resume exists: delegated sub-agent sessions (run-row/journal recovery),
+// top-level OWNER conversations (durable park marker + boot resume sweep), and ordinary PLATFORM CHANNEL
+// turns whose per-turn `parksPlatformTurn` hook proves a faithful resume exists (durable envelope +
+// verified account + outbound target). Cron/scheduled turns, channel turns without (or refused by) the
+// hook, and non-session serial keys have no resume and must always read mid-step. The delegation-safe
+// rule stays sub-agent-only.
 const SUB = (name: string) => `brain-ch-subagent-${name}`;
 
 /** A tool whose execute parks on an external promise, so a test can hold it "mid-step" deliberately. */
@@ -97,7 +99,7 @@ describe('StepDrainCoordinator — what counts as mid-step', () => {
     await run;
   });
 
-  it('a CHANNEL or CRON turn and a non-session serial key are always mid-step (no resume exists)', () => {
+  it('an UN-PARKED channel/cron turn and a non-session serial key are always mid-step', () => {
     const drain = new StepDrainCoordinator();
     drain.begin();
     expect(drain.unsafeCount(['brain-ch-discord-general', 'brain-ch-cron-daily', 'plugins-reload'])).toBe(3);
@@ -116,7 +118,7 @@ describe('StepDrainCoordinator — the boundary hold', () => {
     await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
   });
 
-  it('never installs a hold on a channel or cron session — no resume exists, so parking would deadlock the drain', async () => {
+  it('never parks a channel session WITHOUT the platform hook — fail closed, so parking cannot deadlock the drain', async () => {
     const drain = new StepDrainCoordinator();
     for (const sessionId of ['brain-ch-discord-general', 'brain-ch-cron-daily']) {
       const { session, agent } = fakeSession();
@@ -124,6 +126,46 @@ describe('StepDrainCoordinator — the boundary hold', () => {
       drain.begin();
       await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
     }
+  });
+
+  it('parks a PLATFORM CHANNEL turn only when the per-turn hook proves a resume exists — cron never parks', async () => {
+    // The hook stands in for platformTurnParkEligible: a valid durable envelope for the Discord room,
+    // nothing for cron (which the real predicate refuses unconditionally).
+    const marked: string[] = [];
+    const drain = new StepDrainCoordinator({
+      onParked: (id) => { marked.push(id); },
+      parksPlatformTurn: (id) => id === 'brain-ch-discord-general',
+    });
+
+    // A long-running Discord turn: parks at its step boundary, the marker is written, and the drain
+    // stops waiting on it — this is what makes the drain exit in seconds instead of minutes.
+    const discord = fakeSession();
+    drain.installHold(discord.session, 'brain-ch-discord-general');
+    // A cron turn under the SAME hook wiring: refused per turn, so it passes straight through and the
+    // drain keeps waiting for it whole.
+    const cron = fakeSession();
+    drain.installHold(cron.session, 'brain-ch-cron-daily');
+    drain.begin();
+
+    const controller = new AbortController();
+    let discordSettled = false;
+    const held = discord.agent.prepareNextTurnWithContext!({}, controller.signal).then(() => { discordSettled = true; });
+    await expect(cron.agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
+    await tick();
+    expect(discordSettled).toBe(false);                        // parked: the final model call never starts
+    expect(marked).toEqual(['brain-ch-discord-general']);      // durable marker written at the park, cron never
+    expect(drain.unsafeCount(['brain-ch-discord-general'])).toBe(0); // the park is what makes it safe
+    expect(drain.unsafeCount(['brain-ch-cron-daily'])).toBe(1);      // cron is still waited for whole
+    controller.abort();
+    await held;
+  });
+
+  it('a throwing platform hook refuses the park (fail closed)', async () => {
+    const drain = new StepDrainCoordinator({ parksPlatformTurn: () => { throw new Error('store is on fire'); } });
+    const { session, agent } = fakeSession();
+    drain.installHold(session, 'brain-ch-discord-general');
+    drain.begin();
+    await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
   });
 
   it('parks an OWNER conversation at the boundary and writes the durable park marker first', async () => {

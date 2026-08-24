@@ -47,7 +47,8 @@ import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/
 import { makeAgentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy, shapeBrainMessages } from '../brain/messageView.js';
-import { isNonUserSession, taskSessionId } from '../brain/sessionId.js';
+import { isSubagentSession, isTaskSession, taskSessionId } from '../brain/sessionId.js';
+import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
@@ -677,15 +678,19 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   const hookAudit = new HookAuditBuffer();
   // One step-boundary shutdown coordinator per PROCESS (daemon and each runner build their own core, so
   // each gets exactly one). The factory installs its holds/bookkeeping on every spawned session; the
-  // shutdown drain reads it through BrainService.midStepWork. A parked OWNER conversation writes its
-  // durable park marker here, synchronously, so the boot resume sweep can continue the turn — sub-agent
-  // sessions (the only ones a runner process ever parks) have their own run-row/journal recovery and
-  // deliberately leave no marker.
+  // shutdown drain reads it through BrainService.midStepWork. A parked OWNER conversation and a parked
+  // ordinary PLATFORM CHANNEL turn both write the durable park marker here, synchronously, so their boot
+  // resume sweeps can continue the turn — sub-agent sessions (the only ones a runner process ever parks)
+  // have their own run-row/journal recovery and deliberately leave no marker, and task-worker sessions
+  // never park at all. A platform channel turn is park-eligible only when its current turn's durable
+  // resume envelope proves a faithful resume exists (platformTurnParkEligible — fail closed, and never
+  // for cron/scheduled turns).
   const stepDrain = new StepDrainCoordinator({
     onParked: (sessionId) => {
-      if (isNonUserSession(sessionId)) return;
+      if (isSubagentSession(sessionId) || isTaskSession(sessionId)) return;
       try { brainStore.markSessionParked(sessionId); } catch (e) { log.error(`park marker write failed for ${sessionId}`, e); }
     },
+    parksPlatformTurn: (sessionId) => platformTurnParkEligible(brainStore, sessionId),
   });
   // Per-user embedded brain (the new advisor engine): an in-process PI agent session. Wired only when
   // a provider is configured (reuses the relay endpoint) and not for the in-memory test DB. Coexists

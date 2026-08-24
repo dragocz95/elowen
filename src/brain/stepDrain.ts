@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentSession, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { isNonUserSession, isSubagentSession } from './sessionId.js';
+import { isChannelSession, isNonUserSession, isSubagentSession } from './sessionId.js';
 
 /** One in-flight tool batch entry of one turn. `delegations` counts the delegated child calls this tool
  *  execution has REGISTERED (Delegate/DelegateContinue/WorkflowStart ride ChannelSessionService, which
@@ -31,20 +31,25 @@ export function markDelegationInCurrentTool(): void {
  *
  *  THE INVARIANT: A TURN PARKS ONLY WHERE A BOOT RESUME EXISTS. Parking a turn nothing ever resumes
  *  means its final model call never happens and the person who asked simply never gets an answer.
- *  Today two session classes have a resume and therefore park:
+ *  Three session classes have a resume and therefore park:
  *   - DELEGATED SUB-AGENT sessions — a delegated child has a durable run row (respawned by the boot
  *     reconcile) and a workflow node has the engine's recovery journal;
  *   - TOP-LEVEL OWNER conversations (web dock / bound CLI) — parking writes a durable park marker on the
  *     session row (`brain_sessions.parked_at`, via the onParked hook below) and the boot resume sweep
- *     (BrainService.runParkedConversationRecovery) continues the turn and delivers its answer.
+ *     (BrainService.runParkedConversationRecovery) continues the turn and delivers its answer;
+ *   - ORDINARY PLATFORM CHANNEL turns (Discord rooms, DMs, …) — the turn's durable resume envelope
+ *     (channels.ts, PlatformTurnResumeEnvelope) plus the same park marker let the boot sweep
+ *     (BrainService.runPlatformTurnRecovery) continue the turn and deliver its answer to the room.
+ *     Eligibility is decided PER TURN at the moment of the park, through the `parksPlatformTurn` hook
+ *     (platformTurnRecovery.ts): a faithful resume needs a valid envelope, a verified account and a
+ *     nameable outbound target, so anything unproven — and every CRON/scheduled turn, which has no
+ *     resume — fails closed and is waited for whole. No hook wired (fail closed) ⇒ never parks.
  *  Everything else has NO resume and is deliberately waited for WHOLE, exactly as before the step
- *  boundary existed: PLATFORM CHANNEL turns (their identity/policy/system prompt are built from the live
- *  inbound message — sender, roles, room context — none of it durable, so a faithful resume envelope
- *  cannot be reconstructed at boot), CRON turns, task-worker sessions (whose factory wires no
- *  coordinator), and held non-session serial keys such as a plugin reload.
+ *  boundary existed: cron/scheduled turns, task-worker sessions (whose factory wires no coordinator),
+ *  and held non-session serial keys such as a plugin reload.
  *
  *  Which states make a live turn SAFE to leave behind:
- *   - parked (either resumable class): its agent loop reached `prepareNextTurnWithContext` while
+ *   - parked (any resumable class): its agent loop reached `prepareNextTurnWithContext` while
  *     draining and is held there;
  *   - delegating (SUB-AGENT sessions only): every in-flight tool of its current batch has registered at
  *     least one delegated child — the child is recoverable work and the parent's blocked tool call is
@@ -66,15 +71,30 @@ export class StepDrainCoordinator {
   private tools = new Map<string, Set<ToolExecutionRecord>>();
 
   /** `onParked` fires SYNCHRONOUSLY the moment a hold actually parks a session's loop — the seam that
-   *  writes the durable park marker for owner conversations, and it must complete before the drain can
-   *  observe the park (marker durable strictly before the process exits). */
-  constructor(private hooks?: { onParked?(sessionId: string): void }) {}
+   *  writes the durable park marker for owner conversations and platform channel turns, and it must
+   *  complete before the drain can observe the park (marker durable strictly before the process exits).
+   *  `parksPlatformTurn` is the per-turn eligibility check for ordinary platform channel sessions
+   *  (see the class doc); it is consulted at the moment of the park, when the turn's durable resume
+   *  envelope already exists, and anything but an explicit `true` — including a missing hook or a
+   *  throwing one — refuses the park. */
+  constructor(private hooks?: { onParked?(sessionId: string): void; parksPlatformTurn?(sessionId: string): boolean }) {}
 
-  /** A turn parks only where a boot resume exists — see the class doc. Sub-agent sessions are resumed by
-   *  the delegation reconcile / workflow journal; owner conversations by the park-marker sweep. Channel,
-   *  cron and task sessions (all `isNonUserSession`, minus the sub-agent family) have no resume. */
+  /** May a hold ever be installed for this session — see the class doc. Sub-agent sessions are resumed by
+   *  the delegation reconcile / workflow journal; owner conversations and ordinary platform channel turns
+   *  by their park-marker sweeps. Task sessions and (without the platform hook) every non-subagent
+   *  channel session have no resume. */
   private parkEligible(sessionId: string): boolean {
-    return isSubagentSession(sessionId) || !isNonUserSession(sessionId);
+    if (isSubagentSession(sessionId) || !isNonUserSession(sessionId)) return true;
+    return isChannelSession(sessionId) && typeof this.hooks?.parksPlatformTurn === 'function';
+  }
+
+  /** May THIS park actually happen right now. Static classes park unconditionally; an ordinary platform
+   *  channel turn parks only when the hook proves its current turn is faithfully resumable (valid durable
+   *  envelope, verified account, outbound target — and never a cron/scheduled turn). Fail closed: a
+   *  refused park simply leaves the turn mid-step and the drain waits for it whole, as before. */
+  private mayParkNow(sessionId: string): boolean {
+    if (isSubagentSession(sessionId) || !isNonUserSession(sessionId)) return true;
+    try { return this.hooks?.parksPlatformTurn?.(sessionId) === true; } catch { return false; }
   }
 
   /** Latch the drain. One-way, like BrainService.draining: a draining process is on its way out. */
@@ -96,10 +116,11 @@ export class StepDrainCoordinator {
     if (!this.parkEligible(sessionId)) return;
     const previous = session.agent.prepareNextTurnWithContext;
     session.agent.prepareNextTurnWithContext = async (turn, signal) => {
-      if (this.draining && !signal?.aborted) {
+      if (this.draining && !signal?.aborted && this.mayParkNow(sessionId)) {
         this.parked.add(sessionId);
-        // Durable marker first (owner conversations only — see the brainCore wiring): the drain exits
-        // the moment every turn reads as parked, so the marker must already be on disk by then.
+        // Durable marker first (owner conversations and platform channel turns — see the brainCore
+        // wiring): the drain exits the moment every turn reads as parked, so the marker must already be
+        // on disk by then.
         this.hooks?.onParked?.(sessionId);
         try {
           await new Promise<void>((resolve) => {
@@ -149,7 +170,7 @@ export class StepDrainCoordinator {
   unsafeCount(activeTurnSessionIds: string[]): number {
     let unsafe = 0;
     for (const sessionId of activeTurnSessionIds) {
-      // Parked is safe for BOTH resumable classes: only park-eligible sessions ever enter this set.
+      // Parked is safe for EVERY resumable class: only park-eligible sessions ever enter this set.
       if (this.parked.has(sessionId)) continue;
       // The delegation-safe rule stays SUB-AGENT ONLY (see the class doc): a channel/cron turn, a
       // non-session serial key, and an owner turn blocked on a foreground delegation are all waited

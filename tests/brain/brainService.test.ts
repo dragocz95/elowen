@@ -5591,20 +5591,25 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
   });
 
-  it('fails closed on a parked conversation whose owner account is gone, and on a non-owner marker', async () => {
+  it('fails closed on a parked conversation whose owner account is gone, and partitions channel markers to the platform sweep', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-9', userId: 9, model: 'm' });
     d.store.markSessionParked('brain-9');
     d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
-    d.store.markSessionParked('brain-ch-discord-general'); // invariant breach — only owner turns park
+    d.store.markSessionParked('brain-ch-discord-general'); // a platform channel park — the OTHER sweep's
     (d.users as { get: unknown }).get = (id: number) => (id === 1 ? { name: 'Filip', username: 'filip' } : undefined);
 
     const restarted = new BrainService(d as never);
     await restarted.runParkedConversationRecovery();
 
-    // No resume ran, nothing crashed, and both markers are gone (no retry loop on unresumable rows).
+    // No resume ran, nothing crashed, the vanished-owner marker is gone (no retry loop on unresumable
+    // rows) — and the channel marker was left alone: it belongs to the PLATFORM sweep, which here also
+    // fails closed (no durable resume envelope) and clears it without running a turn.
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.getSession('brain-9')!.parked_at).toBeNull();
+    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).not.toBeNull();
+    await restarted.runPlatformTurnRecovery();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
   });
 

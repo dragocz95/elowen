@@ -556,6 +556,13 @@ export class ChannelSessionService {
     if (this.d.admitsNewWork?.() === false && !parentSessionId) {
       throw new Error('the daemon is shutting down — try again once it is back up');
     }
+    // The room spoke: this message IS the continuation of whatever a shutdown parked here, so the boot
+    // resume sweep must stand down — cleared at admission, before any lock, so a message landing while
+    // the sweep walks its worklist deterministically wins its claim-check (claimParkResumeAttempt bumps
+    // only while the marker stands). The same rule owner turn admission applies in turnRunner. A hidden
+    // internal turn is machine work — the resume sweep's own continuation rides it — and a delegated
+    // send is not this room speaking; both leave the marker alone.
+    if (!parentSessionId && !opts.internalSystem) this.d.store.clearSessionPark(sessionId);
     if (opts.ownerSteer && !parentSessionId) throw new Error('invalid delegated access');
     const delegated = parentSessionId ? this.delegatedExecution(opts, sessionId) : undefined;
     const effectiveToolPolicy = delegated?.toolPolicy ?? opts.toolPolicy;

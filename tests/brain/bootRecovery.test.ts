@@ -154,6 +154,8 @@ describe('createBootRecovery', () => {
       resumeWorkflow: async () => { trace.push('resume:workflows'); },
       claimParkedConversations: () => { trace.push('claim:conversations'); return [{ id: 's' } as never]; },
       resumeParkedConversation: async () => { trace.push('resume:conversations'); },
+      claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'brain-ch-x' } as never]; },
+      resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); },
     };
   }
 
@@ -167,6 +169,8 @@ describe('createBootRecovery', () => {
       { id: 'workflows', dependsOn: ['delegations'], parallel: false },
       // A parked owner turn may be waiting on a result the two sweeps above queue durably first.
       { id: 'owner-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
+      // Parked platform channel turns wait on the same durably-queued results as owner conversations.
+      { id: 'platform-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
     ]);
   });
 
@@ -176,12 +180,13 @@ describe('createBootRecovery', () => {
     coordinator.claimAll(0);
     // Every claim is taken in the synchronous pre-platform pass; the workflow claim must follow the
     // delegation one, because the delegation reconcile is what takes it.
-    expect(trace).toEqual(['claim:delegations', 'claim:workflows', 'claim:conversations']);
+    expect(trace).toEqual(['claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform']);
     await coordinator.resumeAll();
-    expect(trace.slice(3)).toEqual([
+    expect(trace.slice(4)).toEqual([
       'order:delegations', 'resume:delegations',
       'resume:workflows',
       'resume:conversations',
+      'resume:platform',
     ]);
   });
 
@@ -193,5 +198,6 @@ describe('createBootRecovery', () => {
     await coordinator.resumeAll();
     expect(trace).toContain('resume:workflows');
     expect(trace).toContain('resume:conversations');
+    expect(trace).toContain('resume:platform');
   });
 });

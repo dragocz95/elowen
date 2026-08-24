@@ -53,6 +53,7 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { deniedToolsForUser } from './brainDeps.js';
+import { resumePlatformTurn } from './platformTurnRecovery.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
@@ -606,11 +607,13 @@ export class BrainService {
     });
   }
 
-  /** `owner-conversations` provider, CLAIM: every conversation the last shutdown parked. The durable
-   *  claim itself is per-conversation and stays in the resume (claimParkResumeAttempt), which is what lets
-   *  the user's own message win the race against this sweep. */
+  /** `owner-conversations` provider, CLAIM: every OWNER conversation the last shutdown parked. Parked
+   *  platform channel turns are the `platform-conversations` provider's (claimParkedPlatformTurns) — the
+   *  two sweeps partition the marker table so neither ever clears the other's work as an invariant
+   *  breach. The durable claim itself is per-conversation and stays in the resume
+   *  (claimParkResumeAttempt), which is what lets the user's own message win the race against this sweep. */
   claimParkedConversations(): BrainSessionRow[] {
-    return this.d.store.parkedSessions();
+    return this.d.store.parkedSessions().filter((row) => !isNonUserSession(row.id));
   }
 
   /** Boot phase 2, conversation half: resume every OWNER conversation the last shutdown parked at its
@@ -692,6 +695,38 @@ export class BrainService {
       // message clears the marker and continues normally.
       log.error(`boot resume failed for parked conversation ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
     }
+  }
+
+  /** `platform-conversations` provider, CLAIM: every parked NON-owner session — ordinary platform channel
+   *  turns in practice; the resume fails closed (clearing the marker) on anything else that should never
+   *  carry one. The complement of claimParkedConversations, so the two sweeps partition the markers. */
+  claimParkedPlatformTurns(): BrainSessionRow[] {
+    return this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
+  }
+
+  /** Boot phase 2, platform half: resume every ordinary platform channel turn the last shutdown parked
+   *  and deliver each answer back to its own room or DM — see platformTurnRecovery.ts for the delivery
+   *  contract and every fail-closed rule. Independent turns, resumed concurrently like owner ones. */
+  async runPlatformTurnRecovery(): Promise<void> {
+    const parked = this.claimParkedPlatformTurns();
+    if (parked.length === 0) return;
+    await Promise.allSettled(parked.map((row) => this.resumeParkedPlatformTurn(row)));
+  }
+
+  /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn. All the
+   *  policy — authority re-derived from the account (never replayed), the attempt cap, the visible
+   *  give-up, the no-double-reply order — lives in resumePlatformTurn; this only wires the brain in. */
+  async resumeParkedPlatformTurn(row: BrainSessionRow): Promise<void> {
+    await resumePlatformTurn({
+      store: this.d.store,
+      users: this.d.users,
+      ...(this.d.policy ? { policyForUser: this.d.policy } : {}),
+      disabledToolsFor: (userId) => deniedToolsForUser(this.d, userId),
+      send: (opts, text) => this.channelService.send(opts, text),
+      canDeliver: (target) => this.platforms.canDeliver(target),
+      deliver: (text, target) => this.platforms.notify(text, target),
+      log: logger('brain'),
+    }, row);
   }
 
   /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin
