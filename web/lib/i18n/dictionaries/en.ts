@@ -496,7 +496,6 @@ export const en = {
     searchLabel: 'Search',
     owner: 'Owner',
     roomBadge: 'room',
-    hostHint: 'A shared room, so it names whoever wrote here last. The conversation itself is filed under {owner}, which hosts it rather than authoring it.',
     colTitle: 'Conversation',
     colModel: 'Model',
     colTokens: 'Tokens',

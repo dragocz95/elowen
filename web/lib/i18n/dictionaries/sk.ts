@@ -496,7 +496,6 @@ export const sk = {
     searchLabel: 'Hľadať',
     owner: 'Vlastník',
     roomBadge: 'miestnosť',
-    hostHint: 'Zdieľaná miestnosť, preto je uvedený ten, kto sem písal naposledy. Samotná konverzácia je vedená pod účtom {owner}, ktorý ju hostuje, ale nie je jej autorom.',
     colTitle: 'Konverzácia',
     colModel: 'Model',
     colTokens: 'Tokeny',

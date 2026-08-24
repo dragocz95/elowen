@@ -300,13 +300,13 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                         writer there and mark the account as merely hosting the transcript. Everywhere
                         else the owner IS the person talking, and nothing changes. */}
                     {hostedRoom(s) && writer ? (
-                      <span className="flex min-w-0 items-center gap-2" title={t.sessionsPanel.hostHint.replace('{owner}', s.ownerLabel ?? '')}>
+                      <span className="flex min-w-0 items-center gap-2" title={s.lastWriterLabel ?? ''}>
                         <Avatar user={writer} size={20} />
                         <span className="truncate text-xs text-text-muted">{s.lastWriterLabel}</span>
                         <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny text-text-muted">{t.sessionsPanel.roomBadge}</span>
                       </span>
                     ) : owner ? (
-                      <span className="flex min-w-0 items-center gap-2" title={hostedRoom(s) ? t.sessionsPanel.hostHint.replace('{owner}', s.ownerLabel ?? '') : (s.ownerLabel ?? '')}>
+                      <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
                         <Avatar user={owner} size={20} />
                         <span className="truncate text-xs text-text-muted">{s.ownerLabel ?? ''}</span>
                         {hostedRoom(s) ? (
