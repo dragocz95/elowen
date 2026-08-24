@@ -1229,7 +1229,7 @@ export const sk = {
       compactionFailureLimit: "Limit zlyhaní komprimácie",
       compactionFailureLimitHint: "Po koľkých zlyhaniach v rade prestane konverzácia skúšať automatickú komprimáciu kontextu. Každý ďalší pokus by stál volanie modelu, ktoré nemôže uspieť. Príliš nízka hodnota komprimáciu zastaví aj po krátkom výpadku poskytovateľa; ručný „/compact“ zostáva dostupný vždy. Rozsah 1–10, predvolené 3.",
       elicitationTimeoutMs: "Timeout otázky",
-      elicitationTimeoutMsHint: "Ako dlho čaká odložená otázka AskUserQuestion na odpoveď, než sa sama vyrieši ako „bez odpovede“, aby ťah nikdy nevisel donekonečna. Rozsah 0,5 min až 6 h, predvolené 5 min.",
+      elicitationTimeoutMsHint: "Ako dlho čaká odložená otázka AskUserQuestion na odpoveď, než sa sama vyrieši ako „bez odpovede“, aby ťah nikdy nevisel donekonečna. Rozsah 0,5 min až 6 h, predvolené 6 h. Ide o jediné odpočítavanie: otázka prestane byť zodpovedateľná všade naraz, v chate aj v miestnosti na platforme.",
       memoryRecallCount: "Vybavovanie pamäte — počet",
       memoryRecallCountHint: "Koľko relevantných spomienok sa vloží do kontextu každého ťahu. Viac = bohatší kontext, ale vyššia spotreba tokenov. Rozsah 5–20, predvolené 10.",
       memoryRecallChars: "Vybavovanie pamäte — tokeny",

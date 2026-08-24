@@ -1235,7 +1235,7 @@ export const en = {
       compactionFailureLimit: "Compaction failure limit",
       compactionFailureLimitHint: "How many failures in a row before a conversation stops attempting automatic context compaction. Every further attempt would spend a model call that cannot succeed. Too low and a brief provider outage stops compaction for good; a manual \"/compact\" always stays available. Range 1-10, default 3.",
       elicitationTimeoutMs: "Question timeout",
-      elicitationTimeoutMsHint: "How long a parked AskUserQuestion waits for an answer before it auto-resolves as \"no answer\", so a turn never hangs forever. Range 0.5 min to 6 h, default 5 min.",
+      elicitationTimeoutMsHint: "How long a parked AskUserQuestion waits for an answer before it auto-resolves as \"no answer\", so a turn never hangs forever. Range 0.5 min to 6 h, default 6 h. This is the only clock: a question stops being answerable everywhere at once, in chat and in a platform room alike.",
       memoryRecallCount: "Memory recall — count",
       memoryRecallCountHint: "How many relevant memories are injected into each turn's context. More = richer context but higher token cost. Range 5-20, default 10.",
       memoryRecallChars: "Memory recall — tokens",
