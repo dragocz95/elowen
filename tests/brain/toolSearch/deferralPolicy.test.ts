@@ -146,6 +146,21 @@ describe('resolveToolDeferralDecisions precedence', () => {
     expect([...over.values()].every((item) => item.effective === 'deferred' && item.reason === 'mcp-threshold')).toBe(true);
   });
 
+  // A shared room composes several accounts' personal MCP servers into one registry, but narrows every turn
+  // to the writer's own before the prompt is built. Counting the union would defer a room's tools at a size
+  // no single writer ever faces — the threshold asks how heavy THIS turn's prompt is.
+  it('counts a shared room\'s personal tools per writer, not as one pile', () => {
+    const amy = [tool('mcp__amy__one', { owners: new Set([2]) }), tool('mcp__amy__two', { owners: new Set([2]) })];
+    const bob = [tool('mcp__bob__one', { owners: new Set([3]) }), tool('mcp__bob__two', { owners: new Set([3]) })];
+    const room = decisions([...amy, ...bob], EMPTY_OVERRIDES, { threshold: 2 });
+    // Four composed, but the worst-off writer sees two — at the threshold, so nothing is deferred.
+    expect([...room.values()].every((item) => item.effective === 'immediate')).toBe(true);
+
+    // One instance-wide tool tips that same writer over it, because they DO see instance tools as well.
+    const withInstance = decisions([...amy, ...bob, tool('mcp__shared__ping')], EMPTY_OVERRIDES, { threshold: 2 });
+    expect([...withInstance.values()].every((item) => item.effective === 'deferred')).toBe(true);
+  });
+
   it('does not count explicitly immediate MCP tools in the automatic group', () => {
     const explicit = tool('mcp__srv__explicit');
     const automatic = tool('mcp__srv__automatic');

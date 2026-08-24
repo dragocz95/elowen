@@ -130,6 +130,26 @@ export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean
   return true;
 }
 
+/** Which composed tools belong to individual ACCOUNTS rather than to the instance, paired with the account
+ *  the current turn may reach them as. Set only where one session composes several accounts' owner-scoped
+ *  tools — a shared room (see PluginRegistry.sharedRoomToolOwners). A name maps to EVERY account that owns a
+ *  version of it: two colleagues whose personal MCP servers happen to expose the same tool are served from
+ *  one registered definition that dispatches on the writer, so both of them own that name. */
+export interface PersonalToolOwnership {
+  owners: ReadonlyMap<string, ReadonlySet<number>>;
+  contributionUserId: number | null;
+}
+
+/** Whether `name` is one account's personal tool that the CURRENT contribution owner does not own — the one
+ *  predicate every ownership decision reads, so the visibility pass, the execute gate, the deferred-tool
+ *  awareness block and ToolSearch cannot reach different conclusions about whose server a name belongs to.
+ *  Instance-wide tools (absent from the map) belong to everybody and are never withheld by ownership. */
+export function toolOwnedByOtherAccount(name: string, personal: PersonalToolOwnership | undefined): boolean {
+  const owners = personal?.owners.get(name);
+  if (!owners) return false;
+  return personal!.contributionUserId === null || !owners.has(personal!.contributionUserId);
+}
+
 /** The owner's work mode for this turn. Declared here rather than imported from the brain so the plugin
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
+import type { PluginLogger } from '../../src/plugins/api.js';
+import { setLogSink } from '../../src/shared/logger.js';
 import { openDb } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { BrainStore } from '../../src/store/brainStore.js';
@@ -24,32 +27,41 @@ import type { BrainEvent } from '../../src/brain/events.js';
 
 const POLICY: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 
-/** A plugin tool that records whether it actually ran — "refused" and "ran and returned nothing" look
- *  identical from the result alone, and only one of them is a security guarantee. */
-function plugin(name: string): { tool: ToolDefinition; ran: () => number } {
-  let runs = 0;
-  return {
-    ran: () => runs,
-    tool: {
-      name, label: name, description: name, parameters: {} as never,
-      execute: async () => { runs++; return { content: [{ type: 'text', text: `ran ${name}` }], details: {} }; },
-    } as unknown as ToolDefinition,
-  };
+const SILENT: PluginLogger = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** One bridged MCP tool, built exactly as plugins/mcp/index.mjs `registerBridgedTool` builds one: the
+ *  `mcp__<server>__<tool>` name, the `[server] …` description and the remote server's `inputSchema` wrapped
+ *  in `Type.Unsafe` (or an empty object when the server declares none). `tag` only changes what the execute
+ *  RETURNS, never the declared surface — that is what lets a test tell which owner's server answered.
+ *
+ *  It differs from the plugin in one respect: the plugin's execute calls a live MCP client, this one
+ *  answers locally. Nothing here reads a tool's execute except by calling it, so the difference is confined
+ *  to the assertion text. */
+function bridgedTool(name: string, opts?: { description?: string; inputSchema?: Record<string, unknown>; tag?: string }): ToolDefinition {
+  const server = name.split('__')[1] ?? name;
+  return defineTool({
+    name,
+    label: name,
+    description: opts?.description ?? `[${server}] echo`,
+    parameters: opts?.inputSchema ? Type.Unsafe(opts.inputSchema) : Type.Object({}),
+    execute: async () => ({ content: [{ type: 'text' as const, text: `ran ${name}${opts?.tag ? `@${opts.tag}` : ''}` }], details: {} }),
+  }) as unknown as ToolDefinition;
 }
 
-/** A registry holding one instance tool plus one PERSONAL tool per account — the real shape the mcp plugin
- *  produces (`mcp__<server>__<tool>`, registered with the owning account's id). */
-function registryWith(personal: { name: string; ownerUserId: number }[], instance: string[] = ['Read']): PluginRegistry {
+/** A registry holding one instance tool plus the given PERSONAL tools, registered the way a plugin actually
+ *  registers them: through the `PluginContext` the loader hands it, with `{ ownerUserId }` for a personal
+ *  server (mcp plugin, `index.mjs` → `ctx.registerTool(defineTool({…}), { ownerUserId })`). Manifest
+ *  `provides` gating is left off here — this harness is about ownership, and that gate has its own tests. */
+function registryWith(
+  personal: { name: string; ownerUserId: number; description?: string; inputSchema?: Record<string, unknown>; tag?: string }[],
+  instance: string[] = ['Read'],
+): PluginRegistry {
   const registry = new PluginRegistry();
-  for (const name of instance) {
-    registry.tools.push(plugin(name).tool);
-    registry.toolOwnerUsers.push(null);
-    registry.toolOwner.set(name, 'files');
-  }
-  for (const { name, ownerUserId } of personal) {
-    registry.tools.push(plugin(name).tool);
-    registry.toolOwnerUsers.push(ownerUserId);
-    registry.toolOwner.set(name, 'mcp');
+  const files = registry.contextFor('files', {}, SILENT);
+  for (const name of instance) files.registerTool(bridgedTool(name) as never);
+  const mcp = registry.contextFor('mcp', {}, SILENT);
+  for (const spec of personal) {
+    mcp.registerTool(bridgedTool(spec.name, spec) as never, { ownerUserId: spec.ownerUserId });
   }
   return registry;
 }
@@ -71,24 +83,103 @@ describe('a shared room composes every account\'s owner-scoped tools', () => {
 
     expect(registry.toolsFor(null, null, { grantsEnforcedPerTurn: true, allOwners: true }).map((t) => t.name))
       .toEqual(['Read', 'mcp__amy__echo', 'mcp__bob__echo']);
-    expect([...registry.sharedRoomToolOwners()]).toEqual([['mcp__amy__echo', 2], ['mcp__bob__echo', 3]]);
+    expect([...registry.sharedRoomToolOwners()]).toEqual([['mcp__amy__echo', new Set([2])], ['mcp__bob__echo', new Set([3])]]);
   });
 
-  // One registered definition per name is all PI has. Two accounts whose personal servers share a name
-  // cannot both be served from it, and picking one would run somebody else's server under this writer.
-  it('drops a name two accounts both claim, rather than picking one of them', () => {
+  // One registered definition per name is all PI has — but only ONE account's turn ever runs at a time, so
+  // when two colleagues both called their server `github` the one definition can serve both by dispatching
+  // on the writer. Dropping it (as this used to) took a working tool away from both of them, silently.
+  it('serves a name two accounts both claim from one definition that dispatches on the writer', async () => {
     const registry = registryWith([
-      { name: 'mcp__github__list', ownerUserId: 2 },
-      { name: 'mcp__github__list', ownerUserId: 3 },
+      { name: 'mcp__github__list', ownerUserId: 2, tag: 'amy' },
+      { name: 'mcp__github__list', ownerUserId: 3, tag: 'bob' },
       { name: 'mcp__amy__echo', ownerUserId: 2 },
     ]);
 
-    const composed = registry.toolsFor(null, null, { allOwners: true }).map((t) => t.name);
-    expect(composed).not.toContain('mcp__github__list');
-    expect(composed).toContain('mcp__amy__echo');
+    const composed = registry.toolsFor(null, null, { allOwners: true });
+    expect(composed.map((t) => t.name)).toContain('mcp__github__list');
+    expect(registry.sharedRoomToolOwners().get('mcp__github__list')).toEqual(new Set([2, 3]));
+
+    // …and the ONE definition runs the server of whoever is writing, never the other account's.
+    const contested = composed.find((t) => t.name === 'mcp__github__list')!;
+    const call = (contributionUserId: number | null): Promise<{ content: { text: string }[] }> => runWithPolicy(
+      POLICY,
+      () => contested.execute('c1', {} as never, undefined, undefined, {} as never) as Promise<{ content: { text: string }[] }>,
+      { contributionUserId },
+    );
+    expect((await call(2)).content[0]!.text).toBe('ran mcp__github__list@amy');
+    expect((await call(3)).content[0]!.text).toBe('ran mcp__github__list@bob');
+    // Nobody's turn reaches either server (the composed session gate refuses this first; this is the
+    // definition's own fail-closed answer).
+    expect((await call(null)).content[0]!.text).toContain('belongs to another account');
+    expect((await call(4)).content[0]!.text).toContain('belongs to another account');
+  });
+
+  // The honest limit of the merge above: one definition carries ONE parameter schema, so two genuinely
+  // different tools that collided on a name cannot share it. That drop is the old behaviour — but it is
+  // reported, because a tool that vanishes with no explanation is indistinguishable from a broken server.
+  it('withholds a name whose two definitions describe different tools, and says so', () => {
+    const lines: string[] = [];
+    setLogSink({ push: (entry) => { lines.push(`${entry.level} ${entry.scope} ${entry.message}`); } });
+    try {
+      const registry = registryWith([
+        { name: 'mcp__github__list', ownerUserId: 2, inputSchema: { type: 'object', properties: { repo: { type: 'string' } } } },
+        { name: 'mcp__github__list', ownerUserId: 3, inputSchema: { type: 'object', properties: { project: { type: 'number' } } } },
+        { name: 'mcp__amy__echo', ownerUserId: 2 },
+      ]);
+
+      const composed = registry.toolsFor(null, null, { allOwners: true }).map((t) => t.name);
+      expect(composed).not.toContain('mcp__github__list');
+      expect(composed).toContain('mcp__amy__echo');
+      expect(registry.sharedRoomToolOwners().has('mcp__github__list')).toBe(false);
+      // …and each of them still has it in their OWN chat, where the session has a single owner.
+      expect(registry.toolsFor(2, null).map((t) => t.name)).toContain('mcp__github__list');
+
+      const warned = lines.filter((l) => l.includes('mcp__github__list'));
+      expect(warned, 'a room silently missing a tool is a support ticket nobody can answer').toHaveLength(1);
+      expect(warned[0]).toContain('warn');
+      expect(warned[0]).toContain('accounts 2, 3');
+    } finally {
+      setLogSink(undefined);
+    }
+  });
+
+  // A description is what the model picks a tool from, so two servers that describe the same-named tool
+  // differently are not interchangeable either — even when their parameters happen to match.
+  it('treats a differing description as a different tool', () => {
+    const registry = registryWith([
+      { name: 'mcp__github__list', ownerUserId: 2, description: '[github] list issues' },
+      { name: 'mcp__github__list', ownerUserId: 3, description: '[github] list deployments' },
+    ]);
     expect(registry.sharedRoomToolOwners().has('mcp__github__list')).toBe(false);
-    // …and each of them still has it in their OWN chat, where the session has a single owner.
-    expect(registry.toolsFor(2, null).map((t) => t.name)).toContain('mcp__github__list');
+  });
+
+  // Composing four people's servers into one registry must not make the room behave like a session with
+  // four servers: every turn is narrowed to the writer's own tools before the prompt is built, so the
+  // automatic-deferral threshold has to be measured against what ONE of them actually sees.
+  it('measures the deferral threshold against one writer, not the composed pile', () => {
+    const registry = registryWith([
+      { name: 'mcp__amy__one', ownerUserId: 2 }, { name: 'mcp__amy__two', ownerUserId: 2 },
+      { name: 'mcp__bob__one', ownerUserId: 3 }, { name: 'mcp__bob__two', ownerUserId: 3 },
+    ]);
+    const roomDeferred = (threshold: number): Set<string> => {
+      let deferred = new Set<string>();
+      composeSessionTools({
+        kind: 'foreign-channel',
+        pluginTools: registry.toolsFor(null, null, { grantsEnforcedPerTurn: true, allOwners: true }),
+        personalToolOwners: registry.sharedRoomToolOwners(),
+        toolDeferral: {
+          toolOwner: registry.toolOwner, toolDeferLoading: new Set(), planSafeToolNames: new Set(),
+          builtinDeferLoading: [], options: { enabled: true, threshold },
+        },
+        toolSearch: (d) => { deferred = d; return []; },
+      });
+      return deferred;
+    };
+    // Two accounts with two MCP tools each: the worst-off writer faces two, which is AT the threshold.
+    expect([...roomDeferred(2)]).toEqual([]);
+    // One below it, and that same writer is over — so the room defers, as a single account's session would.
+    expect([...roomDeferred(1)].sort()).toEqual(['mcp__amy__one', 'mcp__amy__two', 'mcp__bob__one', 'mcp__bob__two']);
   });
 
   it('lets an instance-wide definition of the same name keep serving everybody', () => {
@@ -354,7 +445,7 @@ describe('a room turn resolves personal contributions for whoever is writing', (
 // ---------------------------------------------------------------------------------------------------
 
 describe('the spawner composes a room differently from a session that has one owner', () => {
-  const spawned = async (sessionId: string, opts: { channel?: boolean; direct?: boolean }) => {
+  const spawned = async (sessionId: string, opts: { channel?: boolean; direct?: boolean; deferTools?: boolean }) => {
     const plugins = registryWith([
       { name: 'mcp__amy__echo', ownerUserId: 2 },
       { name: 'mcp__bob__echo', ownerUserId: 3 },
@@ -375,6 +466,11 @@ describe('the spawner composes a room differently from a session that has one ow
       plugins: async () => plugins,
       factory: { create },
       sessionTaps: () => [],
+      // Deferral withholds a tool's SCHEMA and advertises its name in the appended awareness block — which
+      // is exactly the block a room must not build from the composed superset.
+      ...(opts.deferTools
+        ? { runtimeConfig: () => ({ toolDeferralEnabled: true, hostedToolSearch: {}, limits: { toolDeferThreshold: 0 } }) }
+        : {}),
     } as never);
     const live = await spawner.spawn({ sessionId, ownerUserId: 2, selection: {}, policy: POLICY, autoCompact: false, ...opts } as never);
     const spec = create.mock.calls.at(-1)![0] as unknown as { tools: { name: string }[]; appendSystemPrompt: string[] };
@@ -385,7 +481,7 @@ describe('the spawner composes a room differently from a session that has one ow
     const room = await spawned(channelSessionId('discord-x'), { channel: true, direct: false });
     expect(room.tools).toContain('mcp__amy__echo');
     expect(room.tools).toContain('mcp__bob__echo');
-    expect([...room.live.personalToolOwners!]).toEqual([['mcp__amy__echo', 2], ['mcp__bob__echo', 3]]);
+    expect([...room.live.personalToolOwners!]).toEqual([['mcp__amy__echo', new Set([2])], ['mcp__bob__echo', new Set([3])]]);
     expect(room.live.contributionUserId).toBeNull();
     // The announcement cannot live in the cached prefix here: it has to follow the writer, like the
     // authorisation does. It arrives with each turn instead (see the room turn tests above).
@@ -400,6 +496,23 @@ describe('the spawner composes a room differently from a session that has one ow
     expect(own.live.contributionUserId).toBe(2);
     expect(own.append).toContain('amy-checklist');
     expect(own.append).toContain('shared-runbook');
+  });
+
+  // The deferred-tool awareness block is appended to the CACHED system prompt, which no per-turn pass
+  // rewrites — so a personal tool named there is announced to every member of the room for the life of the
+  // session, whatever the visibility pass does afterwards. In a room the name itself is the private part.
+  it('never names an account\'s personal tool in a room\'s cached deferred-tools block', async () => {
+    const room = await spawned(channelSessionId('discord-deferred'), { channel: true, direct: false, deferTools: true });
+    // The tools are still composed and still deferred — this is about what the prompt ADVERTISES.
+    expect(room.tools).toContain('mcp__amy__echo');
+    expect(room.live.toolSearch!.deferred).toContain('mcp__amy__echo');
+    expect(room.append).not.toContain('mcp__amy__echo');
+    expect(room.append).not.toContain('mcp__bob__echo');
+
+    // …while a session composed for ONE account announces that account's own deferred tools as before.
+    const own = await spawned('brain-2', { deferTools: true });
+    expect(own.append).toContain('mcp__amy__echo');
+    expect(own.append).not.toContain('mcp__bob__echo');
   });
 });
 

@@ -1,7 +1,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { currentToolPolicy, toolPermitted } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentToolPolicy, toolOwnedByOtherAccount, toolPermitted } from '../../plugins/policyContext.js';
 import { logger } from '../../shared/logger.js';
 import { collapseWhitespace, escapeRegExp } from '../../shared/text.js';
 
@@ -27,13 +27,23 @@ export interface ToolSearchHandle {
   readonly activated: Set<string>;
   /** Names registered by plugins; built-ins are subject only to an explicit deny, as in visibleToolNames. */
   readonly pluginNames?: ReadonlySet<string>;
+  /** Which of the session's tools belong to individual ACCOUNTS — a shared room's composition (see
+   *  PluginRegistry.sharedRoomToolOwners), absent on every session composed for one account. `activated` is
+   *  session-wide and the schemas it publishes are read by whoever writes next, so the search has to apply
+   *  ownership itself: without it, one member's `select:` would fetch a colleague's tool schema into the
+   *  shared prompt for the rest of the conversation. */
+  readonly personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>;
   /** The live PI session, wired once created; undefined until then (the tool reports a clear error). */
   session?: ToolActivationTarget;
 }
 
 /** Create a fresh handle for a session whose deferral policy withholds `deferred`. */
-export function createToolSearchHandle(deferred: Set<string>, pluginNames?: ReadonlySet<string>): ToolSearchHandle {
-  return { deferred, activated: new Set(), pluginNames, session: undefined };
+export function createToolSearchHandle(
+  deferred: Set<string>,
+  pluginNames?: ReadonlySet<string>,
+  personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>,
+): ToolSearchHandle {
+  return { deferred, activated: new Set(), pluginNames, ...(personalToolOwners ? { personalToolOwners } : {}), session: undefined };
 }
 
 /** The subset of a rehydrated message this module reads. Kept structural (not the PI import) so the seed
@@ -337,9 +347,16 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
         return ok('No deferred tools in this session — every tool is already active and callable directly.');
       }
       const max = Math.max(1, Math.min(MAX_MAX_RESULTS, Math.floor(p.max_results ?? DEFAULT_MAX_RESULTS)));
+      // WHOSE tools this turn may reach at all. In a room the composed set spans every account, and the
+      // name of somebody's personal MCP server is itself private — so ownership is applied before the
+      // search runs, not only when the call is made. Without it a member could `select:` a colleague's
+      // tool: the answer names it, the schema lands in the shared prompt, and `activated` keeps it there.
+      const personal = handle.personalToolOwners
+        ? { owners: handle.personalToolOwners, contributionUserId: currentContributionUserId() }
+        : undefined;
       // Only deferred tools are searchable — an already-active tool needs no fetch.
       const candidates: Candidate[] = session.getAllTools()
-        .filter((t) => handle.deferred.has(t.name))
+        .filter((t) => handle.deferred.has(t.name) && !toolOwnedByOtherAccount(t.name, personal))
         .map((t) => ({ name: t.name, description: t.description ?? '' }));
       const found = resolveToolSearch(p.query, candidates, max);
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
@@ -360,7 +377,13 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
         if (found.length === 0) {
           const wanted = requestedExactNames(p.query);
           const alreadyActive = wanted.length
-            ? session.getAllTools().filter((t) => wanted.includes(t.name.toLowerCase()) && !handle.deferred.has(t.name)).map((t) => t.name)
+            // Same ownership filter as the candidate list: this branch reads the REGISTERED set, which in a
+            // room holds every account's tools, so without it the fallback would confirm the existence of a
+            // colleague's tool by name.
+            ? session.getAllTools()
+              .filter((t) => wanted.includes(t.name.toLowerCase()) && !handle.deferred.has(t.name)
+                && !toolOwnedByOtherAccount(t.name, personal))
+              .map((t) => t.name)
             : [];
           if (alreadyActive.length) {
             const one = alreadyActive.length === 1;

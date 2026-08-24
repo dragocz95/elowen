@@ -241,7 +241,7 @@ export class LiveSessionSpawner {
       allOwners: perTurnContributions,
     }) ?? [];
     const personalToolOwners = perTurnContributions
-      ? plugins?.sharedRoomToolOwners() ?? new Map<string, number>()
+      ? plugins?.sharedRoomToolOwners() ?? new Map<string, ReadonlySet<number>>()
       : undefined;
     // Plugin hook point: after a permitted plugin tool's execute resolves, fan the call out to
     // `tools.call.after` subscribers (e.g. the formatters plugin). AWAITED by the tool gate before the
@@ -278,7 +278,7 @@ export class LiveSessionSpawner {
         // add the local search tool or a local handle: mixing both paths costs the extra model round again
         // and lets historical `addedToolNames` trigger pi's additional_tools replay.
         if (providerHostedToolSearch) return [];
-        toolSearchHandle = createToolSearchHandle(deferred);
+        toolSearchHandle = createToolSearchHandle(deferred, undefined, personalToolOwners);
         return [toolSearchTool(toolSearchHandle)];
       },
       // Sharing needs a PERSON on the other end, and a sub-agent has none: whatever it shares lands in
@@ -360,8 +360,17 @@ export class LiveSessionSpawner {
     // would name tools the current sender may not use — and the block's own wording promises the opposite.
     // Owner chat has exactly one sender, who owns everything in it. Execute-time policy is unchanged
     // either way; this is about what the prompt ADVERTISES.
+    //
+    // The DEFERRED block is not owner-chat-only (a room's model still needs to know what it can fetch), so
+    // it carries the one narrowing that cannot wait for a turn: a personal tool is dropped from it. This
+    // block is appended to the CACHED system prompt, which no per-turn pass rewrites — so a name left in it
+    // is announced to every writer in the room forever, and in a room the name of somebody's personal MCP
+    // server is itself private. What remains is the instance-wide set, which belongs to everybody.
+    const deferredCandidates = personalToolOwners
+      ? allTools.filter((tool) => !personalToolOwners.has(tool.name))
+      : allTools;
     const deferredBlock = toolSearchHandle
-      ? formatDeferredToolsBlock(allTools, toolSearchHandle.deferred)
+      ? formatDeferredToolsBlock(deferredCandidates, toolSearchHandle.deferred)
       : providerHostedToolSearch
         ? formatHostedToolCatalogBlock(allTools, plugins?.toolOwner ?? new Map<string, string>(), sessionKind)
         : '';

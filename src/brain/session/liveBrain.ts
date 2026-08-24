@@ -163,11 +163,12 @@ export interface LiveBrain {
    *  session composed from the instance set alone, which includes every SHARED room: a room has no
    *  session-wide answer at all and resolves its writer per turn instead (see `announcesSkillsPerTurn`). */
   contributionUserId: number | null;
-  /** name → the ONE account a composed plugin tool belongs to. Present only on a SHARED room, which is the
+  /** name → the accounts a composed plugin tool belongs to. Present only on a SHARED room, which is the
    *  only session that composes several accounts' owner-scoped tools; every turn narrows the advertised
    *  set through it so a room member is never shown (nor told the name of) somebody else's personal MCP
-   *  server. The execute gate was built from the same map at spawn. */
-  personalToolOwners?: ReadonlyMap<string, number>;
+   *  server. The execute gate was built from the same map at spawn. A name maps to more than one account
+   *  when they share a dispatching definition for a tool they each own. */
+  personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>;
   /** Image-carrying mirror of PI's native mid-turn queue (steering + follow-up), kept in sync via the
    *  `queue_update` event. PI's public queue is text-only and clearQueue() drops image attachments, so
    *  these hold what a positional queue-remove needs to re-queue the survivors WITH their images. Ordered

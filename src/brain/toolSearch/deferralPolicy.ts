@@ -25,6 +25,11 @@ export interface ToolDeferralCandidate {
   sourceId: string;
   planSafe: boolean;
   defaultDeferred: boolean;
+  /** The accounts this tool belongs to, when it is one or more accounts' PERSONAL tool rather than an
+   *  instance-wide one — set only by a shared room, which composes several people's owner-scoped tools into
+   *  a set no single turn is ever shown (each turn is narrowed to the writer's own). Absent everywhere
+   *  else. Read only by the automatic-MCP threshold, which must count what ONE writer faces. */
+  owners?: ReadonlySet<number>;
 }
 
 export type ToolDeferralReason =
@@ -81,6 +86,21 @@ function configurableDecision(
   return undefined;
 }
 
+/** How many unresolved MCP tools the WORST-OFF single writer actually faces: every instance-wide one, plus
+ *  the personal tools of whichever account owns the most. The threshold asks "is this prompt heavy with MCP
+ *  tools?", and in a shared room the composed set answers for several people at once — each turn is narrowed
+ *  to the writer's own tools before the prompt is built, so counting the union would defer a room's tools at
+ *  a size no writer ever sees. Outside a room no candidate carries owners and this is a plain count. */
+function worstCaseWriterMcpCount(candidates: readonly ToolDeferralCandidate[]): number {
+  let instance = 0;
+  const perOwner = new Map<number, number>();
+  for (const candidate of candidates) {
+    if (!candidate.owners || candidate.owners.size === 0) { instance++; continue; }
+    for (const owner of candidate.owners) perOwner.set(owner, (perOwner.get(owner) ?? 0) + 1);
+  }
+  return instance + Math.max(0, ...perOwner.values());
+}
+
 /** Resolve the single runtime/UI policy in precedence order while preserving candidate order. */
 export function resolveToolDeferralDecisions(
   candidates: readonly ToolDeferralCandidate[],
@@ -91,12 +111,12 @@ export function resolveToolDeferralDecisions(
     return candidates.map(({ name }) => ({ name, effective: 'immediate', reason: 'global-disabled' }));
   }
 
-  const unresolvedMcpCount = candidates.filter((candidate) => {
+  const unresolvedMcp = candidates.filter((candidate) => {
     if (isNeverDeferred(candidate.name) || candidate.planSafe) return false;
     if (configurableDecision(candidate, overrides)) return false;
     return candidate.name.startsWith(MCP_TOOL_PREFIX);
-  }).length;
-  const deferAutomaticMcp = unresolvedMcpCount > (options.threshold ?? DEFAULT_DEFER_THRESHOLD);
+  });
+  const deferAutomaticMcp = worstCaseWriterMcpCount(unresolvedMcp) > (options.threshold ?? DEFAULT_DEFER_THRESHOLD);
 
   return candidates.map((candidate): ToolDeferralDecision => {
     if (isNeverDeferred(candidate.name)) {

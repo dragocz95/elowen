@@ -397,6 +397,56 @@ describe('toolSearchTool.execute', () => {
     );
     expect((res.details as { matched: string[] }).matched).toEqual(['DiscordCreateChannel', 'ShareImage']);
   });
+
+  // A shared room composes every account's personal MCP tools into ONE registry, and `activated` is
+  // session-wide: a colleague's `select:` would otherwise fetch somebody else's tool schema into the prompt
+  // and keep it there for every later writer. The execute gate still refuses the CALL — this is about the
+  // name and the schema, which in a room are private on their own.
+  describe('ownership in a shared room', () => {
+    const ROOM_TOOLS = [
+      { name: 'mcp__amy__echo', description: 'Amy\'s personal echo server' },
+      { name: 'mcp__bob__echo', description: 'Bob\'s personal echo server' },
+      { name: 'mcp__shared__ping', description: 'An instance-wide ping' },
+    ];
+    const owners = new Map<string, ReadonlySet<number>>([
+      ['mcp__amy__echo', new Set([2])],
+      ['mcp__bob__echo', new Set([3])],
+    ]);
+    const roomHandle = () => {
+      const handle = createToolSearchHandle(new Set(ROOM_TOOLS.map((t) => t.name)), undefined, owners);
+      handle.session = fakeSession(['ToolSearch'], ROOM_TOOLS);
+      return handle;
+    };
+    const search = (handle: ReturnType<typeof roomHandle>, query: string, contributionUserId: number | null) => {
+      const tool = toolSearchTool(handle);
+      return runWithPolicy(POLICY, () => tool.execute('id', { query }, undefined, undefined, {} as never), { contributionUserId });
+    };
+
+    it('never fetches, names or activates another account\'s personal tool', async () => {
+      const handle = roomHandle();
+      const res = await search(handle, 'select:mcp__amy__echo', 3);
+      expect((res.details as { matched: string[] }).matched).toEqual([]);
+      // The answer echoes the query (the model's own words) but confirms nothing about the tool.
+      expect(res.content[0].text).toContain('matched nothing');
+      expect(handle.activated.has('mcp__amy__echo')).toBe(false);
+      expect((handle.session as ReturnType<typeof fakeSession>).calls).toEqual([]);
+    });
+
+    it('still fetches the writer\'s own tool and the instance-wide ones', async () => {
+      const handle = roomHandle();
+      const res = await search(handle, 'echo ping', 3);
+      expect((res.details as { matched: string[] }).matched.sort()).toEqual(['mcp__bob__echo', 'mcp__shared__ping']);
+    });
+
+    it('does not confirm another account\'s tool through the already-active fallback', async () => {
+      // Amy's tool is registered but NOT deferred, which is the branch that reports "already active".
+      const handle = createToolSearchHandle(new Set(['mcp__shared__ping']), undefined, owners);
+      handle.session = fakeSession(['ToolSearch', 'mcp__amy__echo'], ROOM_TOOLS);
+      const res = await search(handle as ReturnType<typeof roomHandle>, 'select:mcp__amy__echo', 3);
+      expect(res.content[0].text).not.toContain('already active');
+      expect((res.details as { alreadyActive?: string[] }).alreadyActive).toBeUndefined();
+    });
+  });
 });
 
 describe('verifyActivation', () => {

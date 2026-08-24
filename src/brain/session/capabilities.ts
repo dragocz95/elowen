@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolOwnedByOtherAccount, toolPermitted, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -80,11 +80,11 @@ export interface CapabilitySpec {
    *  person-facing surface to receive them. */
   shareImage?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
-  /** name → the ONE account a composed plugin tool belongs to. Set only where a session composes several
+  /** name → the accounts a composed plugin tool belongs to. Set only where a session composes several
    *  accounts' owner-scoped tools — a shared room (see PluginRegistry.sharedRoomToolOwners). Every other
    *  session composes one account's, so its whole tool set already belongs to whoever it was composed for
    *  and the map is absent. */
-  personalToolOwners?: ReadonlyMap<string, number>;
+  personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>;
   /** Observer fired after a PERMITTED plugin tool's execute resolves (never for a policy-denied call or
    *  a throwing execute). The caller typically forwards it to the plugin hook bus as `tools.call.after`.
    *  AWAITED before the tool result returns — so a hook that rewrites the just-written file (formatters)
@@ -112,9 +112,10 @@ function gateToolAccess(
   tool: ToolDefinition,
   onToolResult?: (e: PluginToolResultEvent) => void | Promise<void>,
   onToolCall?: (e: PluginToolCallEvent) => Promise<string | undefined>,
-  /** The account this tool BELONGS to, when it is one account's own (a personal MCP server composed into
-   *  a shared room). Undefined for an instance-wide tool, which belongs to everybody. */
-  personalOwnerUserId?: number,
+  /** The accounts this tool BELONGS to, when it is personal rather than instance-wide (a personal MCP
+   *  server composed into a shared room). Usually one; several when they share one dispatching definition
+   *  for a name they all own. Undefined for an instance-wide tool, which belongs to everybody. */
+  personalOwners?: ReadonlySet<number>,
 ): ToolDefinition {
   if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
   const run = tool.execute.bind(tool);
@@ -123,7 +124,8 @@ function gateToolAccess(
     // because its registry is fixed for the session's life, so this is what keeps them one account's. It
     // is deliberately not expressible as a ToolPolicy — an allow-list says what an account was GRANTED,
     // while this says whose server is on the other end of the call.
-    if (personalOwnerUserId !== undefined && currentContributionUserId() !== personalOwnerUserId) {
+    const contributionUserId = currentContributionUserId();
+    if (personalOwners !== undefined && (contributionUserId === null || !personalOwners.has(contributionUserId))) {
       return refused(`The tool "${tool.name}" belongs to another account and is not available to you in this conversation.`);
     }
     if (!toolPermitted(tool.name, currentToolPolicy())) {
@@ -287,14 +289,23 @@ function toolMatchesAny(name: string, patterns: readonly string[]): boolean {
  * plugin. This is intentional for GenerateImage/EditImage: they are marketplace plugin definitions, not PI
  * built-ins, but Elowen owns their loading default. Ownership still selects the override namespace, so an
  * operator controls them through plugin:image-gen / plugin:image-edit rather than a phantom builtin source. */
-function toolDeferralCandidates(tools: readonly ToolDefinition[], spec: SessionToolDeferralSpec): ToolDeferralCandidate[] {
+function toolDeferralCandidates(
+  tools: readonly ToolDefinition[],
+  spec: SessionToolDeferralSpec,
+  /** Which composed tools belong to individual accounts (a shared room). The deferral threshold counts what
+   *  ONE writer faces, so a room must not defer more readily merely because it composes several people's
+   *  personal servers into a set no single turn is ever shown. */
+  personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>,
+): ToolDeferralCandidate[] {
   return tools.map((tool) => {
     const owner = spec.toolOwner.get(tool.name);
+    const owners = personalToolOwners?.get(tool.name);
     return {
       name: tool.name,
       sourceId: owner ? `plugin:${owner}` : 'builtin',
       planSafe: spec.planSafeToolNames.has(tool.name),
       defaultDeferred: spec.toolDeferLoading.has(tool.name) || toolMatchesAny(tool.name, spec.builtinDeferLoading),
+      ...(owners ? { owners } : {}),
     };
   });
 }
@@ -329,7 +340,9 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // while an empty deferred result leaves every existing definition and byte position untouched.
   const withoutToolSearch = [...memoryTools, ...shareImageTools, ...pluginTools, ...planTools];
   const deferred = interactive && spec.toolDeferral
-    ? computeDeferredToolNames(toolDeferralCandidates(withoutToolSearch, spec.toolDeferral), spec.toolDeferral.overrides, spec.toolDeferral.options)
+    ? computeDeferredToolNames(
+        toolDeferralCandidates(withoutToolSearch, spec.toolDeferral, spec.personalToolOwners),
+        spec.toolDeferral.overrides, spec.toolDeferral.options)
     : new Set<string>();
   const toolSearchTools = deferred.size > 0 ? (spec.toolSearch?.(deferred) ?? []) : [];
 
@@ -350,17 +363,14 @@ export function visibleToolNames(
   all: string[],
   pluginNames: Set<string>,
   tp: ToolPolicy | undefined,
-  /** Ownership of the composed tools that belong to ONE account (a shared room's composition — see
+  /** Ownership of the composed tools that belong to individual accounts (a shared room's composition — see
    *  CapabilitySpec.personalToolOwners), paired with the account this turn may reach them as. A tool owned
    *  by anybody else is withheld regardless of policy: in a room, the NAME of somebody's personal MCP
    *  server is itself private, and advertising a tool that the execute gate will refuse merely invites the
    *  model to spend a call finding out. */
-  personal?: { owners: ReadonlyMap<string, number>; contributionUserId: number | null },
+  personal: PersonalToolOwnership | undefined,
 ): string[] {
-  const ownedByOther = (name: string): boolean => {
-    const owner = personal?.owners.get(name);
-    return owner !== undefined && owner !== personal!.contributionUserId;
-  };
+  const ownedByOther = (name: string): boolean => toolOwnedByOtherAccount(name, personal);
   if (!tp) return personal ? all.filter((name) => !ownedByOther(name)) : all;
   return all.filter((name) => !ownedByOther(name)
     && (pluginNames.has(name) ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name))));
@@ -388,13 +398,18 @@ export interface ToolDeferralState {
  *  Deferred tools (external MCP tools withheld to keep the prompt light) are excluded UNLESS ToolSearch
  *  has already fetched them (`deferral.activated`) — so a deferred tool the model has not asked for stays
  *  out of the prompt, and one it has fetched stays in across every subsequent turn. The sender-visibility
- *  filter still applies on top, so a deferred tool the acting sender may not use can never be advertised. */
+ *  filter still applies on top, so a deferred tool the acting sender may not use can never be advertised.
+ *
+ *  `deferral` and `personal` are REQUIRED arguments (pass `undefined` where the session has neither) rather
+ *  than optional ones. An omitted ownership argument silently re-widens a security narrowing back to the
+ *  whole composed superset, which is a bug that a call site does not look like it has — so the compiler,
+ *  not a reviewer, is what makes every caller state its answer. */
 export function applyToolVisibility(
   session: ToolVisibilityTarget,
   pluginNames: Set<string>,
   tp: ToolPolicy | undefined,
-  deferral?: ToolDeferralState,
-  personal?: { owners: ReadonlyMap<string, number>; contributionUserId: number | null },
+  deferral: ToolDeferralState | undefined,
+  personal: PersonalToolOwnership | undefined,
 ): void {
   let desired = visibleToolNames(session.getAllTools().map((t) => t.name), pluginNames, tp, personal);
   if (deferral && deferral.deferred.size > 0) {

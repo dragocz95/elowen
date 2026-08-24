@@ -20,6 +20,57 @@ import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
 import { normalizeNotificationDestination } from './destinations.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('plugins');
+
+/** Canonical JSON of a tool's declared surface, for deciding whether two accounts' same-named personal
+ *  tools are the SAME tool. Keys are emitted in sorted order so two structurally identical schemas built
+ *  from different objects compare equal. Symbol-keyed TypeBox metadata is invisible to JSON, which is
+ *  acceptable here: both sides are produced by the same plugin code path from a remote server's
+ *  `inputSchema`, so a difference that matters shows up in the plain properties. */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+}
+
+/** What the model is told a tool is and how to call it. Two personal tools may share one registered
+ *  definition only when these match exactly — a single definition cannot honestly describe two different
+ *  parameter schemas, and the description is what the model chooses the tool from. */
+function toolSurface(tool: ToolDefinition): string {
+  return canonicalJson({ description: tool.description ?? '', parameters: tool.parameters });
+}
+
+/** One registered definition for a name several accounts own, dispatching to the WRITER's own tool at
+ *  execute time. PI keeps a single definition per name for the life of a session, and a room's turns belong
+ *  to one account at a time, so this is what lets two colleagues keep a tool they both configured instead of
+ *  the second registration silently taking the first one's away.
+ *
+ *  Only reached for definitions with an identical declared surface (see the caller), so the advertised
+ *  schema is true for every owner. The refusal below is defense in depth: the composed session gate
+ *  (gateToolAccess) already refuses a caller who owns no version of the name. */
+function dispatchingPersonalTool(
+  name: string,
+  entries: readonly { tool: ToolDefinition; ownerUserId: number }[],
+): ToolDefinition {
+  const byOwner = new Map(entries.map((e) => [e.ownerUserId, e.tool]));
+  const execute = (async (...args: Parameters<ToolDefinition['execute']>) => {
+    const userId = currentContributionUserId();
+    const target = userId === null ? undefined : byOwner.get(userId);
+    if (!target || typeof target.execute !== 'function') {
+      return {
+        content: [{ type: 'text' as const, text: `The tool "${name}" belongs to another account and is not available to you in this conversation.` }],
+        details: {},
+      };
+    }
+    return target.execute(...args);
+  }) as ToolDefinition['execute'];
+  return { ...entries[0]!.tool, execute };
+}
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -505,38 +556,62 @@ export class PluginRegistry {
     return filtered.length === this.tools.length ? this.tools : filtered;
   }
 
-  /** Which of the composed tools belong to ONE account, as name → that account, for a shared room. The
-   *  authority behind every per-turn ownership decision in a room, and the same index `toolsFor(…,
-   *  { allOwners: true })` composes from — one computation, so what is composed and what is gated cannot
-   *  disagree about who owns a name.
+  /** Which of the composed tools belong to individual accounts, as name → the accounts that own a version
+   *  of it, for a shared room. The authority behind every per-turn ownership decision in a room, and the
+   *  same index `toolsFor(…, { allOwners: true })` composes from — one computation, so what is composed and
+   *  what is gated cannot disagree about who owns a name.
    *
-   *  A name is dropped entirely when it is CONTESTED: two accounts whose personal servers happen to share
-   *  a name (`mcp__github__list` for each of them) cannot both be served from one registered definition,
-   *  and quietly picking one would run somebody else's server under this writer's turn. Neither gets it in
-   *  a room; both keep it in their own chat, where the session has a single owner and the ordinary
-   *  selection above applies. An instance-wide definition of the same name wins for the same reason — it
-   *  is the one that genuinely serves everybody. */
-  sharedRoomToolOwners(): ReadonlyMap<string, number> {
-    return new Map([...this.sharedRoomOwnedTools()].map(([name, entry]) => [name, entry.ownerUserId]));
+   *  A CONTESTED name — two colleagues who both called their personal MCP server `github`, which is the
+   *  likely accident rather than an attack — is served by ONE registered definition that dispatches on the
+   *  writer at execute time (see {@link sharedRoomOwnedTools}), so neither of them loses their tool. It is
+   *  dropped only when the two definitions do not describe the same tool, because one definition cannot
+   *  honestly carry two parameter schemas; that drop is logged, never silent. An instance-wide definition
+   *  of the same name wins outright — it is the one that genuinely serves everybody. */
+  sharedRoomToolOwners(): ReadonlyMap<string, ReadonlySet<number>> {
+    return new Map([...this.sharedRoomOwnedTools()].map(([name, entry]) => [name, entry.owners]));
   }
 
-  private sharedRoomOwnedTools(): Map<string, { tool: ToolDefinition; ownerUserId: number }> {
+  /** Names dropped from a room because two accounts registered structurally different tools under them.
+   *  Warned once per name; kept so a caller (and a test) can see WHICH names a room is missing and why. */
+  private readonly contestedToolsWarned = new Set<string>();
+
+  private sharedRoomOwnedTools(): Map<string, { tool: ToolDefinition; owners: ReadonlySet<number> }> {
     const instanceNames = new Set<string>();
     for (let i = 0; i < this.tools.length; i++) {
       if ((this.toolOwnerUsers[i] ?? null) === null) instanceNames.add(this.tools[i]!.name);
     }
-    const owned = new Map<string, { tool: ToolDefinition; ownerUserId: number } | null>();
+    const claims = new Map<string, { tool: ToolDefinition; ownerUserId: number }[]>();
     for (let i = 0; i < this.tools.length; i++) {
       const ownerUserId = this.toolOwnerUsers[i] ?? null;
       if (ownerUserId === null) continue;
       const name = this.tools[i]!.name;
       if (instanceNames.has(name)) continue;
-      const prior = owned.get(name);
-      if (prior === undefined) owned.set(name, { tool: this.tools[i]!, ownerUserId });
-      else if (prior !== null && prior.ownerUserId !== ownerUserId) owned.set(name, null);
+      const prior = claims.get(name);
+      if (prior) prior.push({ tool: this.tools[i]!, ownerUserId });
+      else claims.set(name, [{ tool: this.tools[i]!, ownerUserId }]);
     }
-    const out = new Map<string, { tool: ToolDefinition; ownerUserId: number }>();
-    for (const [name, entry] of owned) if (entry) out.set(name, entry);
+    const out = new Map<string, { tool: ToolDefinition; owners: ReadonlySet<number> }>();
+    for (const [name, entries] of claims) {
+      const owners = new Set(entries.map((e) => e.ownerUserId));
+      if (owners.size === 1) { out.set(name, { tool: entries[0]!.tool, owners }); continue; }
+      // Same NAME, same declared surface: one definition can serve both, because only one account's turn is
+      // ever running and the dispatcher below picks that account's server. This is the accident case —
+      // two people who each configured the same public MCP server — and losing the tool for both of them,
+      // silently, was a denial of service neither could see.
+      const surface = toolSurface(entries[0]!.tool);
+      if (entries.every((e) => toolSurface(e.tool) === surface)) {
+        out.set(name, { tool: dispatchingPersonalTool(name, entries), owners });
+        continue;
+      }
+      // Genuinely different tools that collided on a name. One definition would have to advertise one
+      // account's schema to everybody, so neither gets it in a room; both keep it in their own chat.
+      if (!this.contestedToolsWarned.has(name)) {
+        this.contestedToolsWarned.add(name);
+        log.warn(`tool "${name}" is withheld from shared rooms: accounts ${[...owners].sort((a, b) => a - b).join(', ')} `
+          + 'each registered a different tool under that name. Each account still has it in their own chat; '
+          + 'rename one of the personal MCP servers to make it available in rooms.');
+      }
+    }
     return out;
   }
 

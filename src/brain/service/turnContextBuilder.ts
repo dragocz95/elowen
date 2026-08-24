@@ -404,7 +404,12 @@ export class TurnContextBuilder {
     }
     // Visibility keeps its OTHER duties untouched — sender roles in a shared channel, delegated agents'
     // allow-lists and deferred MCP tools all still flow through here; only the plan-mode part is withheld.
-    applyToolVisibility(live.session, live.pluginToolNames, visibility, live.toolSearch);
+    // Ownership is stated, not omitted. An owner chat composes one account's tools and carries no ownership
+    // map at all, so this is normally `undefined`; a session that DOES carry one is narrowed to the account
+    // it was composed against rather than being handed the whole superset. Rooms run their own pass in
+    // channels.ts today, and this is what keeps the guarantee if a routing condition ever sends one here.
+    applyToolVisibility(live.session, live.pluginToolNames, visibility, live.toolSearch,
+      live.personalToolOwners ? { owners: live.personalToolOwners, contributionUserId: live.contributionUserId } : undefined);
     // The account's GRANT rides along unchanged: plan mode only ever adds denials, so carrying `allow`
     // through keeps the enforcement policy a superset of the visible one rather than a second opinion.
     if (!authority?.allow && enforced.size === 0) return undefined;
