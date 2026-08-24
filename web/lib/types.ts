@@ -251,7 +251,7 @@ export interface ConfigPatch {
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
 }
 interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null }
-export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; granted_plugins?: string[] }
+export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
 /** Per-user CLI/brain settings surfaced in Account. `model` empty → the configured brain default.

@@ -437,6 +437,13 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (Array.isArray(b.disabled_tools)) {
       users.setDisabledTools(id, b.disabled_tools.filter((t) => typeof t === 'string'));
     }
+    // The positive grant. Names are NOT clamped to a catalogue: a tool may legitimately be granted while
+    // its plugin is disabled or its MCP server is offline, and dropping it here would silently revoke the
+    // grant the moment an admin toggles that plugin off and on again — the same trap `granted_plugins`
+    // documents just below. An unknown name simply never matches anything.
+    if (Array.isArray(b.allowed_tools)) {
+      users.setAllowedTools(id, b.allowed_tools.filter((t) => typeof t === 'string'));
+    }
     if (Array.isArray(b.granted_plugins)) {
       // Clamp to plugins that actually declare `userGrantable`, read from the manifests ON DISK rather
       // than from the live registry: a DISABLED plugin has no registry entry, and dropping its grant

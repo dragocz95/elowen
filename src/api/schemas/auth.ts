@@ -36,6 +36,9 @@ export const userPermissionsSchema = z.object({
   allowed_execs: z.array(z.string()).optional(),
   /** Per-user tool deny-list: plugin tool names disabled for this user's own brain sessions. */
   disabled_tools: z.array(z.string()).optional(),
+  /** Per-user tool ALLOW-list: the plugin tools this account may use at all. `['*']` is the unrestricted
+   *  marker every pre-existing account carries until the grant migration converts it. */
+  allowed_tools: z.array(z.string()).optional(),
   /** Per-user plugin grant-list: names of `userGrantable` plugins this user may use. */
   granted_plugins: z.array(z.string()).optional(),
 });
