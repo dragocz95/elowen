@@ -44,6 +44,11 @@
  *  model from, and {@link deliverPendingPlatformReply} is typed against {@link PlatformDeliveryDeps},
  *  which has no `send`.
  *
+ *  ATTRIBUTION. A resumed turn is OPENED like a live one ({@link openTurn}, exactly as platforms.ts opens
+ *  the turn this one continues): its spend is pinned to the PLATFORM origin under the re-proven writer
+ *  account — never the room's owner — and it reports itself to the team activity feed. Only the model path
+ *  opens; a re-delivery posts text an earlier boot already paid for and already announced.
+ *
  *  THE AT-LEAST-ONCE CONSEQUENCE, deliberately accepted and BOUNDED. A post that actually landed but
  *  whose acknowledgement was lost will be sent a second time. In a chat a duplicate is visible and
  *  self-explaining while silence is not, so this is the lesser harm — but the attempts are capped like
@@ -56,6 +61,8 @@ import type { PendingPlatformDelivery } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
 import type { ToolPolicy } from '../plugins/policyContext.js';
 import { encodeNotificationDestination } from '../plugins/destinations.js';
+import { platformOrigin } from '../api/clientIp.js';
+import { openTurn, type TurnActivityFeed, type TurnOriginPin } from './session/turnSettled.js';
 import {
   normalizePlatformTurnEnvelope,
   provePlatformSenderBinding,
@@ -177,6 +184,16 @@ export interface PlatformTurnRecoveryDeps extends PlatformDeliveryDeps {
    *  {@link PlatformTurnAuthorityDeps}: an absent grant reads as unrestricted, so making this optional
    *  would turn a wiring mistake into a silent privilege escalation on the resume path. */
   toolAuthorityFor: (userId: number) => ToolPolicy | undefined;
+  /** The write-time origin rollup's pin side, and the team feed — the two effects {@link openTurn} owns.
+   *  Optional exactly as they are on the live platform path (BrainDeps), and optional for the OPPOSITE
+   *  reason `toolAuthorityFor` is required: an absent rollup or feed records less, it never widens what
+   *  the resumed turn may do. Present on both places {@link PlatformTurnRecoveryDeps} is wired from.
+   *
+   *  Deliberately NOT on {@link PlatformDeliveryDeps}: a re-delivery must not be able to bill or announce
+   *  a second time, and that is structural here rather than a rule — the delivery seam cannot reach them,
+   *  just as it cannot reach `send`. */
+  usageOrigins?: TurnOriginPin;
+  recordActivity?: TurnActivityFeed;
   /** The ordinary channel turn pipeline (ChannelSessionService.send) — the resume is one more send. */
   send(opts: ChannelSendOpts, text: string): Promise<string>;
 }
@@ -353,6 +370,50 @@ export async function resumePlatformTurn(
     log.info(`parked platform turn ${row.id}: marker cleared before the sweep reached it (the room spoke) — skipping resume`);
     return 'released';
   }
+  // EVERYTHING A RESUMED TURN DOES BESIDES ANSWERING — see openTurn, and platforms.ts for the live twin
+  // whose shape this matches. The open sits HERE, one statement above the only call in this module that
+  // can reach a model, and below every path that spends nothing: no envelope, no nameable target, an
+  // unavailable platform, images the transcript cannot reproduce, an exhausted cap, a marker the room
+  // cleared — and the re-delivery branch, which returns at the very top. Opening for any of those would
+  // bill and announce work that never happened.
+  //
+  // The pin is keyed on the account `resolvePlatformTurnAuthority` has just RE-PROVEN, under the platform
+  // the turn came from. Without it a resumed turn settled as `internal` against the ROOM'S OWNER — the
+  // exact misattribution the live path was fixed for, and worse here: the writer has been disconnected
+  // since the restart, so nothing else in this process still names them.
+  //
+  // The feed row is the same shape a live turn publishes (platform surface, the writer as actor, the
+  // channel key as target, never a word of the message — the feed is instance-wide) and is deliberately
+  // NOT distinguishable as a resume. The feed answers "who is working, and from where", which the restart
+  // did not change; `ACTIVITY_SURFACES` is a closed vocabulary, so a `<platform>-resume` surface would
+  // degrade to `unknown` at the daemon's allow-list and lose the platform instead of adding anything.
+  // That THIS was a resume is an operator fact, and it is in the log lines around this one.
+  //
+  // No `movedTo`: the send below pins `idleRolloverMs: Infinity`, so this turn cannot change conversation
+  // under way. The handle is closed in the `finally` that ends this function, covering every exit taken
+  // below — the `failed` return that keeps the marker for the next boot, the empty-reply stand-down, the
+  // promotion-and-post tail, and any throw. A pin stranded here would bill the room's next live writer,
+  // or the next turn this same boot resumes, to this account.
+  const opened = openTurn({
+    sessionId: row.id,
+    ...(deps.usageOrigins
+      ? { origin: {
+          pin: deps.usageOrigins,
+          userId: authority.accountUserId,
+          origin: platformOrigin(envelope.platform),
+          atMs: Date.now(),
+        } }
+      : {}),
+    ...(deps.recordActivity
+      ? { activity: {
+          record: deps.recordActivity,
+          actorUserId: authority.accountUserId,
+          surface: envelope.platform,
+          target: envelope.channelId,
+        } }
+      : {}),
+  });
+  try {
   let reply: string;
   try {
     reply = await deps.send({
@@ -407,4 +468,12 @@ export async function resumePlatformTurn(
   log.info(`boot resume finished parked platform turn ${row.id} (attempt ${row.park_attempts + 1}); delivering the answer`);
   // The first post is just the first delivery attempt: same counter, same cap, same code as every retry.
   return deliverPendingPlatformReply(deps, promoted);
+  } finally {
+    // Only ever releases the pin THIS resume set: a turn that settled already consumed it (the pin is
+    // token-keyed), so the ordinary success path releases nothing here. There is no `settleTurn` to
+    // match: `deps.send` is the ordinary channel pipeline, which settles the turn it runs — curator,
+    // writer stamp and plugin-reload drain included — in its own `finally`. Settling again here would
+    // simply run all three twice.
+    opened.close();
+  }
 }

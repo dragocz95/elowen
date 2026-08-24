@@ -12,6 +12,7 @@ import { channelSessionId } from '../../src/brain/sessionId.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
 import { LiveEventReplay } from '../../src/brain/session/liveEventReplay.js';
 import { BrainStore } from '../../src/store/brainStore.js';
+import { UsageOriginStore, billSettledTurn } from '../../src/store/usageOriginStore.js';
 import { openDb } from '../../src/store/db.js';
 import { CardRegistry } from '../../src/brain/cards.js';
 import type { BrainEvent } from '../../src/brain/events.js';
@@ -19,10 +20,15 @@ import type { Policy } from '../../src/plugins/policy.js';
 
 const anyPolicy: Policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
 const silentLog = () => ({ info: () => {}, warn: () => {}, error: () => {} });
+const USAGE = { input: 900, output: 100, cacheRead: 0, cacheWrite: 0, total: 1000, cost: 0.5 };
+const AT = Date.UTC(2026, 7, 24, 10, 0);
 
 /** The minimal fake LiveBrain the channel suites use, extended with the custom-message seam the boot
- *  resume rides (`internalSystem` → sendCustomMessage must settle a FRESH assistant). */
-function fakeBrain(sessionId: string) {
+ *  resume rides (`internalSystem` → sendCustomMessage must settle a FRESH assistant).
+ *
+ *  `settle` bills the turn's usage exactly where persistence.ts does — at agent_end, DURING the turn —
+ *  because that timing is what consumes the origin pin. */
+function fakeBrain(sessionId: string, settle: () => void) {
   const messages: { role?: string; content?: unknown; stopReason?: string }[] = [];
   const customSends: { customType: string; content: string }[] = [];
   const session = {
@@ -30,10 +36,11 @@ function fakeBrain(sessionId: string) {
     getContextUsage: () => ({ tokens: 50, contextWindow: 8000, percent: 1 }),
     messages,
     promptTemplates: [] as { name: string }[],
-    prompt: vi.fn(async (t: string) => { messages.push({ role: 'assistant', content: `re: ${t}` }); }),
+    prompt: vi.fn(async (t: string) => { messages.push({ role: 'assistant', content: `re: ${t}` }); settle(); }),
     sendCustomMessage: vi.fn(async (msg: { customType: string; content: string }) => {
       customSends.push({ customType: msg.customType, content: msg.content });
       messages.push({ role: 'assistant', content: 'resumed answer' });
+      settle();
     }),
     steer: vi.fn(async () => {}),
     dispose: vi.fn(() => {}),
@@ -73,26 +80,36 @@ function envelopeFor(channelId = 'discord-ops'): PlatformTurnResumeEnvelope {
   };
 }
 
-function setup(channelId = 'discord-ops') {
-  const store = new BrainStore(openDb(':memory:'));
+function setup(channelId = 'discord-ops', opts: { admitsNewWork?: () => boolean } = {}) {
+  const db = openDb(':memory:');
+  const store = new BrainStore(db);
+  // The REAL write-time rollup, wired as the daemon wires it — a money claim asserted against a mock
+  // proves nothing (see tests/brain/originAttribution.test.ts).
+  const usage = new UsageOriginStore(db);
   const registry = new LiveSessionRegistry<Brain>();
   const cards = new CardRegistry(() => store);
   const brains: Brain[] = [];
   const spawn = vi.fn(async (o: { sessionId: string; ownerUserId: number }) => {
-    const b = fakeBrain(o.sessionId);
+    const b = fakeBrain(o.sessionId, () => billSettledTurn(
+      usage, (id) => store.getSession(id)?.user_id, o.sessionId, USAGE, AT,
+    ));
     brains.push(b);
     if (!store.getSession(o.sessionId)) store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     return b;
   });
   const svc = new ChannelSessionService({
     registry, store, cards, users: { get: () => ({ username: 'o' }) }, spawn,
+    ...(opts.admitsNewWork ? { admitsNewWork: opts.admitsNewWork } : {}),
   } as never);
   const sessionId = channelSessionId(channelId);
   const delivered: { text: string; target: string }[] = [];
+  const activity: { actorUserId: number | null; surface: string; target: string }[] = [];
   const users = { get: vi.fn((id: number) => (id === 7 ? { id: 7 } : undefined)) };
   const deps: PlatformTurnRecoveryDeps = {
     store,
     users,
+    usageOrigins: usage,
+    recordActivity: (e) => { activity.push(e); },
     resolvePlatformUser: vi.fn((platform: string, platformUserId: string) =>
       (platform === 'discord' && platformUserId === '42' ? { id: 7 } : null)),
     policyForUser: () => anyPolicy,
@@ -109,7 +126,11 @@ function setup(channelId = 'discord-ops') {
     store.markSessionParked(sessionId);
     return store.getSession(sessionId)!;
   };
-  return { store, registry, svc, spawn, brains, sessionId, delivered, users, deps, park };
+  return {
+    store, registry, svc, spawn, brains, sessionId, delivered, activity, users, deps, park, usage,
+    /** The rollup as the admin view reads it: [account, address, turns]. */
+    billed: () => usage.topOrigins({ group: 'pair' }).map((r) => [r.userId, r.origin, r.turns]),
+  };
 }
 
 describe('platformTurnParkEligible — a platform turn parks only where a faithful resume exists', () => {
@@ -493,5 +514,73 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     expect(spawn).not.toHaveBeenCalled();
     expect(delivered).toHaveLength(0);
     expect(store.getSession(cronSession)!.parked_at).toBeNull();
+  });
+});
+
+/** A resumed turn spends real model tokens, so it is opened exactly like the live turn it continues —
+ *  driven here through the real BrainStore, the real ChannelSessionService and the real UsageOriginStore,
+ *  because the defect this closes was never in the store: it was a turn that never reached it. */
+describe('resumePlatformTurn — the resumed turn is billed and reported like the live turn it continues', () => {
+  it('bills the PLATFORM origin to the writer account, not the room owner, and reports one feed row', async () => {
+    const { store, sessionId, deps, park, billed, activity, usage } = setup();
+    // The room belongs to account 1 (whoever opened it); the interrupted turn was written by account 7.
+    const row = park(envelopeFor());
+    expect(store.getSession(sessionId)!.user_id).toBe(1);
+
+    await expect(resumePlatformTurn(deps, row)).resolves.toBe('resumed');
+
+    expect(billed()).toEqual([[7, 'platform:discord', 1]]);
+    // Actor and surface only — the feed is instance-wide, so nothing of the message may ride along.
+    expect(activity).toEqual([{ actorUserId: 7, surface: 'discord', target: 'discord-ops' }]);
+    // Consumed by the settling turn, so nothing is left pinned to this room.
+    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+  });
+
+  it('leaves no pin behind when the resume spends nothing — refused before, or inside, the send', async () => {
+    let admits = true;
+    const { sessionId, deps, park, billed, activity, usage } = setup('discord-ops', { admitsNewWork: () => admits });
+
+    // (1) Refused before the model runs: the account vanished while the daemon was down. Nothing spent,
+    //     so nothing may be billed or announced at all.
+    deps.users.get = vi.fn(() => undefined) as never;
+    await expect(resumePlatformTurn(deps, park(envelopeFor()))).resolves.toBe('terminalized');
+    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(billed()).toEqual([]);
+    expect(activity).toEqual([]);
+
+    // (2) Refused INSIDE the send, after the turn was opened: this boot is already draining again, so
+    //     the turn is rejected before its first provider request and the marker is kept for the next
+    //     boot. The pin must go with it — a room is written by several people, and a pin stranded here
+    //     would bill the next writer's whole turn to account 7.
+    deps.users.get = vi.fn((id: number) => (id === 7 ? { id: 7 } : undefined)) as never;
+    admits = false;
+    await expect(resumePlatformTurn(deps, park(envelopeFor()))).resolves.toBe('failed');
+
+    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(billed()).toEqual([]);
+    // The turn was opened this time — it was about to run — so the feed reports it exactly once.
+    expect(activity).toEqual([{ actorUserId: 7, surface: 'discord', target: 'discord-ops' }]);
+  });
+
+  it('does not bill or announce again on a boot that only RE-POSTS an answer already paid for', async () => {
+    const { store, sessionId, delivered, deps, park, billed, activity, usage } = setup();
+    const row = park(envelopeFor());
+    deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+
+    // The boot that computes the answer pays for it, and reports it.
+    await expect(resumePlatformTurn(deps, row)).resolves.toBe('failed');
+    expect(billed()).toEqual([[7, 'platform:discord', 1]]);
+    expect(activity).toHaveLength(1);
+
+    // The next boot runs no model — it re-posts existing text. A second origin row would invent spend
+    // that never happened, and a second feed row would report one exchange twice in a feed the whole
+    // team reads; the boot that did the work already recorded both.
+    deps.deliver = async (text, target) => { delivered.push({ text, target }); };
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('resumed');
+
+    expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
+    expect(billed()).toEqual([[7, 'platform:discord', 1]]);
+    expect(activity).toHaveLength(1);
+    expect(usage.pinnedOrigin(sessionId)).toBeNull();
   });
 });

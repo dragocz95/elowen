@@ -721,6 +721,12 @@ export class BrainService {
       resolvePlatformUser: (platform, platformUserId) => this.d.resolvePlatformUser?.(platform, platformUserId) ?? null,
       ...(this.d.policy ? { policyForUser: this.d.policy } : {}),
       toolAuthorityFor: (userId) => toolAuthorityForUser(this.d, userId),
+      // The two effects a LIVE platform turn opens with (platforms.ts): the origin pin that attributes
+      // the resumed turn's spend to the account it belongs to, and the team feed row. Without them a
+      // resumed turn spent real tokens as `internal` against the room's owner and never appeared in the
+      // feed at all.
+      ...(this.d.usageOrigins ? { usageOrigins: this.d.usageOrigins } : {}),
+      ...(this.d.recordActivity ? { recordActivity: this.d.recordActivity } : {}),
       send: (opts, text) => this.channelService.send(opts, text),
       canDeliver: (target) => this.platforms.canDeliver(target),
       deliver: (text, target) => this.platforms.notify(text, target),

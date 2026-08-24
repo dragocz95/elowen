@@ -329,13 +329,17 @@ describe('the settlement contract', () => {
       .filter(({ path }) => path !== DEFINER)
       .filter(({ code }) => /\bopenTurn\s*\(/.test(code));
     expect(openers.map((m) => m.path).sort(), 'the surfaces that open a turn')
-      .toEqual(['api/routes/brainRouteContext.ts', 'brain/platforms.ts', 'brain/service/turnRunner.ts']);
+      .toEqual([
+        'api/routes/brainRouteContext.ts', 'brain/platformTurnRecovery.ts',
+        'brain/platforms.ts', 'brain/service/turnRunner.ts',
+      ]);
     // A surface that HOLDS the handle owns the pin's lifetime and must give it back on every exit —
     // otherwise the next writer in a shared room is refused a pin and their turn is billed to the
     // previous person. The route layer deliberately does not hold one: it pins a conversation for an
     // operation the brain runs later, so there is no turn here to close.
     const holders = openers.filter(({ code }) => /=\s*openTurn\s*\(/.test(code));
-    expect(holders.map((m) => m.path).sort()).toEqual(['brain/platforms.ts', 'brain/service/turnRunner.ts']);
+    expect(holders.map((m) => m.path).sort())
+      .toEqual(['brain/platformTurnRecovery.ts', 'brain/platforms.ts', 'brain/service/turnRunner.ts']);
     const offenders = holders
       .filter(({ code }) => !finallyBlocks(code).some((block) => /\.close\s*\(\)/.test(block)))
       .map(({ path }) => path);
