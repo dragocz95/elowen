@@ -115,19 +115,33 @@ export class LiveSessionSpawner {
     const registry = buildBrainRegistry(cfg, this.d.runtime);
     // WHOSE personal preferences compose this session. A room belongs to whoever OPENED it, which is
     // bookkeeping and not a mandate: reading settings off that account made one colleague's personal
-    // model, compaction model, thresholds and advisor style answer for everyone else in the room. The
-    // caller therefore names the verified writer (channels.ts); a surface with one sender omits the
-    // argument and its owner stands, as does an unlinked sender, a cron turn or instance automation.
+    // model, compaction model, thresholds, advisor style and private account instructions answer for
+    // everyone else in the room. The caller therefore names the verified writer (channels.ts); a surface
+    // with one sender omits the argument and its owner stands, as does an unlinked sender, a cron turn
+    // or instance automation.
     //
-    // Resolved ONCE, here, because every setting below feeds an input the session is BUILT from and
-    // cannot change without rebuilding it: the model route (chat + compaction model), the system prompt
-    // (advisor style) and the compaction budget. They are therefore spawn-fixed by construction and
-    // follow the writer whose turn spawns — not a per-turn value quietly frozen at spawn. Re-resolving
-    // them per turn would mean disposing and rehydrating the room's whole transcript whenever two people
-    // with different defaults take turns, which costs the prompt cache and breaks the coupling between a
-    // transcript and the model that produced it. An explicit `/model` for the room still wins over all
-    // of this, and the room re-reads the current writer's settings on every respawn (rollover, model
-    // switch, eviction, restart).
+    // That fallback is deliberately ASYMMETRIC with recall, which gives an unlinked sender NOTHING (see
+    // `turnRecallUserId` in channels.ts): memories are one person's private content, so a stranger must
+    // not be answered out of them, whereas a model, a style and a threshold are how the room is
+    // CONFIGURED to answer and the opener's are the only ones a room without a verified writer has. It
+    // does mean a stranger's turn runs on the opener's model and bill — the same bill that room already
+    // ran on before they wrote. Settings are not permissions: nothing here grants anyone anything.
+    //
+    // Resolved ONCE, here, and spawn-fixed — for two different reasons, which are not interchangeable:
+    //  · The model route (chat + compaction model) and the system prompt (advisor style, account
+    //    instructions, per-user prompt overrides) are FORCED. They are inputs the session is built from,
+    //    so re-resolving them per turn means disposing and rehydrating the room's whole transcript, a
+    //    full prompt-cache re-warm, and breaking the coupling between a transcript and the model that
+    //    produced it.
+    //  · The auto-compact threshold is a CHOICE. It is not forced: BrainService.applyAutoCompactSettings
+    //    already changes it on a running session in place, with no respawn at all, so it could be
+    //    re-resolved per writer per turn for free. It is fixed here because compaction rewrites the
+    //    SHARED transcript and its effect outlives the turn whose writer triggered it, so the budget
+    //    belongs to the session, not to one sender — and `live.settingsUserId` is the single identity
+    //    that in-place re-apply matches on, which a per-turn threshold would leave naming something
+    //    untrue.
+    // An explicit `/model` for the room still wins over all of this, and the room re-reads the current
+    // writer's settings on every respawn (rollover, model switch, eviction, restart).
     const settingsUserId = opts.settingsUserId ?? ownerUserId;
     // The writer's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
     // session model (or the provider's stable default). Validated at save time; resolved defensively here
@@ -284,11 +298,18 @@ export class LiveSessionSpawner {
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
     const promptTemplates = buildPromptTemplates(plugins?.commands.values() ?? []);
     const fragments = plugins?.promptFragments ?? [];
-    // The account owner's global instructions layer AFTER the persona as a separate appended chunk, never
-    // the per-turn context (they are stable system-prompt material, so putting them per-turn would waste the
-    // prompt cache). Undefined when empty → NOTHING appended, preserving the byte-identical default prefix.
-    // XML escaping makes the account-data boundary explicit even when the text contains tag-like markup.
-    const rawUserInstructions = this.d.activeUserInstructions?.(ownerUserId);
+    // The composing account's global instructions layer AFTER the persona as a separate appended chunk,
+    // never the per-turn context (they are stable system-prompt material, so putting them per-turn would
+    // waste the prompt cache). Undefined when empty → NOTHING appended, preserving the byte-identical
+    // default prefix. XML escaping makes the account-data boundary explicit even when the text contains
+    // tag-like markup.
+    //
+    // Keyed on settingsUserId, like every other personal preference above: these are Account → user
+    // instructions, a STRONGER statement of how somebody wants to be answered than the advisor style
+    // that lands in the very same prompt. Reading them off the room's opener rendered the writer's style
+    // beside the opener's private instructions — and leaked one person's standing orders into a room they
+    // merely opened.
+    const rawUserInstructions = this.d.activeUserInstructions?.(settingsUserId);
     const userInstructionsAppend = rawUserInstructions ? userInstructionsBlock(rawUserInstructions) : undefined;
     // Skills awareness block (progressive disclosure): PI would render `<available_skills>` itself, but
     // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `Read`
@@ -319,6 +340,11 @@ export class LiveSessionSpawner {
 
     // Elowen identity: the editable `elowen` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Elowen — not the underlying model's default persona.
+    //
+    // The USER RECORD stays the owner's on purpose, and is the one thing here that does: `userName` is who
+    // the instance belongs to (the platform overlay says so in as many words), not a preference of the
+    // person writing, and `is_admin` below gates whether project instruction files may be read at all —
+    // a security decision that must never follow a room's current writer.
     const u = this.d.users.get(ownerUserId);
     const userName = u?.name || u?.username || 'Filip';
     const personality = personalityText(settings?.advisorStyle ?? '');
@@ -334,12 +360,16 @@ export class LiveSessionSpawner {
     // room; owner chat gets the base alone.
     // `scheduled` deliberately gets no productName: its template never mentions the product (that keeps
     // its render byte-stable), and the prompt-editor catalog advertises exactly the vars passed here.
+    //
+    // The per-user prompt OVERRIDE is a personal preference like the advisor style rendered into it, so it
+    // reads from the same composing account — otherwise a room would render the writer's style through the
+    // opener's edited template, one line away from the style itself.
     const persona = opts.scheduled
-      ? this.d.prompts.render('scheduled', { userName, personality, agentName }, ownerUserId)
+      ? this.d.prompts.render('scheduled', { userName, personality, agentName }, settingsUserId)
       : opts.channel
-        ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, ownerUserId)
-          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, ownerUserId)
-        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, ownerUserId);
+        ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId)
+          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, settingsUserId)
+        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId);
 
     // Create the image-carrying queue mirrors before the PI session. The boundary compaction adapter reads
     // these exact arrays just before every next-turn provider request, so queued text AND attachments are

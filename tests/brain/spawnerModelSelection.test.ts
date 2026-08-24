@@ -29,6 +29,10 @@ type Settings = {
 function makeSpawner(settings: Settings | ((userId: number) => Settings | undefined)) {
   const settingsFor = typeof settings === 'function' ? settings : () => settings;
   const settingsReads: number[] = [];
+  /** The ids the two OTHER personal-preference lookups in the system prompt were made under: the account's
+   *  own instructions block, and the per-user prompt override the persona is rendered through. */
+  const instructionReads: number[] = [];
+  const renderIds: (number | undefined)[] = [];
   const listeners: ((e: unknown) => void)[] = [];
   const fakeSession = {
     sessionId: 'sess-1',
@@ -46,10 +50,17 @@ function makeSpawner(settings: Settings | ((userId: number) => Settings | undefi
     store: new BrainStore(openDb(':memory:')),
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Filip', username: 'filip' }) },
-    // The advisor style reaches the model only through the rendered persona, so render it verbatim.
-    prompts: { render: (_name: string, vars: Record<string, string>) => `PERSONA ${vars.personality ?? ''}`.trim() },
+    // The advisor style reaches the model only through the rendered persona, so render it verbatim. The
+    // third argument is the account whose per-user prompt OVERRIDE this render may use.
+    prompts: {
+      render: (_name: string, vars: Record<string, string>, userId?: number) => {
+        renderIds.push(userId);
+        return `PERSONA ${vars.personality ?? ''}`.trim();
+      },
+    },
     url: 'http://x',
     userSettings: (userId: number) => { settingsReads.push(userId); return settingsFor(userId); },
+    activeUserInstructions: (userId: number) => { instructionReads.push(userId); return `INSTRUCTIONS OF ${userId}`; },
     plugins: async () => undefined,
     factory: { create },
     sessionTaps: () => [],
@@ -60,9 +71,9 @@ function makeSpawner(settings: Settings | ((userId: number) => Settings | undefi
   });
   const spec = () => create.mock.calls.at(-1)![0] as unknown as {
     model: { id: string }; providerId: string; autoCompactAtPct: number;
-    systemPrompt: string; compactionFallbackModel?: { id: string };
+    systemPrompt: string; appendSystemPrompt: string[]; compactionFallbackModel?: { id: string };
   };
-  return { spawn, create, spec, settingsReads };
+  return { spawn, create, spec, settingsReads, instructionReads, renderIds };
 }
 
 describe('LiveSessionSpawner — chat-model selection fallback', () => {
@@ -180,6 +191,38 @@ describe('LiveSessionSpawner — the settings a session is composed from', () =>
     expect(spec().autoCompactAtPct).toBe(50);
     expect(spec().systemPrompt).toContain(personalityText('detailed'));
     expect([...new Set(settingsReads)]).toEqual([1]);
+  });
+
+  it('appends the WRITER’S account instructions, not the opener’s', async () => {
+    const { spawn, spec, instructionReads } = makeSpawner(OWNER_1_WRITER_2);
+
+    await spawn({}, 2);
+
+    // Account → user instructions are a stronger statement of how somebody wants to be answered than the
+    // advisor style landing in the very same prompt, so the two must never come from different accounts.
+    expect(spec().appendSystemPrompt.join('\n')).toContain('INSTRUCTIONS OF 2');
+    expect(spec().appendSystemPrompt.join('\n')).not.toContain('INSTRUCTIONS OF 1');
+    expect(spec().systemPrompt).toContain(personalityText('friendly'));
+    expect(instructionReads).toEqual([2]);
+  });
+
+  it('renders the persona through the WRITER’S prompt override', async () => {
+    const { spawn, renderIds } = makeSpawner(OWNER_1_WRITER_2);
+
+    await spawn({}, 2);
+
+    // A per-user prompt override is a personal preference like the style rendered into it.
+    expect([...new Set(renderIds)]).toEqual([2]);
+  });
+
+  it('leaves both on the owner when no writer is named', async () => {
+    const { spawn, spec, instructionReads, renderIds } = makeSpawner(OWNER_1_WRITER_2);
+
+    await spawn({});
+
+    expect(spec().appendSystemPrompt.join('\n')).toContain('INSTRUCTIONS OF 1');
+    expect(instructionReads).toEqual([1]);
+    expect([...new Set(renderIds)]).toEqual([1]);
   });
 
   it('uses the built-in default threshold when the resolved account has no settings row', async () => {
