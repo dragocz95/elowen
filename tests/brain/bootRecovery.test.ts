@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { BootRecoveryCoordinator } from '../../src/brain/recovery/coordinator.js';
 import { createBootRecovery, type BootRecoveryHost } from '../../src/brain/recovery/providers.js';
-import type { RecoveryProvider } from '../../src/brain/recovery/types.js';
+import type { RecoveryOutcome, RecoveryProvider } from '../../src/brain/recovery/types.js';
 
 const silentLog = () => ({ info: () => {}, error: () => {} });
 const recordingLog = () => {
+  const infos: string[] = [];
   const errors: string[] = [];
-  return { log: { info: () => {}, error: (m: string) => { errors.push(m); } }, errors };
+  return { log: { info: (m: string) => { infos.push(m); }, error: (m: string) => { errors.push(m); } }, infos, errors };
 };
 
 /** A provider that records every claim/order/resume it sees into a shared trace. */
@@ -19,7 +20,7 @@ function tracing(
   return {
     id,
     claim: () => { trace.push(`claim:${id}`); return items; },
-    resume: async (item) => { trace.push(`resume:${id}:${item}`); },
+    resume: async (item) => { trace.push(`resume:${id}:${item}`); return 'resumed'; },
     ...extra,
   };
 }
@@ -66,7 +67,7 @@ describe('BootRecoveryCoordinator', () => {
     const trace: string[] = [];
     const { log, errors } = recordingLog();
     const c = new BootRecoveryCoordinator(log);
-    c.register({ id: 'broken', claim: () => { throw new Error('db is on fire'); }, resume: async () => { trace.push('resume:broken'); } });
+    c.register({ id: 'broken', claim: () => { throw new Error('db is on fire'); }, resume: async () => { trace.push('resume:broken'); return 'resumed'; } });
     c.register(tracing('healthy', trace, ['1'], { dependsOn: ['broken'] }));
     c.claimAll(0);
     await c.resumeAll();
@@ -80,7 +81,7 @@ describe('BootRecoveryCoordinator', () => {
     const c = new BootRecoveryCoordinator(log);
     c.register({
       id: 'broken', claim: () => ['1', '2'],
-      resume: async (item) => { trace.push(`resume:broken:${item}`); throw new Error('turn blew up'); },
+      resume: async (item): Promise<RecoveryOutcome> => { trace.push(`resume:broken:${item}`); throw new Error('turn blew up'); },
     });
     c.register(tracing('healthy', trace, ['9'], { dependsOn: ['broken'] }));
     c.claimAll(0);
@@ -110,9 +111,10 @@ describe('BootRecoveryCoordinator', () => {
     const c = new BootRecoveryCoordinator(log);
     c.register({
       id: 'conversations', parallel: true, claim: () => ['a', 'b', 'c'],
-      resume: async (item) => {
+      resume: async (item): Promise<RecoveryOutcome> => {
         trace.push(`resume:${item}`);
         if (item === 'a') throw new Error('resume turn failed');
+        return 'resumed';
       },
     });
     c.claimAll(0);
@@ -131,6 +133,52 @@ describe('BootRecoveryCoordinator', () => {
     expect(trace).toEqual(['claim:a', 'resume:a:1']);
   });
 
+  it('summarizes each provider that had work in ONE line, counting what its items actually did', async () => {
+    const { log, infos } = recordingLog();
+    const c = new BootRecoveryCoordinator(log);
+    c.register<string>({
+      id: 'delegations', claim: () => ['a', 'b', 'c', 'd'],
+      // The four outcomes a provider can report — the coordinator only tallies what the substrate says it
+      // did, never inferring it from durable state it does not own.
+      resume: async (item) => {
+        if (item === 'a') return 'resumed';
+        if (item === 'b') return 'terminalized';
+        if (item === 'c') return 'released';
+        return 'failed';
+      },
+    });
+    // A provider with nothing to recover stays silent: an idle boot must not print rows of zeroes, or the
+    // summary becomes noise nobody reads on the boot that matters.
+    c.register<string>({ id: 'workflows', claim: () => [], resume: async () => 'resumed' });
+    c.claimAll(0);
+    await c.resumeAll();
+
+    expect(infos).toEqual(['boot recovery: provider=delegations claimed=4 resumed=1 terminalized=1 released=1 failed=1']);
+  });
+
+  it('reports a failure in the summary WITHOUT swallowing its isolation error', async () => {
+    const { log, infos, errors } = recordingLog();
+    const c = new BootRecoveryCoordinator(log);
+    c.register<string>({ id: 'delegations', claim: () => { throw new Error('db is on fire'); }, resume: async () => 'resumed' });
+    c.register<string>({
+      id: 'conversations', parallel: true, claim: () => ['a', 'b'],
+      resume: async (item) => { if (item === 'a') throw new Error('turn blew up'); return 'resumed'; },
+      dependsOn: ['delegations'],
+    });
+    c.claimAll(0);
+    await c.resumeAll();
+
+    // Same shape for a provider that died in the claim pass as for one whose item failed in the resume
+    // pass — that sameness is the point: a boot reads as one list, not as four dialects.
+    expect(infos).toEqual([
+      'boot recovery: provider=delegations claimed=0 resumed=0 terminalized=0 released=0 failed=1 reason=db is on fire',
+      'boot recovery: provider=conversations claimed=2 resumed=1 terminalized=0 released=0 failed=1 reason=turn blew up',
+    ]);
+    // The summary REPORTS failures; it never replaces the per-provider error isolation.
+    expect(errors.some((e) => e.includes("'delegations' claim failed"))).toBe(true);
+    expect(errors.some((e) => e.includes("'conversations' item failed"))).toBe(true);
+  });
+
   it('refuses a second claim pass, a resume before the claim, and a duplicate id', async () => {
     const c = new BootRecoveryCoordinator(silentLog());
     await expect(c.resumeAll()).rejects.toThrow(/before the claim pass/);
@@ -144,18 +192,18 @@ describe('BootRecoveryCoordinator', () => {
 
 describe('createBootRecovery', () => {
   /** The real registration, driven against a stub host: this is what pins the boot chain's actual order
-   *  (delegations → workflows → owner conversations) and the claim/resume phase split. */
+   *  (delegations → workflows → owner and platform conversations) and the claim/resume phase split. */
   function stubHost(trace: string[]): BootRecoveryHost {
     return {
       claimDelegationRecovery: () => { trace.push('claim:delegations'); return [{ childSessionId: 'run' } as never]; },
       orderDelegationRecovery: (runs) => { trace.push('order:delegations'); return runs; },
-      recoverDelegation: async () => { trace.push('resume:delegations'); },
+      recoverDelegation: async () => { trace.push('resume:delegations'); return 'resumed'; },
       claimWorkflowRecovery: () => { trace.push('claim:workflows'); return [{ workflowId: 'wf' } as never]; },
-      resumeWorkflow: async () => { trace.push('resume:workflows'); },
+      resumeWorkflow: async () => { trace.push('resume:workflows'); return 'resumed'; },
       claimParkedConversations: () => { trace.push('claim:conversations'); return [{ id: 's' } as never]; },
-      resumeParkedConversation: async () => { trace.push('resume:conversations'); },
+      resumeParkedConversation: async () => { trace.push('resume:conversations'); return 'resumed'; },
       claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'brain-ch-x' } as never]; },
-      resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); },
+      resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); return 'resumed'; },
     };
   }
 
@@ -174,7 +222,7 @@ describe('createBootRecovery', () => {
     ]);
   });
 
-  it('claims all three substrates before the platforms, then resumes deepest-substrate-first', async () => {
+  it('claims all four substrates before the platforms, then resumes deepest-substrate-first', async () => {
     const trace: string[] = [];
     const coordinator = createBootRecovery(stubHost(trace), silentLog());
     coordinator.claimAll(0);

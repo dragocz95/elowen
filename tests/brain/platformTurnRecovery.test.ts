@@ -315,7 +315,11 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     const row = park(envelopeFor());
     deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
 
-    await expect(resumePlatformTurn(deps, row)).resolves.toBeUndefined();
+    // Resolves rather than rejecting — a rejection would abort the rest of the sweep — but reports the
+    // loss as `failed`, never `resumed`: the stand-down already happened, so nobody in that room will
+    // ever receive this answer. Calling it a success would make the boot summary the one place the
+    // at-most-once delivery gap is invisible.
+    await expect(resumePlatformTurn(deps, row)).resolves.toBe('failed');
 
     // The marker fell before the post was attempted: the loss is logged, the answer stays in the
     // transcript, and no later sweep can re-run the turn and post it twice.

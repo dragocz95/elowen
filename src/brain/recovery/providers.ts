@@ -1,8 +1,8 @@
 import type { BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
 import { BootRecoveryCoordinator } from './coordinator.js';
-import type { RecoveryLog } from './types.js';
+import type { RecoveryLog, RecoveryOutcome } from './types.js';
 
-/** What the three built-in providers need from the brain. Narrow on purpose: the coordinator drives
+/** What the four built-in providers need from the brain. Narrow on purpose: the coordinator drives
  *  claim/order/resume and nothing else, so this seam exposes exactly those verbs — BrainService satisfies
  *  it structurally, and a test can satisfy it with a stub instead of a whole brain. */
 export interface BootRecoveryHost {
@@ -10,13 +10,13 @@ export interface BootRecoveryHost {
    *  `workflows` provider below for why the two cannot be claimed independently. */
   claimDelegationRecovery(): readonly RecoverableRun[];
   orderDelegationRecovery(runs: readonly RecoverableRun[]): readonly RecoverableRun[];
-  recoverDelegation(run: RecoverableRun): Promise<void>;
+  recoverDelegation(run: RecoverableRun): Promise<RecoveryOutcome>;
   claimWorkflowRecovery(): readonly RecoverableWorkflow[];
-  resumeWorkflow(workflow: RecoverableWorkflow): Promise<void>;
+  resumeWorkflow(workflow: RecoverableWorkflow): Promise<RecoveryOutcome>;
   claimParkedConversations(): readonly BrainSessionRow[];
-  resumeParkedConversation(row: BrainSessionRow): Promise<void>;
+  resumeParkedConversation(row: BrainSessionRow): Promise<RecoveryOutcome>;
   claimParkedPlatformTurns(): readonly BrainSessionRow[];
-  resumeParkedPlatformTurn(row: BrainSessionRow): Promise<void>;
+  resumeParkedPlatformTurn(row: BrainSessionRow): Promise<RecoveryOutcome>;
 }
 
 /** The daemon's boot recovery chain. Built by the daemon's boot layer only — the sub-agent runner has no

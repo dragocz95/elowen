@@ -40,6 +40,7 @@ import {
   type ChannelSendOpts,
   type PlatformTurnResumeEnvelope,
 } from './channels.js';
+import type { RecoveryOutcome } from './recovery/types.js';
 import { CRON_PLATFORM, channelSessionId, isChannelSession, isSubagentSession, platformOfSession } from './sessionId.js';
 
 /** Boot resume attempts per park marker before the sweep gives up — the same cap (and the same durable
@@ -137,7 +138,7 @@ export interface PlatformTurnRecoveryDeps {
 export async function resumePlatformTurn(
   deps: PlatformTurnRecoveryDeps,
   row: { id: string; park_attempts: number },
-): Promise<void> {
+): Promise<RecoveryOutcome> {
   const { log } = deps;
   // Terminal stand-down: forget both durable halves of the interrupted turn.
   const terminalize = (): void => {
@@ -149,7 +150,7 @@ export async function resumePlatformTurn(
   if (!isChannelSession(row.id) || isSubagentSession(row.id)) {
     log.warn(`park marker on non-platform session ${row.id} — invariant breach; clearing without resume`);
     deps.store.clearSessionPark(row.id);
-    return;
+    return 'released';
   }
   const raw = deps.store.platformTurnEnvelope(row.id);
   let envelope: PlatformTurnResumeEnvelope | null = null;
@@ -157,18 +158,18 @@ export async function resumePlatformTurn(
   if (!envelope || channelSessionId(envelope.channelId) !== row.id) {
     log.warn(`parked platform turn ${row.id}: no valid resume envelope; clearing without resume`);
     terminalize();
-    return;
+    return 'terminalized';
   }
   if (envelope.scheduled || platformOfSession(row.id) === CRON_PLATFORM) {
     log.warn(`parked platform turn ${row.id}: scheduled/cron turns have no boot resume — invariant breach; clearing`);
     terminalize();
-    return;
+    return 'released';
   }
   const target = resumeDeliveryTarget(envelope);
   if (!target) {
     log.warn(`parked platform turn ${row.id}: no outbound delivery target can be named; clearing without resume`);
     terminalize();
-    return;
+    return 'terminalized';
   }
   // A best-effort user-facing notice into the affected conversation itself; the log is the durable record.
   const notice = async (text: string): Promise<void> => {
@@ -180,7 +181,7 @@ export async function resumePlatformTurn(
   if (!deps.canDeliver(target)) {
     log.error(`parked platform turn ${row.id}: platform "${envelope.platform}" is unavailable for delivery — giving up; the sender must re-send`);
     terminalize();
-    return;
+    return 'terminalized';
   }
   // The park gate refuses image-bearing turns, but an envelope is durable data from an earlier build —
   // re-check here. The bytes were never persisted, so the durable transcript cannot reproduce what the
@@ -189,7 +190,7 @@ export async function resumePlatformTurn(
     terminalize();
     log.error(`parked platform turn ${row.id}: the interrupted turn carried ${envelope.imageCount} image(s) the durable transcript cannot reproduce — giving up; the sender must re-send`);
     await notice(RESUME_GIVE_UP_NOTICE);
-    return;
+    return 'terminalized';
   }
   if (row.park_attempts >= MAX_PLATFORM_RESUME_ATTEMPTS) {
     // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
@@ -197,7 +198,7 @@ export async function resumePlatformTurn(
     terminalize();
     log.error(`parked platform turn ${row.id} exhausted ${MAX_PLATFORM_RESUME_ATTEMPTS} boot resume attempts — giving up; the sender must re-send`);
     await notice(RESUME_GIVE_UP_NOTICE);
-    return;
+    return 'terminalized';
   }
   // WHO the resumed turn runs as is re-derived from the ACCOUNT, never replayed: an account that was
   // deleted or unlinked since the park refuses the resume outright — no operator fallback, no ambient
@@ -213,14 +214,14 @@ export async function resumePlatformTurn(
     terminalize();
     log.error(`parked platform turn ${row.id}: authority refused — not resuming`, e);
     await notice(RESUME_REFUSED_NOTICE);
-    return;
+    return 'terminalized';
   }
   // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this race
   // means the room already spoke (channel turn admission clears the marker) — their message is the
   // continuation then, and injecting ours on top is exactly the double-continuation this guards against.
   if (!deps.store.claimParkResumeAttempt(row.id)) {
     log.info(`parked platform turn ${row.id}: marker cleared before the sweep reached it (the room spoke) — skipping resume`);
-    return;
+    return 'released';
   }
   let reply: string;
   try {
@@ -253,12 +254,12 @@ export async function resumePlatformTurn(
   } catch (e) {
     // Marker deliberately kept: the attempt is durably counted, so the next boot retries up to the cap.
     log.error(`boot resume failed for parked platform turn ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PLATFORM_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
-    return;
+    return 'failed';
   }
   if (!reply.trim()) {
     terminalize();
     log.error(`parked platform turn ${row.id}: the resume turn settled with an empty reply — nothing to deliver`);
-    return;
+    return 'terminalized';
   }
   // Durable stand-down BEFORE the outbound post — the no-double-reply order (see the module doc). A crash
   // or delivery failure past this point loses one post, never duplicates it; the answer itself is already
@@ -267,7 +268,12 @@ export async function resumePlatformTurn(
   try {
     await deps.deliver(reply, target);
     log.info(`boot resume finished parked platform turn ${row.id} (attempt ${row.park_attempts + 1}) and delivered the answer`);
+    return 'resumed';
   } catch (e) {
     log.error(`parked platform turn ${row.id}: the resumed answer was computed (it is in the transcript) but delivery to "${envelope.platform}" failed`, e);
+    // NOT 'resumed': the durable stand-down above already happened, so this post is lost for good and
+    // nobody in that room got an answer. Counting it as a success would make the boot summary the one
+    // place the at-most-once delivery gap is invisible.
+    return 'failed';
   }
 }

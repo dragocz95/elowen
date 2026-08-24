@@ -14,6 +14,7 @@ import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
 import type { DelegatedContinueResult, SubagentProgressEvent } from '../../plugins/api.js';
+import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
 
 /** Parse a `provider/model` spec into a brain model selection. Splits on the FIRST slash only — model
@@ -112,13 +113,13 @@ export class DelegatedSessionService {
   constructor(private d: DelegatedSessionDeps) {}
 
   /** Runs this boot CLAIMED for recovery in {@link reconcileDelegationsOnBoot} (synchronous), to respawn
-   *  asynchronously in {@link runDelegationRecovery} once the platforms are up. Held on the instance so the
-   *  two boot phases stay ordered: claim before any client attaches, respawn only after channelService can
-   *  actually run a turn. */
+   *  asynchronously through the `delegations` provider's resume once the platforms are up. Held on the
+   *  instance so the two boot phases stay ordered: claim before any client attaches, respawn only after
+   *  channelService can actually run a turn. */
   private pendingRecovery: RecoverableRun[] = [];
 
   /** Workflows this boot CLAIMED for resume, the workflow twin of {@link pendingRecovery}: stashed by
-   *  phase 1, taken by BrainService.runWorkflowRecovery in phase 2 (the resume needs the plugin registry,
+   *  phase 1, taken by the `workflows` provider's claim in phase 2 (the resume needs the plugin registry,
    *  which this service deliberately has no access to). */
   private pendingWorkflowRecovery: RecoverableWorkflow[] = [];
 
@@ -130,7 +131,7 @@ export class DelegatedSessionService {
    *  its trimmed transcript and re-issues that Delegate call itself, so respawning the old child too would
    *  do the same work twice and wake the node with a duplicate answer. Nothing is respawned here: the
    *  actual recovery turns need the platforms up and must not run before any client can attach, so they are
-   *  deferred to runDelegationRecovery / runWorkflowRecovery. */
+   *  deferred to the recovery coordinator's resume pass (see src/brain/recovery). */
   reconcileDelegationsOnBoot(): void {
     // Retire results addressed to a sub-agent that has already finished. Delivery needs a parent TURN to
     // acknowledge it, and a terminal sub-agent is never prompted again, so such a row stays pending for
@@ -177,7 +178,7 @@ export class DelegatedSessionService {
     });
   }
 
-  /** Hand the phase-1 workflow claims to phase 2 exactly once (BrainService.runWorkflowRecovery). */
+  /** Hand the phase-1 workflow claims to phase 2 exactly once (the `workflows` provider's claim). */
   takePendingWorkflowRecovery(): RecoverableWorkflow[] {
     const claimed = this.pendingWorkflowRecovery;
     this.pendingWorkflowRecovery = [];
@@ -215,8 +216,8 @@ export class DelegatedSessionService {
   /** Recover ONE claimed delegation (see {@link recoverOne}), parking its stale claim with a durable parent
    *  notice when the recovery turn itself fails unexpectedly — otherwise a current-boot `recovering` claim
    *  would sit with no worker until another daemon restart happened to retry it. */
-  async recoverClaimedRun(run: RecoverableRun): Promise<void> {
-    try { await this.recoverOne(run); }
+  async recoverClaimedRun(run: RecoverableRun): Promise<RecoveryOutcome> {
+    try { return await this.recoverOne(run); }
     catch (e) {
       const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
       logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${message}`);
@@ -234,15 +235,10 @@ export class DelegatedSessionService {
         error: `${reason}. Continue the sub-agent ${run.childSessionId} with DelegateContinue after checking whether its last step completed.`,
       });
       if (!parked) logger('brain').error(`boot recovery of ${run.childSessionId} could not park its stale claim`);
+      // The claim was durably parked as recovery_required WITH a parent notice, so nothing retries it and
+      // the parent has been told — a terminal give-up, not an outstanding failure.
+      return 'terminalized';
     }
-  }
-
-  /** Boot phase 2 (ASYNCHRONOUS, after startPlatforms) for this substrate on its own: respawn every claimed
-   *  delegation, deepest first and serially, so a fleet of interrupted delegations does not stampede the
-   *  freshly booted daemon. The daemon drives the same three steps through the recovery coordinator
-   *  (claim → order → resume); this is the whole-sweep entry point for a caller that has only this one. */
-  async runDelegationRecovery(): Promise<void> {
-    for (const run of this.orderForRecovery(this.takePendingRecovery())) await this.recoverClaimedRun(run);
   }
 
   /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; parks as recovery_required
@@ -250,7 +246,7 @@ export class DelegatedSessionService {
    *  effect the parent must decide on); otherwise trims the partial tail and respawns the child to finish,
    *  then completes the run atomically — enqueuing the result even for a foreground delegation, whose
    *  blocking parent turn did not survive the restart. */
-  private async recoverOne(run: RecoverableRun): Promise<void> {
+  private async recoverOne(run: RecoverableRun): Promise<RecoveryOutcome> {
     const { parentSessionId, toolCallId, childSessionId, attempt, state } = run;
     const base = {
       id: syntheticRestartResultId(parentSessionId, toolCallId), toolCallId, sessionId: childSessionId,
@@ -262,7 +258,7 @@ export class DelegatedSessionService {
       this.d.store.completeRecoveredRun(parentSessionId, toolCallId, {
         ...base, status: 'error', error: 'sub-agent could not be recovered after repeated daemon restarts',
       });
-      return;
+      return 'terminalized';
     }
     // Classify the crash-interrupted tail BEFORE trimming it. An unanswered LOCAL tool call in the
     // discarded suffix means a step STARTED whose effect is unknown — replaying the turn could repeat it,
@@ -280,7 +276,7 @@ export class DelegatedSessionService {
         error: `${reason}. Not auto-recovered because replaying the turn could repeat a side effect. `
           + `To resume, continue the sub-agent ${childSessionId} with DelegateContinue — be aware the interrupted step may run again.`,
       });
-      return;
+      return 'terminalized';
     }
     // Safe to replay: drop the partial tail so the transcript ends clean, then respawn the child with a
     // suffix instruction to finish. The child owns this session id, so sendDelegated resolves its scope.
@@ -290,7 +286,7 @@ export class DelegatedSessionService {
       this.d.store.completeRecoveredRun(parentSessionId, toolCallId, {
         ...base, status: 'error', error: 'sub-agent session vanished before it could be recovered',
       });
-      return;
+      return 'terminalized';
     }
     // Fold the child's already-recovered delegated results into the recovery turn. Deepest-first ordering
     // put its own children's recoveries BEFORE this respawn, so their answers sit pending in the inbox
@@ -313,6 +309,7 @@ export class DelegatedSessionService {
     // to the parent), so the lifecycle is still `recovering` and completeRecoveredRun terminalizes it and
     // enqueues the answer in one transaction.
     this.d.store.completeRecoveredRun(parentSessionId, toolCallId, { ...base, status: 'done', result: answer });
+    return 'resumed';
   }
 
   /** Synchronous route preflight for `/brain/subagent/send`: a legacy child with no immutable scope

@@ -4,6 +4,7 @@ import { realpathSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
+import { createBootRecovery } from '../../src/brain/recovery/providers.js';
 import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
@@ -148,6 +149,23 @@ function expectEchoRetracted(seen: readonly { type: string; durableId?: string }
   const echo = seen.find((event) => event.type === 'user');
   expect(echo?.durableId, 'the pre-context user echo').toBeTruthy();
   expect(seen.find((event) => event.type === 'discard_user')).toMatchObject({ durableId: echo?.durableId });
+}
+
+/** ONE boot's recovery chain, wired exactly as the daemon wires it (src/daemon/maintenance.ts). There is
+ *  deliberately no per-substrate sweep to call instead: the coordinator is the only way recovery runs, so
+ *  a test that drives recovery drives this — including the ordering between substrates, which is the part
+ *  a hand-wired call sequence in a test could silently get wrong while staying green.
+ *
+ *  A coordinator instance is ONE boot (it refuses a second claim pass), so a test simulating repeated
+ *  restarts builds a fresh one per boot — which is what {@link runBootRecovery} does per call. */
+const bootRecovery = (svc: BrainService) => createBootRecovery(svc, { info: () => {}, error: () => {} });
+
+/** Both phases of one boot: the synchronous claim pass, then the resume pass the daemon runs once the
+ *  platforms are up. Use {@link bootRecovery} directly when a test must observe the gap between them. */
+async function runBootRecovery(svc: BrainService): Promise<void> {
+  const recovery = bootRecovery(svc);
+  recovery.claimAll();
+  await recovery.resumeAll();
 }
 
 describe('BrainService', () => {
@@ -4840,7 +4858,7 @@ describe('sub-agent session tap + owner steering', () => {
     // finished. Recovery reads lifecycle, not the display projection, so a restart must not respawn it.
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
 
@@ -5123,10 +5141,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-fg', sessionId: 'brain-ch-subagent-fg', status: 'running', task: 'inspect', tools: 1, seconds: 5 });
 
     // A restart is a NEW service over the same store — a fresh boot id, so the running row owned by the
-    // previous boot is a claimable orphan. reconcile now CLAIMS it (lifecycle=recovering) for phase-2
+    // previous boot is a claimable orphan. The claim pass now CLAIMS it (lifecycle=recovering) for phase-2
     // respawn rather than terminalizing it, and delivers nothing at boot.
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     expect(lc('delegate-fg')).toBe('recovering');
@@ -5157,8 +5175,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     ).run(Date.now() + 60_000);
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare(
       "SELECT lifecycle, state, owner_boot_id, lease_until, attempt FROM brain_subagent_runs WHERE tool_call_id = 'continue-finished'"
@@ -5192,7 +5209,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     expect((d.db.prepare(
       "SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-detached'"
@@ -5213,8 +5230,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-mut'").run(); // mark it as un-settled (crash-interrupted)
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-mut'").get() as { lifecycle: string; state: string };
     expect(row.lifecycle).toBe('recovery_required');
@@ -5250,8 +5266,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-blocked'").run();
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     expect(lc('call-grand')).toBe('done');
@@ -5279,8 +5294,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable'));
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state, owner_boot_id, lease_until FROM brain_subagent_runs WHERE tool_call_id = 'delegate-failed-recovery'").get() as {
       lifecycle: string; state: string; owner_boot_id: string | null; lease_until: number | null;
@@ -5331,10 +5345,11 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
     // Phase 1 only claims — the row must not be terminalized before the engine had its chance to resume.
     expect(d.store.getWorkflowRuns('brain-ch-discord-general')[0]?.status).toBe('running');
-    await restarted.runWorkflowRecovery();
+    await recovery.resumeAll();
 
     const stored = d.store.getWorkflowRuns('brain-ch-discord-general')[0];
     expect(stored?.status).toBe('cancelled');
@@ -5368,8 +5383,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runWorkflowRecovery();
+    await runBootRecovery(restarted);
 
     expect(resumeCalls).toHaveLength(1);
     expect(resumeCalls[0]).toMatchObject({ workflowId: 'wf-2', parentSessionId: 'brain-ch-discord-general', toolCallId: 'call-wf2' });
@@ -5422,9 +5436,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(nodeSession, { id: 'nested-call', sessionId: nestedChild, status: 'running', task: 'sub', tools: 1, seconds: 1 });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
-    await restarted.runWorkflowRecovery();
+    // Generic recovery before the workflow resume is the coordinator's declared `workflows depends on
+    // delegations` edge, not something this test arranges by calling two sweeps in the right order.
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'nested-call'").get() as { lifecycle: string };
     // Not 'recovering' (respawned) and not left claimed: superseded as terminal error, without waking the
@@ -5460,9 +5474,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun('origin-2', { id: 'node-progress', sessionId: nodeSession, status: 'running', task: 'node', tools: 1, seconds: 1 });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
-    await restarted.runWorkflowRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'node-progress'").get() as { lifecycle: string };
     expect(row.lifecycle).toBe('error'); // superseded — never respawned next to the workflow's own re-run
@@ -5497,8 +5509,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     vi.spyOn(d.store, 'supersedeClaimedRun').mockReturnValue(false);
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'orphanable'").get() as { lifecycle: string };
     // Generic recovery DROVE it (here to recovery_required — the fixture child has no stored scope). The
@@ -5521,7 +5532,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const prefix = d.session.messages.slice();
 
     const restarted = new BrainService(d as never);
-    await restarted.runParkedConversationRecovery();
+    await runBootRecovery(restarted);
 
     // Exactly one hidden continuation — a custom system message, never a fake user bubble.
     expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
@@ -5548,7 +5559,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     // marker, so the sweep's claim-bump must lose and inject nothing on top.
     await restarted.send({ userId: 1, text: 'never mind — new question', session: 'brain-1' });
     expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
-    await restarted.runParkedConversationRecovery();
+    await runBootRecovery(restarted);
 
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     // Exactly one continuation ran: the user's own turn.
@@ -5563,7 +5574,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
       d.store.clearSessionPark('brain-1'); // the user's turn admission, winning the race
       return [parkedRow];
     });
-    await restarted.runParkedConversationRecovery();
+    await runBootRecovery(restarted);
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
   });
 
@@ -5577,7 +5588,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     await restarted.send({ userId: 1, text: 'quick question', session: 'brain-1' }); // settles fully
     expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
 
-    await restarted.runParkedConversationRecovery();
+    await runBootRecovery(restarted);
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
   });
 
@@ -5600,16 +5611,20 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     (d.users as { get: unknown }).get = (id: number) => (id === 1 ? { name: 'Filip', username: 'filip' } : undefined);
 
     const restarted = new BrainService(d as never);
-    await restarted.runParkedConversationRecovery();
+    // THE PARTITION, asserted where it actually lives — in the two worklists. Both providers resume inside
+    // one coordinator run now, so there is no window between the sweeps to observe it in; the claims are
+    // the honest seam anyway, since "neither sweep ever sees the other's markers" IS a property of them.
+    // A claim that stopped filtering would hand one sweep the other's rows and clear them as an invariant
+    // breach — which is exactly what these two lines refuse.
+    expect(restarted.claimParkedConversations().map((row) => row.id)).toEqual(['brain-9']);
+    expect(restarted.claimParkedPlatformTurns().map((row) => row.id)).toEqual(['brain-ch-discord-general']);
 
-    // No resume ran, nothing crashed, the vanished-owner marker is gone (no retry loop on unresumable
-    // rows) — and the channel marker was left alone: it belongs to the PLATFORM sweep, which here also
-    // fails closed (no durable resume envelope) and clears it without running a turn.
+    await runBootRecovery(restarted);
+
+    // No resume ran and nothing crashed. Each marker was cleared by its OWN sweep failing closed: the
+    // owner row because its account is gone, the channel row because it has no durable resume envelope.
     expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.getSession('brain-9')!.parked_at).toBeNull();
-    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).not.toBeNull();
-    await restarted.runPlatformTurnRecovery();
-    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
   });
 
@@ -5629,18 +5644,19 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     (d as Record<string, unknown>).notifyTurnComplete = (...args: unknown[]) => { notified.push(args); };
 
     const restarted = new BrainService(d as never);
-    await restarted.runParkedConversationRecovery(); // attempt 1 — fails
+    // One coordinator per call — each is one boot, which is exactly what this cap counts.
+    await runBootRecovery(restarted); // attempt 1 — fails
     let row = d.store.getSession('brain-1')!;
     expect(row.parked_at).not.toBeNull();
     expect(row.park_attempts).toBe(1);
 
-    await restarted.runParkedConversationRecovery(); // attempt 2 (next boot)
-    await restarted.runParkedConversationRecovery(); // attempt 3
+    await runBootRecovery(restarted); // attempt 2 (next boot)
+    await runBootRecovery(restarted); // attempt 3
     row = d.store.getSession('brain-1')!;
     expect(row.park_attempts).toBe(3);
     expect(notified).toHaveLength(0); // still trying — no give-up yet
 
-    await restarted.runParkedConversationRecovery(); // past the cap: give up, visibly
+    await runBootRecovery(restarted); // past the cap: give up, visibly
     row = d.store.getSession('brain-1')!;
     expect(row.parked_at).toBeNull();
     expect(notified).toHaveLength(1);
@@ -5659,7 +5675,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-orphan', sessionId: 'brain-ch-subagent-orphan', status: 'running', task: 'b', tools: 1, seconds: 1 });
     d.db.prepare("UPDATE brain_subagent_runs SET state = 'not json' WHERE tool_call_id = 'delegate-corrupt'").run();
 
-    new BrainService(d as never).reconcileDelegationsOnBoot();
+    bootRecovery(new BrainService(d as never)).claimAll();
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     // The claim's json_valid guard skips the corrupt row (so it can never throw and abort the whole claim)
@@ -5681,8 +5697,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("DELETE FROM brain_sessions WHERE id = 'brain-ch-subagent-vanished'").run();
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-vanished'").get() as { lifecycle: string }).lifecycle).toBe('error');
   });
@@ -5731,8 +5746,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_subagent_runs SET attempt = 3 WHERE tool_call_id = 'delegate-poison'").run();
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot(); // claim bumps attempt to 4 (> MAX)
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted); // the claim pass bumps attempt to 4 (> MAX), the resume pass gives up
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-poison'").get() as { lifecycle: string }).lifecycle).toBe('error');
     const pending = d.store.pendingSubagentResults(sessionId);
@@ -5748,7 +5762,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-bg', sessionId: 'brain-ch-subagent-bg', status: 'running', task: 'build', tools: 1, seconds: 2, background: true });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-bg'").get() as { lifecycle: string }).lifecycle).toBe('recovering');
     expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);

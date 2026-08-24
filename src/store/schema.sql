@@ -187,9 +187,9 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- yet (an unlinked sender, or a row that predates this column).
   last_writer_user_id INTEGER,
   -- Shutdown park marker: when the step-boundary drain parked this conversation's live turn (see
-  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot resume sweeps
-  -- (BrainService.runParkedConversationRecovery for owner rows, runPlatformTurnRecovery for platform
-  -- channel rows — the two partition the markers) can continue the turn from exactly there and deliver
+  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot recovery providers
+  -- (`owner-conversations` for owner rows, `platform-conversations` for platform channel rows — the two
+  -- partition the markers between them) can continue the turn from exactly there and deliver
   -- the answer the restart interrupted. NULL = nothing parked. Written synchronously at the park (before
   -- the process exits) and cleared by: a successful boot resume, the sweep failing closed, an explicit
   -- user abort, or the user's own next message (their message IS the continuation then).

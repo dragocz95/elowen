@@ -35,11 +35,11 @@ export function markDelegationInCurrentTool(): void {
  *   - DELEGATED SUB-AGENT sessions — a delegated child has a durable run row (respawned by the boot
  *     reconcile) and a workflow node has the engine's recovery journal;
  *   - TOP-LEVEL OWNER conversations (web dock / bound CLI) — parking writes a durable park marker on the
- *     session row (`brain_sessions.parked_at`, via the onParked hook below) and the boot resume sweep
- *     (BrainService.runParkedConversationRecovery) continues the turn and delivers its answer;
+ *     session row (`brain_sessions.parked_at`, via the onParked hook below) and the `owner-conversations`
+ *     boot recovery provider continues the turn and delivers its answer;
  *   - ORDINARY PLATFORM CHANNEL turns (Discord rooms, DMs, …) — the turn's durable resume envelope
- *     (channels.ts, PlatformTurnResumeEnvelope) plus the same park marker let the boot sweep
- *     (BrainService.runPlatformTurnRecovery) continue the turn and deliver its answer to the room.
+ *     (channels.ts, PlatformTurnResumeEnvelope) plus the same park marker let the `platform-conversations`
+ *     provider continue the turn and deliver its answer to the room.
  *     Eligibility is decided PER TURN at the moment of the park, through the `parksPlatformTurn` hook
  *     (platformTurnRecovery.ts): a faithful resume needs a valid envelope, a verified account and a
  *     nameable outbound target, so anything unproven — and every CRON/scheduled turn, which has no

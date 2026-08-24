@@ -54,6 +54,7 @@ import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { deniedToolsForUser } from './brainDeps.js';
 import { resumePlatformTurn } from './platformTurnRecovery.js';
+import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
@@ -77,7 +78,7 @@ const PLUGIN_RELOAD_POLL_MS = 100;
  *  boot's claimRecoverableWorkflows, so the cap bounds respawns, not nodes. */
 const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 
-/** Boot resume attempts per park marker before the sweep gives up (see runParkedConversationRecovery).
+/** Boot resume attempts per park marker before the sweep gives up (see resumeParkedConversation).
  *  Bumped durably BEFORE each attempt, so a boot that dies mid-resume still counts — three genuine
  *  chances, then a visible give-up instead of stacking resume turns on a conversation forever. */
 const MAX_PARK_RESUME_ATTEMPTS = 3;
@@ -503,17 +504,12 @@ export class BrainService {
     this.goals.reconcileGoalsOnBoot();
   }
 
-  /** The delegation twin of {@link reconcileGoalsOnBoot}: every durable sub-agent/workflow row the DB still
-   *  marks `running` at boot is a zombie — see DelegatedSessionService.reconcileDelegationsOnBoot. */
-  reconcileDelegationsOnBoot(): void {
-    this.delegated.reconcileDelegationsOnBoot();
-  }
-
   // --- Boot recovery, seen from the brain. Each substrate exposes the same three steps the recovery
-  // coordinator drives (claim → order → resume; see src/brain/recovery), plus a whole-sweep method that
-  // recovers THAT substrate on its own. The sweeps are thin compositions of exactly those steps, so there
-  // is one implementation of each, not two. The daemon runs the coordinator, never the sweeps: only the
-  // coordinator can order the three substrates against each other. ---
+  // coordinator drives (claim → order → resume; see src/brain/recovery) and NOTHING ELSE: there is no
+  // per-substrate whole-sweep entry point, because only the coordinator can order the four substrates
+  // against each other, and a second way in would be a second thing to keep correct. Everything durable —
+  // storage, transactions, the on-disk journal, every fail-closed refusal and every user notice — stays
+  // here; the coordinator only orders these steps and tallies the outcome each one reports. ---
 
   /** `delegations` provider, CLAIM: run the synchronous boot reconcile and hand over the generic run
    *  claims. The reconcile claims BOTH substrates in one pass, because a delegation claimed under a
@@ -531,15 +527,8 @@ export class BrainService {
   }
 
   /** `delegations` provider, RESUME: one claimed run — see DelegatedSessionService.recoverClaimedRun. */
-  async recoverDelegation(run: RecoverableRun): Promise<void> {
-    await this.delegated.recoverClaimedRun(run);
-  }
-
-  /** Boot phase 2: respawn the delegations reconcileDelegationsOnBoot claimed, once platforms are up — see
-   *  DelegatedSessionService.runDelegationRecovery. Detached from boot so a multi-minute recovery turn
-   *  never blocks startup, and deliberately AFTER startPlatforms so the respawned child turns can run. */
-  async runDelegationRecovery(): Promise<void> {
-    await this.delegated.runDelegationRecovery();
+  async recoverDelegation(run: RecoverableRun): Promise<RecoveryOutcome> {
+    return this.delegated.recoverClaimedRun(run);
   }
 
   /** `workflows` provider, CLAIM: the workflow half of the reconcile {@link claimDelegationRecovery} ran. */
@@ -547,22 +536,14 @@ export class BrainService {
     return this.delegated.takePendingWorkflowRecovery();
   }
 
-  /** Boot phase 2, workflow half: ask the engine to take back each DAG reconcileDelegationsOnBoot claimed,
-   *  resuming it from the engine's own recovery journal. Runs AFTER startPlatforms for the same reason as
-   *  runDelegationRecovery — a resumed node is an ordinary delegated turn — and after the generic respawns
-   *  so their durable results queue first. Anything the engine cannot take back (no journal, plugin
-   *  disabled, attempt cap) is terminalized as `cancelled` — exactly the old boot sweep — plus a durable
-   *  completion so the origin conversation actually LEARNS the workflow died with the restart instead of
-   *  discovering a silent `cancelled` badge later. */
-  async runWorkflowRecovery(): Promise<void> {
-    for (const wf of this.claimWorkflowRecovery()) await this.resumeWorkflow(wf);
-  }
-
   /** `workflows` provider, RESUME: hand ONE claimed DAG back to the engine, or terminalize it durably.
    *  Everything durable about that decision — the attempt cap, the fail-closed journal boundary check, the
    *  `cancelled` state and the completion the origin conversation actually reads — lives here, never in
-   *  the coordinator that orders the sweep. */
-  async resumeWorkflow(wf: RecoverableWorkflow): Promise<void> {
+   *  the coordinator that orders the sweep. Anything the engine cannot take back (no journal, plugin
+   *  disabled, attempt cap) is terminalized as `cancelled` plus a durable completion, so the origin
+   *  conversation actually LEARNS the workflow died with the restart instead of discovering a silent
+   *  `cancelled` badge later. */
+  async resumeWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
     const control = (await this.resolvePlugins())?.control('workflow');
     let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
     try {
@@ -585,7 +566,7 @@ export class BrainService {
           // re-claim on every boot — systemd's own restart limiter is the backstop for that pathology.
           this.d.store.clearWorkflowClaimAttempts(wf.parentSessionId, wf.toolCallId);
           logger('brain').info(`boot recovery resumed workflow ${wf.workflowId} (attempt ${wf.attempt})`);
-          return;
+          return 'resumed';
         }
         if (outcome.reason) reason = outcome.reason;
       }
@@ -605,6 +586,7 @@ export class BrainService {
           : 'No node had finished yet. ')
         + 'Start a new workflow to redo the remaining work if it is still needed.',
     });
+    return 'terminalized';
   }
 
   /** `owner-conversations` provider, CLAIM: every OWNER conversation the last shutdown parked. Parked
@@ -616,26 +598,16 @@ export class BrainService {
     return this.d.store.parkedSessions().filter((row) => !isNonUserSession(row.id));
   }
 
-  /** Boot phase 2, conversation half: resume every OWNER conversation the last shutdown parked at its
-   *  step boundary (see stepDrain.ts — the park wrote a durable marker on the session row). Runs after
-   *  the delegation/workflow sweeps: a parked owner turn may be waiting on a background child whose
-   *  recovered result should be queued before the conversation continues.
+  /** `owner-conversations` provider, RESUME: continue ONE parked OWNER conversation from its own tail
+   *  (see stepDrain.ts — the park wrote a durable marker on the session row).
    *
-   *  Each conversation is resumed BY ITSELF: a hidden custom system message (never a fake user bubble)
+   *  The conversation is resumed BY ITSELF: a hidden custom system message (never a fake user bubble)
    *  triggers one continuation turn at the transcript's tail, exactly the shape sendDelegated uses for a
    *  delegated child — never a history rewrite, so the cached prefix stays byte-identical. Ordering rule
-   *  against the user speaking first: turn admission clears the marker, and the sweep's durable
-   *  claim-bump succeeds only while the marker still stands, so the user's own message always wins and
-   *  no duplicate continuation is injected. Conversations resume concurrently — they are independent
-   *  turns, exactly as they would be in normal operation. */
-  async runParkedConversationRecovery(): Promise<void> {
-    const parked = this.claimParkedConversations();
-    if (parked.length === 0) return;
-    await Promise.allSettled(parked.map((row) => this.resumeParkedConversation(row)));
-  }
-
-  /** `owner-conversations` provider, RESUME: continue ONE parked conversation from its own tail. */
-  async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<void> {
+   *  against the user speaking first: turn admission clears the marker, and the durable claim-bump below
+   *  succeeds only while the marker still stands, so the user's own message always wins and no duplicate
+   *  continuation is injected. */
+  async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<RecoveryOutcome> {
     const log = logger('brain');
     // Fail closed on anything the park invariant says cannot happen: only top-level owner conversations
     // ever carry a marker (the onParked wiring refuses non-user sessions), and a marker without a live
@@ -644,12 +616,12 @@ export class BrainService {
     if (isNonUserSession(row.id)) {
       log.warn(`park marker on non-owner session ${row.id} — invariant breach; clearing without resume`);
       this.d.store.clearSessionPark(row.id);
-      return;
+      return 'released';
     }
     if (!this.d.users.get(row.user_id)) {
       log.warn(`parked conversation ${row.id}: owner account ${row.user_id} no longer exists; clearing without resume`);
       this.d.store.clearSessionPark(row.id);
-      return;
+      return 'released';
     }
     if (row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
       // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
@@ -659,14 +631,14 @@ export class BrainService {
       this.d.store.clearSessionPark(row.id);
       log.error(`parked conversation ${row.id} exhausted ${MAX_PARK_RESUME_ATTEMPTS} boot resume attempts — giving up; the user must re-send`);
       this.d.notifyTurnComplete?.(row.user_id, row.title, 'A restart interrupted this conversation and it could not be resumed automatically — please re-send your last message.');
-      return;
+      return 'terminalized';
     }
     // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
     // race means the user already spoke (admission cleared the marker) or aborted — their input is the
     // continuation, and injecting ours on top is exactly the double-continuation this guards against.
     if (!this.d.store.claimParkResumeAttempt(row.id)) {
       log.info(`parked conversation ${row.id}: marker cleared before the sweep reached it (the user spoke) — skipping resume`);
-      return;
+      return 'released';
     }
     try {
       // A UNIQUE resultId, for two reasons: without one, sendCustomSystem's "already in context"
@@ -689,11 +661,14 @@ export class BrainService {
       if (this.attachments.watchingCount(row.id) === 0) {
         this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
       }
+      return 'resumed';
     } catch (e) {
       // Marker deliberately kept: the attempt is durably counted, so the next boot retries up to the
       // cap. Within THIS boot the conversation stays as the failed turn left it — the user's next
-      // message clears the marker and continues normally.
+      // message clears the marker and continues normally. Reported as `failed` rather than rethrown:
+      // the retry is already durably arranged here, so this is a counted outcome, not an escape.
       log.error(`boot resume failed for parked conversation ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
+      return 'failed';
     }
   }
 
@@ -704,20 +679,12 @@ export class BrainService {
     return this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
   }
 
-  /** Boot phase 2, platform half: resume every ordinary platform channel turn the last shutdown parked
-   *  and deliver each answer back to its own room or DM — see platformTurnRecovery.ts for the delivery
-   *  contract and every fail-closed rule. Independent turns, resumed concurrently like owner ones. */
-  async runPlatformTurnRecovery(): Promise<void> {
-    const parked = this.claimParkedPlatformTurns();
-    if (parked.length === 0) return;
-    await Promise.allSettled(parked.map((row) => this.resumeParkedPlatformTurn(row)));
-  }
-
-  /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn. All the
-   *  policy — authority re-derived from the account (never replayed), the attempt cap, the visible
-   *  give-up, the no-double-reply order — lives in resumePlatformTurn; this only wires the brain in. */
-  async resumeParkedPlatformTurn(row: BrainSessionRow): Promise<void> {
-    await resumePlatformTurn({
+  /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn and deliver its
+   *  answer back to the room or DM it came from. All the policy — authority re-derived from the account
+   *  (never replayed), the attempt cap, the visible give-up, the no-double-reply order — lives in
+   *  resumePlatformTurn; this only wires the brain in. */
+  async resumeParkedPlatformTurn(row: BrainSessionRow): Promise<RecoveryOutcome> {
+    return resumePlatformTurn({
       store: this.d.store,
       users: this.d.users,
       // Fail-closed on purpose: a wiring without the daemon's link resolver cannot re-prove the platform
