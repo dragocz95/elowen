@@ -206,7 +206,10 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         recordRequest: (sessionId, userId, origin) => {
           order.push('pin');
           pins.push([sessionId, userId, origin.value]);
+          return 1;
         },
+        releasePin: () => { order.push('release'); },
+        repointPin: () => {},
       },
       channels: {
         sessionOwnerUserId: () => 1, // …while the ROOM is owned by account 1
@@ -221,8 +224,10 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     expect(pins).toEqual([['brain-ch-discord-c1', 2, 'platform:discord']]);
     // Pinned BEFORE the turn: the settle that consumes the pin happens inside the send, so a pin written
-    // afterwards would be consumed by nothing and the turn would settle as `internal` anyway.
-    expect(order).toEqual(['pin', 'send']);
+    // afterwards would be consumed by nothing and the turn would settle as `internal` anyway. And given
+    // back AFTER it, so a turn refused before it reached the provider cannot leave its pin on the room for
+    // the next colleague to be billed under.
+    expect(order).toEqual(['pin', 'send', 'release']);
   });
 
   describe('a direct 1:1 chat', () => {

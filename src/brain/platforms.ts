@@ -377,7 +377,13 @@ export class PlatformOrchestrator {
           // The feed's surface is the platform name, which IS derivable here — unlike web vs CLI, which
           // post an identical body and must state themselves. An unlinked sender carries no actor, so the
           // feed shows the platform alone rather than inventing an attribution.
-          openTurn({
+          //
+          // The handle is closed in the `finally` below, and that is a money fix rather than tidiness: a
+          // room is written by SEVERAL people, and every pre-prompt refusal inside `send` (the shutdown
+          // drain, a delegation abort, an unavailable fast mode) returns without any turn settling the
+          // pin. The pin then survived, the next colleague was refused a pin of their own, and their whole
+          // turn was billed to the previous writer under that person's platform origin.
+          const opened = openTurn({
             sessionId: canonicalSessionId,
             ...(accountUserId != null && this.d.usageOrigins
               ? { origin: {
@@ -396,6 +402,7 @@ export class PlatformOrchestrator {
                 } }
               : {}),
           });
+          try {
           // Ordinary platform channels only — every delegated send returned through the dispatch above.
           const channelReply = await this.d.channels.send({
             channelId: keyOf(src),
@@ -436,6 +443,11 @@ export class PlatformOrchestrator {
           // It still is — one layer down, inside settleTurn, where the owner surface finally records one
           // too instead of leaving the register's writer column empty for every CLI and web row.
           return channelReply;
+          } finally {
+            // Only ever releases the pin this turn SET: a settled turn already consumed it, and a message
+            // steered into a running turn never held one, so neither is disturbed.
+            opened.close();
+          }
         };
         adapter.listen(onMessage);
         // Out-of-band channel control for slash commands (stop/status/compact/restart) and synthetic
