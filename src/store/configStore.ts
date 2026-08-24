@@ -23,7 +23,7 @@ export interface EmbeddingBlock {
   dimensions: number | null;
 }
 
-// The bound every brain exec is judged against lives in brain/config.ts as configuredBrainProviderIds:
+// The bound every brain exec is judged against lives in brain/config.ts as configuredBrainProviders:
 // it has to see connected OAuth accounts and the relay fallback, which serve models under ids that never
 // appear in `brain.providers`, and a set that misses those would deny models the pickers legitimately offer.
 

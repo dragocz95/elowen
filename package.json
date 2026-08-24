@@ -59,6 +59,7 @@
     "postbuild": "node scripts/dist-integrity.mjs chmod-bins && node scripts/dist-integrity.mjs verify",
     "check:dist": "node scripts/dist-integrity.mjs verify",
     "models:refresh": "node scripts/refresh-model-capabilities.mjs",
+    "db:prune-stale-models": "node --experimental-strip-types --no-warnings scripts/prune-stale-brain-models.mjs",
     "build:web": "node scripts/build-web-bundle.mjs",
     "prepublishOnly": "npm run build && npm run build:web",
     "test": "vitest run",

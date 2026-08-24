@@ -42,7 +42,7 @@ import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
-import { brainConfigFromElowen, configuredBrainProviderIds } from '../brain/config.js';
+import { brainConfigFromElowen, configuredBrainProviders } from '../brain/config.js';
 import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
 import { makeAgentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
@@ -521,7 +521,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         const owner = users.list().find((u) => u.is_admin);
         const globalExecs = config.get().allowedExecs;
         return listBrainModels(c).then((models) =>
-          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), configuredBrainProviderIds(config, brainCreds))));
+          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), configuredBrainProviders(config, brainCreds))));
       },
       resolveProvider,
       // The SHARED embedder + live Settings→Memory config mapper, exposed to plugins as ctx.embeddings
@@ -739,9 +739,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
         resolvePlatformUser,
-        // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
-        // bounded by the global list AND their personal whitelist (empty personal = global only).
-        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, configuredBrainProviderIds(config, brainCreds)),
+        // Same allow-list semantics as the task/session routes: admins unrestricted in their NARROWING,
+        // everyone else bounded by the global list AND their personal whitelist (empty personal = global
+        // only). A brain model that no longer exists in Settings → Brain is refused for everyone — that is
+        // an existence check, not a permission — which is what makes a session pinned to a removed model
+        // fall back to the default (lifecycle's candidate loop) instead of running it anyway.
+        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, configuredBrainProviders(config, brainCreds)),
         // Delegated scopes still need explicit project-id policies; platform human turns resolve only
         // through their linked account policy. The admin's token anchors shared channel sessions.
         policyForProjects,

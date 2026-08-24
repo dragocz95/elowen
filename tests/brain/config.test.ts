@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
-import { brainConfigFromElowen } from '../../src/brain/config.js';
+import { brainConfigFromElowen, configuredBrainProviders } from '../../src/brain/config.js';
 
 describe('brainConfigFromElowen', () => {
   it('returns null when nothing is configured', () => {
@@ -67,5 +67,46 @@ describe('brainConfigFromElowen', () => {
       brain: { providers: [{ id: 'own', label: 'Own', type: 'openai', baseUrl: 'https://x/v1', models: ['m'], apiKey: 'k' }] },
     });
     expect(brainConfigFromElowen(config)?.providers.map((p) => p.id)).toEqual(['own']);
+  });
+});
+
+describe('configuredBrainProviders', () => {
+  it('carries each provider\'s manual model list, not just its id', () => {
+    const config = new ConfigStore(openDb(':memory:'));
+    config.update({ brain: { providers: [
+      { id: 'coresynth', label: 'Coresynth', type: 'openai', baseUrl: 'https://cs.example/v1', models: ['deepseek/deepseek-v4-flash-vision-exp', 'sarah-nano'], apiKey: 'k' },
+      { id: 'catalogue', label: 'Catalogue', type: 'openai', baseUrl: 'https://cat.example/v1', models: [], apiKey: 'k' },
+    ] } });
+    expect(configuredBrainProviders(config)).toEqual([
+      { id: 'coresynth', models: ['deepseek/deepseek-v4-flash-vision-exp', 'sarah-nano'] },
+      { id: 'catalogue', models: [] },
+    ]);
+  });
+
+  // The distinction the whole design rests on, now one level deeper: a provider whose CREDENTIAL is
+  // missing has not been deleted, so it keeps both its id AND the model list that bounds it. Losing the
+  // list here would silently widen the bound to "any model on that provider" for the duration of an
+  // outage — the opposite of what the empty-list catalogue rule is protecting.
+  it('keeps the model list of an explicit entry whose oauth account is disconnected', () => {
+    const config = new ConfigStore(openDb(':memory:'));
+    config.update({ brain: { providers: [
+      { id: 'anthropic', label: 'Claude account', type: 'oauth-anthropic', baseUrl: '', models: ['claude-opus-5'] },
+    ] } });
+    expect(configuredBrainProviders(config, { get: () => undefined } as never))
+      .toEqual([{ id: 'anthropic', models: ['claude-opus-5'] }]);
+  });
+
+  // A connected account with no entry of its own is served under a synthetic id whose list is empty —
+  // i.e. the full account catalogue, exactly as brainConfigFromElowen serves it.
+  it('adds a connected oauth account with no explicit entry as a catalogue provider', () => {
+    const config = new ConfigStore(openDb(':memory:'));
+    const auth = { get: (p: string) => (p === 'anthropic' ? { type: 'oauth' } : undefined) } as never;
+    expect(configuredBrainProviders(config, auth)).toEqual([{ id: 'anthropic', models: [] }]);
+  });
+
+  it('carries the relay fallback\'s single model', () => {
+    const config = new ConfigStore(openDb(':memory:'));
+    config.update({ autopilot: { apiUrl: 'https://relay.example.test/v1', model: 'gpt-x', apiKey: 'cs-key' } });
+    expect(configuredBrainProviders(config)).toEqual([{ id: 'relay', models: ['gpt-x'] }]);
   });
 });

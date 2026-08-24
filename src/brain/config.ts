@@ -2,6 +2,7 @@ import type { ConfigStore } from '../store/configStore.js';
 import type { BrainRuntimeConfig, BrainProviderEntry } from './providers.js';
 import { OAUTH_BUILTIN } from './providers.js';
 import type { BrainCredentialAccess } from './providerUsage.js';
+import type { BrainProviderModels } from '../shared/execs.js';
 
 const OAUTH_LABELS: Record<string, string> = {
   'oauth-anthropic': 'Claude account',
@@ -53,9 +54,10 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
 }
 
 /**
- * Every brain provider id this installation is configured to reach — the registry a stored model
- * reference is judged against, and the reason a deleted provider's models stop existing everywhere at
- * once instead of having to be hunted down row by row.
+ * Every brain provider this installation is configured to reach, each with the operator's manual model
+ * list — the registry a stored model reference is judged against, and the reason a deleted provider (or a
+ * model removed from a surviving provider) stops existing everywhere at once instead of having to be
+ * hunted down row by row.
  *
  * Deliberately WIDER than `brain.providers` alone and deliberately narrower than "whatever answered last":
  *  - an explicit entry always counts, even while its OAuth credential is missing or its endpoint is down.
@@ -67,11 +69,19 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
  *    a perfectly valid setup.
  *  - the relay fallback counts on the same grounds.
  *
+ * The MODEL list travels with the id for the same reason the id survives a missing credential: an entry
+ * whose account is disconnected keeps the list that bounds it, so an outage cannot silently widen the bound
+ * to "any model on that provider". An empty list is not "no models" — see `isOfferableBrainModel`.
+ *
  * Feed this to `isOfferableExec` / `isExecAllowedForUser` / `isModelVisibleForUser` so the offered set and
  * the enforced set are computed from one source and cannot drift apart.
  */
-export function configuredBrainProviderIds(config: ConfigStore, creds?: BrainCredentialAccess): string[] {
-  const explicit = config.brainProviders().map((p) => p.id);
-  const reachable = brainConfigFromElowen(config, creds)?.providers.map((p) => p.id) ?? [];
-  return [...new Set([...explicit, ...reachable])];
+export function configuredBrainProviders(config: ConfigStore, creds?: BrainCredentialAccess): BrainProviderModels[] {
+  const explicit = config.brainProviders().map((p) => ({ id: p.id, models: p.models }));
+  const reachable = brainConfigFromElowen(config, creds)?.providers.map((p) => ({ id: p.id, models: p.models })) ?? [];
+  const byId = new Map<string, BrainProviderModels>();
+  // Explicit entries first and never overwritten: a synthetic OAuth/relay entry only ever ADDS an id that
+  // `brain.providers` does not carry, and would otherwise replace a curated list with the full catalogue.
+  for (const entry of [...explicit, ...reachable]) if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  return [...byId.values()];
 }

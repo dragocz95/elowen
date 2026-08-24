@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 /** The brain providers this installation has configured. A brain exec only skips the global
- *  allow-list when its provider is one of these — see isOfferableExec. */
-const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov'];
+ *  allow-list when its provider is one of these — see isOfferableExec. An EMPTY `models` list means the
+ *  provider serves a live catalogue, so it bounds nothing beyond the provider itself; the whitelist
+ *  behaviour of a NON-empty list has its own fixture below. */
+const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov']
+  .map((id) => ({ id, models: [] as string[] }));
 
 import {
   PROGRAM_PREFIXES,
@@ -11,6 +14,7 @@ import {
   elowenExec,
   isExecAllowedForUser,
   isModelVisibleForUser,
+  isOfferableBrainModel,
   EXEC_NOTES,
   isWellFormedExec,
   isAllowedExec,
@@ -149,6 +153,89 @@ describe('shared/execs', () => {
 
     it('keeps admitting a brain exec whose provider is still configured', () => {
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'anthropic/claude-opus-5', PROVIDERS)).toBe(true);
+    });
+  });
+
+  // The model-level half of the same staleness: removing ONE model from a provider that still exists left
+  // that model offered, grantable and storable, because the bound stopped at the provider id. A manual
+  // model list is durable configuration (no upstream fetch can empty it), so it is a whitelist.
+  describe('isOfferableBrainModel (manual model list = whitelist)', () => {
+    // Mirrors the reporting instance: every provider carries an explicit list, and two of the model ids
+    // contain slashes of their own — which is why membership is tested against the parsed model, never
+    // against a naive split of the exec string.
+    const CONFIGURED = [
+      { id: 'ai-coresynth-io', models: ['deepseek/deepseek-v4-flash-vision-exp', 'sarah-nano'] },
+      { id: 'kimi-coding', models: ['k3'] },
+      { id: 'openrouter', models: ['openrouter/free'] },
+      { id: 'catalogue', models: [] as string[] },
+    ];
+
+    it('accepts a model on the provider list, slashes in the model id included', () => {
+      expect(isOfferableBrainModel('ai-coresynth-io', 'deepseek/deepseek-v4-flash-vision-exp', CONFIGURED)).toBe(true);
+      expect(isOfferableBrainModel('openrouter', 'openrouter/free', CONFIGURED)).toBe(true);
+      expect(isOfferableBrainModel('kimi-coding', 'k3', CONFIGURED)).toBe(true);
+    });
+
+    it('refuses a model the provider no longer lists', () => {
+      // The operator's own case: he calls this one "K3", and a bare model-name match would have kept it.
+      expect(isOfferableBrainModel('ai-coresynth-io', 'kimi-k3', CONFIGURED)).toBe(false);
+      expect(isOfferableBrainModel('ai-coresynth-io', 'ollama/deepseek-v4-flash', CONFIGURED)).toBe(false);
+      // …while the LIVE model of the same bare name on another provider survives untouched.
+      expect(isOfferableBrainModel('kimi-coding', 'k3', CONFIGURED)).toBe(true);
+    });
+
+    it('an empty model list is a live catalogue, not an empty whitelist', () => {
+      // The outage rule. A provider whose models come from an HTTP fetch must keep admitting them: the
+      // fetch degrades to [] when the upstream is down, and denying everything then would lock the
+      // instance out of its own models. Mutation: make an empty list deny and this goes red.
+      expect(isOfferableBrainModel('catalogue', 'anything-at-all', CONFIGURED)).toBe(true);
+      expect(isOfferableBrainModel('catalogue', 'vendor/nested/model', CONFIGURED)).toBe(true);
+    });
+
+    it('an unconfigured provider is still refused whatever the model', () => {
+      expect(isOfferableBrainModel('alibaba', 'qwen3.8-max', CONFIGURED)).toBe(false);
+    });
+
+    it('the permission gate and the picker both apply it', () => {
+      const globalExecs = ['sonnet'];
+      const bob = { is_admin: false, allowed_execs: [] };
+      expect(isExecAllowedForUser(bob, globalExecs, 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      expect(isModelVisibleForUser(null, globalExecs, 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      // A personal grant does not resurrect it — the same rule the provider-level fix established.
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['ai-coresynth-io/kimi-k3'] }, globalExecs, 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      expect(isModelVisibleForUser({ allowed_execs: ['ai-coresynth-io/kimi-k3'] }, globalExecs, 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      // The live one on the same provider stays available.
+      expect(isExecAllowedForUser(bob, globalExecs, 'ai-coresynth-io/deepseek/deepseek-v4-flash-vision-exp', CONFIGURED)).toBe(true);
+      expect(isModelVisibleForUser(null, globalExecs, 'ai-coresynth-io/deepseek/deepseek-v4-flash-vision-exp', CONFIGURED)).toBe(true);
+    });
+
+    // Existence is not a permission. The admin bypass answers "may this user be narrowed?", and the
+    // answer for an admin is no — but a model this installation does not have cannot be run by anyone,
+    // which is what makes a run PINNED to a dead model refuse instead of resolving. Without this the
+    // operator (an admin) kept every dead model runnable through a stored session pin, a project
+    // preference or /model, no matter what the picker showed. The CLI half of the bypass is untouched:
+    // `allowedExecs` is the operator's own list and an admin may still step outside it.
+    it('refuses a dead brain model even for an admin, while leaving the CLI bypass intact', () => {
+      const admin = { is_admin: true, allowed_execs: [] };
+      expect(isExecAllowedForUser(admin, ['sonnet'], 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      expect(isExecAllowedForUser(admin, ['sonnet'], 'ai-coresynth-io/sarah-nano', CONFIGURED)).toBe(true);
+      // An exec naming no provider at all is not a brain model reference and cannot become one.
+      expect(isExecAllowedForUser(admin, ['sonnet'], '/kimi-k3', CONFIGURED)).toBe(false);
+      // A CLI exec outside the global list still passes for an admin — unchanged.
+      expect(isExecAllowedForUser(admin, ['sonnet'], 'claude:opus', CONFIGURED)).toBe(true);
+      // …and open mode (no user system) gets the same existence bound.
+      expect(isExecAllowedForUser(null, ['sonnet'], 'ai-coresynth-io/kimi-k3', CONFIGURED)).toBe(false);
+      expect(isExecAllowedForUser(null, ['sonnet'], 'kimi-coding/k3', CONFIGURED)).toBe(true);
+    });
+
+    it('leaves non-brain execs alone — they are a different program\'s registry', () => {
+      // `codex:gpt-5.5`, `opus` and `sonnet` are CLI-agent execs bounded by allowedExecs. No brain
+      // provider list may touch them, and none of them may be read as a brain model reference.
+      const globalExecs = ['sonnet', 'opus', 'codex:gpt-5.5'];
+      for (const exec of ['sonnet', 'opus', 'codex:gpt-5.5']) {
+        expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, exec, CONFIGURED)).toBe(true);
+        expect(isModelVisibleForUser(null, globalExecs, exec, CONFIGURED)).toBe(true);
+      }
     });
   });
 

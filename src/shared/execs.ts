@@ -198,6 +198,43 @@ function includesExec(list: readonly string[], spec: string): boolean {
 }
 
 /**
+ * One configured brain provider as the exec bound sees it: its id plus the operator's MANUAL model list.
+ *
+ * An EMPTY list does not mean "this provider has no models". It means "this provider's models come from its
+ * live catalogue" — an `openai` endpoint's `/models`, or an OAuth account's built-in catalog. That is the
+ * contract `listBrainModels` already builds the picker from, and it is the one case that must NOT be read as
+ * a whitelist: the catalogue is an HTTP fetch that degrades to `[]` when the upstream is down, so judging a
+ * model against it would deny every model of that provider for the length of an outage.
+ *
+ * A NON-EMPTY list is durable configuration that no upstream failure can empty, so it IS a whitelist.
+ *
+ * The two cases share one field because `sanitizeBrainProviders` normalises an absent `models` to `[]`:
+ * "empty" and "absent" are the same stored fact here, and both mean "use the catalogue".
+ */
+export interface BrainProviderModels { id: string; models: readonly string[] }
+
+/**
+ * Whether this installation still has `<provider>/<model>` at all: the provider must be configured, and
+ * when that provider carries a manual model list, the model must be on it.
+ *
+ * The provider half and the model half are the same question asked at two depths, so one function answers
+ * both — a caller that checked only the provider goes on offering `<live provider>/<model the operator
+ * removed>`, which is precisely the model-level half of the same staleness.
+ *
+ * Membership is tested against the PARSED model, never against a split of the exec string: a model id may
+ * itself contain slashes (`deepseek/deepseek-v4-flash`, `openrouter/free`).
+ */
+export function isOfferableBrainModel(
+  provider: string,
+  model: string,
+  brainProviders: readonly BrainProviderModels[],
+): boolean {
+  const entry = brainProviders.find((p) => p.id === provider);
+  if (!entry) return false;
+  return entry.models.length === 0 || entry.models.includes(model);
+}
+
+/**
  * Whether this installation may OFFER or STORE an exec at all — the shared bound applied before any
  * per-user narrowing, and the single answer to "does this model still exist here?".
  *
@@ -212,6 +249,10 @@ function includesExec(list: readonly string[], spec: string): boolean {
  * registry ALONE — no configured provider, no exec, whatever any stored list still claims. This can only
  * ever narrow what is offered; nothing here can admit an exec that the provider set does not back.
  *
+ * Removing one MODEL from a provider that still exists is the same fact one level down, and gets the same
+ * answer — see `isOfferableBrainModel`, including why a provider's EMPTY model list is the one case that
+ * cannot be read as a whitelist.
+ *
  * Membership in the provider set is also what separates a real brain model from a well-shaped string:
  * since the canonical spelling is bare `<provider>/<model>`, ANY slash-shaped value parses as a brain
  * exec, so "is this the brain?" would wave `bogus/model` straight past the bound that exists to stop it.
@@ -219,11 +260,11 @@ function includesExec(list: readonly string[], spec: string): boolean {
 export function isOfferableExec(
   exec: ExecInput,
   globalExecs: readonly string[],
-  brainProviders: readonly string[],
+  brainProviders: readonly BrainProviderModels[],
 ): boolean {
   const ref = parseExecRef(exec);
   if (!ref) return false;
-  if (ref.program === 'elowen') return brainProviders.includes(ref.provider);
+  if (ref.program === 'elowen') return isOfferableBrainModel(ref.provider, ref.model, brainProviders);
   const spec = execSpecOf(exec);
   return spec !== null && includesExec(globalExecs, spec);
 }
@@ -233,13 +274,23 @@ export function isOfferableExec(
  * everyone else is bounded by the global allow-list AND their personal whitelist (an empty
  * personal list means "everything the global list allows"). `user` null/undefined = open mode.
  * Accepts either identity form; a structured value that names no runnable model is refused.
+ *
+ * EXISTENCE is not a permission, so the brain-model bound is applied BEFORE the admin bypass: a model this
+ * installation does not have cannot be run by anyone. That is what makes a run pinned to a dead model —
+ * a stored session pin, a project preference, `/model` — refuse instead of resolving to something else,
+ * and it is the half an admin (the operator himself) was silently exempt from. The CLI half of the bypass
+ * is deliberately untouched: `allowedExecs` is the operator's own curated list, not an existence claim,
+ * and an admin may still step outside it.
  */
 export function isExecAllowedForUser(
   user: { is_admin: boolean; allowed_execs: readonly string[] } | null | undefined,
   globalExecs: readonly string[],
   exec: ExecInput,
-  brainProviders: readonly string[],
+  brainProviders: readonly BrainProviderModels[],
 ): boolean {
+  const ref = parseExecRef(exec);
+  if (!ref) return false;
+  if (ref.program === 'elowen' && !isOfferableBrainModel(ref.provider, ref.model, brainProviders)) return false;
   if (!user || user.is_admin) return true;
   const spec = execSpecOf(exec);
   if (spec === null) return false;
@@ -257,7 +308,7 @@ export function isModelVisibleForUser(
   user: { allowed_execs: readonly string[] } | null | undefined,
   globalExecs: readonly string[],
   exec: ExecInput,
-  brainProviders: readonly string[],
+  brainProviders: readonly BrainProviderModels[],
 ): boolean {
   const spec = execSpecOf(exec);
   if (spec === null) return false;

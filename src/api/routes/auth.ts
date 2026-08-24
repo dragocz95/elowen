@@ -5,7 +5,7 @@ import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { isExecAllowedForUser, isOfferableExec } from '../../shared/execs.js';
-import { configuredBrainProviderIds } from '../../brain/config.js';
+import { configuredBrainProviders } from '../../brain/config.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
@@ -60,7 +60,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // isExecAllowedForUser in two ways: it had no admin bypass, and it applied the global allow-list to
       // `elowen:` brain execs, which are bounded by the configured providers instead. So a model the
       // brain picker offered could not be saved as the default here.
-      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec, configuredBrainProviderIds(d.config, d.brainAuth))) {
+      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec, configuredBrainProviders(d.config, d.brainAuth))) {
         return c.json({ error: 'exec not allowed' }, 400);
       }
     }
@@ -168,7 +168,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // pick is already structured here, so it is judged as an ExecRef: the gate decides on `program`
     // instead of on a prefix this route would first have had to write into a string.
     const brainRef = (provider: string, model: string) => ({ program: 'elowen' as const, provider, model });
-    const providers = configuredBrainProviderIds(d.config, d.brainAuth);
+    const providers = configuredBrainProviders(d.config, d.brainAuth);
     if (patch.model && patch.modelProvider
       && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.modelProvider, patch.model), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
@@ -430,7 +430,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // a deleted provider's models stayed grantable: the deletion leaves them behind in `allowedExecs`,
       // and that stale entry then wrote them straight back into a user's permission list.
       const globalExecs = d.config.get().allowedExecs;
-      const providers = configuredBrainProviderIds(d.config, d.brainAuth);
+      const providers = configuredBrainProviders(d.config, d.brainAuth);
       users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && isOfferableExec(e, globalExecs, providers)))]);
     }
     if (Array.isArray(b.disabled_tools)) {

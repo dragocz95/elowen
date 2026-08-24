@@ -12,7 +12,8 @@ import {
 import { resolveExecutor } from '../../src/shared/execRouting.js';
 /** The brain providers this installation has configured. A brain exec only skips the global
  *  allow-list when its provider is one of these — see isOfferableExec. */
-const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov'];
+const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov']
+  .map((id) => ({ id, models: [] as string[] }));
 
 
 /**

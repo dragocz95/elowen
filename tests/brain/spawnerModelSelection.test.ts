@@ -95,6 +95,25 @@ describe('LiveSessionSpawner — chat-model selection fallback', () => {
     expect(spec.providerId).toBe('img');
   });
 
+  // Same rule for the model half: the provider is still there, but the operator removed THIS model from
+  // its list in Settings. A custom endpoint would otherwise register the stale id ad hoc and run a model
+  // the installation no longer offers — the account's picker shows one set, its session runs outside it.
+  it('starts on the default when the saved preference names a model the provider no longer lists', async () => {
+    const { spawn, create } = makeSpawner({ model: 'gpt-4o-mini', modelProvider: 'relay' });
+
+    const live = await spawn({});
+
+    expect(live.providerId).toBe('img');
+    expect(live.model).toBe('gpt-image-2');
+    const spec = create.mock.calls[0]?.[0] as { model: { id: string }; providerId: string };
+    expect(spec.model.id).toBe('gpt-image-2');
+  });
+
+  it('keeps a saved preference the provider still lists', async () => {
+    const { spawn } = makeSpawner({ model: 'gpt-5.5', modelProvider: 'relay' });
+    expect((await spawn({})).model).toBe('gpt-5.5');
+  });
+
   it('falls back to the config default when neither selection nor settings are set', async () => {
     const { spawn } = makeSpawner({ model: '', modelProvider: '' });
 
