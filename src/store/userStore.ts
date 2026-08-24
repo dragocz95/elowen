@@ -305,15 +305,16 @@ export class UserStore {
     this.db.prepare('UPDATE users SET allowed_execs = ? WHERE id = ?').run(execs.map(canonicalExec).filter(Boolean).join(','), id);
     return this.get(id);
   }
-  /** Set the per-user tool DENY-list. Retained unread for one release as a rollback path behind
-   *  `allowed_tools`; nothing in the turn path consults it any more (see turnCapabilities). */
+  /** Set the per-user tool DENY-list. Still READ and still applied beside the allow-list: allow and deny
+   *  answer different questions, and dropping the deny-list the moment the grant landed would hand every
+   *  account back the tools an admin had explicitly taken away. `toolAuthorityForUser` returns both. */
   setDisabledTools(id: number, tools: string[]): User | null {
     this.db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
     return this.get(id);
   }
   /** Set the per-user tool ALLOW-list — the plugin tools this account may use at all. Empty means NO
    *  plugin tool for a non-admin, which is the deny-by-default the list exists for: anything newly
-   *  installed stays invisible until an admin grants it. Admins are exempt (see turnCapabilities), so an
+   *  installed stays invisible until an admin grants it. Admins are exempt (`toolAuthorityForUser`), so an
    *  empty list never locks the operator out. Tool names are comma-free, so a CSV is safe. */
   setAllowedTools(id: number, tools: string[]): User | null {
     this.db.prepare('UPDATE users SET allowed_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
