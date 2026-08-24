@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { installGracefulShutdown, RESTART_EXIT_CODE } from '../../src/daemon/bootstrap.js';
 import type { BrainService } from '../../src/brain/brainService.js';
+import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 
 /** A brain whose in-flight work follows a scripted sequence, one entry consumed per busy() call. The last
  *  entry repeats, so a test can end on "still busy" to exercise the budget expiring.
@@ -210,6 +211,30 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     const exited = await runSignal(brain, { drainMs: 20 });
     expect(exited).toEqual([0]);
   });
+
+  it('drives a REAL coordinator through the real drain loop: park on beginDrain, then exit', async () => {
+    // The other step-boundary tests stub midStepWork; this one wires an actual StepDrainCoordinator with
+    // an installed hold, so the loop is proven against the real park/latch mechanics: the turn is
+    // mid-step until beginDrain latches the coordinator, its next boundary parks, and the drain exits.
+    const drainCoord = new StepDrainCoordinator();
+    const child = 'brain-ch-subagent-real-park';
+    const agent: { prepareNextTurnWithContext?: (turn: unknown, signal?: AbortSignal) => Promise<unknown> } = {};
+    drainCoord.installHold({ agent } as never, child);
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => {
+        drainCoord.begin();
+        // The agent loop reaches its next step boundary a moment later and parks there.
+        setTimeout(() => { void agent.prepareNextTurnWithContext!({}, new AbortController().signal); }, 20);
+      },
+      midStepWork: async () => drainCoord.unsafeCount([child]),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000, pollMs: 5 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // parked at the boundary, not the fallback budget
+  }, 40_000);
 
   it('latches the step drain in the runner pool too (beginDrain reaches the brain exactly once)', async () => {
     // The daemon-side latch is what parks turns; BrainService.beginDrain also broadcasts to the pool.

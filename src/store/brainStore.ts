@@ -832,6 +832,12 @@ export class BrainStore {
     return this.delegation.supersedeClaimedRun(parentSessionId, toolCallId, reason);
   }
 
+  /** Zero a workflow's resume-attempt counter after a successful resume — see
+   *  {@link BrainDelegationStore.clearWorkflowClaimAttempts}. */
+  clearWorkflowClaimAttempts(parentSessionId: string, toolCallId: string): void {
+    this.delegation.clearWorkflowClaimAttempts(parentSessionId, toolCallId);
+  }
+
   /** Park a claimed run as recovery_required — see {@link BrainDelegationStore.markRecoveryRequired}. */
   markRecoveryRequired(parentSessionId: string, toolCallId: string, reason: string, raw: unknown): boolean {
     return this.delegation.markRecoveryRequired(parentSessionId, toolCallId, reason, raw);

@@ -890,6 +890,18 @@ export class BrainDelegationStore {
     });
   }
 
+  /** Zero a workflow's resume-attempt counter once the engine ACTUALLY took it back (resumed: true).
+   *  Without this, `attempt` only ever grows — one bump per boot claim — so four perfectly ordinary
+   *  deploys under one long-running workflow would hit the resume cap and kill it healthy. Guarded by the
+   *  claim: only the boot that owns the row may declare its resume successful. */
+  clearWorkflowClaimAttempts(parentSessionId: string, toolCallId: string): void {
+    const cur = this.bootId;
+    if (!parentSessionId || !toolCallId || !cur) return;
+    withWriteLock(this.db, () => this.db.prepare(
+      'UPDATE brain_workflows SET attempt = 0 WHERE parent_session_id = ? AND tool_call_id = ? AND owner_boot_id = ?'
+    ).run(parentSessionId, toolCallId, cur));
+  }
+
   /** Release a run claim WITHOUT recovering it, terminalizing the row as `error`. Used when boot workflow
    *  resume supersedes the generic recovery of a delegation nested INSIDE a claimed workflow's node: the
    *  resumed node re-issues its Delegate call itself, so respawning the old child would run the same work

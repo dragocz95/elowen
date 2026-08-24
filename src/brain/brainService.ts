@@ -24,6 +24,8 @@ import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, BrainEvent, CompactResult, WorkflowCompletion } from './events.js';
 import { terminalizeWorkflow } from './workflowRuns.js';
+import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type DelegatingTurnAccess } from './delegatedScope.js';
+import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
 import { ClientAttachments } from './service/attachments.js';
@@ -522,9 +524,15 @@ export class BrainService {
               emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
               complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
               stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+              validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
             },
           });
           if (outcome.resumed) {
+            // A successful hand-back ends the crash-loop suspicion for THIS interruption: without the
+            // reset, four ordinary deploys under one long workflow would hit the attempt cap and kill it
+            // healthy. The accepted trade-off: a workflow whose NODE reliably crashes the daemon can now
+            // re-claim on every boot — systemd's own restart limiter is the backstop for that pathology.
+            this.d.store.clearWorkflowClaimAttempts(wf.parentSessionId, wf.toolCallId);
             logger('brain').info(`boot recovery resumed workflow ${wf.workflowId} (attempt ${wf.attempt})`);
             continue;
           }
@@ -547,6 +555,37 @@ export class BrainService {
           + 'Start a new workflow to redo the remaining work if it is still needed.',
       });
     }
+  }
+
+  /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin
+   *  data dir, writable by the SAME uid the agent's Bash tool runs as, so a journaled boundary is
+   *  untrusted input: an edited file (or simply a stale one — admin revoked, project unshared between
+   *  crash and boot) must not resume as live authority. The journaled boundary is validated as a
+   *  delegable scope and compared against the origin user's authority AS IT STANDS NOW, through the same
+   *  scopeExceedsCurrentAccess check a DelegateContinue uses — equality-strict on the permission
+   *  boundary, so this REFUSES anything it cannot prove is still held (fail closed, never intersect-and-
+   *  widen). `owner` authority is granted only to an owner-conversation origin: a channel/cron origin
+   *  whose journal claims it fails closed too. */
+  private journaledBoundaryCheck(originSessionId: string, raw: unknown): { ok: boolean; reason?: string } {
+    const scope = normalizeDelegatedExecutionScope(raw);
+    if (!scope) return { ok: false, reason: 'the journaled access boundary is not a valid delegable scope' };
+    const row = this.d.store.getSession(originSessionId);
+    if (!row) return { ok: false, reason: 'the origin session no longer exists' };
+    if (!this.d.users.get(row.user_id)) return { ok: false, reason: 'the origin user no longer exists' };
+    const policy = this.d.policy?.(row.user_id);
+    const settings = this.d.permissions?.(row.user_id);
+    const access: DelegatingTurnAccess = {
+      admin: policy?.allowedProjectIds === 'all',
+      projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
+      owner: !isNonUserSession(originSessionId),
+      // The same ruleset build a live turn's boundary snapshot uses (permissionApproval.turnPermissions);
+      // yolo is a session-scoped override that never enters the boundary shape.
+      permissionBoundary: settings
+        ? noninteractivePermissionBoundary({ ruleset: buildPermissionRuleset(settings), yolo: false, unattendedAsks: settings.unattendedAsks })
+        : null,
+    };
+    const exceeds = scopeExceedsCurrentAccess(scope, access);
+    return exceeds ? { ok: false, reason: `the journaled boundary exceeds the origin's current authority: ${exceeds}` } : { ok: true };
   }
 
   /** Deliver a workflow completion durably to its origin conversation on behalf of boot resume, where no

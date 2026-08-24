@@ -670,6 +670,24 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       deleteJournal(workflowId); // mismatched/corrupt — it can never resume anything, so stop it lingering
       return { resumed: false, reason: 'recovery journal does not match the claimed workflow' };
     }
+    // The journal is an agent-writable file, so every boundary read from it is UNTRUSTED authority. Core
+    // re-validates each one against the origin user's authority AS IT STANDS NOW; the first refusal kills
+    // the whole resume (core then terminalizes with a durable notice). Never resume on a boundary this
+    // process cannot get vouched for — including every dynamically-added node's narrower one.
+    const rejectedBoundary = (() => {
+      const parent = hooks.validateBoundary(raw.parentAccess);
+      if (!parent.ok) return parent.reason ?? 'the journaled workflow boundary was rejected';
+      for (const entry of Array.isArray(raw.nodeParentAccess) ? raw.nodeParentAccess : []) {
+        if (!Array.isArray(entry) || entry.length !== 2) return 'malformed journaled node boundary';
+        const node = hooks.validateBoundary(entry[1]);
+        if (!node.ok) return node.reason ?? 'a journaled node boundary was rejected';
+      }
+      return undefined;
+    })();
+    if (rejectedBoundary) {
+      deleteJournal(workflowId); // core terminalizes the claim now; a lingering journal could only mislead
+      return { resumed: false, reason: `refusing to replay journaled authority: ${rejectedBoundary}` };
+    }
     pruneWorkflows();
     if ([...workflows.values()].filter((w) => w.finishedAt === undefined).length >= MAX_WORKFLOWS) {
       return { resumed: false, reason: `too many workflows (${MAX_WORKFLOWS}) are already running` };

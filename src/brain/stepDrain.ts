@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentSession, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { isSubagentSession } from './sessionId.js';
 
 /** One in-flight tool batch entry of one turn. `delegations` counts the delegated child calls this tool
  *  execution has REGISTERED (Delegate/DelegateContinue/WorkflowStart ride ChannelSessionService, which
@@ -28,11 +29,19 @@ export function markDelegationInCurrentTool(): void {
  *  fully answered (message_end persisted the assistant and every toolResult), so a restart resumes the
  *  turn from exactly there; mid-step the tail would be trimmed and the step repeated.
  *
- *  Three states make a turn SAFE to leave behind:
+ *  PARKING IS ONLY SAFE WHERE BOOT RECOVERY CAN RESUME THE WORK, which today means DELEGATED SUB-AGENT
+ *  sessions only: a delegated child has a durable run row (respawned by the boot reconcile) and a
+ *  workflow node has the engine's recovery journal — but a TOP-LEVEL owner/channel turn has neither.
+ *  Nothing prompts such a session again after a restart, so parking it would mean its final model call
+ *  never happens and the person who asked simply never gets an answer. Those turns are therefore always
+ *  counted mid-step and the drain waits them out whole, exactly as it did before the step boundary
+ *  existed (turn-only drains converge in 10–30 s in practice).
+ *
+ *  For a sub-agent session, three states make its turn SAFE to leave behind:
  *   - parked: its agent loop reached `prepareNextTurnWithContext` while draining and is held there;
  *   - delegating: every in-flight tool of its current batch has registered at least one delegated child
- *     (the child is recoverable work, and the parent's blocked tool call is re-answered by the durable
- *     result outbox after the restart);
+ *     (the child is recoverable work, and the parent's blocked tool call is re-answered durably at boot —
+ *     see recoverOne's delegation-wait classification in delegatedSession.ts);
  *   - finished: no active turn at all.
  *  Everything else — streaming from the model, or executing a local tool like Bash — is mid-step and the
  *  drain waits for it (bounded by the caller's overall budget).
@@ -60,6 +69,10 @@ export class StepDrainCoordinator {
    *  about to park. The hold releases only on the turn's own abort signal (`/stop` still works and lets
    *  the turn unwind); otherwise the loop stays parked until the process exits — which is the point. */
   installHold(session: AgentSession, sessionId: string): void {
+    // Only a delegated sub-agent session may park: boot recovery can resume IT. Parking a top-level
+    // conversation turn would strand it — the drain deliberately waits for those whole, and a hold here
+    // would deadlock that wait against its own park.
+    if (!isSubagentSession(sessionId)) return;
     const previous = session.agent.prepareNextTurnWithContext;
     session.agent.prepareNextTurnWithContext = async (turn, signal) => {
       if (this.draining && !signal?.aborted) {
@@ -83,6 +96,9 @@ export class StepDrainCoordinator {
    *  through untouched, so system-prompt bytes and tool behavior stay identical (the in-process/runner
    *  parity invariant). */
   wrapTools(sessionId: string, tools: ToolDefinition[]): ToolDefinition[] {
+    // Same gate as installHold: a non-sub-agent turn is unconditionally mid-step, so tracking its tool
+    // batches would be bookkeeping nothing reads.
+    if (!isSubagentSession(sessionId)) return tools;
     return tools.map((tool) => {
       if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to observe
       const run = tool.execute.bind(tool);
@@ -109,6 +125,10 @@ export class StepDrainCoordinator {
   unsafeCount(activeTurnSessionIds: string[]): number {
     let unsafe = 0;
     for (const sessionId of activeTurnSessionIds) {
+      // A turn boot recovery cannot resume is waited for WHOLE — parking and the delegation rule apply
+      // only to delegated sub-agent sessions (see the class doc). This covers top-level owner/channel
+      // conversations, cron sessions and non-session serial keys alike.
+      if (!isSubagentSession(sessionId)) { unsafe += 1; continue; }
       if (this.parked.has(sessionId)) continue;
       const records = this.tools.get(sessionId);
       if (records && records.size > 0 && [...records].every((record) => record.delegations > 0)) continue;

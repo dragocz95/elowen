@@ -1603,6 +1603,7 @@ describe('workflow recovery journal + boot resume', () => {
         emit: (u: unknown) => void;
         complete: (c: { id: string; toolCallId: string; status: string; result: string }) => void;
         stopChild: (sessionId: string) => Promise<{ stopped: boolean }>;
+        validateBoundary: (access: unknown) => { ok: boolean; reason?: string };
       };
     }): Promise<{ resumed: boolean; reason?: string }>;
   };
@@ -1647,6 +1648,7 @@ describe('workflow recovery journal + boot resume', () => {
         emit: (u) => emits.push(u as { status: string }),
         complete: (c) => completions.push(c),
         stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => ({ ok: true }),
       },
     });
     expect(outcome).toEqual({ resumed: true });
@@ -1688,12 +1690,42 @@ describe('workflow recovery journal + boot resume', () => {
         emit: () => {},
         complete: (c) => completions.push(c),
         stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => ({ ok: true }),
       },
     });
     expect(outcome).toEqual({ resumed: true });
     await until(() => completions.length === 1);
     expect(h2.launched).toEqual(['b-par']); // a-par's journaled result survived; only the hung node re-ran
     expect(completions[0]!.result).toContain('done:a-par');
+  });
+
+  it('refuses to resume when core rejects a journaled boundary, and runs nothing (D3)', async () => {
+    // The journal is an agent-writable file: a widened (or merely stale) boundary must never be replayed
+    // as authority. Core's validateBoundary hook is the arbiter; the first refusal kills the resume
+    // BEFORE any node launches, and the dead journal is disposed of.
+    const h1 = harness();
+    gate = { task: 'a-sec', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-sec', { nodesFile: workflowFile([{ id: 'a', task: 'a-sec' }]) });
+    await until(() => h1.snapshots.length > 0);
+    const wfId = h1.snapshots[0]!.id;
+    expect(existsSync(journalPathOf(wfId))).toBe(true);
+
+    const h2 = harness();
+    const validated: unknown[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-sec',
+      hooks: {
+        emit: () => {},
+        complete: () => { throw new Error('must not complete a refused resume'); },
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: (access) => { validated.push(access); return { ok: false, reason: 'admin authority revoked since the crash' }; },
+      },
+    });
+    expect(outcome.resumed).toBe(false);
+    expect(outcome.reason).toContain('admin authority revoked');
+    expect(validated.length).toBeGreaterThan(0); // the journaled parentAccess actually went through the check
+    expect(h2.launched).toEqual([]); // nothing ran under the rejected boundary
+    expect(existsSync(journalPathOf(wfId))).toBe(false);
   });
 
   it('refuses a claim its journal does not match, so core terminalizes instead', async () => {
@@ -1704,7 +1736,7 @@ describe('workflow recovery journal + boot resume', () => {
     const wfId = h1.snapshots[0]!.id;
 
     const h2 = harness();
-    const hooks = { emit: () => {}, complete: () => {}, stopChild: async () => ({ stopped: true }) };
+    const hooks = { emit: () => {}, complete: () => {}, stopChild: async () => ({ stopped: true }), validateBoundary: () => ({ ok: true }) };
     // Wrong origin session: the journal names brain-parent, so this claim must be refused outright —
     // resuming under a different parent would deliver the summary to a conversation that never asked.
     const wrongParent = await resumeControlOf(h2).resumeInterrupted({

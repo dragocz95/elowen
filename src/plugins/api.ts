@@ -987,6 +987,13 @@ export interface WorkflowRecoveryControl {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
       stopChild: (childSessionId: string) => Promise<{ stopped: boolean }>;
+      /** The journal lives on DISK, writable by the same uid the agent's tools run as, so a boundary read
+       *  from it is UNTRUSTED authority. Core re-validates every journaled boundary (the workflow's
+       *  parentAccess and each dynamically-added node's) against the origin user's authority AS IT STANDS
+       *  AT BOOT — the engine must refuse the whole resume on the first `ok: false` and may never widen
+       *  from disk. Fail closed: an origin user who no longer exists, or no longer holds what the journal
+       *  claims, terminates the workflow instead of replaying stale (or tampered) authority. */
+      validateBoundary: (access: unknown) => { ok: boolean; reason?: string };
     };
   }): Promise<{ resumed: boolean; reason?: string }>;
 }
