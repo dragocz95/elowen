@@ -396,11 +396,20 @@ export class ChannelSessionService {
       // session's own last deliberate touch (compact/model switch), mirroring the owner-chat call site:
       // a recent interaction vetoes the rollover even when the last stored message is stale.
       const live = this.d.registry.channelGet(opts.channelId);
+      // The caller resolved this from the row that existed when the turn arrived. The rollover below can
+      // rename that row out from under it, which is the one moment the value goes stale.
+      let ownerUserId = opts.ownerUserId;
       if (!live?.session.isStreaming
           && !this.d.registry.hasActiveChildren(sessionId)
           && rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(sessionId), interactedAt: live?.interactedAt, now: Date.now() }, opts.idleRolloverMs ?? SESSION_IDLE_ROLLOVER_MS)) {
         this.d.registry.channelDispose(opts.channelId);
         this.d.store.reassignSession(sessionId, archivedChannelSessionId(opts.channelId));
+        // The previous conversation has just been archived under its own owner, and the canonical id is
+        // free again. Whoever is writing now is therefore OPENING a room, not joining one, and owns what
+        // they open — the same rule the orchestrator applies when no row exists at all. It cannot apply it
+        // here itself: the rollover is decided inside this method, after the owner was already resolved.
+        // An unlinked sender carries no account, so the channel owner stands.
+        if (opts.writerUserId != null) ownerUserId = opts.writerUserId;
       }
       // The post-turn curator must distill ONLY this sender's own words. Imported platform history is
       // seeded separately, so it can never land in THIS sender's private memory or conversation title.
@@ -424,7 +433,7 @@ export class ChannelSessionService {
       // other spawn-time composition. Re-stamping SQLite alone would leave the live session serving the
       // old account/classification until an unrelated respawn.
       const classificationChanged = !!ch
-        && (ch.ownerUserId !== opts.ownerUserId || ch.direct !== (opts.direct === true));
+        && (ch.ownerUserId !== ownerUserId || ch.direct !== (opts.direct === true));
       // A channel respawn is invisible to the model, so the compaction it was already oriented for has
       // to survive it — otherwise every model switch re-sends the whole post-compaction block for a
       // compaction the model has already been told about.
@@ -444,7 +453,7 @@ export class ChannelSessionService {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
           sessionId,
-          ownerUserId: opts.ownerUserId,
+          ownerUserId,
           direct: opts.direct === true,
           parentSessionId: opts.parentSessionId,
           delegatedAccess: delegated?.scope,
@@ -462,7 +471,7 @@ export class ChannelSessionService {
           // too, and a hardcoded percentage here meant the Account setting silently never applied to
           // Discord/WhatsApp. Only the global percentage is resolved at this level — the spawner layers
           // the owner's per-model override on top (resolveAutoCompactPct), so the decision stays in one place.
-          autoCompactAtPct: this.d.userSettings?.(opts.ownerUserId)?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
+          autoCompactAtPct: this.d.userSettings?.(ownerUserId)?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
           clientCwd: opts.clientCwd,
@@ -567,7 +576,7 @@ export class ChannelSessionService {
           return true;
         };
         const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
-          ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, opts.ownerUserId, completion); }
+          ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, ownerUserId, completion); }
           : undefined;
         // Persist-first, mirroring emitSubagent: the in-plugin engine owns the DAG only in memory, so the
         // durable row is the sole thing the transcript marker and its modal can be rebuilt from after a
@@ -583,7 +592,7 @@ export class ChannelSessionService {
           recordWorkflowFinishMarker(this.d.store, ch.sessionId, (event) => ch.replay.publish(event), prevStatus, u);
         };
         const emitWorkflowCompletion = parentSessionId && this.d.completeWorkflow
-          ? (completion: WorkflowCompletion) => { this.d.completeWorkflow!(ch.sessionId, opts.ownerUserId, completion); }
+          ? (completion: WorkflowCompletion) => { this.d.completeWorkflow!(ch.sessionId, ownerUserId, completion); }
           : undefined;
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
@@ -593,7 +602,7 @@ export class ChannelSessionService {
           // sender (else their channel owner) fresh, but a delegated child MUST use its immutable captured
           // boundary. Resolving `writerUserId ?? ownerUserId` here would let an idle child inherit the
           // durable row owner's newer/wider settings; it also must not gain owner-memory identity.
-          const livePermissionSettings = delegated ? undefined : this.d.permissions?.(opts.writerUserId ?? opts.ownerUserId);
+          const livePermissionSettings = delegated ? undefined : this.d.permissions?.(opts.writerUserId ?? ownerUserId);
           const permissions: TurnPermissions | undefined = delegated
             ? noninteractiveTurnPermissions(delegated.scope.permissionBoundary)
             : livePermissionSettings
