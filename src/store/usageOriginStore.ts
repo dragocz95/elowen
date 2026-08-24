@@ -41,6 +41,10 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  *  requester waiting on it, and short enough that a leaked pin cannot mislabel next week's spend. */
 const PIN_MAX_AGE_MS = 6 * 3_600_000;
 
+/** Identifies ONE pin, so the surface that set it can take it back without ever touching a pin somebody
+ *  else's turn now holds. Opaque by intent — its only operation is equality. */
+export type PinToken = number;
+
 /** Origin attribution for brain spend: which request origin ordered a turn, and how many tokens each
  *  (day, user, origin) bucket has burned since tracking began.
  *
@@ -59,7 +63,11 @@ export class UsageOriginStore {
    *  A pin is set by the first request of a turn and consumed by {@link settleTurn}; a request arriving
    *  while one is in flight is STEERED into that same turn, so it must not repoint the attribution.
    *  The settling turn therefore reads this without touching SQLite at all. */
-  private readonly turnOrigins = new Map<string, { origin: ClientOrigin; userId: number; at: number }>();
+  private readonly turnOrigins = new Map<string, { origin: ClientOrigin; userId: number; at: number; token: PinToken }>();
+
+  /** Issues {@link PinToken}s. A token, not a timestamp: two writers can pin the same conversation within
+   *  one millisecond, and a release that matched on time alone would then drop somebody else's pin. */
+  private nextPinToken = 1;
 
   constructor(private readonly db: Db) {}
 
@@ -68,10 +76,18 @@ export class UsageOriginStore {
    *
    *  That asymmetry is the attribution rule. A message sent while a turn streams is steered INTO the
    *  running turn rather than starting a new one, so its tokens belong to the request that ordered that
-   *  turn. Overwriting the pin would move a turn's whole spend to whoever spoke into it last. */
-  recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): void {
+   *  turn. Overwriting the pin would move a turn's whole spend to whoever spoke into it last.
+   *
+   *  Returns the token of the pin this call SET, or null when an in-flight turn already held one. The
+   *  caller hands that token back to {@link releasePin} once its turn is over — see the class doc on why
+   *  a stranded pin is a billing defect rather than a cosmetic leak. */
+  recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): PinToken | null {
     this.pruneStalePins(atMs);
-    if (!this.turnOrigins.has(sessionId)) this.turnOrigins.set(sessionId, { origin, userId, at: atMs });
+    let token: PinToken | null = null;
+    if (!this.turnOrigins.has(sessionId)) {
+      token = this.nextPinToken++;
+      this.turnOrigins.set(sessionId, { origin, userId, at: atMs, token });
+    }
     this.db.prepare(
       `INSERT INTO brain_session_origins (session_id, origin, user_id, trusted, requests, first_at, last_at)
             VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -82,6 +98,36 @@ export class UsageOriginStore {
             trusted  = MIN(trusted, excluded.trusted),
             last_at  = excluded.last_at`
     ).run(sessionId, origin.value, userId, origin.trusted ? 1 : 0, atMs, atMs);
+    return token;
+  }
+
+  /** Drop a pin whose turn ended without ever settling one — a turn refused during shutdown, aborted
+   *  before its first provider request, or rejected by any other pre-prompt guard.
+   *
+   *  This is not housekeeping. In a SHARED room the next message is usually a different colleague, and a
+   *  surviving pin refuses them a pin of their own (see {@link recordRequest}), so their whole turn is
+   *  billed to the previous writer under that person's platform origin. It was harmless only while the
+   *  pin was owner-only, where one account is both writers.
+   *
+   *  Keyed on the token the pin was created with, so it can only ever remove THAT pin: a turn whose pin
+   *  was already consumed, and a message that was steered into somebody else's running turn (which never
+   *  held a pin), both release nothing. */
+  releasePin(sessionId: string, token: PinToken): void {
+    if (this.turnOrigins.get(sessionId)?.token === token) this.turnOrigins.delete(sessionId);
+  }
+
+  /** Follow a turn that changed conversation under way. Owner-chat idle rollover archives the transcript
+   *  and mints a FRESH session id (`ConversationLifecycle.maybeRollover`), and the turn then settles under
+   *  that new id — so a pin left on the old one is found by nobody and the turn records as `internal`
+   *  against the row owner instead of the surface the person actually used.
+   *
+   *  Token-keyed exactly like {@link releasePin}, and it never overwrites a pin already held at the
+   *  destination: that pin belongs to a turn in flight there. */
+  repointPin(fromSessionId: string, token: PinToken, toSessionId: string): void {
+    const pin = this.turnOrigins.get(fromSessionId);
+    if (!pin || pin.token !== token || fromSessionId === toSessionId) return;
+    this.turnOrigins.delete(fromSessionId);
+    if (!this.turnOrigins.has(toSessionId)) this.turnOrigins.set(toSessionId, pin);
   }
 
   /** Consume the pin of a settling turn: the origin of the request that ORDERED it, or `internal`, plus
@@ -111,9 +157,12 @@ export class UsageOriginStore {
    *  behind, and the next turn of that conversation would inherit it. Nothing in the map is worth
    *  keeping for longer than a turn can plausibly run, so anything older than the window is dropped —
    *  those conversations fall back to `internal`, which is the honest answer for a turn nobody can still
-   *  point at a request. Swept on write, so an idle daemon does nothing. */
+   *  point at a request. Swept on write, so an idle daemon does nothing.
+   *
+   *  Deliberately NOT gated on the map being large. It used to skip the sweep below 256 entries, which on
+   *  an ordinary instance means always: the map holds turns in FLIGHT, so it is small by construction and
+   *  the safety net simply never ran. The sweep costs one pass over that handful of entries. */
   private pruneStalePins(nowMs: number): void {
-    if (this.turnOrigins.size < 256) return;
     for (const [id, pin] of this.turnOrigins) if (nowMs - pin.at > PIN_MAX_AGE_MS) this.turnOrigins.delete(id);
   }
 
@@ -282,6 +331,28 @@ export class UsageOriginStore {
       return removed;
     })();
   }
+}
+
+/** Bill ONE settled turn to the account and address that ordered it.
+ *
+ *  The pin's account wins over the conversation's owner, and that is the whole point in a shared room: a
+ *  room belongs to whoever opened it, so falling back to the row would keep billing the opener for every
+ *  colleague's turn. The row owner is the answer only where NOBODY was identified — an unlinked platform
+ *  sender, an instance cron — which is the same person `/usage/by-day` already reports that spend under.
+ *
+ *  A function rather than four lines in the daemon wiring, so the fallback rule has one implementation
+ *  that a test can drive; `tests/brain/originAttribution.test.ts` drives exactly this one. */
+export function billSettledTurn(
+  origins: Pick<UsageOriginStore, 'settleTurn' | 'addTurn'>,
+  sessionOwnerUserId: (sessionId: string) => number | undefined,
+  sessionId: string,
+  usage: OriginTurnUsage,
+  atMs: number,
+): void {
+  const pin = origins.settleTurn(sessionId);
+  const userId = pin.userId ?? sessionOwnerUserId(sessionId);
+  if (typeof userId !== 'number') return; // an unknown session has nobody to bill
+  origins.addTurn(userId, pin.origin, usage, atMs);
 }
 
 /** Narrow an ISO date/datetime to its UTC day, or undefined when it is not a date at all. */

@@ -32,7 +32,7 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { FileCredentialStore } from '../brain/credentialStore.js';
 import { bearerFromAuth, type BrainCredentialAccess } from '../brain/providerUsage.js';
 import { BrainStore } from '../store/brainStore.js';
-import { UsageOriginStore } from '../store/usageOriginStore.js';
+import { UsageOriginStore, billSettledTurn } from '../store/usageOriginStore.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
@@ -686,20 +686,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         projectPath: () => homeProject.path,
         projects,
         chatImagesDir,
-        // Bill a settled turn to the account and origin that ORDERED it. `settleTurn` consumes the pin
-        // openTurn set, so a turn nobody requested (a cron wake-up, a boot-recovered delegation) settles
-        // as `internal` rather than inheriting the last human address.
-        //
-        // The pin's account wins over the session row's owner, and that is the whole point in a shared
-        // room: a room belongs to whoever opened it, so falling back to the row would keep billing the
-        // opener for every colleague's turn. The row owner remains the answer where nobody is
-        // identified — an unlinked platform sender, an instance cron — which is the same person
-        // /usage/by-day already reports that spend under.
+        // Bill a settled turn to the account and origin that ORDERED it — see billSettledTurn, which owns
+        // the fallback rule. The pin openTurn set is consumed here, so a turn nobody requested (a cron
+        // wake-up, a boot-recovered delegation) settles as `internal` rather than inheriting the last
+        // human address.
         onTurnSettled: (sessionId, usage) => {
-          const pin = usageOrigins.settleTurn(sessionId);
-          const userId = pin.userId ?? brainStore.getSession(sessionId)?.user_id;
-          if (typeof userId !== 'number') return; // an unknown session has nobody to bill
-          usageOrigins.addTurn(userId, pin.origin, usage, Date.now());
+          billSettledTurn(usageOrigins, (id) => brainStore.getSession(id)?.user_id, sessionId, usage, Date.now());
         },
         // The write side of the same rollup: the brain pins a turn's origin before it runs.
         usageOrigins,

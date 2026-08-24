@@ -2,6 +2,7 @@ import type { ClientOrigin } from '../../api/clientIp.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { ConversationTitler } from '../conversationTitler.js';
 import type { MemoryCurator } from '../memoryCurator.js';
+import type { PinToken } from '../../store/usageOriginStore.js';
 
 /** The ONE place that decides what a turn does BESIDES answering — the settlement side of the same
  *  discipline `composeTurnPrompt` applies to the prompt side.
@@ -27,12 +28,20 @@ import type { MemoryCurator } from '../memoryCurator.js';
  *  - {@link openTurn}             before the turn's first provider request
  *  - {@link titleTurnConversation} at admission, once the turn's user row exists
  *  - {@link settleTurn}           after the turn has settled
+ *
+ *  Two of them are paired, and the pairing is load-bearing rather than tidy: `openTurn` hands back an
+ *  {@link OpenedTurn} that the surface must close on EVERY exit of the turn, and `settleTurn` belongs in a
+ *  `finally`. A turn that throws is still a turn that happened — it may have written a skill to disk, and
+ *  somebody did write in the room — and in a shared room a pin left behind by a turn that never ran bills
+ *  the next colleague's turn to the previous writer.
  */
 
 /** The write-time origin rollup, structurally — see `UsageOriginStore`. Attribution is accumulated as
  *  turns settle and is NEVER recovered by querying `brain_messages`, which carries no origin at all. */
 export interface TurnOriginPin {
-  recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): void;
+  recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): PinToken | null;
+  releasePin(sessionId: string, token: PinToken): void;
+  repointPin(fromSessionId: string, token: PinToken, toSessionId: string): void;
 }
 
 /** The team activity feed, structurally — the daemon supplies a bus-publishing callback. */
@@ -54,13 +63,27 @@ export interface TurnOpening {
   activity?: { record: TurnActivityFeed; actorUserId: number | null; surface: string; target: string };
 }
 
+/** The opened turn's handle. A surface takes one from {@link openTurn} and MUST close it on every exit
+ *  of the turn it opened, success or throw — which is why it is returned rather than optional. */
+export interface OpenedTurn {
+  /** The turn moved to another conversation mid-flight (owner-chat idle rollover archives the transcript
+   *  and mints a fresh session id), so the pin follows it. Without this the turn settles under an id no
+   *  pin was ever written for and records as `internal` against the row owner. */
+  movedTo(sessionId: string): void;
+  /** The turn is over. Releases a pin nothing consumed — a turn refused at shutdown, aborted before its
+   *  first provider request, or rejected by any other pre-prompt guard. A pin that a settled turn already
+   *  consumed, and a message steered into somebody else's turn, both release nothing (the pin is
+   *  token-keyed), so this is safe to call unconditionally and idempotent. */
+  close(): void;
+}
+
 /** Everything that must happen before the turn's first provider request. */
-export function openTurn(parts: TurnOpening): void {
+export function openTurn(parts: TurnOpening): OpenedTurn {
   // The pin first: it is what the turn's spend will be attributed to, and the feed is best-effort
   // reporting. Neither can throw in practice, but the money side is never made to wait on the cosmetic one.
-  if (parts.origin) {
-    parts.origin.pin.recordRequest(parts.sessionId, parts.origin.userId, parts.origin.origin, parts.origin.atMs);
-  }
+  const pin = parts.origin;
+  let sessionId = parts.sessionId;
+  let token = pin ? pin.pin.recordRequest(sessionId, pin.userId, pin.origin, pin.atMs) : null;
   if (parts.activity) {
     parts.activity.record({
       actorUserId: parts.activity.actorUserId,
@@ -68,6 +91,18 @@ export function openTurn(parts: TurnOpening): void {
       target: parts.activity.target,
     });
   }
+  return {
+    movedTo(next: string): void {
+      if (!pin || token == null) return;
+      pin.pin.repointPin(sessionId, token, next);
+      sessionId = next;
+    },
+    close(): void {
+      if (!pin || token == null) return;
+      pin.pin.releasePin(sessionId, token);
+      token = null;
+    },
+  };
 }
 
 export interface TurnTitling {
