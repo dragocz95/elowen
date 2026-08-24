@@ -338,6 +338,24 @@ export class ChannelSessionService {
     };
   }
 
+  /** WHOSE personal settings a DELEGATED child composes from: whatever composed its parent.
+   *
+   *  A child carries no writer of its own — `delegatedExecution` refuses one outright, because its sender
+   *  is the sub-agent identity and not a person — so without this it fell back to the room's opener and
+   *  ran on that account's default chat model, compaction model and thresholds while the parent turn that
+   *  delegated it ran on the writer's. The parent's live record is the single place that already knows the
+   *  answer (see SpawnOpts.settingsUserId), so the child reads it there rather than re-deriving it from a
+   *  second copy of the writer.
+   *
+   *  Undefined when the parent is no longer live (evicted, restarted): the caller then falls back to the
+   *  session owner, which is the id the child would have used anyway. */
+  private parentSettingsUserId(parentSessionId: string | undefined): number | undefined {
+    if (!parentSessionId) return undefined;
+    const parent = this.d.registry.get(parentSessionId)
+      ?? (isChannelSession(parentSessionId) ? this.d.registry.channelGet(channelIdOf(parentSessionId)) : undefined);
+    return parent?.settingsUserId;
+  }
+
   /** Resolve the durable owner of a prospective delegated parent. PlatformOrchestrator uses this before
    *  entering send(); send() repeats the parent/owner check at the write boundary to close TOCTOU races. */
   sessionOwnerUserId(sessionId: string): number | undefined {
@@ -500,7 +518,8 @@ export class ChannelSessionService {
           // else in the room. An unlinked sender carries no account, so the owner still stands. Every
           // one of those settings is read from this single id inside the spawner; resolving even one of
           // them here would be the second opinion that let the threshold drift from the model.
-          settingsUserId: opts.writerUserId ?? ownerUserId,
+          // A delegated child has no writer of its own and inherits its parent's — see parentSettingsUserId.
+          settingsUserId: opts.writerUserId ?? this.parentSettingsUserId(parentSessionId) ?? ownerUserId,
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
           clientCwd: opts.clientCwd,
@@ -1023,12 +1042,18 @@ export class ChannelSessionService {
    *  the exact same tree teardown a platform `/stop` does — BEFORE disposing, and only under the
    *  channel's own lock so a concurrent send() cannot straddle the teardown.
    *
-   *  `ownerFilter` narrows the reset to the channel sessions owned by one user (a personality change,
-   *  which must not touch anyone else's room); omitted, every channel is reset (a plugin reload, which
-   *  genuinely is global). */
-  async resetChannels(reason: string, ownerFilter?: (ownerUserId: number) => boolean): Promise<void> {
+   *  `settingsFilter` narrows the reset to the channel sessions COMPOSED FROM one account (a change to
+   *  that account's instructions or persona, which must not touch anyone else's room); omitted, every
+   *  channel is reset (a plugin reload, which genuinely is global).
+   *
+   *  Matched on the id the session was composed from, never on who owns the row — the same rule
+   *  BrainService.applyAutoCompactSettings follows, and for the same reason: a room belongs to whoever
+   *  opened it, so keying this on ownership respawned the wrong rooms in both directions. The opener's
+   *  save reset a room already composed for somebody else (pushing the opener's instructions back into
+   *  it), while the writer whose instructions the room actually renders saw nothing happen at all. */
+  async resetChannels(reason: string, settingsFilter?: (settingsUserId: number) => boolean): Promise<void> {
     const targets = this.d.registry.channelEntries()
-      .filter(([, ch]) => !ownerFilter || ownerFilter(this.d.store.getSession(ch.sessionId)?.user_id ?? -1))
+      .filter(([, ch]) => !settingsFilter || settingsFilter(ch.settingsUserId))
       .map(([channelId]) => channelId);
     await Promise.all(targets.map(async (channelId) => {
       await this.abortTree(channelId, new Set(), reason);

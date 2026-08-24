@@ -1266,13 +1266,17 @@ export class BrainService {
   }
 
   /** A user changed their global agent instructions: respawn so the new system-prompt chunk lands in every
-   *  surface. The owner chat restarts and every channel session THIS USER OWNS is reset; other users stay
-   *  untouched. History rehydrates from SQLite on respawn. Rare operation; serialized on its own key so it
-   *  never interleaves a reload. */
+   *  surface. The owner chat restarts and every channel session COMPOSED FROM THIS ACCOUNT is reset; other
+   *  users stay untouched. History rehydrates from SQLite on respawn. Rare operation; serialized on its own
+   *  key so it never interleaves a reload.
+   *
+   *  Keyed on the composing account (settingsUserId), exactly like applyAutoCompactSettings — the
+   *  instructions the spawner appends come from that id, so the rooms that have to respawn are the rooms
+   *  that RENDER them, not the rooms this account happens to have opened. */
   async applyUserInstructionsChange(userId: number): Promise<void> {
     await this.serial(`user-instructions-${userId}`, async () => {
       await this.restart(userId);
-      await this.channelService.resetChannels('user instructions changed', (ownerUserId) => ownerUserId === userId);
+      await this.channelService.resetChannels('user instructions changed', (settingsUserId) => settingsUserId === userId);
     });
   }
 

@@ -8,7 +8,7 @@ import { openDb, type Db } from '../../src/store/db.js';
 
 /** A minimal fake LiveBrain — only the fields ChannelSessionService.send/abortTree touch (mirrors
  *  channelIdleRollover.test.ts's harness, plus the abort surface abortSessionWork needs). */
-function fakeBrain(sessionId: string, ownerUserId: number) {
+function fakeBrain(sessionId: string, ownerUserId: number, settingsUserId: number) {
   const messages: { role?: string; content?: unknown }[] = [];
   const session = {
     isStreaming: false,
@@ -27,7 +27,9 @@ function fakeBrain(sessionId: string, ownerUserId: number) {
     // A real LiveBrain always carries both: the spawner writes `ownerUserId` and `direct: opts.direct === true`.
     // Omitting them here made send() see an ownership/classification change on every turn and respawn the
     // pre-seeded room, which is exactly the cache-destroying behaviour the comparison exists to avoid.
-    ownerUserId, direct: false,
+    // …and `settingsUserId`, the account the session was actually COMPOSED from, which is what a
+    // settings-driven reset matches on. A room belongs to whoever opened it; its prompt does not.
+    ownerUserId, settingsUserId, direct: false,
     model: 'kimi', thinkingLevel: undefined as string | undefined, providerId: 'moonshot',
     pluginToolNames: new Set<string>(), turnSender: undefined as number | undefined,
     interactedAt: undefined as number | undefined, listeners: new Set<(e: unknown) => void>(),
@@ -50,10 +52,10 @@ function setup() {
     registry, store, users: { get: () => ({ username: 'owner' }) }, spawn, elicitation, cancelWorkflows,
   } as never);
   /** Register a live channel session directly (no spawn round-trip), mirroring an already-open room. */
-  const seedChannel = (channelId: string, ownerUserId: number): Brain => {
+  const seedChannel = (channelId: string, ownerUserId: number, settingsUserId = ownerUserId): Brain => {
     const sessionId = channelSessionId(channelId);
     store.createSession({ id: sessionId, userId: ownerUserId, model: 'kimi' });
-    const brain = fakeBrain(sessionId, ownerUserId);
+    const brain = fakeBrain(sessionId, ownerUserId, settingsUserId);
     registry.channelTouch(channelId, brain);
     return brain;
   };
@@ -74,18 +76,31 @@ describe('ChannelSessionService.resetChannels', () => {
     expect(t.registry.channelGet('c2')).toBeUndefined();
   });
 
-  it('resets only the channels the owner filter matches — a different owner\'s channel survives untouched (personality change)', async () => {
+  it('resets only the channels the settings filter matches — another account\'s channel survives untouched (personality change)', async () => {
     const t = setup();
     const mine = t.seedChannel('c1', 1);
     const theirs = t.seedChannel('c2', 2);
 
-    await t.svc.resetChannels('personality changed', (ownerUserId) => ownerUserId === 1);
+    await t.svc.resetChannels('personality changed', (settingsUserId) => settingsUserId === 1);
 
     expect(mine.session.dispose).toHaveBeenCalledOnce();
     expect(t.registry.channelGet('c1')).toBeUndefined();
     // The other user's channel is not merely "not yet reset" — it is the SAME live object, never touched.
     expect(theirs.session.dispose).not.toHaveBeenCalled();
     expect(t.registry.channelGet('c2')).toBe(theirs);
+  });
+
+  it('follows the account a room was COMPOSED from, not the account that opened it', async () => {
+    const t = setup();
+    // User 2 opened the room; user 1 wrote the turn that spawned it, so 1's instructions and persona are
+    // what the live system prompt renders. Filtering on ownership resets exactly the wrong one of these.
+    const composedForOne = t.seedChannel('c1', 2, 1);
+    const openedByOne = t.seedChannel('c2', 1, 2);
+
+    await t.svc.resetChannels('personality changed', (settingsUserId) => settingsUserId === 1);
+
+    expect(composedForOne.session.dispose).toHaveBeenCalledOnce();
+    expect(openedByOne.session.dispose).not.toHaveBeenCalled();
   });
 
   it('cancels the workflow engine for every reset channel before tearing it down', async () => {
