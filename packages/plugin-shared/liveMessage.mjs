@@ -5,9 +5,11 @@
 // Telegram were near-verbatim copies of this whole file (quality.md #155: that drift is what broke
 // WhatsApp), so it lives here once, parameterized by the pieces that genuinely differ per surface:
 //
-//   - transport   create / edit / remove one message, the reply-reference shape, and the standalone-image
-//                 post — each closure receives the adapter instance so it calls the SAME adapter methods
-//                 the plugin tests mock (adapter.rest / adapter.tgSend / …).
+//   - transport   create / edit / remove one message, the reply-reference shape, and the standalone
+//                 image/file posts — each closure receives the adapter instance so it calls the SAME
+//                 adapter methods the plugin tests mock (adapter.rest / adapter.tgSend / …). The
+//                 hasImages/postImages and hasFiles/postFiles pairs are OPTIONAL: a surface that cannot
+//                 upload that kind of attachment omits the pair instead of owning a degraded copy.
 //   - style       the render style handed to ./liveTrace.mjs, extended with subtext(s) and italic(s) for
 //                 the progress bubble's dim lines (Discord `-# …` / `_…_`; plain-text Telegram → identity).
 //   - CHUNK/splitContent  the surface's message-size limit and its code-fence-aware splitter.
@@ -25,6 +27,26 @@ const DEFAULT_EDIT_THROTTLE_MS = 1200; // stays under Discord's ~5 edits / 5 s a
  *  resets the clock and drops it again. Tuned short enough that a slow step never reads as a stuck agent. */
 const STALL_HINT_MS = 60_000;
 const DIVIDER = '┈┈┈┈┈┈┈┈┈┈'; // separates the tool trace from each display card (wrapped in style.subtext)
+
+/** BrainEvent kinds this reducer deliberately does not render, each with the reason it is inert on a chat
+ *  surface. This is not documentation: tests/contract/sharedReducerEventKinds.test.ts derives the full kind
+ *  list from the `BrainEvent` union in src/brain/events.ts and requires every kind to be either handled in
+ *  `onEvent` below or named here. A new core event kind therefore cannot reach a room as silence — the
+ *  contract fails until somebody decides which of the two it is. */
+export const UNRENDERED_EVENT_KINDS = Object.freeze([
+  'tool_authoring', // a pre-execution hint; the matching `tool` event is what renders a trace row
+  'compacted',      // drives a transcript REBUILD, which a chat surface does not hold
+  'session',        // the adapter is told its session id out of band (turnOnEvent) before the turn runs
+  'delivery',       // a sink-confirmation for scheduler plugins, not a message
+  'workflow',       // no room rendering for a DAG panel yet — a room shows the delegating tool row instead
+  'session-event',  // owner-surface marker for out-of-turn state changes; a room has no such controls
+  'queue',          // the pending-message chips are an owner-composer affordance
+  'user',           // the platform already shows the user's own message
+  'discard_user',   // undoes an owner echo this surface never drew
+  'process',        // owner-only background-shell panel (a command line can carry a secret)
+  'goal',           // `/goal` has no room surface
+  'error',          // the adapter reports a failed turn through fail()/msg.error(), not through the stream
+]);
 
 /** Bounded process-local arrival order for visible user messages. Platform message ids are deliberately
  *  not compared: their ordering contracts differ, while a local sequence says exactly what the adapter
@@ -257,6 +279,8 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
       this.text = '';       // accumulated assistant text — streamed into `answer` and the finalize fallback
       this.imageRefs = [];  // image refs from tool results (generated or shared) — attached even if the reply omits them
       this.imageCaptions = []; // captions the agent gave those images (ShareImage) — the image message's own text
+      this.fileRefs = [];   // general files the agent shared (ShareFile) → uploaded as their own message
+      this.fileCaptions = []; // captions the agent gave those files — the file message's own text
       this.idle = null;     // the turn's settle event (model + context usage) → runtime footer
       this.reasoning = '';  // reasoning stream, only rendered when cfg.showReasoning (off by default)
       this.cards = new Map(); // latest display cards (ctx.emitCard) by id — the todo checklist is the canonical one
@@ -416,6 +440,12 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         this.imageRefs.push(e.ref);
         if (typeof e.caption === 'string' && e.caption.trim()) this.imageCaptions.push(e.caption.trim());
         this.settleTool(e.id, 'done', 'image ready');
+      } else if (e.type === 'file' && e.ref) {
+        // A file the agent shared on purpose (ShareFile). Its `ref` is a relative daemon URL, which is
+        // dead text on every chat surface — so the bytes are uploaded at finalize, exactly like an image.
+        this.fileRefs.push({ ref: e.ref, name: e.name, size: e.size });
+        if (typeof e.caption === 'string' && e.caption.trim()) this.fileCaptions.push(e.caption.trim());
+        this.settleTool(e.id, 'done', 'file ready');
       } else if (e.type === 'card' && e.card?.id) {
         // Upsert the card by id; an empty card (no items/body) removes it. Then re-render the bubble.
         const empty = (!e.card.items || e.card.items.length === 0) && !e.card.body;
@@ -432,6 +462,12 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // turn stays blocked in the tool until the user answers via a component/button/text interaction).
         this.postedBelowProgress = true;
         void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions).catch(() => {});
+      } else if (e.type === 'ask_resolved' && e.id) {
+        // The parked question is settled — by an answer, the core timeout, an abort, or a newer question
+        // superseding it. Every surface that raised it must stop showing it: a room otherwise keeps live
+        // buttons on a question whose answer can no longer reach anything. The core timeout is the ONLY
+        // authority on when that happens, so an adapter carries no expiry clock of its own.
+        void Promise.resolve(this.a.resolveAsk?.(this.channelId, e.id, e.reason)).catch(() => {});
       } else if (e.type === 'idle') {
         this.idle = e;
       }
@@ -535,6 +571,15 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // stays safe on every surface.
         const caption = this.imageCaptions.join('\n');
         if (data.length) { await transport.postImages(this.a, this.channelId, data, this.replyToId, caption).catch(() => {}); posted = true; }
+      }
+      // Shared files ride the same lifecycle as images and for the same reason: the ref is a daemon URL
+      // that reads as dead text here, so the bytes go out as their own message BEFORE the answer text —
+      // keeping the reply the last thing in the conversation. A surface that cannot upload a general file
+      // omits the pair rather than owning a second delivery path, and its text answer is unaffected.
+      if (this.fileRefs.length && transport.hasFiles?.(this.a)) {
+        const data = this.a.resolveSharedFiles(this.fileRefs);
+        const caption = this.fileCaptions.join('\n');
+        if (data.length) await transport.postFiles(this.a, this.channelId, data, this.replyToId, caption).catch(() => {});
       }
       // Runtime footer (model · context %) rides the text message only, opt-out via config.
       const footer = this.a.cfg?.runtimeFooter !== false ? footerLine(this.idle) : '';

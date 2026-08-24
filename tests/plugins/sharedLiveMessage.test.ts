@@ -380,3 +380,126 @@ describe('conversation order tracker', () => {
     expect(tracker.isCurrent(current)).toBe(false);
   });
 });
+
+/** A file the agent shared (ShareFile) and a question the core settled are both things the owner surfaces
+ *  handle and the rooms did not. Neither failed loudly: the tool reported success, and nobody in the room
+ *  ever saw the file or watched the expired question's buttons go away. */
+describe('shared LiveMessage attachments and settled questions', () => {
+  const plainStyle = {
+    mentionSafe: (s: string) => s,
+    fenceSafe: (s: string) => s,
+    bold: (s: string) => s,
+    strike: (s: string) => s,
+    italic: (s: string) => s,
+    subtext: (s: string) => s,
+    summaryLine: (s: string) => `  ↳ ${s}`,
+  };
+
+  const load = async () => (await import(join(repoRoot, 'packages/plugin-shared/liveMessage.mjs'))) as {
+    createLiveMessage: (deps: Record<string, unknown>) => new (
+      adapter: unknown, channelId: string, replyToId?: string,
+    ) => Lm;
+  };
+
+  /** A surface that CAN upload a general file, wired the same way the image pair is. */
+  async function buildWithFiles(hasFiles = true) {
+    const { createLiveMessage } = await load();
+    const posted: Record<string, unknown>[] = [];
+    const texts: string[] = [];
+    const LiveMessage = createLiveMessage({
+      transport: {
+        create: async () => 'mid-1',
+        edit: async () => true,
+        remove: async () => {},
+        replyRef: (replyToId: string) => ({ replyToId }),
+        hasImages: () => false,
+        postImages: async () => {},
+        ...(hasFiles ? {
+          hasFiles: (a: { resolveSharedFiles?: unknown }) => typeof a.resolveSharedFiles === 'function',
+          postFiles: async (_a: unknown, channelId: string, data: unknown, replyToId: unknown, caption: unknown) => {
+            posted.push({ channelId, data, replyToId, caption });
+          },
+        } : {}),
+      },
+      style: plainStyle,
+      CHUNK: 4000,
+      splitContent: (t: string) => [t],
+      postWithImages: async (_a: unknown, _c: string, text: string) => { texts.push(text); },
+      footerLine: () => '',
+    });
+    const adapter = {
+      cfg: { runtimeFooter: false },
+      resolveSharedFiles: (refs: { ref: string; name: string; size: number }[]) =>
+        refs.map((r) => ({ name: r.name, data: Buffer.from(`bytes:${r.ref}`) })),
+    };
+    return { lm: new LiveMessage(adapter, 'chan-1', 'trigger-1'), posted, texts };
+  }
+
+  it('uploads a shared file as its own message, carrying its caption and the trigger reference', async () => {
+    const { lm, posted, texts } = await buildWithFiles();
+    lm.onEvent({ type: 'file', id: 't1', ref: '/api/brain/chat-files/abc.bin', name: 'report.pdf', size: 12, caption: 'Zpráva za srpen' });
+    await lm.finalize('Posílám report.');
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.channelId).toBe('chan-1');
+    expect(posted[0]!.replyToId).toBe('trigger-1');
+    expect(posted[0]!.caption).toBe('Zpráva za srpen');
+    expect(posted[0]!.data).toEqual([{ name: 'report.pdf', data: Buffer.from('bytes:/api/brain/chat-files/abc.bin') }]);
+    // The answer text is unaffected — the file rides its own message, the reply stays the last one.
+    expect(texts).toEqual(['Posílám report.']);
+  });
+
+  it('leaves a surface that declares no file transport with its text answer alone', async () => {
+    const { lm, posted, texts } = await buildWithFiles(false);
+    lm.onEvent({ type: 'file', id: 't1', ref: '/api/brain/chat-files/abc.bin', name: 'report.pdf', size: 12 });
+    await lm.finalize('Posílám report.');
+    expect(posted).toEqual([]);
+    expect(texts).toEqual(['Posílám report.']);
+  });
+
+  it('tells the adapter to retire a question the core settled, whatever settled it', async () => {
+    const { createLiveMessage } = await load();
+    const resolved: unknown[][] = [];
+    const LiveMessage = createLiveMessage({
+      transport: {
+        create: async () => 'mid-1', edit: async () => true, remove: async () => {},
+        replyRef: () => ({}), hasImages: () => false, postImages: async () => {},
+      },
+      style: plainStyle,
+      CHUNK: 4000,
+      splitContent: (t: string) => [t],
+      postWithImages: async () => {},
+      footerLine: () => '',
+    });
+    const adapter = {
+      cfg: { runtimeFooter: false },
+      postAsk: async () => {},
+      resolveAsk: (...args: unknown[]) => { resolved.push(args); },
+    };
+    const lm = new LiveMessage(adapter, 'chan-1');
+    for (const reason of ['timeout', 'cancelled', 'answered']) {
+      lm.onEvent({ type: 'ask_resolved', id: `q-${reason}`, reason });
+    }
+    expect(resolved).toEqual([
+      ['chan-1', 'q-timeout', 'timeout'],
+      ['chan-1', 'q-cancelled', 'cancelled'],
+      ['chan-1', 'q-answered', 'answered'],
+    ]);
+  });
+
+  it('survives an adapter with no resolveAsk and a rejecting one', async () => {
+    const { createLiveMessage } = await load();
+    const LiveMessage = createLiveMessage({
+      transport: {
+        create: async () => 'mid-1', edit: async () => true, remove: async () => {},
+        replyRef: () => ({}), hasImages: () => false, postImages: async () => {},
+      },
+      style: plainStyle, CHUNK: 4000, splitContent: (t: string) => [t],
+      postWithImages: async () => {}, footerLine: () => '',
+    });
+    const bare = new LiveMessage({ cfg: {} }, 'chan-1');
+    expect(() => bare.onEvent({ type: 'ask_resolved', id: 'q1', reason: 'timeout' })).not.toThrow();
+    const failing = new LiveMessage({ cfg: {}, resolveAsk: async () => { throw new Error('gone'); } }, 'chan-1');
+    expect(() => failing.onEvent({ type: 'ask_resolved', id: 'q1', reason: 'timeout' })).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
