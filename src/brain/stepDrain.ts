@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentSession, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { isSubagentSession } from './sessionId.js';
+import { isNonUserSession, isSubagentSession } from './sessionId.js';
 
 /** One in-flight tool batch entry of one turn. `delegations` counts the delegated child calls this tool
  *  execution has REGISTERED (Delegate/DelegateContinue/WorkflowStart ride ChannelSessionService, which
@@ -29,19 +29,29 @@ export function markDelegationInCurrentTool(): void {
  *  fully answered (message_end persisted the assistant and every toolResult), so a restart resumes the
  *  turn from exactly there; mid-step the tail would be trimmed and the step repeated.
  *
- *  PARKING IS ONLY SAFE WHERE BOOT RECOVERY CAN RESUME THE WORK, which today means DELEGATED SUB-AGENT
- *  sessions only: a delegated child has a durable run row (respawned by the boot reconcile) and a
- *  workflow node has the engine's recovery journal — but a TOP-LEVEL owner/channel turn has neither.
- *  Nothing prompts such a session again after a restart, so parking it would mean its final model call
- *  never happens and the person who asked simply never gets an answer. Those turns are therefore always
- *  counted mid-step and the drain waits them out whole, exactly as it did before the step boundary
- *  existed (turn-only drains converge in 10–30 s in practice).
+ *  THE INVARIANT: A TURN PARKS ONLY WHERE A BOOT RESUME EXISTS. Parking a turn nothing ever resumes
+ *  means its final model call never happens and the person who asked simply never gets an answer.
+ *  Today two session classes have a resume and therefore park:
+ *   - DELEGATED SUB-AGENT sessions — a delegated child has a durable run row (respawned by the boot
+ *     reconcile) and a workflow node has the engine's recovery journal;
+ *   - TOP-LEVEL OWNER conversations (web dock / bound CLI) — parking writes a durable park marker on the
+ *     session row (`brain_sessions.parked_at`, via the onParked hook below) and the boot resume sweep
+ *     (BrainService.runParkedConversationRecovery) continues the turn and delivers its answer.
+ *  Everything else has NO resume and is deliberately waited for WHOLE, exactly as before the step
+ *  boundary existed: PLATFORM CHANNEL turns (their identity/policy/system prompt are built from the live
+ *  inbound message — sender, roles, room context — none of it durable, so a faithful resume envelope
+ *  cannot be reconstructed at boot), CRON turns, task-worker sessions (whose factory wires no
+ *  coordinator), and held non-session serial keys such as a plugin reload.
  *
- *  For a sub-agent session, three states make its turn SAFE to leave behind:
- *   - parked: its agent loop reached `prepareNextTurnWithContext` while draining and is held there;
- *   - delegating: every in-flight tool of its current batch has registered at least one delegated child
- *     (the child is recoverable work, and the parent's blocked tool call is re-answered durably at boot —
- *     see recoverOne's delegation-wait classification in delegatedSession.ts);
+ *  Which states make a live turn SAFE to leave behind:
+ *   - parked (either resumable class): its agent loop reached `prepareNextTurnWithContext` while
+ *     draining and is held there;
+ *   - delegating (SUB-AGENT sessions only): every in-flight tool of its current batch has registered at
+ *     least one delegated child — the child is recoverable work and the parent's blocked tool call is
+ *     re-answered durably at boot (see recoverOne's delegation-wait classification in
+ *     delegatedSession.ts). An owner turn blocked on a foreground delegation is NOT safe: its results
+ *     are only delivered into a running or freshly prompted turn, which nothing at boot provides for a
+ *     top-level conversation, so the drain waits for that delegation whole;
  *   - finished: no active turn at all.
  *  Everything else — streaming from the model, or executing a local tool like Bash — is mid-step and the
  *  drain waits for it (bounded by the caller's overall budget).
@@ -54,6 +64,18 @@ export class StepDrainCoordinator {
   private parked = new Set<string>();
   /** In-flight tool executions per session (the current step's unsettled batch). */
   private tools = new Map<string, Set<ToolExecutionRecord>>();
+
+  /** `onParked` fires SYNCHRONOUSLY the moment a hold actually parks a session's loop — the seam that
+   *  writes the durable park marker for owner conversations, and it must complete before the drain can
+   *  observe the park (marker durable strictly before the process exits). */
+  constructor(private hooks?: { onParked?(sessionId: string): void }) {}
+
+  /** A turn parks only where a boot resume exists — see the class doc. Sub-agent sessions are resumed by
+   *  the delegation reconcile / workflow journal; owner conversations by the park-marker sweep. Channel,
+   *  cron and task sessions (all `isNonUserSession`, minus the sub-agent family) have no resume. */
+  private parkEligible(sessionId: string): boolean {
+    return isSubagentSession(sessionId) || !isNonUserSession(sessionId);
+  }
 
   /** Latch the drain. One-way, like BrainService.draining: a draining process is on its way out. */
   begin(): void {
@@ -69,14 +91,16 @@ export class StepDrainCoordinator {
    *  about to park. The hold releases only on the turn's own abort signal (`/stop` still works and lets
    *  the turn unwind); otherwise the loop stays parked until the process exits — which is the point. */
   installHold(session: AgentSession, sessionId: string): void {
-    // Only a delegated sub-agent session may park: boot recovery can resume IT. Parking a top-level
-    // conversation turn would strand it — the drain deliberately waits for those whole, and a hold here
-    // would deadlock that wait against its own park.
-    if (!isSubagentSession(sessionId)) return;
+    // A session without a boot resume must never park: the drain deliberately waits for those turns
+    // whole, and a hold here would deadlock that wait against its own park.
+    if (!this.parkEligible(sessionId)) return;
     const previous = session.agent.prepareNextTurnWithContext;
     session.agent.prepareNextTurnWithContext = async (turn, signal) => {
       if (this.draining && !signal?.aborted) {
         this.parked.add(sessionId);
+        // Durable marker first (owner conversations only — see the brainCore wiring): the drain exits
+        // the moment every turn reads as parked, so the marker must already be on disk by then.
+        this.hooks?.onParked?.(sessionId);
         try {
           await new Promise<void>((resolve) => {
             if (!signal) return; // no abort seam to release on — parked until exit, released by nothing
@@ -96,8 +120,8 @@ export class StepDrainCoordinator {
    *  through untouched, so system-prompt bytes and tool behavior stay identical (the in-process/runner
    *  parity invariant). */
   wrapTools(sessionId: string, tools: ToolDefinition[]): ToolDefinition[] {
-    // Same gate as installHold: a non-sub-agent turn is unconditionally mid-step, so tracking its tool
-    // batches would be bookkeeping nothing reads.
+    // Tool-batch tracking feeds only the delegation-safe rule, which applies to sub-agent sessions
+    // alone (see unsafeCount) — for every other session the records would be bookkeeping nothing reads.
     if (!isSubagentSession(sessionId)) return tools;
     return tools.map((tool) => {
       if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to observe
@@ -125,11 +149,12 @@ export class StepDrainCoordinator {
   unsafeCount(activeTurnSessionIds: string[]): number {
     let unsafe = 0;
     for (const sessionId of activeTurnSessionIds) {
-      // A turn boot recovery cannot resume is waited for WHOLE — parking and the delegation rule apply
-      // only to delegated sub-agent sessions (see the class doc). This covers top-level owner/channel
-      // conversations, cron sessions and non-session serial keys alike.
-      if (!isSubagentSession(sessionId)) { unsafe += 1; continue; }
+      // Parked is safe for BOTH resumable classes: only park-eligible sessions ever enter this set.
       if (this.parked.has(sessionId)) continue;
+      // The delegation-safe rule stays SUB-AGENT ONLY (see the class doc): a channel/cron turn, a
+      // non-session serial key, and an owner turn blocked on a foreground delegation are all waited
+      // for whole — none of them has a boot path that would deliver the blocked call's answer.
+      if (!isSubagentSession(sessionId)) { unsafe += 1; continue; }
       const records = this.tools.get(sessionId);
       if (records && records.size > 0 && [...records].every((record) => record.delegations > 0)) continue;
       unsafe += 1;

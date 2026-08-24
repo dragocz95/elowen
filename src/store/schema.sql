@@ -186,6 +186,17 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- with a per-row json_extract for every row of a listing. NULL where nobody identifiable has written
   -- yet (an unlinked sender, or a row that predates this column).
   last_writer_user_id INTEGER,
+  -- Shutdown park marker: when the step-boundary drain parked this conversation's live turn (see
+  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot resume sweep
+  -- (BrainService.runParkedConversationRecovery) can continue the turn from exactly there and deliver
+  -- the answer the restart interrupted. NULL = nothing parked. Written synchronously at the park (before
+  -- the process exits) and cleared by: a successful boot resume, the sweep failing closed, an explicit
+  -- user abort, or the user's own next message (their message IS the continuation then).
+  parked_at TEXT,
+  -- How many boot resumes have been attempted on the current park. Bumped durably BEFORE each attempt so
+  -- a boot that dies mid-resume still counts it; past the cap the sweep gives up visibly instead of
+  -- stacking resume turns forever. Reset whenever the marker clears.
+  park_attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

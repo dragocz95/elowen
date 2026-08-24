@@ -46,6 +46,11 @@ export interface BrainSessionRow {
    *  anchored on the operator because a room has no single author. NULL where nobody identifiable has
    *  written yet (an unlinked sender, or a row older than the column). */
   last_writer_user_id: number | null;
+  /** When the step-boundary shutdown drain parked this conversation's live turn (see schema.sql).
+   *  NULL = nothing parked; the boot resume sweep continues every marked conversation. */
+  parked_at: string | null;
+  /** Boot resume attempts on the current park; bumped durably before each attempt, reset on clear. */
+  park_attempts: number;
   created_at: string; updated_at: string;
 }
 export interface BrainMessageRow {
@@ -231,6 +236,35 @@ export class BrainStore {
 
   getSession(id: string): BrainSessionRow | undefined {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
+  }
+
+  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked at its
+   *  step boundary by a draining daemon and MUST be resumed at the next boot. Written synchronously the
+   *  moment the loop parks, so it is durable before the process exits. */
+  markSessionParked(id: string): void {
+    this.db.prepare("UPDATE brain_sessions SET parked_at = datetime('now') WHERE id = ?").run(id);
+  }
+
+  /** Clear the park marker and its attempt counter. Idempotent; called by every path that makes the boot
+   *  resume unnecessary or wrong: a successful resume, the sweep failing closed, an explicit user abort
+   *  of the parked turn, and the user's own next message (their message is the continuation then). */
+  clearSessionPark(id: string): void {
+    this.db.prepare('UPDATE brain_sessions SET parked_at = NULL, park_attempts = 0 WHERE id = ?').run(id);
+  }
+
+  /** Every conversation the last shutdown parked — the boot resume sweep's worklist. */
+  parkedSessions(): BrainSessionRow[] {
+    return this.db.prepare('SELECT * FROM brain_sessions WHERE parked_at IS NOT NULL').all() as BrainSessionRow[];
+  }
+
+  /** Claim one boot resume attempt: bump the counter, but only while the marker still stands. A false
+   *  return means the park was cleared since the sweep read its worklist — the user spoke (their turn
+   *  admission clears the marker) or aborted — and the sweep must NOT inject its own continuation on
+   *  top. This compare-and-bump is the sweep's ordering rule against concurrent user input. */
+  claimParkResumeAttempt(id: string): boolean {
+    return this.db.prepare(
+      'UPDATE brain_sessions SET park_attempts = park_attempts + 1 WHERE id = ? AND parked_at IS NOT NULL',
+    ).run(id).changes > 0;
   }
 
   /** Read a child's immutable delegation boundary. Both legacy NULL rows and malformed DB JSON are

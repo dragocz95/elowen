@@ -94,6 +94,11 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       // recovery journal (or terminalize it with a durable notice). After the generic respawns so their
       // results queue first; failures land here, never on the boot announcement.
       .then(() => deps.brain?.runWorkflowRecovery().catch((e) => deps.log.error('workflow recovery failed', e)))
+      // Conversation half of phase 2: resume every owner conversation the last shutdown parked at its
+      // step boundary, so the person who was mid-answer gets it without re-asking. After the delegation
+      // and workflow sweeps on purpose — a parked turn may be waiting on a recovered child's result,
+      // which those sweeps queue durably first.
+      .then(() => deps.brain?.runParkedConversationRecovery().catch((e) => deps.log.error('parked conversation recovery failed', e)))
       .catch((e) => deps.log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.

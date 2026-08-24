@@ -20,7 +20,7 @@ import type { ChannelSendOpts, DelegatedSteerOutcome } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegatedTurn.js';
 import { SubagentDispatch } from '../subagent/dispatch.js';
-import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
+import { lastAssistant, lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, BrainEvent, CompactResult, WorkflowCompletion } from './events.js';
 import { terminalizeWorkflow } from './workflowRuns.js';
@@ -75,6 +75,21 @@ const PLUGIN_RELOAD_POLL_MS = 100;
  *  boot claims — the workflow twin of delegatedSession's MAX_RECOVERY_ATTEMPTS. attempt is bumped by each
  *  boot's claimRecoverableWorkflows, so the cap bounds respawns, not nodes. */
 const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
+
+/** Boot resume attempts per park marker before the sweep gives up (see runParkedConversationRecovery).
+ *  Bumped durably BEFORE each attempt, so a boot that dies mid-resume still counts — three genuine
+ *  chances, then a visible give-up instead of stacking resume turns on a conversation forever. */
+const MAX_PARK_RESUME_ATTEMPTS = 3;
+
+/** The hidden continuation a boot resume injects into a parked conversation. Delivered through PI's
+ *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
+ *  transcript's TAIL, after the fully-answered pending step the park left behind, so the cached prefix
+ *  above it is untouched. The turn it triggers produces the answer the restart interrupted. */
+const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn at a step boundary. '
+  + 'Every tool result above is complete, but the remaining work was not done and the final answer was never delivered. '
+  + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
+  + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
+  + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
  *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI.
@@ -554,6 +569,86 @@ export class BrainService {
             : 'No node had finished yet. ')
           + 'Start a new workflow to redo the remaining work if it is still needed.',
       });
+    }
+  }
+
+  /** Boot phase 2, conversation half: resume every OWNER conversation the last shutdown parked at its
+   *  step boundary (see stepDrain.ts — the park wrote a durable marker on the session row). Runs after
+   *  the delegation/workflow sweeps: a parked owner turn may be waiting on a background child whose
+   *  recovered result should be queued before the conversation continues.
+   *
+   *  Each conversation is resumed BY ITSELF: a hidden custom system message (never a fake user bubble)
+   *  triggers one continuation turn at the transcript's tail, exactly the shape sendDelegated uses for a
+   *  delegated child — never a history rewrite, so the cached prefix stays byte-identical. Ordering rule
+   *  against the user speaking first: turn admission clears the marker, and the sweep's durable
+   *  claim-bump succeeds only while the marker still stands, so the user's own message always wins and
+   *  no duplicate continuation is injected. Conversations resume concurrently — they are independent
+   *  turns, exactly as they would be in normal operation. */
+  async runParkedConversationRecovery(): Promise<void> {
+    const parked = this.d.store.parkedSessions();
+    if (parked.length === 0) return;
+    await Promise.allSettled(parked.map((row) => this.resumeParkedConversation(row)));
+  }
+
+  private async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<void> {
+    const log = logger('brain');
+    // Fail closed on anything the park invariant says cannot happen: only top-level owner conversations
+    // ever carry a marker (the onParked wiring refuses non-user sessions), and a marker without a live
+    // owner account has nobody to resume for. Clear rather than retry — a resume here could run a turn
+    // under authority that no longer exists.
+    if (isNonUserSession(row.id)) {
+      log.warn(`park marker on non-owner session ${row.id} — invariant breach; clearing without resume`);
+      this.d.store.clearSessionPark(row.id);
+      return;
+    }
+    if (!this.d.users.get(row.user_id)) {
+      log.warn(`parked conversation ${row.id}: owner account ${row.user_id} no longer exists; clearing without resume`);
+      this.d.store.clearSessionPark(row.id);
+      return;
+    }
+    if (row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
+      // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
+      // owner's phone is told the conversation needs their message — the same push channel a finished
+      // answer uses. The failed attempts themselves are already visible in the transcript as errored
+      // turns, so the conversation does not look silently healthy.
+      this.d.store.clearSessionPark(row.id);
+      log.error(`parked conversation ${row.id} exhausted ${MAX_PARK_RESUME_ATTEMPTS} boot resume attempts — giving up; the user must re-send`);
+      this.d.notifyTurnComplete?.(row.user_id, row.title, 'A restart interrupted this conversation and it could not be resumed automatically — please re-send your last message.');
+      return;
+    }
+    // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
+    // race means the user already spoke (admission cleared the marker) or aborted — their input is the
+    // continuation, and injecting ours on top is exactly the double-continuation this guards against.
+    if (!this.d.store.claimParkResumeAttempt(row.id)) {
+      log.info(`parked conversation ${row.id}: marker cleared before the sweep reached it (the user spoke) — skipping resume`);
+      return;
+    }
+    try {
+      // A UNIQUE resultId, for two reasons: without one, sendCustomSystem's "already in context"
+      // forgiveness (`resultInContext(…, undefined)`) matches ANY custom row lacking a resultId — our
+      // own note included — and would report an errored resume as landed; and it keeps a crashed-boot
+      // retry honest (a second attempt's note is a different id, never mistaken for the first).
+      await this.turnRunner.sendCustomSystem(row.user_id, row.id, 'restart-resume', PARKED_RESUME_NOTE, `restart-resume-${randomUUID()}`);
+      // sendCustomSystem throws on definite non-delivery but forgives a turn that ERRORED after the
+      // note entered the context (right for sub-agent results, whose delivery is the note itself — not
+      // for us, where the deliverable is the ANSWER the triggered turn produces). Verify the outcome:
+      // the live session must now end in an assistant that settled normally.
+      const settled = lastAssistant(this.sessions.get(row.id)?.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[] ?? []);
+      if (!settled || settled.stopReason === 'aborted' || settled.stopReason === 'error') {
+        throw new Error(settled?.errorMessage?.trim() || `the resume turn ${settled?.stopReason ?? 'produced no assistant reply'}`);
+      }
+      this.d.store.clearSessionPark(row.id);
+      log.info(`boot resume finished parked conversation ${row.id} (attempt ${row.park_attempts + 1})`);
+      // The answer the user was waiting for has just landed while (almost certainly) nobody was
+      // watching a reconnected client — same push the ordinary settled-turn notifier sends.
+      if (this.attachments.watchingCount(row.id) === 0) {
+        this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
+      }
+    } catch (e) {
+      // Marker deliberately kept: the attempt is durably counted, so the next boot retries up to the
+      // cap. Within THIS boot the conversation stays as the failed turn left it — the user's next
+      // message clears the marker and continues normally.
+      log.error(`boot resume failed for parked conversation ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
     }
   }
 

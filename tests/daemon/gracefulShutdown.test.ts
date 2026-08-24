@@ -236,6 +236,32 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     expect(Date.now() - startedAt).toBeLessThan(30_000); // parked at the boundary, not the fallback budget
   }, 40_000);
 
+  it('parks a long TOP-LEVEL owner turn at its boundary and exits in seconds, writing the durable marker', async () => {
+    // The operator's exact question: a restart while an agent works in ANOTHER conversation must not
+    // wait the 600 s fallback. An owner turn now parks like a sub-agent — its safety comes from the
+    // durable park marker (onParked), which the boot resume sweep turns back into the finished answer.
+    const marked: string[] = [];
+    const drainCoord = new StepDrainCoordinator({ onParked: (id) => { marked.push(id); } });
+    const owner = 'brain-1';
+    const agent: { prepareNextTurnWithContext?: (turn: unknown, signal?: AbortSignal) => Promise<unknown> } = {};
+    drainCoord.installHold({ agent } as never, owner);
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => {
+        drainCoord.begin();
+        // The long tool loop reaches its next step boundary a moment later and parks there.
+        setTimeout(() => { void agent.prepareNextTurnWithContext!({}, new AbortController().signal); }, 20);
+      },
+      midStepWork: async () => drainCoord.unsafeCount([owner]),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000, pollMs: 5 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // parked at the boundary, not the fallback budget
+    expect(marked).toEqual([owner]); // the marker the boot resume needs was written before the exit
+  }, 40_000);
+
   it('latches the step drain in the runner pool too (beginDrain reaches the brain exactly once)', async () => {
     // The daemon-side latch is what parks turns; BrainService.beginDrain also broadcasts to the pool.
     // Here we only pin that the shutdown handler calls it before polling — the broadcast itself is

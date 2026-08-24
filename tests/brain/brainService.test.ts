@@ -5506,6 +5506,142 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(row.lifecycle).not.toBe('recovering');
   });
 
+  it('boot resume finishes a parked OWNER conversation: continuation at the tail only, marker cleared (the D1 shape)', async () => {
+    // THE regression shape: a turn parked at its LAST step boundary — all tool results answered, only the
+    // final model call left. The park marker is what makes leaving it safe; the sweep must produce and
+    // deliver that final answer without the user re-asking, appending strictly at the transcript's tail.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    // The rehydrated prefix a resume must not touch (prompt cache: the provider re-caches by byte prefix).
+    d.session.messages.push(
+      { role: 'user', content: 'do the thing' },
+      { role: 'assistant', content: 'tool call + answered result' },
+    );
+    const prefix = d.session.messages.slice();
+
+    const restarted = new BrainService(d as never);
+    await restarted.runParkedConversationRecovery();
+
+    // Exactly one hidden continuation — a custom system message, never a fake user bubble.
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume', display: false });
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: true });
+    // Tail-append only: every prefix row is untouched (same objects, same order), the resume's custom
+    // note and the produced answer follow AFTER them.
+    expect(d.session.messages.slice(0, prefix.length)).toEqual(prefix);
+    prefix.forEach((row, i) => expect(d.session.messages[i]).toBe(row));
+    expect(d.session.messages.at(-1)).toMatchObject({ role: 'assistant', stopReason: 'stop' });
+    // The park is spent: marker cleared, attempts reset — nothing resumes this conversation twice.
+    const row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).toBeNull();
+    expect(row.park_attempts).toBe(0);
+  });
+
+  it('a user message arriving before the sweep IS the continuation — no injected duplicate', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+
+    const restarted = new BrainService(d as never);
+    // The user speaks first (their message reached the daemon before phase 2 ran): admission clears the
+    // marker, so the sweep's claim-bump must lose and inject nothing on top.
+    await restarted.send({ userId: 1, text: 'never mind — new question', session: 'brain-1' });
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+    await restarted.runParkedConversationRecovery();
+
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    // Exactly one continuation ran: the user's own turn.
+    expect(d.session.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+
+    // And the RACE inside the sweep itself: the user's message lands between the worklist read and the
+    // dispatch. The durable claim-bump (UPDATE … WHERE parked_at IS NOT NULL) is what must lose then —
+    // simulated by clearing the marker as the worklist is handed out.
+    d.store.markSessionParked('brain-1');
+    const parkedRow = d.store.getSession('brain-1')!;
+    vi.spyOn(d.store, 'parkedSessions').mockImplementation(() => {
+      d.store.clearSessionPark('brain-1'); // the user's turn admission, winning the race
+      return [parkedRow];
+    });
+    await restarted.runParkedConversationRecovery();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+  });
+
+  it('a turn that finished normally leaves no marker, so the sweep never produces a second answer', async () => {
+    // "Already answered" is decided from DURABLE state, not the transcript's shape: only an actual park
+    // writes parked_at, and a park by construction happens BEFORE the turn's final model call. A turn
+    // that settled during the drain simply has no marker.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const restarted = new BrainService(d as never);
+    await restarted.send({ userId: 1, text: 'quick question', session: 'brain-1' }); // settles fully
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+
+    await restarted.runParkedConversationRecovery();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+  });
+
+  it('an explicit user abort of the parked turn clears the marker — the next boot must not resurrect stopped work', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const svc = new BrainService(d as never);
+    await svc.send({ userId: 1, text: 'long job', session: 'brain-1' }); // spawns the live session
+    d.store.markSessionParked('brain-1'); // the drain parks it
+    await svc.abort(1, 'brain-1');        // Esc during the drain window
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+  });
+
+  it('fails closed on a parked conversation whose owner account is gone, and on a non-owner marker', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-9', userId: 9, model: 'm' });
+    d.store.markSessionParked('brain-9');
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-ch-discord-general'); // invariant breach — only owner turns park
+    (d.users as { get: unknown }).get = (id: number) => (id === 1 ? { name: 'Filip', username: 'filip' } : undefined);
+
+    const restarted = new BrainService(d as never);
+    await restarted.runParkedConversationRecovery();
+
+    // No resume ran, nothing crashed, and both markers are gone (no retry loop on unresumable rows).
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.store.getSession('brain-9')!.parked_at).toBeNull();
+    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
+  });
+
+  it('a failed resume keeps the marker with a durably counted attempt; the cap gives up VISIBLY', async () => {
+    // Idempotency across a boot that dies (or errors) while resuming: the attempt is bumped BEFORE the
+    // dispatch, the marker survives the failure, and the next boot retries — up to the cap, where the
+    // sweep clears the marker and tells the owner instead of stacking resume turns forever.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    // The resume turn reaches the model but errors — the custom note lands, no answer is produced.
+    d.session.sendCustomMessage.mockImplementation(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
+      d.session.messages.push({ role: 'custom', ...message } as never);
+      if (options?.triggerTurn) d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error' } as never);
+    });
+    const notified: unknown[][] = [];
+    (d as Record<string, unknown>).notifyTurnComplete = (...args: unknown[]) => { notified.push(args); };
+
+    const restarted = new BrainService(d as never);
+    await restarted.runParkedConversationRecovery(); // attempt 1 — fails
+    let row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).not.toBeNull();
+    expect(row.park_attempts).toBe(1);
+
+    await restarted.runParkedConversationRecovery(); // attempt 2 (next boot)
+    await restarted.runParkedConversationRecovery(); // attempt 3
+    row = d.store.getSession('brain-1')!;
+    expect(row.park_attempts).toBe(3);
+    expect(notified).toHaveLength(0); // still trying — no give-up yet
+
+    await restarted.runParkedConversationRecovery(); // past the cap: give up, visibly
+    row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).toBeNull();
+    expect(notified).toHaveLength(1);
+    expect(String(notified[0]?.[2])).toContain('re-send');
+  });
+
   it('boot reconcile survives a corrupt delegation row and still repairs every other session', async () => {
     // The scan reads status straight out of the stored JSON. Without the json_valid guard one unparseable
     // row would throw inside SQLite and abort the whole boot reconcile, leaving every other phantom behind.

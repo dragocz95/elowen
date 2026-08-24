@@ -4,8 +4,10 @@ import { StepDrainCoordinator, markDelegationInCurrentTool } from '../../src/bra
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-// Parking and the delegation-safe rule apply ONLY to delegated sub-agent sessions — the only turns boot
-// recovery can actually resume. Top-level conversations use plain ids below and must always read mid-step.
+// A turn parks only where a boot resume exists: delegated sub-agent sessions (run-row/journal recovery)
+// and top-level OWNER conversations (durable park marker + boot resume sweep). Channel/cron sessions and
+// non-session serial keys have no resume and must always read mid-step. The delegation-safe rule stays
+// sub-agent-only.
 const SUB = (name: string) => `brain-ch-subagent-${name}`;
 
 /** A tool whose execute parks on an external promise, so a test can hold it "mid-step" deliberately. */
@@ -80,10 +82,10 @@ describe('StepDrainCoordinator — what counts as mid-step', () => {
     await Promise.all(runs);
   });
 
-  it('a TOP-LEVEL turn is always mid-step — even when blocked only on a delegation (D1)', async () => {
-    // Boot recovery has no resume path for a plain conversation turn: nothing prompts that session again
-    // after a restart, so its final answer would simply never be produced. The drain must wait it out
-    // whole, exactly as the pre-step-boundary drain did.
+  it('an un-parked TOP-LEVEL turn is mid-step — even when blocked only on a delegation', async () => {
+    // The delegation-safe rule is sub-agent-only: an owner turn's blocked Delegate call has no boot path
+    // that would deliver its answer into the conversation, so the drain waits for that delegation whole.
+    // Only an actual park (with its durable marker and resume sweep) makes an owner turn safe to leave.
     const drain = new StepDrainCoordinator();
     const delegate = gatedTool('Delegate', () => { markDelegationInCurrentTool(); });
     const [wrapped] = drain.wrapTools('brain-1', [delegate.tool]);
@@ -93,6 +95,12 @@ describe('StepDrainCoordinator — what counts as mid-step', () => {
     expect(drain.unsafeCount(['brain-1'])).toBe(1);
     delegate.release();
     await run;
+  });
+
+  it('a CHANNEL or CRON turn and a non-session serial key are always mid-step (no resume exists)', () => {
+    const drain = new StepDrainCoordinator();
+    drain.begin();
+    expect(drain.unsafeCount(['brain-ch-discord-general', 'brain-ch-cron-daily', 'plugins-reload'])).toBe(3);
   });
 
   it('markDelegationInCurrentTool outside any tool execution is a harmless no-op', () => {
@@ -108,14 +116,35 @@ describe('StepDrainCoordinator — the boundary hold', () => {
     await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
   });
 
-  it('never installs a hold on a top-level conversation session (D1)', async () => {
-    // Parking a turn the drain waits for whole would deadlock the drain against its own park — and the
-    // parked turn's answer would never be produced. The hold simply does not exist for these sessions.
+  it('never installs a hold on a channel or cron session — no resume exists, so parking would deadlock the drain', async () => {
     const drain = new StepDrainCoordinator();
+    for (const sessionId of ['brain-ch-discord-general', 'brain-ch-cron-daily']) {
+      const { session, agent } = fakeSession();
+      drain.installHold(session, sessionId);
+      drain.begin();
+      await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
+    }
+  });
+
+  it('parks an OWNER conversation at the boundary and writes the durable park marker first', async () => {
+    // The marker (via onParked) is what makes the park safe: the boot resume sweep finds it and finishes
+    // the turn. It must fire synchronously at the park — before the drain can observe the turn as safe —
+    // so it is durable strictly before the process exits.
+    const marked: string[] = [];
+    const drain = new StepDrainCoordinator({ onParked: (id) => { marked.push(id); } });
     const { session, agent } = fakeSession();
     drain.installHold(session, 'brain-1');
     drain.begin();
-    await expect(agent.prepareNextTurnWithContext!({}, new AbortController().signal)).resolves.toBe('previous-hook-ran');
+    const controller = new AbortController();
+    let settled = false;
+    const held = agent.prepareNextTurnWithContext!({}, controller.signal).then(() => { settled = true; });
+    await tick();
+    expect(settled).toBe(false);           // parked: the final model call never starts under drain
+    expect(marked).toEqual(['brain-1']);   // marker written at the park
+    expect(drain.unsafeCount(['brain-1'])).toBe(0); // and only the PARK makes an owner turn safe
+    controller.abort();                    // explicit stop still releases the hold
+    await held;
+    expect(settled).toBe(true);
   });
 
   it('parks the loop at the boundary once draining, and the parked turn stops counting as mid-step', async () => {

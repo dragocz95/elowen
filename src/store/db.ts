@@ -242,6 +242,11 @@ function applyAdditiveMigrations(db: Db): void {
   // filled from the next message onwards — the register simply shows no writer until then, rather than
   // this needing a backfill that would have to scan brain_messages to invent one.
   addColumn(db, 'brain_sessions', 'last_writer_user_id', 'INTEGER');
+  // Shutdown park marker + resume attempt counter (see brain_sessions in schema.sql). NULL/0 on every
+  // pre-upgrade row — nothing was parked before these columns existed, so the boot resume sweep sees
+  // exactly nothing to do on an upgraded database.
+  addColumn(db, 'brain_sessions', 'parked_at', 'TEXT');
+  addColumn(db, 'brain_sessions', 'park_attempts', 'INTEGER NOT NULL DEFAULT 0');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.
