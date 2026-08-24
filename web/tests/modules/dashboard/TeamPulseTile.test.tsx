@@ -49,12 +49,14 @@ describe('TeamPulseTile — heatmap', () => {
 
 describe('TeamPulseTile — presence rail', () => {
   const person = (over: Partial<PresenceEntry>): PresenceEntry =>
-    ({ userId: 1, label: 'Filip Džudža', working: false, lastTs: '2026-08-23 06:00:00', ...over });
+    ({ userId: 1, label: 'Filip Džudža', username: 'filip', working: false, lastTs: '2026-08-23 06:00:00', ...over });
 
-  it('shows initials and marks who is mid-turn', async () => {
-    mount([], [person({ working: true }), person({ userId: 2, label: 'Michal', working: false })]);
+  it('marks who is mid-turn, and falls back to a monogram only when there is no picture', async () => {
+    mount([], [person({ working: true }), person({ userId: 2, label: 'Michal', username: 'michal', working: false })]);
 
     const rail = (await screen.findByText('Filip Džudža')).closest('li');
+    // Nobody here uploaded a picture, so the shared Avatar draws its own monogram — the rail no longer
+    // computes one itself.
     expect(within(rail!).getByText('FD')).toBeInTheDocument();
     expect(rail?.className).toContain('border-accent/50');
     // Somebody merely seen today must not be dressed up as working.

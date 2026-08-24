@@ -576,6 +576,18 @@ export interface ToolCatalogOption {
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
 
+export interface SessionTask {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm?: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  owner?: string;
+  metadata: Record<string, unknown>;
+  blockedBy: string[];
+  blocks: string[];
+}
+
 /** One markdown skill of the skills plugin (GET /plugins/skills/list). Bundled skills ship with the
  *  install and are read-only; user skills are created at runtime and can be edited or deleted.
  *  `disableModelInvocation` mirrors PI's `disable-model-invocation` frontmatter flag — when set the
@@ -600,7 +612,17 @@ export interface HeatmapBucket { day: string; hour: number; count: number }
 
 /** Somebody on the presence rail. `working` is the daemon's LIVE view of a running turn; `lastTs` is
  *  when they were last seen, which is what keeps the rail populated the rest of the day. */
-export interface PresenceEntry { userId: number; label: string; working: boolean; lastTs: string }
+export interface PresenceEntry {
+  userId: number;
+  label: string;
+  /** Raw username + avatar handle, so the rail can draw the real picture through the shared Avatar
+   *  component instead of a monogram. Sent from the presence row's already-resolved account rather than
+   *  fetched client-side: the accounts list is admin-only, and the dashboard is not. */
+  username: string;
+  avatar?: string;
+  working: boolean;
+  lastTs: string;
+}
 
 export interface ActivityEvent {
   id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string;

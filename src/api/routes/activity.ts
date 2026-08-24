@@ -24,7 +24,14 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     const rows = [...new Set([...working, ...seen.keys()])].flatMap((id) => {
       const u = d.users?.get(id);
       if (!u) return [];
-      return [{ userId: id, label: u.name || u.username, working: working.has(id), lastTs: seen.get(id) ?? '' }];
+      return [{
+        userId: id,
+        label: u.name || u.username,
+        username: u.username,
+        ...(u.avatar ? { avatar: u.avatar } : {}),
+        working: working.has(id),
+        lastTs: seen.get(id) ?? '',
+      }];
     });
     // Whoever is working first, then by how recently they were seen.
     rows.sort((a, b) => Number(b.working) - Number(a.working) || b.lastTs.localeCompare(a.lastTs));

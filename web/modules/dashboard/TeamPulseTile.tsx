@@ -2,18 +2,12 @@
 import { useHeatmap, usePresence } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { LoadingState } from '../../components/ui/states';
+import { Avatar } from '../../components/ui/Avatar';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { HeatmapBucket, PresenceEntry } from '../../lib/types';
 
 const DAYS = 14;
 const HOURS = 24;
-
-/** Initials for the rail: first letters of the first two words, so "Filip Džudža" reads as FD and a
- *  single-word username still shows something. Uses code points, not UTF-16 units, or a name starting
- *  with an astral character would render half a glyph. */
-function initials(label: string): string {
-  return label.trim().split(/\s+/).slice(0, 2).map((w) => [...w][0] ?? '').join('').toUpperCase();
-}
 
 /** One dot per person, brightest for whoever is mid-turn. */
 function PresenceRail({ people, t }: { people: PresenceEntry[]; t: LocaleDict }) {
@@ -28,14 +22,7 @@ function PresenceRail({ people, t }: { people: PresenceEntry[]; t: LocaleDict })
             p.working ? 'border-accent/50 bg-accent/10 text-text' : 'border-border text-text-muted'
           }`}
         >
-          <span
-            aria-hidden
-            className={`grid h-5 w-5 place-items-center rounded-full font-mono text-[9px] ${
-              p.working ? 'bg-accent/25 text-text' : 'bg-surface text-text-muted'
-            }`}
-          >
-            {initials(p.label)}
-          </span>
+          <Avatar user={{ id: p.userId, username: p.username, name: p.label, ...(p.avatar ? { avatar: p.avatar } : {}) }} size={20} />
           <span className="max-w-[9rem] truncate">{p.label}</span>
           {p.working ? <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-success" /> : null}
         </li>
