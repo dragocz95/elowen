@@ -386,26 +386,6 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
-    // Before anything can steer, queue or reject this message: the pin belongs to the request that
-    // ordered the turn, and a message sent into a RUNNING turn is steered into it, so it must reach the
-    // origin ledger without repointing that turn's attribution (recordRequest owns that asymmetry).
-    // Both effects were owned by the HTTP route until now, which is why a goal kickoff, a system nudge
-    // and a cron wake-up into an owner conversation appeared in no feed at all.
-    openTurn({
-      sessionId: active.sessionId,
-      ...(request.origin && this.d.usageOrigins
-        ? { origin: { pin: this.d.usageOrigins, userId, origin: request.origin, atMs: Date.now() } }
-        : {}),
-      ...(this.d.recordActivity
-        ? { activity: {
-            record: this.d.recordActivity,
-            actorUserId: userId,
-            // An internal turn is nobody's keystroke; naming it as such is what makes it visible at all.
-            surface: internal ? 'internal' : (request.surface ?? 'unknown'),
-            target: active.sessionId,
-          } }
-        : {}),
-    });
     // Esc/stop fences the conversation before it snapshots children and clears PI's queue. Never admit a
     // message into that teardown window: the cancelled compaction/run will not drain it, so it would
     // otherwise survive as a phantom chip and execute on a later prompt.
@@ -422,6 +402,32 @@ export class BrainTurnRunner {
     // stray user turn. When idle it runs straight through, and — crucially — never drives the goal loop
     // (see the skipped afterTurnGoalJudge below), so it can't burn a goal-budget turn or mis-judge a goal.
     if (internal?.kind === 'systemNudge' && turnBusy) return;
+    // Everything this turn does besides answering — see openTurn. AFTER the two guards above and before
+    // anything can steer or queue: the pin belongs to the request that ordered the turn, and a message
+    // sent into a RUNNING turn is steered into it, so it must reach the origin ledger without repointing
+    // that turn's attribution (recordRequest owns that asymmetry). Both effects were owned by the HTTP
+    // route until now, which is why a goal kickoff, a system nudge and a cron wake-up into an owner
+    // conversation appeared in no feed at all.
+    //
+    // Opening it EARLIER, before the guards, is what made the feed report work that never happens: a nudge
+    // dropped because the session is busy and a message rejected into an aborting session both streamed a
+    // live "is working" row to every attached browser, one per drop.
+    const opened = openTurn({
+      sessionId: active.sessionId,
+      ...(request.origin && this.d.usageOrigins
+        ? { origin: { pin: this.d.usageOrigins, userId, origin: request.origin, atMs: Date.now() } }
+        : {}),
+      ...(this.d.recordActivity
+        ? { activity: {
+            record: this.d.recordActivity,
+            actorUserId: userId,
+            // An internal turn is nobody's keystroke; naming it as such is what makes it visible at all.
+            surface: internal ? 'internal' : (request.surface ?? 'unknown'),
+            target: active.sessionId,
+          } }
+        : {}),
+    });
+    try {
     // Mid-turn: a message sent while a turn is already streaming is STEERED into the running turn — PI
     // delivers it between steps (after the current tool calls, before the next model call), so the agent
     // folds it in during the SAME turn instead of waiting for it to end. Admission creates only PI queue
@@ -436,6 +442,12 @@ export class BrainTurnRunner {
         { live: active, text: queuedText, persistText: text, images, display, mode, visible: true, titleOnAdmission: false, onAdmitted: request.onAdmitted },
       );
       await admission.steer();
+      // A steered message settles too, with everything a steer must NOT carry expressed as an absent
+      // argument: the running turn curates its own exchange, it is still live so nothing may dispose it,
+      // and it will notify on its own. What remains is the writer stamp — the person did write here, and
+      // the room surface has always recorded it, so returning early left the two surfaces disagreeing
+      // about a message that reached the model either way.
+      settleTurn({ sessionId: active.sessionId, lastWriter: { store: this.d.store, userId } });
       return;
     }
     // A manual /compact owns the session lock and ends idle (PI's steer/follow-up queue only delivers inside
@@ -590,6 +602,11 @@ export class BrainTurnRunner {
         // default-start resolution); fallback-resolved dirs are never stamped.
         if (clientCwd) this.d.lifecycle.stampWorkDir(b.sessionId, clientCwd, b.policy);
         completedSessionId = b.sessionId;
+        // The pin follows the turn to the conversation it actually runs in. An idle rollover archives the
+        // old transcript and mints a FRESH session id, and settlement happens under that new id — so a pin
+        // left on the pre-lock id was found by nobody and the first turn after every rollover recorded as
+        // `internal` against the row owner instead of the surface the person was sitting at.
+        opened.movedTo(b.sessionId);
         await runTurn(b, text, images, mode, !internal, display);
       });
     } finally {
@@ -628,5 +645,10 @@ export class BrainTurnRunner {
       });
     }
     if (internal?.kind !== 'systemNudge') this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
+    } finally {
+      // Every exit of the turn this opened, including the ones that never reach a provider: a rollover
+      // rejection, a stopped client, a steer that threw. Releases only the pin this turn set.
+      opened.close();
+    }
   }
 }
