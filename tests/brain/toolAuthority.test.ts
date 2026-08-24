@@ -19,6 +19,8 @@ import { ChannelSessionService } from '../../src/brain/channels.js';
 import { PlatformOrchestrator } from '../../src/brain/platforms.js';
 import { IdentityResolver } from '../../src/brain/identity.js';
 import type { ChannelSendOpts } from '../../src/brain/channels.js';
+import { delegatedChannelSendOpts } from '../../src/brain/delegatedTurn.js';
+import type { DelegatedExecutionScope } from '../../src/brain/delegatedScope.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 
 /** The instance's live tool catalogue. Almost everything in Elowen is plugin-contributed (files,
@@ -258,6 +260,19 @@ describe('the execute-time gate, not just prompt visibility', () => {
     expect(read.ran()).toBe(1);
   });
 
+  // A deny entry may be a pattern — the shared predicate honours a trailing `*` on the deny side so a
+  // wildcard cannot become a way past a refusal. The execute-time deny gate, which covers the BUILT-INS
+  // that `allow` deliberately never touches, compared names exactly and so failed open on exactly those.
+  it('refuses a built-in named by a wildcard deny, not only an exact one', async () => {
+    const memory = plugin('MemorySearch');
+    const gated = composeSessionTools({ kind: 'owner-chat', pluginTools: [], memoryTools: () => [memory.tool] })
+      .find((t) => t.name === 'MemorySearch')!;
+
+    const refused = await call(gated, { deny: new Set(['Memory*']) });
+    expect(memory.ran()).toBe(0);
+    expect(refused.content[0]!.text).toContain('not available to you');
+  });
+
   it('refuses every plugin tool for an account nobody has granted anything', async () => {
     const { amy, deps } = accounts();
     const read = plugin('Read');
@@ -285,6 +300,63 @@ describe('unresolvable and partial account rows', () => {
       plugins: { peek: () => new PluginRegistry() } as unknown as BrainDeps['plugins'],
     };
     expect(toolAuthorityForUser(partial, 5)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The delegated surface: one behaviour, not one per path.
+// ---------------------------------------------------------------------------------------------------
+
+/** "The spawning account's CURRENT grant narrows a live child" has to hold on every path that can run a
+ *  delegated turn, and the channel service is the one they all funnel through. It used to rebuild the
+ *  child's policy from the frozen scope alone and throw the caller's carefully intersected allow-list
+ *  away, so whether a revoked tool actually stopped reaching a child depended on which path the turn took. */
+describe('a delegated turn is narrowed by the account grant wherever it is routed', () => {
+  const SCOPE: DelegatedExecutionScope = {
+    admin: false, projectIds: [7], owner: false, permissionBoundary: null,
+    toolPolicy: { allow: ['Read', 'Bash'] },
+  };
+
+  it('keeps the caller\'s current grant when the channel service rehydrates the child', async () => {
+    const store = new BrainStore(openDb(':memory:'));
+    const registry = new LiveSessionRegistry<never>();
+    const session = fakeSession();
+    let policy: ToolPolicy | undefined;
+    session.prompt.mockImplementation(async () => { policy = currentToolPolicy(); });
+    const listeners = new Set<(e: BrainEvent) => void>();
+    store.createSession({ id: 'brain-parent', userId: 1, model: 'kimi' });
+    const svc = new ChannelSessionService({
+      registry, store, cards: new CardRegistry(() => store),
+      users: { get: () => ({ username: 'amy' }) },
+      spawn: async (o: { sessionId: string; ownerUserId: number }) => {
+        if (!store.getSession(o.sessionId)) store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
+        return {
+          session, sessionId: o.sessionId, ownerUserId: o.ownerUserId, model: 'kimi', providerId: 'moonshot',
+          direct: false, requestProfile: { fast: false }, fastAvailable: false, thinkingLabels: {},
+          pluginToolNames: new Set(CATALOGUE.filter((name) => name !== BUILTIN)),
+          listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser: '', afterUser: '' }),
+        };
+      },
+    } as never);
+
+    // Built by the SAME builder the daemon and the sub-agent runner both use, so this is the real shape.
+    const opts = delegatedChannelSendOpts({
+      channelId: 'subagent-sub-dlg-1',
+      ownerUserId: 1,
+      parentSessionId: 'brain-parent',
+      delegatedAccess: SCOPE,
+      accountAllow: ['Read'], // the admin has since revoked Bash from the spawning account
+      scheduled: false,
+    }, {
+      policyForProjects: () => POLICY,
+      identity: new IdentityResolver({ platformOwner: () => 1, resolvePlatformUser: () => null, users: { get: () => undefined } as never }),
+    });
+    await svc.send(opts as never, 'go');
+
+    expect(opts.toolPolicy).toEqual({ allow: new Set(['Read']) });
+    // …and the channel service does not widen it back to the frozen scope on the way in.
+    expect(policy).toEqual({ allow: new Set(['Read']) });
+    expect(session.activeNames()).toEqual([BUILTIN, 'Read']);
   });
 });
 
@@ -322,17 +394,42 @@ describe('tool authority is resolved in exactly one place', () => {
     expect(offenders, 'authority must come from toolAuthorityForUser, never from a hand-rolled set').toEqual([]);
   });
 
-  // The four wirings that RESOLVE an account's authority, plus the two turn builders that consume it.
-  // `channels.ts` is deliberately absent: it receives an already-resolved policy as `opts.toolPolicy`, so
-  // resolving one itself would be the second opinion this contract exists to prevent — and the test above
-  // is what stops it growing one.
-  it('every surface that mints a turn ToolPolicy asks the shared resolver', () => {
-    for (const file of [
-      'brain/brainService.ts', 'brain/service/delegatedSession.ts', 'daemon/bootstrap.ts',
-      'brain/service/turnContextBuilder.ts', 'brain/platforms.ts',
-    ]) {
-      const source = readFileSync(join(root, file), 'utf-8');
-      expect(source.includes('toolAuthorityFor'), `${file} must resolve authority through toolAuthorityFor`).toBe(true);
-    }
+  /** A real CALL of the resolver — `toolAuthorityForUser(…)`, `toolAuthorityFor(…)` or the dep form
+   *  `this.d.toolAuthorityFor?.(…)`. Deliberately NOT satisfied by a mention: a TypeScript declaration
+   *  (`toolAuthorityFor?: (id: number) => …`) and a comment both name the symbol without resolving
+   *  anything, and a check a comment can satisfy proves nothing at all. */
+  const CALLS_RESOLVER = /\btoolAuthorityFor(?:User)?\s*(?:\?\.)?\(/;
+  /** The whole dependency object being handed to a collaborator — the one honest way a module can carry
+   *  the resolver without calling it (TurnRunner constructs TurnContextBuilder from its own deps). */
+  const FORWARDS_DEPS = /\.\.\.(?:this\.)?d\s*,/;
+  /** `toolPolicy` written as an object PROPERTY, shorthand included. Case-sensitive, so the `ToolPolicy`
+   *  type never counts. */
+  const ESTABLISHES_POLICY = /\btoolPolicy\s*[,:]/;
+
+  const modules = (): { path: string; code: string }[] => sourceFiles(root)
+    .map((path) => ({ path: path.slice(root.length), code: stripComments(readFileSync(path, 'utf-8')) }));
+
+  // Derived from the source, not from a list somebody has to remember to extend: whatever takes tool
+  // authority as a dependency is IN the check by construction, so a new surface cannot be born outside it.
+  it('every module that takes tool authority as a dependency actually resolves it', () => {
+    const holders = modules().filter(({ code }) => /\btoolAuthorityFor(?:User)?\b/.test(code));
+    // A rename that stopped matching would leave an empty set quietly passing.
+    expect(holders.length, 'the resolver seems to have been renamed — this check matches nothing').toBeGreaterThan(4);
+    const offenders = holders
+      .filter(({ code }) => !CALLS_RESOLVER.test(code) && !FORWARDS_DEPS.test(code))
+      .map(({ path }) => path);
+    expect(offenders, 'naming the resolver is not resolving anything: call it, or forward your deps to something that does').toEqual([]);
+  });
+
+  // The seam finding-1 hid in. A module that resolves an account's authority AND establishes turn scopes
+  // must put the one on the other: the task worker filtered its tool NAMES by the grant and then ran
+  // `runWithPolicy` without it, so inside the turn `currentToolPolicy()` was undefined — the execute-time
+  // gate was inert and every sub-agent it spawned was minted with no allow-list at all.
+  it('a module that resolves authority and establishes a turn scope puts the one on the other', () => {
+    const surfaces = modules().filter(({ code }) => CALLS_RESOLVER.test(code) && /\brunWithPolicy\s*\(/.test(code));
+    expect(surfaces.map((m) => m.path).sort(), 'the turn surfaces this contract covers')
+      .toEqual(['brain/service/turnContextBuilder.ts', 'brain/worker/brainWorker.ts']);
+    const offenders = surfaces.filter(({ code }) => !ESTABLISHES_POLICY.test(code)).map(({ path }) => path);
+    expect(offenders, 'resolved authority that never reaches runWithPolicy gates nothing').toEqual([]);
   });
 });
