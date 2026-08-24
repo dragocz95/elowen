@@ -41,7 +41,6 @@ import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
 import type { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.js';
-import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
 import { steerCustomMessage } from './session/steerCustomMessage.js';
@@ -223,8 +222,10 @@ export interface ChannelServiceDeps {
   /** Names a brand-new channel conversation from its first message (shared with owner chat). */
   titler?: ConversationTitler;
   /** Per-user settings: the memory toggles (autoRecall/autoSave), read fresh per turn for the verified
-   *  writer, plus the channel OWNER's auto-compact threshold applied when a channel session spawns. */
-  userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean; autoCompactAt?: number };
+   *  writer. The settings a SESSION is composed from (models, compaction thresholds, advisor style) are
+   *  deliberately absent here — the channel names the writer via SpawnOpts.settingsUserId and the spawner
+   *  reads them, so this surface cannot hold a second opinion about any of them. */
+  userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean };
   /** Parked AskUserQuestion registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
    *  emit an `ask` event to the channel's clients and await the answer (settled by a Discord interaction). */
   elicitation?: ElicitationRegistry;
@@ -493,11 +494,13 @@ export class ChannelSessionService {
           thinkingLevel: opts.thinkingLevel,
           fast: opts.fast,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
-          // …but at the OWNER'S threshold, not a fixed default: a channel session is their conversation
-          // too, and a hardcoded percentage here meant the Account setting silently never applied to
-          // Discord/WhatsApp. Only the global percentage is resolved at this level — the spawner layers
-          // the owner's per-model override on top (resolveAutoCompactPct), so the decision stays in one place.
-          autoCompactAtPct: this.d.userSettings?.(ownerUserId)?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
+          // …at the WRITER'S personal settings, not the room opener's. A room is owned by whoever opened
+          // it, which is bookkeeping only, so composing the session from that account meant one
+          // colleague's default model, compaction model, thresholds and advisor style answered everyone
+          // else in the room. An unlinked sender carries no account, so the owner still stands. Every
+          // one of those settings is read from this single id inside the spawner; resolving even one of
+          // them here would be the second opinion that let the threshold drift from the model.
+          settingsUserId: opts.writerUserId ?? ownerUserId,
           // A delegated child inherits its parent's working directory (set only for subagent sends); an
           // ordinary platform channel leaves this undefined and resolves its cwd from the policy root.
           clientCwd: opts.clientCwd,

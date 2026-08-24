@@ -1243,7 +1243,11 @@ export class BrainService {
    *
    *  No respawn happens here — PI reads its compaction settings at each check, so replacing the reserve in
    *  place is enough. Channels keep proactive compaction ALWAYS on (long-lived and unattended); only the
-   *  threshold follows the owner, exactly as at spawn. */
+   *  threshold follows, exactly as at spawn.
+   *
+   *  Matched on the id the session was COMPOSED from, never on who owns the row: a room belongs to
+   *  whoever opened it, so keying this on ownership would push that person's personal threshold back
+   *  onto a room composed for a different writer the next time they saved their settings. */
   applyAutoCompactSettings(userId: number): void {
     const settings = this.d.userSettings?.(userId);
     const globalPct = settings?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT;
@@ -1251,12 +1255,12 @@ export class BrainService {
     const pctFor = (live: LiveBrain): number => (live.providerId
       ? resolveAutoCompactPct(settings?.autoCompactAtByModel, live.providerId, live.model, globalPct)
       : globalPct);
-    for (const [sessionId, live] of this.sessions.liveEntries()) {
-      if (this.d.store.getSession(sessionId)?.user_id !== userId) continue;
+    for (const [, live] of this.sessions.liveEntries()) {
+      if (live.settingsUserId !== userId) continue;
       live.applyCompaction(!!settings?.autoCompact, pctFor(live));
     }
     for (const [, live] of this.sessions.channelEntries()) {
-      if (this.d.store.getSession(live.sessionId)?.user_id !== userId) continue;
+      if (live.settingsUserId !== userId) continue;
       live.applyCompaction(true, pctFor(live));
     }
   }

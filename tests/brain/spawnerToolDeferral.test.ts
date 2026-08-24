@@ -78,7 +78,7 @@ function makeSpawner(
     create,
     spawn: () => spawner.spawn({
       sessionId: 'sess-1', ownerUserId: 1, selection: {}, policy,
-      autoCompact: false, autoCompactAtPct: 80,
+      autoCompact: false,
     }),
   };
 }

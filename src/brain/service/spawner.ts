@@ -18,7 +18,7 @@ import { currentWorkDir } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
-import type { LiveBrain, SpawnOpts, QueuedMsg, TurnContextBlocks } from '../session/liveBrain.js';
+import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
@@ -113,14 +113,30 @@ export class LiveSessionSpawner {
     // Azure capability map. A settings change applies on the next respawn, never mid-turn.
     const runtime = this.d.runtimeConfig?.();
     const registry = buildBrainRegistry(cfg, this.d.runtime);
-    // The owner's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
+    // WHOSE personal preferences compose this session. A room belongs to whoever OPENED it, which is
+    // bookkeeping and not a mandate: reading settings off that account made one colleague's personal
+    // model, compaction model, thresholds and advisor style answer for everyone else in the room. The
+    // caller therefore names the verified writer (channels.ts); a surface with one sender omits the
+    // argument and its owner stands, as does an unlinked sender, a cron turn or instance automation.
+    //
+    // Resolved ONCE, here, because every setting below feeds an input the session is BUILT from and
+    // cannot change without rebuilding it: the model route (chat + compaction model), the system prompt
+    // (advisor style) and the compaction budget. They are therefore spawn-fixed by construction and
+    // follow the writer whose turn spawns — not a per-turn value quietly frozen at spawn. Re-resolving
+    // them per turn would mean disposing and rehydrating the room's whole transcript whenever two people
+    // with different defaults take turns, which costs the prompt cache and breaks the coupling between a
+    // transcript and the model that produced it. An explicit `/model` for the room still wins over all
+    // of this, and the room re-reads the current writer's settings on every respawn (rollover, model
+    // switch, eviction, restart).
+    const settingsUserId = opts.settingsUserId ?? ownerUserId;
+    // The writer's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
     // session model (or the provider's stable default). Validated at save time; resolved defensively here
     // so a since-revoked/removed pick never blocks the session.
-    const settings = this.d.userSettings?.(ownerUserId);
+    const settings = this.d.userSettings?.(settingsUserId);
     const compactSel = settings?.compactModel && settings.compactModelProvider
       ? { provider: settings.compactModelProvider, model: settings.compactModel }
       : undefined;
-    // The owner's per-user chat-model choice fills in only when NO explicit selection is in play: an
+    // The writer's per-user chat-model choice fills in only when NO explicit selection is in play: an
     // empty selection would otherwise resolve to cfg.providers[0].models[0] — the first model of the
     // first provider in LIST order, not anyone's default — which once dropped a session on an
     // image-only model that cannot hold a conversation. Both parts must be set together: model ids are
@@ -132,9 +148,14 @@ export class LiveSessionSpawner {
     const route = resolveBrainModelRoute(registry, cfg, selection, compactSel);
     const { model } = route;
     // Per-model auto-compact threshold: the user's override for THIS model (keyed providerId/model) wins
-    // over the global percentage carried in opts. Each model's own contextWindow then turns the percentage
-    // into the right absolute reserve down in the factory.
-    const autoCompactAtPct = resolveAutoCompactPct(settings?.autoCompactAtByModel, route.providerId, model.id, opts.autoCompactAtPct);
+    // over their global percentage, which in turn wins over the built-in default. Both halves are read
+    // from the SAME settings id — resolving the global percentage at a call site (as every spawn caller
+    // used to) is how a room ended up compacting at the opener's threshold with the writer's per-model
+    // override layered on top of it. Each model's own contextWindow then turns the percentage into the
+    // right absolute reserve down in the factory.
+    const autoCompactAtPct = resolveAutoCompactPct(
+      settings?.autoCompactAtByModel, route.providerId, model.id, settings?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
+    );
     const capabilities = modelCapabilities(model);
     // One resolver owns OAuth, official API-key and probe-backed Azure classification. It consumes the
     // config entry (auth + URL), never guesses from PI's registry provider name.
@@ -300,7 +321,7 @@ export class LiveSessionSpawner {
     // so the brain knows it is Elowen — not the underlying model's default persona.
     const u = this.d.users.get(ownerUserId);
     const userName = u?.name || u?.username || 'Filip';
-    const personality = personalityText(this.d.userSettings?.(ownerUserId)?.advisorStyle ?? '');
+    const personality = personalityText(settings?.advisorStyle ?? '');
     const brand = this.d.brand?.() ?? DEFAULT_BRAND;
     const agentName = brand.agentName;
     const productName = brand.productName;
@@ -451,7 +472,7 @@ export class LiveSessionSpawner {
       };
     };
     live = {
-      session, sessionId, ownerUserId, direct: opts.direct === true,
+      session, sessionId, ownerUserId, settingsUserId, direct: opts.direct === true,
       model: model.id, providerId, provider: model.provider, thinkingLevel: opts.thinkingLevel,
       requestProfile, fastAvailable: capabilities.fast,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),

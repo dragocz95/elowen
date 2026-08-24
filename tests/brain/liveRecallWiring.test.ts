@@ -48,7 +48,7 @@ async function buildWithLiveRecall(retrieve: (q: string) => Promise<{ id: number
     runtime: undefined,
     model: { id: 'test-model', provider: 'anthropic', contextWindow: 200_000 },
     cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
-    autoCompact: false, autoCompactAtPct: 80,
+    autoCompact: false,
     liveRecall: {
       budget: () => ({ passes: 10, count: 8, bytes: 6000 }),
       enabled: () => true,
@@ -155,7 +155,7 @@ describe('live recall wiring — a real session reaches the recall pass', () => 
       sessionId: 'brain-1', ownerUserId: 1, runtime: undefined,
       model: { id: 'test-model', provider: 'anthropic', contextWindow: 200_000 },
       cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
-      autoCompact: false, autoCompactAtPct: 80,
+      autoCompact: false,
     } as never);
 
     expect(handlers.context).toBeUndefined();

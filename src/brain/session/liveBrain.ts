@@ -56,6 +56,12 @@ export interface LiveBrain {
   sessionId: string;
   /** Spawn-time ownership/classification inputs that determine skills, instructions and tool composition. */
   ownerUserId: number;
+  /** WHOSE personal settings this session was actually composed from (see SpawnOpts.settingsUserId) —
+   *  the verified writer in a room, the owner everywhere else. Anything that re-applies a saved setting
+   *  to an ALREADY LIVE session has to match on this rather than on who owns the row: a room's owner is
+   *  only whoever opened it, so re-thresholding their rooms would put their personal preference back on
+   *  a session composed for somebody else, one settings save later. */
+  settingsUserId: number;
   direct: boolean;
   model: string;
   /** The CONFIG provider entry id the model resolved from (selection.provider, else the default first
@@ -250,12 +256,17 @@ export interface SpawnOpts {
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** WHOSE personal settings compose this session — chat model, compaction model, auto-compact
+   *  thresholds and advisor style. A shared room serves several people, so its caller names the VERIFIED
+   *  WRITER of the turn that is spawning: a room's owner is only whoever opened it, and their personal
+   *  preferences must not answer for everybody else. Omitted on a single-sender surface (owner chat) and
+   *  whenever there is no verified writer at all (an unlinked platform sender, a cron turn, instance
+   *  automation), where `ownerUserId` stands. There is deliberately no per-setting override beside it:
+   *  the spawner reads every one of them from this one id, so they cannot drift apart. */
+  settingsUserId?: number;
   /** PI's built-in auto-compaction toggle for this session (the owner's per-user setting; always on for
    *  long-lived channels). */
   autoCompact: boolean;
-  /** Context-window fill percentage (30–95) at which PI auto-compacts — mapped to PI's reserveTokens in
-   *  the factory. Channels pass the default; owner chat passes the user's %. */
-  autoCompactAtPct: number;
   /** The client-reported working directory (the CLI sends where it was launched). Validated against
    *  the policy before use — see BrainService.turnWorkDir — and preferred as the session cwd, which pi
    *  advertises to the model ("Current working directory: …"). */

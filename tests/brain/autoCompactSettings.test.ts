@@ -90,9 +90,10 @@ const reserveOf = (manager: SettingsManager): number => manager.getCompactionRes
 const policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
 
 describe('auto-compact threshold on channel sessions', () => {
-  it('spawns a channel at the OWNER’S percentage instead of the built-in default', async () => {
+  it('spawns a channel at the OWNER’S percentage when the sender is unlinked', async () => {
     // Regression: channels hardcoded DEFAULT_AUTO_COMPACT_PCT, so an owner running their clients on
-    // Discord never got the threshold they configured in Account → CLI.
+    // Discord never got the threshold they configured in Account → CLI. An unlinked sender carries no
+    // account of their own, so the room's owner is the only row there is to read.
     const { svc, spawned, models, settingsReads } = brainHarness((id) => (id === 1
       ? { autoCompact: true, autoCompactAt: 50 }
       : { autoCompact: true, autoCompactAt: 25 }));
@@ -104,6 +105,20 @@ describe('auto-compact threshold on channel sessions', () => {
     expect(settingsReads).toContain(1);
     expect([...new Set(settingsReads)]).toEqual([1]);
     expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 50));
+  });
+
+  it('compacts a room at the WRITER’S percentage, not the room opener’s', async () => {
+    // A room belongs to whoever opened it, and that is bookkeeping only: composing the session from that
+    // account made one colleague's personal threshold govern everybody else's turns in the room.
+    const { svc, spawned, models, settingsReads } = brainHarness((id) => (id === 1
+      ? { autoCompact: true, autoCompactAt: 50 }
+      : { autoCompact: true, autoCompactAt: 25 }));
+
+    await svc.channelSend({ channelId: 'c-writer', ownerUserId: 1, writerUserId: 2, policy }, 'ahoj');
+
+    // The opener's row must not be consulted at all — not even as a second opinion behind the writer's.
+    expect([...new Set(settingsReads)]).toEqual([2]);
+    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
   });
 
   it('lets the owner’s per-model override win for a channel session', async () => {
@@ -155,6 +170,27 @@ describe('auto-compact threshold on live sessions', () => {
     expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 45));
     expect(reserveOf(spawned[1]!.settings)).toBe(compactionReserveTokens(models[1]!.contextWindow, true, 45));
     expect(createSession.mock.calls).toHaveLength(spawnCalls); // applied in place, no respawn
+  });
+
+  it('leaves a room composed for another writer alone when its opener saves settings', async () => {
+    // The room belongs to 1 because they opened it; it was composed for writer 2. Re-applying on
+    // ownership would hand the opener's personal threshold back to a session that is not theirs to set.
+    let settings: Record<number, CliSettings> = {
+      1: { autoCompact: true, autoCompactAt: 80 },
+      2: { autoCompact: true, autoCompactAt: 25 },
+    };
+    const { svc, spawned, models } = brainHarness((id) => settings[id]);
+    await svc.channelSend({ channelId: 'c-composed', ownerUserId: 1, writerUserId: 2, policy }, 'ahoj');
+    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
+
+    settings = { 1: { autoCompact: true, autoCompactAt: 45 }, 2: { autoCompact: true, autoCompactAt: 25 } };
+    svc.applyAutoCompactSettings(1);
+    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 25));
+
+    // The writer it WAS composed for still reaches it, without a respawn — the whole point of this path.
+    settings = { 1: { autoCompact: true, autoCompactAt: 45 }, 2: { autoCompact: true, autoCompactAt: 30 } };
+    svc.applyAutoCompactSettings(2);
+    expect(reserveOf(spawned[0]!.settings)).toBe(compactionReserveTokens(models[0]!.contextWindow, true, 30));
   });
 
   it('honours a per-model override and leaves another user’s live sessions untouched', async () => {

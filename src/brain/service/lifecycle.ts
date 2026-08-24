@@ -4,7 +4,6 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { BrainEvent } from '../events.js';
 import { sendLockKey, type LiveSessionRegistry } from '../session/liveRegistry.js';
-import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
 import { rolloverDue } from '../session/idleRollover.js';
 import { decideVisionHop } from '../visionFallback.js';
@@ -352,7 +351,6 @@ export class ConversationLifecycle {
         thinkingLevel: o.thinkingLevel === null ? undefined : (o.thinkingLevel ?? userCfg?.thinkingLevel),
         fast: o.fast,
         autoCompact: !!userCfg?.autoCompact,
-        autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: resolvedCwd,
       });
       if (o.explicitResume) live.interactedAt = Date.now();
@@ -407,7 +405,6 @@ export class ConversationLifecycle {
           policy,
           fast: prevFast,
           autoCompact: !!userCfg?.autoCompact,
-          autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
           clientCwd: prevWorkDir,
         });
       } catch (error) {
@@ -528,7 +525,6 @@ export class ConversationLifecycle {
         thinkingLevel: previous.thinkingLevel ?? undefined,
         fast: previous.requestProfile.fast,
         autoCompact: !!userCfg?.autoCompact,
-        autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: prevWorkDir,
       });
       live.interactedAt = Date.now(); // a clear is a deliberate touch — don't idle-roll it over
