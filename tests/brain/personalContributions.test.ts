@@ -13,6 +13,8 @@ import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.
 import type { Policy } from '../../src/plugins/policy.js';
 import { ChannelSessionService } from '../../src/brain/channels.js';
 import { LiveSessionRegistry } from '../../src/brain/session/liveRegistry.js';
+import { LiveSessionSpawner } from '../../src/brain/service/spawner.js';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import { LiveEventReplay } from '../../src/brain/session/liveEventReplay.js';
 import { CardRegistry } from '../../src/brain/cards.js';
 import { channelSessionId } from '../../src/brain/sessionId.js';
@@ -348,7 +350,61 @@ describe('a room turn resolves personal contributions for whoever is writing', (
 });
 
 // ---------------------------------------------------------------------------------------------------
-// 4. Mechanical contract: ownership is decided in one place, and reaches the turn.
+// 4. What the REAL spawner composes, on each kind of session.
+// ---------------------------------------------------------------------------------------------------
+
+describe('the spawner composes a room differently from a session that has one owner', () => {
+  const spawned = async (sessionId: string, opts: { channel?: boolean; direct?: boolean }) => {
+    const plugins = registryWith([
+      { name: 'mcp__amy__echo', ownerUserId: 2 },
+      { name: 'mcp__bob__echo', ownerUserId: 3 },
+    ]);
+    for (const [name, ownerUserId] of [['shared-runbook', null], ['amy-checklist', 2]] as [string, number | null][]) {
+      plugins.skills.push({ name, description: `does ${name}`, filePath: `/s/${name}.md`, baseDir: '/s' } as never);
+      plugins.skillOwners.push('skills');
+      plugins.skillOwnerUsers.push(ownerUserId);
+    }
+    const create = vi.fn(async () => ({ session: { sessionId, subscribe: () => () => {} }, applyCompaction: vi.fn() }));
+    const spawner = new LiveSessionSpawner({
+      config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://relay.example/v1', models: ['gpt-5'], apiKey: 'k' }] },
+      store: new BrainStore(openDb(':memory:')),
+      runtime: await inMemoryModelRuntime(),
+      users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Amy', username: 'amy' }) },
+      prompts: { render: () => 'PERSONA' },
+      url: 'http://x',
+      plugins: async () => plugins,
+      factory: { create },
+      sessionTaps: () => [],
+    } as never);
+    const live = await spawner.spawn({ sessionId, ownerUserId: 2, selection: {}, policy: POLICY, autoCompact: false, ...opts } as never);
+    const spec = create.mock.calls.at(-1)![0] as unknown as { tools: { name: string }[]; appendSystemPrompt: string[] };
+    return { live, tools: spec.tools.map((t) => t.name), append: spec.appendSystemPrompt.join('\n') };
+  };
+
+  it('gives a room every account\'s personal tools and no baked-in skills block', async () => {
+    const room = await spawned(channelSessionId('discord-x'), { channel: true, direct: false });
+    expect(room.tools).toContain('mcp__amy__echo');
+    expect(room.tools).toContain('mcp__bob__echo');
+    expect([...room.live.personalToolOwners!]).toEqual([['mcp__amy__echo', 2], ['mcp__bob__echo', 3]]);
+    expect(room.live.contributionUserId).toBeNull();
+    // The announcement cannot live in the cached prefix here: it has to follow the writer, like the
+    // authorisation does. It arrives with each turn instead (see the room turn tests above).
+    expect(room.append).not.toContain('available_skills');
+  });
+
+  it('gives a session that HAS an owner only their own, announced once in the cached prompt', async () => {
+    const own = await spawned('brain-2', {});
+    expect(own.tools).toContain('mcp__amy__echo');
+    expect(own.tools).not.toContain('mcp__bob__echo');
+    expect(own.live.personalToolOwners).toBeUndefined();
+    expect(own.live.contributionUserId).toBe(2);
+    expect(own.append).toContain('amy-checklist');
+    expect(own.append).toContain('shared-runbook');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// 5. Mechanical contract: ownership is decided in one place, and reaches the turn.
 // ---------------------------------------------------------------------------------------------------
 
 function sourceFiles(dir: string): string[] {
