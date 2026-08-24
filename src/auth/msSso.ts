@@ -10,12 +10,22 @@ import { MicrosoftGraphDirectoryError, MicrosoftGraphMembership } from './msGrap
 import type { EventBus } from '../api/sse.js';
 import type { AgentsAdvisorHooks } from '../plugins/api.js';
 import { logger } from '../shared/logger.js';
+import { platformIdentity } from '../shared/platformIdentity.js';
 
 const FLOW_TTL_MS = 10 * 60_000;
 const DISCOVERY_TTL_MS = 24 * 60 * 60_000;
 const MAX_FLOWS = 500;
 const TOKEN_TIMEOUT_MS = 10_000;
 const PROVIDER = 'msteams';
+/** The setting key holding the Teams link, taken from the identity descriptor rather than spelled here:
+ *  this file READS that link to upgrade a Teams-bootstrapped account to a real SSO binding, and a second
+ *  spelling of the key would silently stop finding it the day the descriptor changed. Missing descriptor
+ *  is a startup error, not a lookup that quietly answers "nobody". */
+const TEAMS_LINK_KEY = ((): string => {
+  const key = platformIdentity(PROVIDER)?.linkSettingKey;
+  if (!key) throw new Error(`msSso: no platform identity descriptor for '${PROVIDER}'`);
+  return key;
+})();
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type MicrosoftSsoErrorCode =
@@ -160,7 +170,7 @@ export class MicrosoftSsoService {
     this.graph = new MicrosoftGraphMembership(d.clock, this.fetchImpl);
   }
 
-  providers(): { id: 'msteams'; label: 'Microsoft' }[] {
+  providers(): { id: typeof PROVIDER; label: 'Microsoft' }[] {
     return this.activeConfig() && this.d.users.count() > 0 ? [{ id: PROVIDER, label: 'Microsoft' }] : [];
   }
 
@@ -228,7 +238,7 @@ export class MicrosoftSsoService {
         }
       }
       if (!user && email && GUID.test(identity.objectId)) {
-        const tofuUserId = this.d.userSettings?.userIdBySetting('msteamsUserId', identity.objectId) ?? null;
+        const tofuUserId = this.d.userSettings?.userIdBySetting(TEAMS_LINK_KEY, identity.objectId) ?? null;
         const emailUser = this.d.users.userByUniqueEmail(email);
         if (tofuUserId !== null && emailUser?.id === tofuUserId) {
           if (identity.claims.acct === undefined) await requireDirectoryMember();
@@ -248,7 +258,7 @@ export class MicrosoftSsoService {
             throw error;
           }
         } else if (tofuUserId !== null) {
-          this.d.userSettings?.remove(tofuUserId, 'msteamsUserId');
+          this.d.userSettings?.remove(tofuUserId, TEAMS_LINK_KEY);
         }
       }
       if (!user && email && this.d.users.hasAmbiguousEmail(email)) {

@@ -27,10 +27,12 @@
  *  rides on that validated identity. Discord, WhatsApp and Telegram report a sender id and nothing a
  *  third party has vouched for, so they carry no bootstrap and must be linked explicitly.
  *
- *  Structurally it cannot fire where it was not earned either: `verifiedEmailUnique` only ever runs on
- *  an e-mail the CALLER passed in as platform-verified, and the only caller that passes one is the
- *  Teams identity path. A descriptor asserting it for a platform whose adapter has no verified e-mail
- *  to hand over simply never reaches the branch.
+ *  What it does NOT do is authenticate the e-mail. `verifiedEmailUnique` runs on whatever e-mail the
+ *  CALLER hands over as platform-verified, and the resolver is exposed to every loaded plugin through
+ *  `PluginHostExternalUsers.resolvePlatformUser` — so any plugin can pass `platform: 'msteams'` with an
+ *  e-mail of its choosing and self-link to that account. Plugins are in-process trusted code (they can
+ *  already reach the store directly), so this is not an escalation, but the trust boundary is the
+ *  PLUGIN SET, not the Teams adapter. Do not read this branch as if core validated the e-mail.
  */
 export interface PlatformIdentityBootstrap {
   /** Bind the sender to the single account holding this platform-verified e-mail, then persist the
@@ -105,7 +107,21 @@ export const PLATFORM_IDENTITIES = [
     // A sender arrives as a JID (`420778433908@s.whatsapp.net`, sometimes with a `:device` part); a
     // user types a phone number. Dropping everything from the first `@`/`:` and then every non-digit
     // maps both onto the same international-form number.
-    normalize: (raw: string) => digits(raw.replace(/[@:].*$/, '')),
+    //
+    // EXCEPT `@lid`. Baileys 7 addresses a contact that hides its number by an internal LID whose local
+    // part is digits too, and the adapter falls back to it whenever the phone-number alt field is
+    // absent. A LID and a phone number are DISJOINT namespaces: normalising a LID here would compare
+    // its digits against stored phone numbers, so a LID that happens to equal somebody's number would
+    // resolve the sender TO THAT ACCOUNT. Refusing costs those senders the ability to link at all —
+    // they resolve to nobody and their turns stay unattributed — until a separate LID identity (its own
+    // setting key and unique index, fed by a value the user can actually read off their own client) is
+    // added. That is the right trade: unlinkable is recoverable, misattributed is not.
+    normalize: (raw: string) => {
+      const jid = raw.trim();
+      const at = jid.indexOf('@');
+      if (at >= 0 && jid.slice(at + 1).toLowerCase() === 'lid') return '';
+      return digits(jid.replace(/[@:].*$/, ''));
+    },
     validate: (value: string) => /^\d{6,15}$/.test(value),
     conflictMessage: 'Toto WhatsApp číslo už má propojené jiný uživatel.',
   },
@@ -131,10 +147,21 @@ export function platformIdentity(platform: string): PlatformIdentityDescriptor |
  *  of at the moment somebody's identity is resolved:
  *  - one descriptor per platform, per setting key and per index name, so no platform can shadow
  *    another's link rows or silently share its uniqueness guarantee;
- *  - key and index names are plain identifiers, because `db.ts` interpolates them into DDL. */
+ *  - key and index names are plain identifiers, because `db.ts` interpolates them into DDL.
+ *
+ *  It also FREEZES the set. `as const` is a compile-time promise only, and `d.indexName` /
+ *  `d.linkSettingKey` are interpolated straight into DDL: anything that could reach these objects at
+ *  runtime and assign to them would be writing SQL. Nothing does today — the indexes are created while
+ *  the database opens, long before any plugin loads — so this is a lock on the door, not a fix for a
+ *  break-in. */
 function assertDescriptors(): void {
   const seen = new Map<string, string>();
-  for (const d of PLATFORM_IDENTITIES) {
+  Object.freeze(PLATFORM_IDENTITIES);
+  // Walked as the INTERFACE, not as the `as const` union: the literal type of a descriptor without a
+  // bootstrap has no such property at all, and this loop must treat every descriptor alike.
+  for (const d of PLATFORM_IDENTITIES as readonly PlatformIdentityDescriptor[]) {
+    Object.freeze(d);
+    if (d.bootstrap) Object.freeze(d.bootstrap);
     for (const [what, value] of [['platform', d.platform], ['link key', d.linkSettingKey], ['index', d.indexName]] as const) {
       const owner = seen.get(`${what}:${value}`);
       if (owner) throw new Error(`platform identity: ${what} '${value}' is claimed by both ${owner} and ${d.platform}`);

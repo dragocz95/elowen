@@ -196,6 +196,20 @@ describe('UserSettingStore', () => {
     expect(s.cliSettings(2).msteamsUserId).toBe('');
   });
 
+  // The two writers are not the same operation. The account holder submitting a field they emptied or
+  // mistyped is unlinking themselves; an inbound sender id we cannot parse is a message we failed to
+  // understand, and must leave the stored link exactly where it was.
+  it('clears on a user edit but never on an unparseable inbound id', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    const guid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    s.setCliSettings(1, { msteamsUserId: guid });
+    s.setPlatformLink(1, 'msteams', `8:orgid:${guid}`);
+    expect(s.cliSettings(1).msteamsUserId).toBe(guid);
+    expect(s.userIdBySetting('msteamsUserId', guid)).toBe(1);
+    s.setCliSettings(1, { msteamsUserId: 'not-a-teams-id' });
+    expect(s.cliSettings(1).msteamsUserId).toBe('');
+  });
+
   // DERIVED from the identity descriptors, so a platform added there is covered here without anybody
   // remembering to write a test: every link normalises, round-trips, reverse-looks-up, clears on a value
   // its own validator rejects, and refuses a second owner with the descriptor's own message.

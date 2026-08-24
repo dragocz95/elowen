@@ -170,11 +170,12 @@ export class UserSettingStore {
       // Global agent instructions. The persisted key stays `personalityBody` for downgrade compatibility;
       // the API exposes the semantic `userInstructions` name. Empty is a valid clear operation.
       if (patch.personalityBody !== undefined) this.set(userId, 'personalityBody', patch.personalityBody);
-      // Platform links, one loop over the identity descriptors. A value that does not normalise into a
-      // plausible identity (including empty) clears the link.
+      // Platform links, one loop over the identity descriptors. This patch is the account holder EDITING
+      // their own fields, so a value that does not normalise into a plausible identity (empty included)
+      // is them clearing the link.
       for (const descriptor of PLATFORM_IDENTITIES) {
         const raw = patch[descriptor.linkSettingKey];
-        if (raw !== undefined) this.writePlatformLink(userId, descriptor, raw);
+        if (raw !== undefined) this.writePlatformLink(userId, descriptor, raw, 'clear');
       }
     })();
   }
@@ -183,10 +184,18 @@ export class UserSettingStore {
    *  squatter could claim the operator's id and have that account's messages (and its memory namespace
    *  and admin flag) attributed to themselves. The descriptor's partial UNIQUE index rejects the write
    *  atomically, so there is no check-then-act race; we surface it as a typed conflict the route can
-   *  answer 409 to. Re-setting one's OWN id stays idempotent. */
-  private writePlatformLink(userId: number, descriptor: PlatformIdentityDescriptor, raw: string): void {
+   *  answer 409 to. Re-setting one's OWN id stays idempotent.
+   *
+   *  `onInvalid` is the whole difference between the two callers. A user submitting a field they emptied
+   *  or mistyped means "unlink me" — but an INBOUND sender id nobody recognises means only that: an
+   *  unparseable identifier is not consent to destroy a working link. A single legacy `8:orgid:…` Teams
+   *  MRI arriving used to wipe a perfectly good stored GUID and lock the account out of its own channel. */
+  private writePlatformLink(userId: number, descriptor: PlatformIdentityDescriptor, raw: string, onInvalid: 'clear' | 'keep'): void {
     const value = descriptor.normalize(String(raw));
-    if (!descriptor.validate(value)) { this.remove(userId, descriptor.linkSettingKey); return; }
+    if (!descriptor.validate(value)) {
+      if (onInvalid === 'clear') this.remove(userId, descriptor.linkSettingKey);
+      return;
+    }
     try { this.set(userId, descriptor.linkSettingKey, value); }
     catch (e) {
       if (isUniqueViolation(e)) throw new PlatformLinkConflictError(descriptor.platform, descriptor.linkSettingKey, value, descriptor.conflictMessage);
@@ -196,11 +205,12 @@ export class UserSettingStore {
 
   /** Link a platform sender id to an account, by platform rather than by setting field — what the
    *  inbound identity resolver needs when it bootstraps a link it has just established. Unknown
-   *  platforms are a no-op: an identity model we do not have cannot be persisted into one we do. */
+   *  platforms are a no-op: an identity model we do not have cannot be persisted into one we do, and an
+   *  id whose shape we do not recognise is likewise a no-op rather than an erase. */
   setPlatformLink(userId: number, platform: string, rawValue: string): void {
     const descriptor = platformIdentity(platform);
     if (!descriptor) return;
-    this.db.transaction(() => { this.writePlatformLink(userId, descriptor, rawValue); })();
+    this.db.transaction(() => { this.writePlatformLink(userId, descriptor, rawValue, 'keep'); })();
   }
 
   /** A user's explicitly selected provider/model for one canonical Git project root. The JSON map is

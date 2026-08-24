@@ -139,6 +139,38 @@ describe('buildBrainCore descriptor-driven platform identity', () => {
     } finally { core.db.close(); }
   });
 
+  // A `@lid` is WhatsApp's internal identifier, and the adapter falls back to it whenever the contact
+  // hides its number. Its local part is digits, so treating it as a phone number would resolve a
+  // stranger onto whichever account happens to hold that number — identity confusion, not a near miss.
+  it('never resolves a WhatsApp LID into the phone-number namespace', async () => {
+    const { core, bob, resolve } = await setup();
+    try {
+      core.userSettings.setCliSettings(bob.id, { whatsappNumber: '420778433908' });
+      expect(resolve('whatsapp', '420778433908@lid')).toBeNull();
+      expect(resolve('whatsapp', '420778433908:7@lid')).toBeNull();
+      // …and a LID cannot be stored as a number from the account view either.
+      core.userSettings.setCliSettings(bob.id, { whatsappNumber: '999888777666@lid' });
+      expect(core.userSettings.cliSettings(bob.id).whatsappNumber).toBe('');
+    } finally { core.db.close(); }
+  });
+
+  // An inbound id whose shape we do not recognise says nothing about the link the account already has.
+  // A legacy `8:orgid:<guid>` MRI used to run through the same clear-on-invalid path as a user emptying
+  // the field, wiping a working link and locking the account out of its own channel.
+  it('keeps an existing link when an unparseable inbound id arrives', async () => {
+    const { core, owner, resolve } = await setup();
+    try {
+      const guid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+      core.users.setProfile(owner.id, { email: 'owner@example.com' });
+      core.userSettings.setCliSettings(owner.id, { msteamsUserId: guid });
+      // The bootstrap path: no explicit link for THIS id, unique e-mail match, so it tries to persist.
+      expect(resolve('msteams', `8:orgid:${guid}`, 'owner@example.com')).toMatchObject({ id: owner.id });
+      expect(core.userSettings.cliSettings(owner.id).msteamsUserId).toBe(guid);
+      // The real id still resolves — the link was never touched.
+      expect(resolve('msteams', guid)).toMatchObject({ id: owner.id });
+    } finally { core.db.close(); }
+  });
+
   // Only a platform whose descriptor EARNS a bootstrap may self-link. Discord/Telegram/WhatsApp report a
   // sender id and no third-party evidence, so verified-looking e-mail must not bind them to an account.
   it('never self-links a platform without a bootstrap, however good the e-mail evidence looks', async () => {

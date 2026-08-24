@@ -27,26 +27,56 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
+/** The ONLY places in `src/` allowed to spell a platform out, each pinned to the exact snippet that may
+ *  do so and to the reason it is not a re-listed identity model. Pinning the snippet rather than the file
+ *  keeps the exemption honest: any OTHER platform literal in the same file still offends, and an
+ *  exemption whose snippet has disappeared fails rather than quietly covering nothing. */
+const PLATFORM_LITERAL_EXEMPTIONS: readonly { file: string; snippet: string; reason: string }[] = [
+  {
+    file: 'shared/wireContract.ts',
+    snippet: "export type PlatformSurface = 'discord' | 'msteams' | 'telegram' | 'whatsapp';",
+    reason: 'declares the union itself — wireContract may import nothing, and the test below pins it to the descriptors',
+  },
+  {
+    file: 'store/db.ts',
+    snippet: "for (const name of ['discord', 'whatsapp']) if (configs?.[name])",
+    reason: 'the plugins carrying a `visionModel` config — a DIFFERENT set that happens to share two names, mirrored in configStore',
+  },
+  {
+    file: 'store/configStore.ts',
+    snippet: "[['discord', 'visionModel'], ['whatsapp', 'visionModel']",
+    reason: 'the same visionModel plugin-config set as the db migration above',
+  },
+  {
+    file: 'auth/msSso.ts',
+    snippet: "const PROVIDER = 'msteams';",
+    reason: 'this module IS the Microsoft provider adapter; the literal is its OAuth provider id, and the link KEY it writes comes from the descriptor',
+  },
+];
+
 describe('platform identity is data, not literals', () => {
-  // The whole point of the descriptor set: a file that CONSUMES it must not also re-list what it
-  // consumes. The file set is DERIVED from the import graph rather than written out here, so a new
-  // consumer is covered the moment it imports, and this cannot pass by having stopped covering anything.
-  it('no consumer of the descriptors re-lists a platform or a link key', () => {
-    const consumers = tsFiles(SRC)
-      .filter((path) => path !== DESCRIPTOR_MODULE)
-      .map((path) => ({ path, code: withoutComments(readFileSync(path, 'utf8')) }))
-      .filter(({ code }) => code.includes('shared/platformIdentity.js'));
-    expect(consumers.length).toBeGreaterThanOrEqual(6);
-    const offenders = consumers.flatMap(({ path, code }) => {
-      // An identity KEY is unambiguous: naming one is always re-listing an identity model. A platform
-      // ID is not — `db.ts` legitimately lists the plugins that carry a `visionModel` config, which is
-      // a different set that happens to be spelled with the same words. So the platform half of the
-      // rule applies to the files that took the generated surface list, which are exactly the files
-      // that used to spell the union out by hand.
-      const needles = code.includes('PLATFORM_SURFACES') ? [...PLATFORM_SURFACES, ...PLATFORM_LINK_KEYS] : [...PLATFORM_LINK_KEYS];
-      return needles.flatMap((needle) => quotedLiterals(code, needle).map(() => `${path.slice(SRC.length + 1)}: '${needle}'`));
+  // The whole point of the descriptor set: nothing but the descriptors gets to enumerate platforms or
+  // identity keys. The file set is EVERY source file, not the ones that import the module — a consumer
+  // that re-lists the platforms is most dangerous precisely when it never imported them (that is how
+  // Telegram ended up supported in three files and absent from a fourth). Legitimate exceptions are
+  // named above with their reason; there is no way to opt out by omission.
+  it('nothing outside the descriptor module re-lists a platform or a link key', () => {
+    const files = tsFiles(SRC).filter((path) => path !== DESCRIPTOR_MODULE);
+    expect(files.length).toBeGreaterThanOrEqual(50);
+    const offenders = files.flatMap((path) => {
+      const rel = path.slice(SRC.length + 1);
+      let code = withoutComments(readFileSync(path, 'utf8'));
+      for (const exemption of PLATFORM_LITERAL_EXEMPTIONS.filter((e) => e.file === rel)) {
+        expect(code, `stale exemption: ${rel} no longer contains ${exemption.snippet}`).toContain(exemption.snippet);
+        code = code.split(exemption.snippet).join('');
+      }
+      return [...PLATFORM_SURFACES, ...PLATFORM_LINK_KEYS]
+        .flatMap((needle) => quotedLiterals(code, needle).map(() => `${rel}: '${needle}'`));
     });
     expect(offenders).toEqual([]);
+    // …and the descriptors really are consumed rather than merely un-contradicted.
+    const consumers = tsFiles(SRC).filter((path) => readFileSync(path, 'utf8').includes('shared/platformIdentity.js'));
+    expect(consumers.length).toBeGreaterThanOrEqual(6);
   });
 
   // `resolvePlatformUser` decides WHO a sender is; a platform literal in it is the exact shape of the
@@ -108,6 +138,17 @@ describe('platform identity is data, not literals', () => {
   it('only a platform that authenticates its sender carries a bootstrap', () => {
     expect(PLATFORM_IDENTITIES.filter((d) => d.bootstrap).map((d) => d.platform)).toEqual(['msteams']);
     expect(platformIdentity('msteams')?.bootstrap).toEqual({ verifiedEmailUnique: true, externalProvider: 'msteams' });
+  });
+
+  // `as const` is compile-time only, and `indexName` / `linkSettingKey` go straight into DDL — whatever
+  // could assign to a descriptor at runtime would be writing SQL. Nothing can reach them today; the
+  // freeze is what keeps that true without anyone having to re-derive the reachability argument.
+  it('freezes the descriptor set at runtime, not merely in the type system', () => {
+    expect(Object.isFrozen(PLATFORM_IDENTITIES)).toBe(true);
+    for (const d of PLATFORM_IDENTITIES) {
+      expect(Object.isFrozen(d), `${d.platform} descriptor is mutable`).toBe(true);
+      if (d.bootstrap) expect(Object.isFrozen(d.bootstrap), `${d.platform} bootstrap is mutable`).toBe(true);
+    }
   });
 
   // Normalisation runs on BOTH the value a user types and the id an adapter reports, so it has to be
