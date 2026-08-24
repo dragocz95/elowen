@@ -9,6 +9,10 @@ export interface ActivityEvent {
    *  (users.name, username fallback) so a rename is reflected in the whole history at once. */
   actor_user_id: number | null;
   actor_label: string;
+  /** Resolved by the same JOIN, so the feed can draw the person's face rather than a name alone. Null
+   *  for an unattributable row and for one whose account is gone. */
+  actor_username: string | null;
+  actor_avatar: string | null;
   surface: string;
   /** How many identical events this row folds, and when the last one landed. `ts` stays the first. */
   count: number;
@@ -173,7 +177,8 @@ export class EventStore {
     const limit = opts?.limit ?? 200;
     // Every read goes through this projection so the actor's name is resolved in ONE place. It is a
     // LEFT JOIN: an event whose account was deleted keeps its history and simply loses the name.
-    const select = `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.username, '') AS actor_label
+    const select = `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.username, '') AS actor_label,
+                             u.username AS actor_username, u.avatar AS actor_avatar
                       FROM events e LEFT JOIN users u ON u.id = e.actor_user_id`;
     // Target-scoped: the per-task feed (decision + review for one task), read oldest-first so the
     // detail pane renders it as a chronological conversation rather than the reverse-time timeline.

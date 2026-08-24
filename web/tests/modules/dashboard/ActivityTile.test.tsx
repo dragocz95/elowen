@@ -12,7 +12,8 @@ import type { ActivityEvent } from '../../../lib/types';
 // differently from the task timeline rows that share the same table and the same tile.
 const row = (over: Partial<ActivityEvent>): ActivityEvent => ({
   id: 1, ts: '2026-08-22 20:00:00', type: 'turn', target: 'brain-1', detail: 'claude-opus-5',
-  project_id: null, label: '', actor_user_id: 1, actor_label: 'Filip Džudža', surface: 'web',
+  project_id: null, label: '', actor_user_id: 1, actor_label: 'Filip Džudža',
+  actor_username: 'filip', actor_avatar: null, surface: 'web',
   count: 1, last_ts: '2026-08-22 20:05:00', ...over,
 });
 
@@ -42,6 +43,21 @@ describe('ActivityTile — team feed rows', () => {
   it('says "someone" rather than leaving the row anonymous when the account is gone', async () => {
     mount([row({ actor_label: '', actor_user_id: 9 })]);
     expect(await screen.findByText(en.dashboard.ev.someone)).toBeInTheDocument();
+  });
+
+  /** A feed row is about a person, so it leads with their face. The row carried only a name until the
+   *  JOIN started resolving the avatar too. */
+  it('draws the face of whoever the row is about', async () => {
+    server.use(http.get('*/api/users/1/avatar/url', () => HttpResponse.json({ url: '/api/users/1/avatar?sig=x' })));
+    mount([row({ actor_avatar: 'filip.png' })]);
+    const face = await screen.findByRole('img', { name: 'Filip Džudža' });
+    expect(face).toHaveAttribute('src', expect.stringContaining('/users/1/avatar'));
+  });
+
+  it('leaves an unattributable row faceless rather than inventing a monogram', async () => {
+    mount([row({ actor_user_id: null, actor_label: '', actor_username: null })]);
+    expect(await screen.findByText(en.dashboard.ev.someone)).toBeInTheDocument();
+    expect(screen.queryByRole('img')).toBeNull();
   });
 
   it('never renders the conversation id of a team-feed row', async () => {

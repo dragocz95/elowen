@@ -4,6 +4,7 @@ import { useActivity, usePresence } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs, compactElapsed } from '../../lib/format';
 import { LoadingState } from '../../components/ui/states';
+import { Avatar } from '../../components/ui/Avatar';
 import type { ActivityEvent } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
 
@@ -64,7 +65,23 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
       <span className="min-w-0 truncate text-[13px] leading-5">
         {teamFeed ? (
           <>
-            <span className="font-medium text-text">{event.actor_label || t.dashboard.ev.someone}</span>{' '}
+            {/* A feed row is about a PERSON, so it leads with their face. Drawn only when an account is
+                actually behind the row — an unattributable turn, or one whose account was deleted, has
+                nobody to picture and falls back to the name alone. */}
+            <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
+              {event.actor_user_id !== null && event.actor_label ? (
+                <Avatar
+                  user={{
+                    id: event.actor_user_id,
+                    username: event.actor_username ?? event.actor_label,
+                    name: event.actor_label,
+                    ...(event.actor_avatar ? { avatar: event.actor_avatar } : {}),
+                  }}
+                  size={16}
+                />
+              ) : null}
+              <span className="truncate font-medium text-text">{event.actor_label || t.dashboard.ev.someone}</span>
+            </span>{' '}
             <span className="text-text-muted">
               {t.dashboard.ev.turn} · {surfaceLabel(t, event.surface)}
               {event.count > 1 ? ` ×${event.count}` : ''}

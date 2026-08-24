@@ -179,7 +179,9 @@ describe('GET /activity/heatmap and /activity/presence', () => {
 
     // Nobody is running a turn in this harness, so a presence line built only from live sessions would
     // be empty -- and empty most of the day on a real instance too.
-    expect(rows).toEqual([{ userId: 2, label: 'bob', working: false, lastTs: expect.any(String) }]);
+    // The rail draws faces, so presence carries the username and (when set) the avatar handle; an
+    // account with no picture sends no `avatar` key at all.
+    expect(rows).toEqual([{ userId: 2, label: 'bob', username: 'bob', working: false, lastTs: expect.any(String) }]);
     expect((await (await app.request('/activity/presence', auth(adminTok))).json())).toHaveLength(1);
   });
 });

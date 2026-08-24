@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { pendingEscalations } from '../../lib/escalations';
 import type { ActivityEvent, Task } from '../../lib/types';
 
-const ev = (over: Partial<ActivityEvent>): ActivityEvent => ({ id: 1, ts: '2026-06-22 10:00:00', type: 'review', target: 'p1', detail: 'escalated: bad', project_id: 1, label: '', actor_user_id: null, actor_label: '', surface: '', count: 1, last_ts: null, ...over });
+const ev = (over: Partial<ActivityEvent>): ActivityEvent => ({ id: 1, ts: '2026-06-22 10:00:00', type: 'review', target: 'p1', detail: 'escalated: bad', project_id: 1, label: '', actor_user_id: null, actor_label: '', actor_username: null, actor_avatar: null, surface: '', count: 1, last_ts: null, ...over });
 const task = (over: Partial<Task> & { id: string }): Task => ({ title: over.id, status: 'open', ...over });
 
 describe('pendingEscalations', () => {

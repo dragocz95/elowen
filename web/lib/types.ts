@@ -630,6 +630,10 @@ export interface ActivityEvent {
    *  fallback), so it follows a rename; an event whose account is gone simply has none. */
   actor_user_id: number | null;
   actor_label: string;
+  /** From the same JOIN as the label, so a feed row can draw the person's avatar. Null when the row has
+   *  no account behind it (unattributable, or the account was deleted). */
+  actor_username: string | null;
+  actor_avatar: string | null;
   surface: string;
   /** How many identical events this row folds, and when the last landed. `ts` is the first occurrence. */
   count: number;
