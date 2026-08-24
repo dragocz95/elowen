@@ -20,6 +20,14 @@ describe('visibleToolNames', () => {
     const tp = { deny: new Set(['DiscordApi', 'MemorySearch']) };
     expect(visibleToolNames(ALL, PLUGINS, tp)).toEqual(['ElowenCreateTask', 'Read', 'Bash']);
   });
+
+  // A deny entry is a PATTERN, and the shared predicate honours a trailing `*` on the deny side precisely
+  // so that a wildcard can never become a way past a refusal. The built-in branch matched exactly, so it
+  // kept advertising the very entries `toolPermitted` refuses — failing open.
+  it('honours a wildcard deny on a built-in too, not only on a plugin tool', () => {
+    expect(visibleToolNames(ALL, PLUGINS, { deny: new Set(['Elowen*']) }))
+      .toEqual(['MemorySearch', 'Read', 'Bash', 'DiscordApi']);
+  });
 });
 
 /** A fake PI session that records setActiveToolsByName calls. */

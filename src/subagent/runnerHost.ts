@@ -20,7 +20,9 @@ import type { HostRpcHandler } from './hostRpc.js';
 const log = logger('subagent-runner');
 
 function hostRpcAllowed(turn: PendingTurn): boolean {
-  return toolPermitted('WorkflowAddNodes', delegatedToolPolicy(turn.request.delegatedAccess));
+  // The same policy the turn itself will run under, account grant included — a reverse-channel capability
+  // must not be decided from a wider view of the child than the child gets.
+  return toolPermitted('WorkflowAddNodes', delegatedToolPolicy(turn.request.delegatedAccess, [], turn.request.accountAllow));
 }
 
 /** How long the child gets to attach its database, load plugins and build its brain before we give up on

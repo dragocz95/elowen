@@ -27,6 +27,15 @@ export interface DelegatedTurnRequest {
   parentSessionId: string;
   /** The immutable boundary minted by the delegating turn; policy/toolPolicy/identity all come from it. */
   delegatedAccess: DelegatedExecutionScope;
+  /** The spawning ACCOUNT's tool grant as it stands RIGHT NOW, or absent when that account is under no
+   *  grant restriction (an admin, or an instance whose migration has not run).
+   *
+   *  Carried rather than frozen into `delegatedAccess` on purpose: the scope is immutable and authoritative
+   *  about what the child was ever allowed, while this is the live half — a tool the admin has revoked
+   *  since the child was minted must stop reaching it. It only ever INTERSECTS the scope, so it can never
+   *  hand the child anything its boundary lacks. A plain `string[]`, because the request crosses a process
+   *  boundary and a `Set` does not survive JSON (see subagentWirePayload.test.ts). */
+  accountAllow?: string[];
   scheduled: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
@@ -78,7 +87,10 @@ export function delegatedChannelSendOpts(
     delegatedAccess: scope,
     ...(req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
     ...(req.idleRolloverMs !== undefined ? { idleRolloverMs: req.idleRolloverMs } : {}),
-    toolPolicy: delegatedToolPolicy(scope),
+    // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
+    // as the drill-in continuation path does. Without this the forked runner and every first spawn were
+    // the two paths on which a revoked tool kept reaching a child — one behaviour with three answers.
+    toolPolicy: delegatedToolPolicy(scope, [], req.accountAllow),
     identity: deps.identity.forDelegatedTurn(scope, req.ownerUserId),
     ...(onEvent ? { onEvent } : {}),
   };
@@ -176,6 +188,10 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
       ...(typeof m.model === 'string' ? { model: m.model } : {}),
     };
   }
+  // An allow-list that arrived malformed must REFUSE the turn, never quietly become "no grant
+  // restriction" — that is the one reading of it that widens the child.
+  if (v.accountAllow !== undefined
+    && (!Array.isArray(v.accountAllow) || v.accountAllow.some((t) => typeof t !== 'string'))) return undefined;
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
   if (v.fast !== undefined && typeof v.fast !== 'boolean') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
@@ -187,6 +203,7 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
     ownerUserId: v.ownerUserId as number,
     parentSessionId,
     delegatedAccess: scope,
+    ...(Array.isArray(v.accountAllow) ? { accountAllow: v.accountAllow as string[] } : {}),
     scheduled: v.scheduled,
     ...(model ? { model } : {}),
     ...(typeof v.thinkingLevel === 'string' ? { thinkingLevel: v.thinkingLevel } : {}),

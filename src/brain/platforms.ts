@@ -2,7 +2,7 @@ import type { PluginRegistry } from '../plugins/registry.js';
 import { decodeNotificationDestination, encodeNotificationDestination } from '../plugins/destinations.js';
 import type { ChannelRef, ServiceNotice } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
-import type { ToolPolicy, TurnIdentity } from '../plugins/policyContext.js';
+import { narrowToolAllowList, type ToolPolicy, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
 import { channelSessionId } from './sessionId.js';
@@ -188,8 +188,14 @@ export class PlatformOrchestrator {
             // INTERSECT the preset with any call-level allow-list (an explicit `tools`, or a restricted
             // parent) — both only ever narrow, so a read-only child never even SEES a tool the caller lacks.
             // A parent deny-list (disabled tools) rides on top untouched.
+            //
+            // Through the shared narrowing, because BOTH sides carry patterns. An exact intersection broke
+            // this path twice over: a pre-migration grant is literally `['*']`, which shares no member with
+            // any preset and left every read-only or typed child of a non-admin with an empty scope; and
+            // `mcp__*` in the read-only preset can never equal a concrete granted MCP tool name, so those
+            // children lost MCP permanently.
             const callAllow = src.access.toolPolicy?.allow;
-            const narrowed = preset && callAllow ? preset.filter((t) => callAllow.includes(t)) : preset ?? callAllow;
+            const narrowed = preset && callAllow ? narrowToolAllowList(preset, callAllow) : preset ?? callAllow;
             // A disjoint intersection (the caller's allow-list shares no tool with the preset) leaves the
             // child with nothing to do. Fail with an actionable error — as the pre-unification plugin did —
             // instead of silently spawning a mute child whose empty allow-list can never run a tool.
@@ -230,7 +236,8 @@ export class PlatformOrchestrator {
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union
             // too, so a later settings change that re-enables a tool never widens an already-delegated run.
-            const delegatedAccess = withDelegatedDeniedTools(rawScope, this.d.toolAuthorityFor?.(sessionOwner)?.deny ?? []);
+            const spawnerAuthority = this.d.toolAuthorityFor?.(sessionOwner);
+            const delegatedAccess = withDelegatedDeniedTools(rawScope, spawnerAuthority?.deny ?? []);
             // Validated above for the owner lookup; re-checked here so the request below carries the
             // non-optional parent it actually has.
             if (!parentSessionId) throw new Error('invalid parent session');
@@ -246,6 +253,9 @@ export class PlatformOrchestrator {
               ownerUserId: sessionOwner,
               parentSessionId,
               delegatedAccess,
+              // The account's grant travels ALONGSIDE the scope rather than inside it: the scope is frozen
+              // at spawn, while this is re-read on every turn so a revoked tool stops reaching the child.
+              ...(spawnerAuthority?.allow ? { accountAllow: [...spawnerAuthority.allow] } : {}),
               // A scheduled/unattended turn (a plugin sets access.scheduled) uses the focused `scheduled`
               // system prompt, not the coding-agent base. Core stays agnostic to which plugin fired it.
               scheduled: src.access.scheduled === true,

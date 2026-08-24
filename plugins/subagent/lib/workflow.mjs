@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } from './dag.mjs';
+import { toolListCovers, toolPolicyAllows } from './toolLists.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -61,10 +62,6 @@ const depIntro = (truncatedIds) => 'Results from the nodes this one depends on f
  *  a change costs only session continuity (see WorkflowResume), while a missed change would fail the node
  *  inside the host with `delegated access unavailable`. */
 const sameParentAccess = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-const toolListCovers = (list, name) => list?.some((entry) =>
-  entry === name || (entry.endsWith('*') && name.startsWith(entry.slice(0, -1)))) === true;
-const toolPolicyAllows = (policy, name) =>
-  (!policy?.allow || toolListCovers(policy.allow, name)) && !toolListCovers(policy?.deny, name);
 /** Strip runner-persisted prompt metadata and retain only authority a dynamically added node may inherit. */
 const delegableAccess = (access) => ({
   admin: access.admin,

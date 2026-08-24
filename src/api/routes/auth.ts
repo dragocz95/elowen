@@ -11,6 +11,7 @@ import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
+import { toolPermitted } from '../../plugins/policyContext.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
 import { DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError, TeamsIdConflictError } from '../../store/userSettingStore.js';
@@ -470,9 +471,12 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     const iconOf = makeToolIconResolver(iconMap);
     // Per-user deny-list: a plugin tool the admin switched off for this user's own brain sessions.
     const disabled = new Set(target.disabled_tools);
-    // The positive grant, mirroring toolAuthorityForUser: an admin bypasses it entirely, and the
-    // pre-migration `*` marker means unrestricted. `null` here therefore reads as "no grant restriction".
-    const grant = target.is_admin || target.allowed_tools.includes('*') ? null : new Set(target.allowed_tools);
+    // The positive grant, mirroring toolAuthorityForUser: an admin bypasses it entirely, so `null` here
+    // reads as "no grant restriction". Everyone else is measured with the SAME predicate the turn path
+    // enforces, which is what makes a pattern grant readable: the pre-migration `*` marker and a family
+    // grant like `mcp__*` both cover their members, where an exact `Set.has` drew tools that actually run
+    // as disabled.
+    const grant = target.is_admin ? null : new Set(target.allowed_tools);
     type ToolState = 'allowed' | 'inherited' | 'unavailable' | 'disabled';
     const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'memory' | 'image' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
     // What is left of the built-ins is memory and image: per-user, composed for every interactive
@@ -512,7 +516,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       const granted = !plugin || isPluginAllowedForUser(target, { name: plugin, userGrantable: registry?.userGrantable.has(plugin) });
       const state: ToolState = disabled.has(t.name) ? 'disabled'
         : !granted ? 'unavailable'
-          : grant !== null && !grant.has(t.name) ? 'disabled' : 'allowed';
+          : grant !== null && !toolPermitted(t.name, { allow: grant }) ? 'disabled' : 'allowed';
       pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin, group: 'plugin', state, toggleable: state !== 'unavailable' });
     }
     // Allowed first, then inherited, then disabled/unavailable; alphabetical within each band.

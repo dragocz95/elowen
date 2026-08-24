@@ -33,6 +33,27 @@ describe('scopeExceedsCurrentAccess', () => {
     )).toBeUndefined();
   });
 
+  // `users.allowed_tools` defaults to the `*` marker, so between the deploy and the migration EVERY
+  // non-admin grant is literally `['*']` — and a child spawned in that window carries it. Comparing raw
+  // membership made `*` "a tool this conversation does not hold", so the moment the migration wrote a real
+  // grant, every DelegateContinue against a live child was refused. Nothing is handed back here: the
+  // continuation clamps the child to `scope ∩ current grant` on the way in (delegatedToolPolicy), so what
+  // it names beyond the caller's grant is unreachable rather than merely unaudited.
+  it('accepts a child minted under the pre-migration `*` grant once the caller has a real one', () => {
+    expect(scopeExceedsCurrentAccess(
+      scope({ toolPolicy: { allow: ['*'] } }),
+      access({ toolPolicy: { allow: ['Read', 'Write'] } }),
+    )).toBeUndefined();
+  });
+
+  // The other half of the same asymmetry: a family name can only ever be matched by pattern.
+  it('accepts a child holding an MCP family the caller holds a member of', () => {
+    expect(scopeExceedsCurrentAccess(
+      scope({ toolPolicy: { allow: ['mcp__*'] } }),
+      access({ toolPolicy: { allow: ['mcp__github__issue'] } }),
+    )).toBeUndefined();
+  });
+
   it('an admin caller may continue any project-scoped child', () => {
     expect(scopeExceedsCurrentAccess(scope({ projectIds: [3, 4] }), access({ admin: true, projectIds: [] })))
       .toBeUndefined();
@@ -188,6 +209,19 @@ describe('delegatedToolPolicy', () => {
     // No grant at all (an admin parent) → the captured scope stands unchanged.
     expect(delegatedToolPolicy(child(), [])).toEqual({ allow: new Set(['Read', 'Bash']) });
     expect(delegatedToolPolicy(scope(), [])).toBeUndefined();
+  });
+
+  // Both sides of the intersection are PATTERN lists, and an exact one is wrong in both directions.
+  it('honours a wildcard on either side of the intersection', () => {
+    // Pre-migration the account's grant is the `*` marker: it restricts nothing, so the scope stands.
+    expect(delegatedToolPolicy(child(), [], ['*'])).toEqual({ allow: new Set(['Read', 'Bash']) });
+    // A scope holding an MCP FAMILY narrows to the members the account was actually granted — the family
+    // name itself can never equal a concrete grant, and dropping it lost the child MCP entirely.
+    expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['Read', 'mcp__*'] } }), [], ['Read', 'mcp__github__issue']))
+      .toEqual({ allow: new Set(['Read', 'mcp__github__issue']) });
+    // …and it is still a narrowing: a member outside the family stays out.
+    expect(delegatedToolPolicy(child({ toolPolicy: { allow: ['mcp__*'] } }), [], ['Bash', 'mcp__github__issue']))
+      .toEqual({ allow: new Set(['mcp__github__issue']) });
   });
 
   it('applies the account\'s current denies on top of the intersection', () => {

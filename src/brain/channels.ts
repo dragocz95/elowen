@@ -320,9 +320,14 @@ export class ChannelSessionService {
       || !this.d.store.hasDelegatedAccess(sessionId, scope))) {
       throw new Error('delegated access unavailable');
     }
-    // The captured allow-list is authoritative. A caller may only add current account denies; it cannot
-    // swap the inherited allow/deny shape while the child is idle.
-    return { scope, toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? []) };
+    // The captured allow-list is authoritative. A caller may only NARROW it — its current denies add, and
+    // its current grant intersects — so it cannot swap the inherited allow/deny shape while the child is
+    // idle. Dropping the caller's allow here is what made the account grant a per-path accident: the
+    // careful intersection every caller computes was discarded and rebuilt from the frozen scope alone.
+    return {
+      scope,
+      toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
+    };
   }
 
   /** Resolve the durable owner of a prospective delegated parent. PlatformOrchestrator uses this before

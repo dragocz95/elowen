@@ -1,4 +1,4 @@
-import { toolPermitted, type ToolPolicy } from '../plugins/policyContext.js';
+import { narrowToolAllowList, type ToolPolicy } from '../plugins/policyContext.js';
 import {
   normalizeNoninteractivePermissionBoundary,
   type NoninteractivePermissionBoundary,
@@ -233,8 +233,13 @@ export function scopeExceedsCurrentAccess(
     // Absence means UNRESTRICTED, so an old child without an allow-list is strictly wider than a caller
     // that now runs on one. Reading a missing list as "narrow" is exactly the inversion to avoid.
     if (!childAllow) return 'it runs with an unrestricted toolset and this conversation is now limited to a specific one';
-    const held = new Set(callerAllow);
-    const extra = childAllow.filter((name) => !held.has(name));
+    // An entry is only "extra" when the caller's CURRENT grant can satisfy nothing it names. A pattern
+    // entry that still resolves to something the caller holds is not a refusal, because the continuation
+    // clamps the child to `scope ∩ current grant` on the way in (delegatedToolPolicy) — so what it holds
+    // beyond that grant is unreachable rather than merely unaudited. Comparing raw membership instead
+    // refused every live child across the grant migration: a child spawned while the column still held
+    // the `*` marker carries `allow: ['*']`, which is a member of no explicit grant.
+    const extra = childAllow.filter((name) => narrowToolAllowList([name], callerAllow).length === 0);
     if (extra.length) return `it holds ${extra.join(', ')}, which this conversation does not`;
   }
   return permissionBoundaryExceeds(scope.permissionBoundary, access.permissionBoundary);
@@ -428,12 +433,12 @@ export function delegatedToolPolicy(
   // a tool an admin has since revoked must not keep reaching a long-lived child through its frozen
   // boundary. Intersection only — an account grant can never hand the child something its scope lacks.
   const scopeAllow = narrowed.toolPolicy?.allow;
-  const account = currentAllow === undefined ? undefined : new Set(currentAllow);
+  const account = currentAllow === undefined ? undefined : [...currentAllow];
   const allow = account === undefined
     ? scopeAllow
     : scopeAllow === undefined
-      ? [...account]
-      : scopeAllow.filter((name) => toolPermitted(name, { allow: account }));
+      ? account
+      : narrowToolAllowList(scopeAllow, account);
   if (allow === undefined && (!deny || deny.length === 0)) return undefined;
   return {
     ...(allow !== undefined ? { allow: new Set(allow) } : {}),

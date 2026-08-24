@@ -14,9 +14,12 @@ function registryWith(strangerId: number | null): PluginRegistry {
   const reg = new PluginRegistry();
   reg.tools.push({ name: 'Bash', label: 'Run command' } as unknown as PluginRegistry['tools'][number]);
   reg.tools.push({ name: 'OpenTool', label: 'Open' } as unknown as PluginRegistry['tools'][number]);
-  reg.toolOwnerUsers.push(null, null);
+  // A bridged MCP tool: its name exists only at runtime, so `mcp__*` is the only way to grant the family.
+  reg.tools.push({ name: 'mcp__github__issue', label: 'Issue' } as unknown as PluginRegistry['tools'][number]);
+  reg.toolOwnerUsers.push(null, null, null);
   reg.toolOwner.set('Bash', 'terminal');
   reg.toolOwner.set('OpenTool', 'open');
+  reg.toolOwner.set('mcp__github__issue', 'mcp');
   reg.userGrantable.add('terminal');
   if (strangerId !== null) {
     reg.tools.push({ name: 'SomeonesPersonalTool', label: 'Theirs' } as unknown as PluginRegistry['tools'][number]);
@@ -91,6 +94,20 @@ describe('the tool list an admin sees for one account', () => {
     const empty = await pillsFor([], false, [], null, []);
     expect(empty.get('OpenTool')?.state).toBe('disabled');
     expect(empty.get('OpenTool')?.toggleable).toBe(true);
+  });
+
+  // The grant is a PATTERN list — the column default is the `*` marker and an MCP family can only be
+  // granted as `mcp__*` — so this list has to measure it with the same predicate the turn path enforces.
+  // Reading membership exactly drew tools as disabled while they ran perfectly well: the panel simply lied.
+  it('reads a wildcard grant the way the turn path does', async () => {
+    const family = await pillsFor([], false, [], null, ['mcp__*']);
+    expect(family.get('mcp__github__issue')?.state).toBe('allowed');
+    // …and it is still a grant, not an amnesty: nothing outside the family comes along.
+    expect(family.get('OpenTool')?.state).toBe('disabled');
+    // The pre-migration marker keeps meaning "unrestricted".
+    const preMigration = await pillsFor([], false, [], null, ['*']);
+    expect(preMigration.get('OpenTool')?.state).toBe('allowed');
+    expect(preMigration.get('mcp__github__issue')?.state).toBe('allowed');
   });
 
   // An admin bypasses the grant entirely (toolAuthorityForUser), so an empty one must not read as "no

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -155,7 +155,11 @@ function gateDeniedTools(tool: ToolDefinition): ToolDefinition {
   if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
   const run = tool.execute.bind(tool);
   const execute = (async (...args: Parameters<ToolDefinition['execute']>) => {
-    if (currentToolPolicy()?.deny?.has(tool.name)) {
+    // `listCovers`, not `Set.has`: a deny entry may be a pattern, and the shared predicate deliberately
+    // honours one on the deny side so that a wildcard can never become a way past a refusal. Reading it
+    // exactly here failed OPEN on precisely the entries `toolPermitted` refuses.
+    const denied = currentToolPolicy()?.deny;
+    if (denied && listCovers(denied, tool.name)) {
       // Name the mode when there is one: a model that reaches for a writing tool while planning needs to
       // know the refusal is the MODE, not a missing capability, or it will keep retrying.
       const mode = currentTurnMode();
@@ -328,7 +332,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
  *  No policy → the full set is visible. */
 export function visibleToolNames(all: string[], pluginNames: Set<string>, tp: ToolPolicy | undefined): string[] {
   if (!tp) return all;
-  return all.filter((name) => (pluginNames.has(name) ? toolPermitted(name, tp) : !tp.deny?.has(name)));
+  return all.filter((name) => (pluginNames.has(name) ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name))));
 }
 
 /** The minimal PI-session surface tool visibility needs — the SAME structural target ToolSearch uses to

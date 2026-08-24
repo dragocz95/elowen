@@ -68,6 +68,19 @@ describe('resolveDelegateTools', () => {
       expect(res.error).toMatch(/you do not have Write yourself/);
     });
 
+    // The caller's inherited list is a PATTERN list: `users.allowed_tools` defaults to the `*` marker, so
+    // before the grant migration runs every non-admin holds literally `['*']`, and an MCP family can only
+    // ever be named `mcp__*`. Matching membership exactly told those callers they did not hold tools they
+    // were plainly running, and refused every explicit `tools:` delegation they made.
+    it('measures what the caller holds by the same covers rule the host uses', () => {
+      expect(mod.resolveDelegateTools(['*'], ['Read', 'Bash'], AVAILABLE))
+        .toEqual({ allow: ['Read', 'Bash'] });
+      expect(mod.resolveDelegateTools(['Read', 'mcp__*'], ['Read', 'mcp__github__issue'], [...AVAILABLE, 'mcp__github__issue']))
+        .toEqual({ allow: ['Read', 'mcp__github__issue'] });
+      // Still a narrowing: a name no pattern of the caller's covers is refused exactly as before.
+      expect(mod.resolveDelegateTools(['mcp__*'], ['Bash'], AVAILABLE).error).toMatch(/you do not have Bash yourself/);
+    });
+
     it('a restricted caller may still narrow WITHIN what it holds', () => {
       const { allow } = mod.resolveDelegateTools(['Read', 'ListDir', 'Search'], ['Read', 'ListDir'], AVAILABLE);
       expect(allow).toEqual(['Read', 'ListDir']);

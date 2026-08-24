@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PlatformOrchestrator } from '../../src/brain/platforms.js';
 import { IdentityResolver } from '../../src/brain/identity.js';
 import type { Policy } from '../../src/plugins/policy.js';
+import type { ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ChannelSendOpts } from '../../src/brain/channels.js';
 import { READ_ONLY_AGENT_TOOLS, type AgentDef } from '../../src/brain/agents/agentRegistry.js';
 import { normalizeDelegatedExecutionScope, PROMPT_TRUNCATION_MARKER } from '../../src/brain/delegatedScope.js';
@@ -560,7 +561,10 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     name: 'explore', description: 'read-only explore', body: 'You explore.',
     toolsSpec: 'read-only', source: 'builtin', filePath: '/explore.md',
   }]]);
-  const runTypedDelegate = async (access: Record<string, unknown>): Promise<ChannelSendOpts> => {
+  const runTypedDelegate = async (
+    access: Record<string, unknown>,
+    toolAuthorityFor?: (userId: number) => ToolPolicy | undefined,
+  ): Promise<ChannelSendOpts> => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
     const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
@@ -572,6 +576,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       identity: resolver,
       agents: exploreDef,
       channels: channels as never,
+      ...(toolAuthorityFor ? { toolAuthorityFor } : {}),
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
     });
     await orch.startAll();
@@ -617,6 +622,45 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
       agentType: 'explore', toolPolicy: { allow: ['Write'] }, permissionBoundary: null,
     })).rejects.toThrow('delegated tool scope is empty');
+  });
+
+  // `users.allowed_tools` defaults to the `*` marker and the migration that turns it into a real list runs
+  // AFTER the deploy. In that window a non-admin's whole grant — and therefore the allow-list on every
+  // delegate call they make — is literally `['*']`. Intersecting that with an exact `Array.includes`
+  // produced the empty set, so every read-only or typed sub-agent a non-admin spawned threw
+  // 'delegated tool scope is empty' from the moment of deploy until the migration ran.
+  it('a pre-migration `*` allow-list restricts nothing, rather than emptying the preset', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['*'] }, permissionBoundary: null,
+    });
+    expect(sortedAllow(sent)).toEqual(presetSorted);
+  });
+
+  // The permanent half of the same bug: `mcp__*` is in the preset because bridged MCP names only exist at
+  // runtime, so it can never equal a concrete granted name. Dropping it left every non-admin read-only
+  // child with no MCP at all.
+  it('resolves the preset\'s MCP wildcard against the concrete MCP tools the caller was granted', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['Read', 'mcp__github__issue', 'Write'] }, permissionBoundary: null,
+    });
+    // Write is outside the preset and stays out; the family entry resolves to the granted member.
+    expect(sortedAllow(sent)).toEqual(['Read', 'mcp__github__issue']);
+  });
+
+  // The parent's CURRENT grant has to narrow the child on the SPAWN path too, not only on the owner's
+  // drill-in continuation. It travels beside the frozen scope (accountAllow) rather than inside it,
+  // because the scope is immutable and this half must be re-read on every turn.
+  it('intersects the spawning account\'s current grant into the child\'s executing policy', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['Read', 'Grep'] }, permissionBoundary: null,
+    }, () => ({ allow: new Set(['Read']) })); // the admin has since revoked Grep from the account
+    // The captured scope still records what the child was minted with (the normalizer sorts it)…
+    expect(sortedAllow(sent)).toEqual(['Grep', 'Read']);
+    // …but the policy the turn actually executes under is that scope ∩ the account's grant right now.
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['Read']) });
   });
 
   it('a bare read_only delegation (no type) takes the same host-side read-only path', async () => {

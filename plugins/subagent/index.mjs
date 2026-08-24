@@ -11,6 +11,7 @@ import { errorText } from './lib/errors.mjs';
 import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
+import { toolListCovers } from './lib/toolLists.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -56,8 +57,11 @@ export function resolveDelegateTools(inheritedAllow, requested, available) {
     return { error: `unknown tool(s): ${unknown.join(', ')}. Pass names exactly as they appear in your own toolset.` };
   }
   // Tools the CALLER does not hold cannot be granted — but dropping them silently would spawn a child
-  // that mysteriously cannot do the job it was given. Say so instead.
-  const notHeld = inheritedAllow ? names.filter((name) => !inheritedAllow.includes(name)) : [];
+  // that mysteriously cannot do the job it was given. Say so instead. Measured with the shared covers
+  // predicate, not `includes`: the caller's inherited list is a PATTERN list (a pre-migration account
+  // holds the literal `['*']`, and MCP families are named `mcp__*`), so exact membership refused every
+  // explicit `tools:` request a non-admin made.
+  const notHeld = inheritedAllow ? names.filter((name) => !toolListCovers(inheritedAllow, name)) : [];
   if (notHeld.length) {
     return { error: `you do not have ${notHeld.join(', ')} yourself, so you cannot give ${notHeld.length > 1 ? 'them' : 'it'} to a sub-agent. Delegation can only ever narrow your own access.` };
   }
