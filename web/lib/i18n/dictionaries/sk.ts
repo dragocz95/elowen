@@ -106,6 +106,18 @@ export const sk = {
     emptyTitle: 'Žiadne zručnosti',
     emptyDesc: 'Pridané zručnosti sa objavia tu a načítate ich jedným kliknutím.',
   },
+  tasksModal: {
+    modalTitle: 'Úlohy',
+    filterPlaceholder: 'Filtrovať úlohy',
+    status: 'Stav',
+    statusPending: 'Čaká',
+    statusInProgress: 'Prebieha',
+    statusCompleted: 'Dokončené',
+    blockedBy: 'Blokované úlohami',
+    deleteTitle: 'Zmazať túto úlohu?',
+    emptyTitle: 'Žiadne úlohy',
+    emptyDesc: 'Úlohy vytvorené pre túto konverzáciu sa zobrazia tu.',
+  },
   common: {
     daemon: 'daemon',
     daemonUnreachable: 'daemon elowen nie je dostupný',

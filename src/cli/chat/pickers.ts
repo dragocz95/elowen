@@ -10,7 +10,7 @@ import { openStatuslineEditor } from './statuslineEditor.js';
 import { openStatsOverlay } from './statsOverlay.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { trimTrailingSlash } from '../../shared/url.js';
-import { WORK_MODE_LABEL, type BrainProviderView } from './brainClient.js';
+import { WORK_MODE_LABEL, type BrainProviderView, type SessionTaskView } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
@@ -30,6 +30,7 @@ export interface Pickers {
   openSessionsModal(): void;
   openMcpModal(): void;
   openSkillsModal(): void;
+  openTasksModal(): void;
   openLspModal(): void;
   openToolsModal(): void;
   openKeybindsModal(): void;
@@ -513,6 +514,64 @@ export function createPickers(
     }, fail);
   };
 
+  const openTasksModal = (): void => {
+    runSession(() => client.sessionTasks(), (tasks) => {
+      if (tasks.length === 0) { rt.notice = color.dim('no tasks in this conversation'); render(); return; }
+      const refresh = () => openTasksModal();
+      const syncTodoCard = (next: SessionTaskView[]): void => {
+        const completed = new Set(next.filter((task) => task.status === 'completed').map((task) => task.id));
+        const card = {
+          id: 'todos', title: 'Todos', pinned: true,
+          items: next.map((task) => {
+            const blockers = task.blockedBy.filter((id) => !completed.has(id));
+            const blocked = blockers.length ? ` (blocked by ${blockers.map((id) => `#${id}`).join(', ')})` : '';
+            const owner = task.owner ? ` — ${task.owner}` : '';
+            return { text: `${task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject}${owner}${blocked}`, status: task.status };
+          }),
+        };
+        rt.cards = [...rt.cards.filter((item) => item.id !== 'todos'), card];
+      };
+      const confirmDelete = (taskId: string, subject: string): void => {
+        openPicker({
+          tui, editor, title: `Delete task "${subject}"?`,
+          items: [
+            { value: 'no', label: 'Cancel', description: 'keep the task' },
+            { value: 'yes', label: 'Delete', description: 'also removes its dependency edges' },
+          ],
+          onPick: (value) => {
+            if (value !== 'yes') { refresh(); return; }
+            runSession(() => client.deleteSessionTask(taskId), (next) => { syncTodoCard(next); rt.notice = color.dim('task deleted'); refresh(); render(); }, fail);
+          },
+        });
+      };
+      const statusGlyph = (status: string): string => status === 'completed' ? color.success('[x]') : status === 'in_progress' ? color.warning('[•]') : color.faint('[ ]');
+      openPicker({
+        tui, editor, title: 'Tasks',
+        items: tasks.map((task) => ({ value: task.id, label: `${statusGlyph(task.status)} ${task.subject}`, description: task.description })),
+        footer: 'type filter · enter manage · esc close',
+        onPick: (taskId) => {
+          const task = tasks.find((item) => item.id === taskId);
+          if (!task) return;
+          openPicker({
+            tui, editor, title: `Task #${task.id}`,
+            items: [
+              { value: '__back', label: 'Back', description: task.description },
+              { value: 'pending', label: '[ ] Pending', description: 'mark as waiting' },
+              { value: 'in_progress', label: '[•] In progress', description: 'mark as active' },
+              { value: 'completed', label: '[x] Completed', description: 'mark as finished' },
+              { value: '__delete', label: 'Delete', description: 'permanently remove this task' },
+            ],
+            onPick: (value) => {
+              if (value === '__back') refresh();
+              else if (value === '__delete') confirmDelete(task.id, task.subject);
+              else runSession(() => client.updateSessionTask(task.id, value as 'pending' | 'in_progress' | 'completed'), (result) => { syncTodoCard(result.tasks); refresh(); render(); }, fail);
+            },
+          });
+        },
+      });
+    }, fail);
+  };
+
   // /lsp as a status modal (mirrors /mcp): whether diagnostics are enabled and running, one row per
   // language server (● running · ○ installed · ✗ missing), and the on/off toggle as the first row —
   // replaces the old blind flip, so the operator SEES the state before (and after) changing it.
@@ -648,7 +707,7 @@ export function createPickers(
 
   return {
     openThinkingPicker, cycleThinkingLevel, openModelPicker, applyModelArg, changeDirectory, applyTheme, openThemePicker,
-    openHelpModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal,
+    openHelpModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal, openTasksModal,
     openLspModal, openToolsModal, openKeybindsModal, openStatuslineModal,
   };
 }

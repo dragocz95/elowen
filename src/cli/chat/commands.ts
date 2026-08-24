@@ -20,7 +20,7 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -47,6 +47,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'clear' | 's
     case 'lsp': return { cmd: 'lsp' };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
+    case 'tasks': return { cmd: 'tasks' };
     case 'tools': return { cmd: 'tools' };
     case 'goal': return { cmd: 'goal', arg: m[2] };
     case 'subgoal': return { cmd: 'subgoal', arg: m[2] };
@@ -491,6 +492,9 @@ export function wireSubmit(
           return;
         case 'skills':
           pickers.openSkillsModal();
+          return;
+        case 'tasks':
+          pickers.openTasksModal();
           return;
         case 'tools':
           pickers.openToolsModal();

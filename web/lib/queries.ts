@@ -465,6 +465,13 @@ export const useMarketplace = () =>
 export const useCronJobs = (enabled = true) =>
   useQuery({ queryKey: ['cron-jobs'], queryFn: elowenClient.cronJobs, enabled });
 
+export const useSessionTasks = (sessionId: string | null) =>
+  useQuery({
+    queryKey: ['session-tasks', sessionId],
+    queryFn: () => elowenClient.sessionTasks(sessionId as string),
+    enabled: !!sessionId,
+  });
+
 /** The skills plugin's markdown skills — bundled + user (admin, the skills plugin detail). */
 export const usePluginSkills = () =>
   useQuery({ queryKey: ['plugin-skills'], queryFn: elowenClient.pluginSkills });

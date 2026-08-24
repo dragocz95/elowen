@@ -68,6 +68,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "name === 'stats'": 'Built-in slash command.',
     "name === 'reasoning'": 'Built-in slash command.',
     "name === 'skills'": 'Built-in slash command.',
+    "name === 'tasks'": 'Built-in slash command.',
     "name === 'rename'": 'Built-in slash command.',
   },
   'modules/dashboard/HeroCosmos.tsx': {

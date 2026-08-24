@@ -8,7 +8,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
-import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainUsage, BrainWorkMode, McpServerStatus, SlashCommandDef, StatuslineConfig } from '../../lib/types';
+import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
 import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/brainSession';
 import { subscribeRevive } from '../../lib/useRevive';
@@ -120,6 +120,10 @@ export interface BrainChatValue {
   /** `/skills` — the loaded-skill overview (filter, load into the conversation, delete a user skill). */
   skillsOpen: boolean;
   setSkillsOpen: (v: boolean) => void;
+  /** `/tasks` — the current conversation's task descriptions, statuses and delete controls. */
+  tasksOpen: boolean;
+  setTasksOpen: (v: boolean) => void;
+  syncSessionTasks: (tasks: SessionTask[]) => void;
   /** `/help` — the command catalog with descriptions (it used to be a toast of bare names). */
   helpOpen: boolean;
   setHelpOpen: (v: boolean) => void;
@@ -298,10 +302,25 @@ function useBrainChatController(): BrainChatValue {
   const [notice, setNotice] = useState('');
   const [ask, setAsk] = useState<Ask | null>(null);
   const [cards, setCards] = useState<BrainCard[]>([]);
+  const syncSessionTasks = useCallback((tasks: SessionTask[]): void => {
+    const completed = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id));
+    const card: BrainCard = {
+      id: 'todos', title: 'Todos', pinned: true,
+      items: tasks.map((task) => {
+        const blockers = task.blockedBy.filter((id) => !completed.has(id));
+        const blocked = blockers.length ? ` (blocked by ${blockers.map((id) => `#${id}`).join(', ')})` : '';
+        const owner = task.owner ? ` — ${task.owner}` : '';
+        const text = task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject;
+        return { text: `${text}${owner}${blocked}`, status: task.status };
+      }),
+    };
+    setCards((current) => upsertCard(current, card));
+  }, []);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
@@ -880,6 +899,7 @@ function useBrainChatController(): BrainChatValue {
       }
       if (cmd.name === 'reasoning') { setReasoningOpen(true); return; }
       if (cmd.name === 'skills') { setSkillsOpen(true); return; }
+      if (cmd.name === 'tasks') { setTasksOpen(true); return; }
       if (cmd.kind === 'mode') {
         const mode = WORK_MODES.find((m) => m === cmd.name);
         if (mode) { runMode(mode); return; }
@@ -1022,7 +1042,7 @@ function useBrainChatController(): BrainChatValue {
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,

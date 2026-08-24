@@ -55,6 +55,7 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `requiresPlugin` and vanish from the menu when that plugin is not running.
   { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', execution: 'surface-local', surfaces: ['cli'], requiresPlugin: 'mcp' },
   { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'], requiresPlugin: 'skills' },
+  { name: 'tasks', description: 'Inspect and manage this conversation\'s tasks', kind: 'picker', execution: 'surface-local', surfaces: ['cli', 'web'], requiresPlugin: 'todo' },
   // `surface-local` despite hitting the daemon: the CLI drives the goal endpoints from its own handler,
   // not through a catalog dispatch, and no other surface publishes them.
   { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', execution: 'surface-local', surfaces: ['cli'] },

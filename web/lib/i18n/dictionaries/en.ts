@@ -106,6 +106,18 @@ export const en = {
     emptyTitle: 'No skills',
     emptyDesc: 'Skills you add appear here and load with one click.',
   },
+  tasksModal: {
+    modalTitle: 'Tasks',
+    filterPlaceholder: 'Filter tasks',
+    status: 'Status',
+    statusPending: 'Pending',
+    statusInProgress: 'In progress',
+    statusCompleted: 'Completed',
+    blockedBy: 'Blocked by',
+    deleteTitle: 'Delete this task?',
+    emptyTitle: 'No tasks',
+    emptyDesc: 'Tasks created for this conversation appear here.',
+  },
   common: {
     daemon: 'daemon',
     daemonUnreachable: 'elowen daemon unreachable',

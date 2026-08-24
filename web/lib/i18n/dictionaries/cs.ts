@@ -106,6 +106,18 @@ export const cs = {
     emptyTitle: 'Žádné dovednosti',
     emptyDesc: 'Přidané dovednosti se objeví zde a načtete je jedním kliknutím.',
   },
+  tasksModal: {
+    modalTitle: 'Úkoly',
+    filterPlaceholder: 'Filtrovat úkoly',
+    status: 'Stav',
+    statusPending: 'Čeká',
+    statusInProgress: 'Probíhá',
+    statusCompleted: 'Dokončeno',
+    blockedBy: 'Blokováno úkoly',
+    deleteTitle: 'Smazat tento úkol?',
+    emptyTitle: 'Žádné úkoly',
+    emptyDesc: 'Úkoly vytvořené pro tuto konverzaci se zobrazí zde.',
+  },
   common: {
     daemon: 'daemon',
     daemonUnreachable: 'daemon elowen není dostupný',

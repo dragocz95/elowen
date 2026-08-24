@@ -26,6 +26,10 @@ let sendBodies: Record<string, unknown>[] = [];
 let renameCalls: { id: string; title: string }[] = [];
 let thinkBodies: Record<string, unknown>[] = [];
 let modelBodies: Record<string, unknown>[] = [];
+let sessionTasks = [
+  { id: '1', subject: 'Inspect auth', description: 'Check private token handling', status: 'pending', metadata: {}, blockedBy: [], blocks: [] },
+  { id: '2', subject: 'Ship fix', description: 'Deploy after verification', status: 'in_progress', metadata: {}, blockedBy: ['1'], blocks: [] },
+];
 let thinkingLevel = 'low';
 
 const server = setupServer(
@@ -43,6 +47,17 @@ const server = setupServer(
     thinkBodies.push(body as unknown as Record<string, unknown>);
     thinkingLevel = body.level;
     return HttpResponse.json({ thinkingLevel: body.level });
+  }),
+  http.get('*/api/plugins/todo/api/tasks', () => HttpResponse.json({ tasks: sessionTasks })),
+  http.patch('*/api/plugins/todo/api/task', async ({ request }) => {
+    const body = (await request.json()) as { taskId: string; status: 'pending' | 'in_progress' | 'completed' };
+    sessionTasks = sessionTasks.map((task) => task.id === body.taskId ? { ...task, status: body.status } : task);
+    return HttpResponse.json({ task: sessionTasks.find((task) => task.id === body.taskId), tasks: sessionTasks });
+  }),
+  http.delete('*/api/plugins/todo/api/task', ({ request }) => {
+    const taskId = new URL(request.url).searchParams.get('taskId');
+    sessionTasks = sessionTasks.filter((task) => task.id !== taskId);
+    return HttpResponse.json({ success: true, taskId, tasks: sessionTasks });
   }),
   http.get('*/api/plugins/skills/list', () => HttpResponse.json([
     { name: 'deploy', description: 'Ship it', source: 'user', owner: 1, canDelete: true, disableModelInvocation: false, scope: 'personal', active: true },
@@ -73,6 +88,7 @@ const server = setupServer(
       { name: 'rename', description: 'Rename this conversation', kind: 'picker' },
       { name: 'reasoning', description: 'Set the reasoning effort', kind: 'picker' },
       { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker' },
+      { name: 'tasks', description: 'Inspect and manage conversation tasks', kind: 'picker' },
       { name: 'model', description: 'Switch the model', kind: 'picker' },
       { name: 'help', description: 'List every command', kind: 'info' },
     ],
@@ -83,7 +99,10 @@ beforeAll(() => {
   server.listen({ onUnhandledRequest });
   (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
 });
-afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; modelBodies = []; thinkingLevel = 'low'; vi.restoreAllMocks(); });
+afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; sendBodies = []; renameCalls = []; thinkBodies = []; modelBodies = []; sessionTasks = [
+  { id: '1', subject: 'Inspect auth', description: 'Check private token handling', status: 'pending', metadata: {}, blockedBy: [], blocks: [] },
+  { id: '2', subject: 'Ship fix', description: 'Deploy after verification', status: 'in_progress', metadata: {}, blockedBy: ['1'], blocks: [] },
+]; thinkingLevel = 'low'; vi.restoreAllMocks(); });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
@@ -228,6 +247,25 @@ describe('web slash commands: work mode + rename', () => {
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ text: '/skill:deploy' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('/tasks shows descriptions, updates status and deletes with confirmation', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    await runSlash('tasks');
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Check private token handling')).toBeInTheDocument();
+    expect(within(dialog).getByText('Deploy after verification')).toBeInTheDocument();
+
+    const status = within(dialog).getByRole('combobox', { name: 'Status: Inspect auth' });
+    await act(async () => { fireEvent.change(status, { target: { value: 'completed' } }); });
+    await waitFor(() => expect(sessionTasks[0]?.status).toBe('completed'));
+
+    fireEvent.click(within(dialog).getAllByRole('button', { name: 'Delete' })[0]!);
+    const confirm = await screen.findByRole('dialog', { name: 'Delete this task?' });
+    await act(async () => { fireEvent.click(within(confirm).getByRole('button', { name: 'Delete' })); });
+    await waitFor(() => expect(sessionTasks.map((task) => task.id)).toEqual(['2']));
+    await waitFor(() => expect(screen.queryByText('Inspect auth')).toBeNull());
   });
 
   // The decision itself now comes from the DAEMON (the work mode rides the snapshot's control frame), so

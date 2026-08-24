@@ -50,6 +50,12 @@ describe('parseCommand — /stats', () => {
   });
 });
 
+describe('parseCommand — /tasks', () => {
+  it('recognises a bare /tasks with no argument', () => {
+    expect(parseCommand('/tasks')).toEqual({ cmd: 'tasks' });
+  });
+});
+
 describe('parseCommand — /context', () => {
   it('recognises the context-breakdown command', () => {
     expect(parseCommand('/context')).toEqual({ cmd: 'context' });

@@ -117,7 +117,7 @@ describe('slash command registry', () => {
 
   describe('plugin-contributed prompt commands', () => {
     // The plugin-gated built-ins are present in these cases so the merge assertions keep their subject.
-    const LOADED = new Set(['skills', 'mcp']);
+    const LOADED = new Set(['skills', 'mcp', 'todo']);
     const plugin = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1 with notes: $ARGS', plugin: 'ops' }];
 
     it('merges plugin commands after the built-ins for the surface', () => {
@@ -165,6 +165,7 @@ describe('slash command registry', () => {
       const none = commandsWithPlugins('cli', true, [], new Set());
       expect(none.some((c) => c.name === 'skills')).toBe(false);
       expect(none.some((c) => c.name === 'mcp')).toBe(false);
+      expect(none.some((c) => c.name === 'tasks')).toBe(false);
       expect(none.some((c) => c.name === 'compact')).toBe(true);
     });
 
@@ -172,12 +173,14 @@ describe('slash command registry', () => {
       const onlySkills = commandsWithPlugins('cli', true, [], new Set(['skills']));
       expect(onlySkills.some((c) => c.name === 'skills')).toBe(true);
       expect(onlySkills.some((c) => c.name === 'mcp')).toBe(false);
+      expect(onlySkills.some((c) => c.name === 'tasks')).toBe(false);
     });
 
     it('gates every surface the command is offered on, not just the CLI', () => {
       // /skills is a CLI+web command; the web dock builds its menu from the same endpoint.
       expect(commandsWithPlugins('web', true, [], new Set()).some((c) => c.name === 'skills')).toBe(false);
       expect(commandsWithPlugins('web', true, [], new Set(['skills'])).some((c) => c.name === 'skills')).toBe(true);
+      expect(commandsWithPlugins('web', true, [], new Set(['todo'])).some((c) => c.name === 'tasks')).toBe(true);
     });
 
     it('never gates a command the server itself dispatches', () => {
@@ -268,8 +271,8 @@ describe('slash command registry', () => {
      *  surface). A phase that is supposed to be purely additive must leave every one of these untouched;
      *  the later phases that DO move commands have to change this table deliberately. */
     const PUBLISHED_SHAPE: Record<SlashSurface, string[]> = {
-      cli: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'context:info', 'mcp:picker@mcp', 'skills:picker@skills', 'goal:action', 'subgoal:action', 'tools:picker', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'yolo:action', 'model:picker', 'fast:action', 'reasoning:picker', 'theme:picker', 'maskot:action', 'keybinds:info', 'statusline:picker@statusline', 'cd:action', 'paste:action', 'editor:picker', 'export:action', 'lsp:picker!@lsp', 'restart:action!', 'help:info', 'sessions:picker', 'resume:picker', 'rename:picker', 'delete:picker', 'quit:action'],
-      web: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'skills:picker@skills', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'model:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info', 'rename:picker'],
+      cli: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'context:info', 'mcp:picker@mcp', 'skills:picker@skills', 'tasks:picker@todo', 'goal:action', 'subgoal:action', 'tools:picker', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'yolo:action', 'model:picker', 'fast:action', 'reasoning:picker', 'theme:picker', 'maskot:action', 'keybinds:info', 'statusline:picker@statusline', 'cd:action', 'paste:action', 'editor:picker', 'export:action', 'lsp:picker!@lsp', 'restart:action!', 'help:info', 'sessions:picker', 'resume:picker', 'rename:picker', 'delete:picker', 'quit:action'],
+      web: ['new:action', 'clear:action', 'stop:action', 'stats:info', 'skills:picker@skills', 'tasks:picker@todo', 'compact:action', 'plan:mode', 'build:mode', 'workflow:mode', 'model:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info', 'rename:picker'],
       discord: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
       whatsapp: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
       telegram: ['new:action', 'stop:action', 'status:info', 'compact:action', 'model:picker', 'context:picker', 'fast:action', 'reasoning:picker', 'restart:action!', 'help:info'],
@@ -278,7 +281,7 @@ describe('slash command registry', () => {
 
     it('leaves every surface roster, order, kind and gate unchanged for both admin projections', () => {
       const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
-      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline']);
+      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline', 'todo']);
       for (const surface of SURFACES) {
         for (const isAdmin of [false, true]) {
           const expected = PUBLISHED_SHAPE[surface].filter((entry) => isAdmin || !entry.includes('!'));
@@ -306,7 +309,7 @@ describe('slash command registry', () => {
         expect(c.execution, `/${identity(c)}`).toBe(sessionControls.has(identity(c)) ? 'session-control' : 'surface-local');
       }
       const macro = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy $1' }];
-      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline']);
+      const loaded = new Set(['skills', 'mcp', 'lsp', 'statusline', 'todo']);
       for (const surface of SURFACES) {
         const published = commandsWithPlugins(surface, true, macro, loaded);
         for (const c of published) {

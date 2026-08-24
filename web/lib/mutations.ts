@@ -3,7 +3,7 @@ import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@t
 import { elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill } from './types';
+import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
 
 type TaskCacheSnapshot = Array<[QueryKey, Task[] | undefined]>;
 
@@ -381,6 +381,30 @@ export function useUpdatePluginSkill() {
     onSettled: () => { void qc.invalidateQueries({ queryKey: ['plugin-skills'] }); },
   });
 }
+export function useUpdateSessionTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { sessionId: string; taskId: string; status: SessionTask['status'] }) => elowenClient.updateSessionTask(v.sessionId, v.taskId, v.status),
+    onMutate: async (v) => {
+      const key = ['session-tasks', v.sessionId];
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<{ tasks: SessionTask[] }>(key);
+      qc.setQueryData<{ tasks: SessionTask[] }>(key, (cur) => cur ? { tasks: cur.tasks.map((task) => task.id === v.taskId ? { ...task, status: v.status } : task) } : cur);
+      return { key, prev };
+    },
+    onError: (_error, _value, context) => { if (context?.prev) qc.setQueryData(context.key, context.prev); },
+    onSettled: (_data, _error, value) => { void qc.invalidateQueries({ queryKey: ['session-tasks', value.sessionId] }); },
+  });
+}
+
+export function useDeleteSessionTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { sessionId: string; taskId: string }) => elowenClient.deleteSessionTask(v.sessionId, v.taskId),
+    onSuccess: (_data, value) => qc.invalidateQueries({ queryKey: ['session-tasks', value.sessionId] }),
+  });
+}
+
 export function useDeletePluginSkill() {
   const qc = useQueryClient();
   return useMutation({

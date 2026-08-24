@@ -84,6 +84,16 @@ export interface LspServerView { language: string; label: string; command: strin
 export interface LspStatus { enabled: boolean; running: boolean; servers: LspServerView[] }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
+export interface SessionTaskView {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm?: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  owner?: string;
+  blockedBy: string[];
+  blocks: string[];
+}
 export type GoalView = BrainGoalState;
 export interface RuntimeToolView { name: string; plugin: string; description?: string; schema?: string }
 /** One configured brain provider from the public config (API key stripped to `apiKeySet`). */
@@ -516,6 +526,33 @@ export class BrainClient {
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/commands`);
     const body = (await res.json()) as { commands?: SlashCommandDef[] };
     return body.commands ?? [];
+  }
+
+  async sessionTasks(): Promise<SessionTaskView[]> {
+    const res = await this.f(`${this.o.base}/plugins/todo/api/tasks${this.boundQs()}`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/todo/api/tasks`);
+    const body = (await res.json()) as { tasks?: SessionTaskView[] };
+    return body.tasks ?? [];
+  }
+
+  async updateSessionTask(taskId: string, status: SessionTaskView['status']): Promise<{ task: SessionTaskView; tasks: SessionTaskView[] }> {
+    const res = await this.f(`${this.o.base}/plugins/todo/api/task${this.boundQs()}`, {
+      method: 'PATCH', headers: this.headers(true), body: JSON.stringify({ taskId, status }),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/todo/api/task`);
+    return (await res.json()) as { task: SessionTaskView; tasks: SessionTaskView[] };
+  }
+
+  async deleteSessionTask(taskId: string): Promise<SessionTaskView[]> {
+    const separator = this.boundQs() ? '&' : '?';
+    const res = await this.f(`${this.o.base}/plugins/todo/api/task${this.boundQs()}${separator}taskId=${encodeURIComponent(taskId)}`, {
+      method: 'DELETE', headers: this.headers(),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/todo/api/task`);
+    return ((await res.json()) as { tasks: SessionTaskView[] }).tasks;
   }
 
   async status(): Promise<BrainStatus> {

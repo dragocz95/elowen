@@ -22,6 +22,7 @@ import { AgentsTable } from './AgentsTable';
 import { StatsModal } from './StatsModal';
 import { ReasoningModal } from './ReasoningModal';
 import { SkillsModal } from './SkillsModal';
+import { TasksModal } from './TasksModal';
 import { HelpModal } from './HelpModal';
 import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
@@ -734,7 +735,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const c = useBrainChat();
   const {
     turns, busy, ready, notice, ask, cards, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, lineCfg, currentModel, provider, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, slash, sessions, focusNonce,
     ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
@@ -1077,6 +1078,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         ) : null}
         {skillsOpen ? (
           <SkillsModal onClose={() => setSkillsOpen(false)} />
+        ) : null}
+        {tasksOpen ? (
+          <TasksModal onClose={() => setTasksOpen(false)} />
         ) : null}
         {helpOpen ? (
           <HelpModal onClose={() => setHelpOpen(false)} />
