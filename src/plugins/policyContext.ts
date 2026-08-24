@@ -77,11 +77,14 @@ export function turnPrincipal(identity: TurnIdentity | null | undefined): string
   return platform && userId ? `${platform}:${userId}` : undefined;
 }
 
-/** Per-turn tool access — the SINGLE abstraction both sources (a user's Elowen account and a platform
- *  role policy) resolve into, so tool gating has one shape everywhere. `allow` (when set) is an
- *  allow-list: only those plugin tools are permitted (a role's tool allowlist for an unlinked sender).
- *  `deny` is a deny-list: those plugin tools are withheld (a user's own `disabled_tools`). Both may be
- *  set; deny is applied after allow. Undefined ToolPolicy = no restriction (every plugin tool). */
+/** Per-turn tool access — the SINGLE abstraction every source resolves into, so tool gating has one shape
+ *  everywhere. `allow` (when set) is an allow-list: only those plugin tools are permitted — the grant an
+ *  admin gave the account that is writing, or a delegated child's captured scope. `deny` is a deny-list:
+ *  those plugin tools are withheld (the account's `disabled_tools`, plus any grant-gated plugin it does
+ *  not hold). Both may be set; deny is applied after allow. Undefined ToolPolicy = no restriction.
+ *
+ *  A platform ROLE is deliberately not a source here. Authority belongs to a verified account, and a role
+ *  is not an identity — see buildRoleAccess in the shared plugin package. */
 export interface ToolPolicy { allow?: Set<string>; deny?: Set<string> }
 
 /** Whether an entry of a ToolPolicy list covers this tool name. Exact by default; a trailing `*` makes it

@@ -16,7 +16,15 @@ export function rolePrompt(policy) {
 
 /** Build the access descriptor for a turn from the matched policy and that conversation's saved state.
  *  Call only with a policy that actually matched — an unmatched sender must get `access: undefined` from
- *  the adapter, which drops the turn. */
+ *  the adapter, which drops the turn.
+ *
+ *  A role decides PRESENTATION and trust for the room: its name and extra prompt, the conversation's model
+ *  and reasoning effort, and whether the room is treated as trusted. It does NOT decide authority. Tool
+ *  and project scope come from the verified sender's own Elowen account, because a role is not an identity
+ *  — nobody can be held to a grant given to "whoever holds this role". The `tools` and `projectIds` fields
+ *  that used to be built here were read by nothing in the host and therefore failed OPEN: narrowing a role
+ *  in the settings UI changed nothing at all. They are gone rather than wired, so the settings cannot
+ *  promise a restriction the host will not keep. */
 export function buildRoleAccess(match, state = {}) {
   const chosen = state.model;
   return {
@@ -24,14 +32,11 @@ export function buildRoleAccess(match, state = {}) {
     // (trusted conversation). It does NOT grant the owner's Elowen* control-plane tools or API token: a
     // shared channel is never the verified owner's own chat, whatever policy the sender matched.
     admin: match.admin === true,
-    projectIds: (match.projectIds ?? []).map(Number),
     prompt: rolePrompt(match),
     model: chosen ? { provider: chosen.provider, model: chosen.model } : undefined,
     // Per-conversation reasoning effort (set via /reasoning); empty = the model default.
     thinkingLevel: typeof state.thinkingLevel === 'string' ? state.thinkingLevel : undefined,
     fast: state.fast === true,
-    // Per-role tool allowlist (undefined or ['*'] = everything the session would normally get).
-    tools: Array.isArray(match.tools) && match.tools.length > 0 ? match.tools : undefined,
   };
 }
 

@@ -345,7 +345,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     expect(db.pragma('user_version', { simple: true })).toBe(15); // every one-shot migration is done
   });
 
-  it("rewrites a platform role's tool allow-list, keeping the unrestricted markers intact", () => {
+  it("leaves a platform role's stale tool list alone — the host stopped reading it, so it is inert", () => {
     const path = seedPreRename((db) => {
       db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
         plugins: { config: {
@@ -361,11 +361,14 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     });
     const db = openDb(path);
     const cfg = JSON.parse((db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data).plugins.config;
+    // The names are deliberately NOT rewritten any more. A role's tool list was read by nothing, so
+    // maintaining it only kept alive a restriction the host never enforced. It is left exactly as the
+    // operator wrote it — unknown config keys are preserved rather than dropped, so nobody's blob is
+    // silently rewritten — and it simply no longer means anything.
     expect(cfg.discord.rolePolicies.map((r: { tools: string[] }) => r.tools)).toEqual([
-      [], ['*'], ['DiscordReadChannel', 'AskUserQuestion', 'sarah_hair'], // a foreign plugin's tool rides through
+      [], ['*'], ['discord_read_channel', 'ask_user_question', 'sarah_hair'],
     ]);
-    // rolePolicies is a declared config type, not a Discord field — every plugin's config is walked.
-    expect(cfg.telegram.rolePolicies[0].tools).toEqual(['Bash']);
+    expect(cfg.telegram.rolePolicies[0].tools).toEqual(['run_command']);
     expect(cfg.files).toEqual({ readCap: 100000 });
   });
 

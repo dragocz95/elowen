@@ -21,32 +21,30 @@ describe('shared plugin access descriptor', () => {
   });
 
   describe('buildRoleAccess', () => {
-    it('builds the seven-field descriptor from the policy plus the conversation state', () => {
+    it('builds the five-field descriptor from the policy plus the conversation state', () => {
+      // The policy deliberately still carries `projectIds` and `tools`: an operator's stored config may
+      // hold them for years, and the descriptor must simply not pass them on.
       const access = buildRoleAccess(
         { name: 'Ops', prompt: 'Be terse.', admin: true, projectIds: ['3', 7], tools: ['Bash', 'Read'] },
         { model: { provider: 'anthropic', model: 'claude-x' }, thinkingLevel: 'high', fast: true },
       );
       expect(access).toEqual({
         admin: true,
-        projectIds: [3, 7],
         prompt: 'The user you are talking to has the "Ops" role.\nBe terse.',
         model: { provider: 'anthropic', model: 'claude-x' },
         thinkingLevel: 'high',
         fast: true,
-        tools: ['Bash', 'Read'],
       });
     });
 
-    it('grants nothing by default: a bare policy is non-admin, unscoped and unconstrained', () => {
+    it('grants nothing by default: a bare policy is non-admin and unconstrained', () => {
       const access = buildRoleAccess({ roleId: 'r1' }, {});
       expect(access).toEqual({
         admin: false,
-        projectIds: [],
         prompt: undefined,
         model: undefined,
         thinkingLevel: undefined,
         fast: false,
-        tools: undefined,
       });
     });
 
@@ -57,9 +55,20 @@ describe('shared plugin access descriptor', () => {
       expect(buildRoleAccess({}, { fast: 1 }).fast).toBe(false);
     });
 
-    it('treats an empty tool allowlist as no allowlist, so it can never lock a session out of every tool', () => {
-      expect(buildRoleAccess({ tools: [] }, {}).tools).toBeUndefined();
-      expect(buildRoleAccess({ tools: 'Bash' }, {}).tools).toBeUndefined();
+    it('never carries authority: a role cannot grant tools or project scope, however it is written', () => {
+      // Both fields used to be built here and read by NOTHING in the host, so narrowing a role in the
+      // settings UI changed nothing at all — it failed open while looking like a restriction. Authority
+      // now comes from the verified sender's own account, and the descriptor must not carry a field that
+      // could be mistaken for a grant.
+      for (const policy of [
+        { tools: ['Bash'], projectIds: [3] },
+        { tools: [], projectIds: [] },
+        { tools: 'Bash', projectIds: '3' },
+      ]) {
+        const access = buildRoleAccess(policy, {});
+        expect(access).not.toHaveProperty('tools');
+        expect(access).not.toHaveProperty('projectIds');
+      }
     });
 
     it('keeps only the provider/model pair of the saved model, dropping any other stored fields', () => {

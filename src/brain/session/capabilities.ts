@@ -96,9 +96,10 @@ export interface CapabilitySpec {
 }
 
 /** Wrap a plugin tool so its access is decided at EXECUTE time from the current turn's ToolPolicy.
- *  This is the single, shared enforcement point: whether a tool is gated by a user's own `disabled_tools`
- *  (deny) or a platform role's tool allowlist (allow), the decision funnels through one predicate on the
- *  per-turn identity — mirroring how memory tools re-check identity at call time. A denied tool returns a
+ *  This is the single, shared enforcement point: whether a tool is withheld by the writing account's
+ *  `disabled_tools` (deny) or simply absent from the grant an admin gave that account (allow), the
+ *  decision funnels through one predicate on the per-turn identity — mirroring how memory tools re-check
+ *  identity at call time. A denied tool returns a
  *  clear locked no-op instead of running, so the model always gets something to reason over. Because a
  *  channel session is shared across senders, the tool SET is fixed at spawn; this per-turn gate is what
  *  makes access correct for whoever is actually speaking. */

@@ -222,7 +222,10 @@ export interface SessionSource {
   /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation.
    *  Individual role-preserving messages are preferred; a legacy string remains accepted during rollout. */
   history?: () => Promise<PlatformHistory>;
-  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; fast?: boolean; tools?: string[];
+  /** `projectIds` is supplied only by a DELEGATED turn (the subagent plugin copies it from
+   *  `ctx.currentAccess()`, which derives it from the resolved Policy). A platform role does not set it:
+   *  project scope, like tool scope, comes from the verified sender's own account. */
+  access?: { projectIds?: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; fast?: boolean;
     /** Optional background the delegating agent hands to a sub-agent (it cannot see the parent
      *  conversation). Added to the child's system-prompt prefix as stable, cache-friendly blocks. A LIST
      *  because each block is bounded on its own (MAX_PROMPT_CHARS in delegatedScope): passing a workflow
@@ -239,7 +242,8 @@ export interface SessionSource {
      *  Ignored when the sender is already linked to an account, and never a way to gain rights. */
     actAsUserId?: number;
     /** Exact execute-time plugin-tool policy inherited by a delegated child. Arrays preserve an empty
-    *  allow-list (deny everything), unlike a platform role's legacy `tools: []` = unrestricted convention. */
+    *  allow-list, which really does mean "deny everything" — this is a captured boundary, not a role
+    *  descriptor, so absence and emptiness are deliberately different answers. */
     toolPolicy?: { allow?: string[]; deny?: string[] };
     /** Effective ordered granular permission boundary captured by `ctx.currentAccess()` for a delegated
      * child. Explicit null means the parent turn had no permission gate wired; absence is rejected. */

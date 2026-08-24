@@ -792,23 +792,10 @@ function renameStoredToolNames(db: Db, rename: (name: string) => string): void {
       db.prepare('UPDATE brain_sessions SET delegated_access = ? WHERE id = ?').run(next, s.id);
     }
   }
-  // A platform role's tool ALLOW-list, inside the settings blob. `rolePolicies` is a declared config
-  // type, not a Discord-only field, so walk every plugin's config rather than name one.
-  const settings = db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
-  if (!settings) return;
-  const next = rewriteJson(settings.data, (blob) => {
-    const configs = (blob as { plugins?: { config?: Record<string, unknown> } }).plugins?.config;
-    if (!configs || typeof configs !== 'object') return;
-    for (const cfg of Object.values(configs)) {
-      const policies = (cfg as { rolePolicies?: unknown } | null)?.rolePolicies;
-      if (!Array.isArray(policies)) continue;
-      for (const p of policies as ({ tools?: unknown } | null)[]) {
-        // An empty list or ['*'] means "unrestricted" — `rename` leaves '*' alone, so both survive.
-        if (Array.isArray(p?.tools)) p.tools = (p.tools as unknown[]).map((n) => typeof n === 'string' ? rename(n) : n);
-      }
-    }
-  });
-  if (next && next !== settings.data) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(next);
+  // A platform role's tool allow-list used to be rewritten here too. It is gone: the host never read it,
+  // so it could only ever promise a restriction nothing enforced. Any such key left in an old settings
+  // blob is inert — unknown config keys are preserved but never projected back to the UI — so there is
+  // nothing to rename and nothing to clean up.
 }
 
 /** Run a one-shot data migration behind `PRAGMA user_version`.
