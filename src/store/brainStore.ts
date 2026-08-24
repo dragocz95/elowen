@@ -28,7 +28,7 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 // brainService + tests: syntheticRestartResultId). BrainSubagentRun/BrainSubagentResult have no external
 // importer (consumed structurally), so they are not re-exported.
 export { syntheticRestartResultId } from './brainDelegationStore.js';
-export type { BrainWorkflowRun, RecoverableRun } from './brainDelegationStore.js';
+export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
 
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
@@ -46,8 +46,38 @@ export interface BrainSessionRow {
    *  anchored on the operator because a room has no single author. NULL where nobody identifiable has
    *  written yet (an unlinked sender, or a row older than the column). */
   last_writer_user_id: number | null;
+  /** When the step-boundary shutdown drain parked this conversation's live turn (see schema.sql).
+   *  NULL = nothing parked; the boot resume sweep continues every marked conversation. */
+  parked_at: string | null;
+  /** Boot resume attempts on the current park; bumped durably before each attempt, reset on clear. */
+  park_attempts: number;
   created_at: string; updated_at: string;
 }
+/** A boot-resumed platform turn's answer that is computed but not yet posted (see
+ *  brain_platform_turn_deliveries in schema.sql). Everything a retry needs and nothing more: the exact
+ *  text, the encoded destination, and the sender→account claim the retry must RE-PROVE before posting. */
+export interface PendingPlatformDelivery {
+  sessionId: string;
+  reply: string;
+  /** Encoded `destination:` string (plugins/destinations.ts) — fail-closed, never a broadcast. */
+  target: string;
+  /** The platform half of the captured IDENTITY (envelope.identity.platform), i.e. exactly what the
+   *  binding proof is keyed on — not the orchestrator's routing platform. */
+  platform: string;
+  platformUserId: string;
+  accountUserId: number;
+  /** Post attempts already made on this answer; bumped durably before each one. */
+  attempts: number;
+}
+type PendingPlatformDeliveryRow = {
+  session_id: string; reply: string; target: string;
+  platform: string; platform_user_id: string; account_user_id: number; attempts: number;
+};
+const pendingPlatformDeliveryOf = (row: PendingPlatformDeliveryRow): PendingPlatformDelivery => ({
+  sessionId: row.session_id, reply: row.reply, target: row.target, platform: row.platform,
+  platformUserId: row.platform_user_id, accountUserId: row.account_user_id, attempts: row.attempts,
+});
+
 export interface BrainMessageRow {
   id: string; session_id: string; parent_id: string | null; role: string; content: string; created_at: string;
   /** Display-only whole-turn wall time, present on the settled run's last assistant row. */
@@ -231,6 +261,124 @@ export class BrainStore {
 
   getSession(id: string): BrainSessionRow | undefined {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
+  }
+
+  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked at its
+   *  step boundary by a draining daemon and MUST be resumed at the next boot. Written synchronously the
+   *  moment the loop parks, so it is durable before the process exits. */
+  markSessionParked(id: string): void {
+    this.db.prepare("UPDATE brain_sessions SET parked_at = datetime('now') WHERE id = ?").run(id);
+  }
+
+  /** Clear the park marker and its attempt counter. Idempotent; called by every path that makes the boot
+   *  resume unnecessary or wrong: a successful resume, the sweep failing closed, an explicit user abort
+   *  of the parked turn, and the user's own next message (their message is the continuation then). */
+  clearSessionPark(id: string): void {
+    this.db.prepare('UPDATE brain_sessions SET parked_at = NULL, park_attempts = 0 WHERE id = ?').run(id);
+  }
+
+  /** Every conversation the last shutdown parked — the boot resume sweep's worklist. */
+  parkedSessions(): BrainSessionRow[] {
+    return this.db.prepare('SELECT * FROM brain_sessions WHERE parked_at IS NOT NULL').all() as BrainSessionRow[];
+  }
+
+  /** Claim one boot resume attempt: bump the counter, but only while the marker still stands. A false
+   *  return means the park was cleared since the sweep read its worklist — the user spoke (their turn
+   *  admission clears the marker) or aborted — and the sweep must NOT inject its own continuation on
+   *  top. This compare-and-bump is the sweep's ordering rule against concurrent user input. */
+  claimParkResumeAttempt(id: string): boolean {
+    return this.db.prepare(
+      'UPDATE brain_sessions SET park_attempts = park_attempts + 1 WHERE id = ? AND parked_at IS NOT NULL',
+    ).run(id).changes > 0;
+  }
+
+  /** Capture (or replace) the durable resume envelope for a platform channel turn that is about to run
+   *  (see brain_platform_turn_envelopes in schema.sql). Written synchronously before the turn's first
+   *  async boundary so a process death mid-turn always leaves the row behind. The payload is an opaque
+   *  JSON string here on purpose: its shape and validation belong to the brain layer
+   *  (normalizePlatformTurnEnvelope), mirroring how delegated_access is stored. */
+  savePlatformTurnEnvelope(sessionId: string, envelope: string): void {
+    this.db.prepare(
+      `INSERT INTO brain_platform_turn_envelopes (session_id, envelope) VALUES (?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET envelope = excluded.envelope, captured_at = datetime('now')`,
+    ).run(sessionId, envelope);
+  }
+
+  /** The raw captured envelope for one channel session, or undefined when none is in flight — which is
+   *  also what every pre-upgrade session reads (the table exists but has no row for it). */
+  platformTurnEnvelope(sessionId: string): string | undefined {
+    const row = this.db.prepare('SELECT envelope FROM brain_platform_turn_envelopes WHERE session_id = ?')
+      .get(sessionId) as { envelope: string } | undefined;
+    return row?.envelope;
+  }
+
+  /** Drop a settled turn's envelope. Idempotent — the settle path calls it unconditionally. */
+  clearPlatformTurnEnvelope(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_platform_turn_envelopes WHERE session_id = ?').run(sessionId);
+  }
+
+  /** Every envelope left behind by an interrupted turn — a boot sweep's worklist. */
+  platformTurnEnvelopes(): { sessionId: string; envelope: string; capturedAt: string }[] {
+    return (this.db.prepare(
+      'SELECT session_id, envelope, captured_at FROM brain_platform_turn_envelopes ORDER BY captured_at ASC, session_id ASC',
+    ).all() as { session_id: string; envelope: string; captured_at: string }[])
+      .map((row) => ({ sessionId: row.session_id, envelope: row.envelope, capturedAt: row.captured_at }));
+  }
+
+  /** THE PROMOTION: a resumed platform turn's answer stops being "a turn to run" and becomes "a message
+   *  to post" (see brain_platform_turn_deliveries in schema.sql). ONE transaction on purpose — the park
+   *  marker and the envelope go, the pending delivery appears, and no crash can leave a moment where
+   *  both halves exist (two model turns) or neither does (the answer lost). After it returns, the only
+   *  durable trace of this turn is text plus a destination: there is nothing left to run a model from. */
+  promotePlatformTurnToDelivery(sessionId: string, delivery: {
+    reply: string; target: string; platform: string; platformUserId: string; accountUserId: number;
+  }): PendingPlatformDelivery {
+    return this.db.transaction(() => {
+      this.db.prepare('UPDATE brain_sessions SET parked_at = NULL, park_attempts = 0 WHERE id = ?').run(sessionId);
+      this.db.prepare('DELETE FROM brain_platform_turn_envelopes WHERE session_id = ?').run(sessionId);
+      this.db.prepare(
+        `INSERT INTO brain_platform_turn_deliveries
+           (session_id, reply, target, platform, platform_user_id, account_user_id, attempts)
+         VALUES (@session_id, @reply, @target, @platform, @platform_user_id, @account_user_id, 0)
+         ON CONFLICT(session_id) DO UPDATE SET
+           reply = excluded.reply, target = excluded.target, platform = excluded.platform,
+           platform_user_id = excluded.platform_user_id, account_user_id = excluded.account_user_id,
+           attempts = 0, created_at = datetime('now')`,
+      ).run({
+        session_id: sessionId, reply: delivery.reply, target: delivery.target, platform: delivery.platform,
+        platform_user_id: delivery.platformUserId, account_user_id: delivery.accountUserId,
+      });
+      // Read back rather than echo the input: the caller posts from what is DURABLE, so a row that did
+      // not land the way it was written can never be delivered as if it had.
+      return this.pendingPlatformDelivery(sessionId)!;
+    })();
+  }
+
+  /** The computed-but-undelivered answer for one channel session, or undefined when there is none. */
+  pendingPlatformDelivery(sessionId: string): PendingPlatformDelivery | undefined {
+    const row = this.db.prepare('SELECT * FROM brain_platform_turn_deliveries WHERE session_id = ?')
+      .get(sessionId) as PendingPlatformDeliveryRow | undefined;
+    return row ? pendingPlatformDeliveryOf(row) : undefined;
+  }
+
+  /** Every answer a boot computed but never got posted — the delivery half of the sweep's worklist. */
+  pendingPlatformDeliveries(): PendingPlatformDelivery[] {
+    return (this.db.prepare(
+      'SELECT * FROM brain_platform_turn_deliveries ORDER BY created_at ASC, session_id ASC',
+    ).all() as PendingPlatformDeliveryRow[]).map(pendingPlatformDeliveryOf);
+  }
+
+  /** Claim one delivery attempt: bump the counter, but only while the row still stands. A false return
+   *  means the answer was posted (and the row cleared) since the sweep read its worklist, so this attempt
+   *  must not post it a second time. Bumped BEFORE the post, so a boot that dies mid-post still counts. */
+  claimPlatformDeliveryAttempt(sessionId: string): boolean {
+    return this.db.prepare('UPDATE brain_platform_turn_deliveries SET attempts = attempts + 1 WHERE session_id = ?')
+      .run(sessionId).changes > 0;
+  }
+
+  /** Drop a delivered (or durably given-up) answer. Idempotent. */
+  clearPlatformTurnDelivery(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_platform_turn_deliveries WHERE session_id = ?').run(sessionId);
   }
 
   /** Read a child's immutable delegation boundary. Both legacy NULL rows and malformed DB JSON are
@@ -820,6 +968,24 @@ export class BrainStore {
     return this.delegation.claimRecoverableRuns(leaseMs);
   }
 
+  /** Claim every restart-orphaned workflow for this boot — see
+   *  {@link BrainDelegationStore.claimRecoverableWorkflows}. */
+  claimRecoverableWorkflows(): ReturnType<BrainDelegationStore['claimRecoverableWorkflows']> {
+    return this.delegation.claimRecoverableWorkflows();
+  }
+
+  /** Release a run claim superseded by boot workflow resume — see
+   *  {@link BrainDelegationStore.supersedeClaimedRun}. */
+  supersedeClaimedRun(parentSessionId: string, toolCallId: string, reason: string): boolean {
+    return this.delegation.supersedeClaimedRun(parentSessionId, toolCallId, reason);
+  }
+
+  /** Zero a workflow's resume-attempt counter after a successful resume — see
+   *  {@link BrainDelegationStore.clearWorkflowClaimAttempts}. */
+  clearWorkflowClaimAttempts(parentSessionId: string, toolCallId: string): void {
+    this.delegation.clearWorkflowClaimAttempts(parentSessionId, toolCallId);
+  }
+
   /** Park a claimed run as recovery_required — see {@link BrainDelegationStore.markRecoveryRequired}. */
   markRecoveryRequired(parentSessionId: string, toolCallId: string, reason: string, raw: unknown): boolean {
     return this.delegation.markRecoveryRequired(parentSessionId, toolCallId, reason, raw);
@@ -854,12 +1020,6 @@ export class BrainStore {
    *  {@link BrainDelegationStore.workflowStatus}. */
   workflowStatus(parentSessionId: string, workflowId: string): ReturnType<BrainDelegationStore['workflowStatus']> {
     return this.delegation.workflowStatus(parentSessionId, workflowId);
-  }
-
-  /** Parent sessions with a durable delegation row still marked `running` (the boot reconcile's input) —
-   *  see {@link BrainDelegationStore.runningDelegationParentSessionIds}. */
-  runningDelegationParentSessionIds(): string[] {
-    return this.delegation.runningDelegationParentSessionIds();
   }
 
   /** Append a display-only session-event marker (model/mode/rename/reasoning change). Insertion order

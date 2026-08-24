@@ -386,6 +386,12 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
+    // The user spoke: their message IS the continuation of whatever a shutdown parked here, so the boot
+    // resume sweep must stand down. Cleared at admission — before any lock — so a message that lands
+    // while the sweep is still walking its worklist deterministically wins its claim-check
+    // (claimParkResumeAttempt bumps only while the marker stands). Internal turns (goal kickoff, system
+    // nudges) are machine work, not the user speaking, and leave the marker alone.
+    if (!internal) this.d.store.clearSessionPark(targetId);
     // Esc/stop fences the conversation before it snapshots children and clears PI's queue. Never admit a
     // message into that teardown window: the cancelled compaction/run will not drain it, so it would
     // otherwise survive as a phantom chip and execute on a later prompt.

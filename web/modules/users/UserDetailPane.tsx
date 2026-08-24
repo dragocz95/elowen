@@ -5,7 +5,7 @@ import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
-import { brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
+import { brainModelId, brainModelLabel, brainModelQualifiedLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
 import { PROVIDERS, providerMeta } from '../settings/providers';
 import { useToast } from '../../components/ui/Toast';
 import { ElowenApiError } from '../../lib/elowenClient';
@@ -101,7 +101,6 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const brainModels = useBrainModels();
-  if (globalExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
 
   // Display names come from the catalogs — worker presets first, then the Elowen AI model list — never
   // from splitting the exec at its first slash: a brain model id may itself contain slashes
@@ -114,12 +113,24 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   const qualifiedLabelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
     ?? brainModelQualifiedLabel(exec, brainModels.data);
 
+  // What may be OFFERED is derived, never read straight out of stored config — the same rule the daemon's
+  // isOfferableExec applies, so this modal cannot advertise something the PATCH would refuse. Worker execs
+  // come from the global allow-list, which is where they legitimately live. A brain model, though, exists
+  // only as long as its provider does, so its rows come from the live catalog: deleting a provider leaves
+  // its `provider/model` strings behind in `globalExecs`, and reading them from there is exactly why
+  // `alibaba/…` stayed listed and selectable after that provider was removed.
+  const brainExecs = (brainModels.data ?? []).map(brainModelId);
+  const offeredExecs = [...globalExecs.filter((e) => execProvider(e) !== 'elowen'), ...brainExecs];
+  // Nothing left to grant — which now includes the case where every configured provider is gone. Rendering
+  // an empty picker would invite a save that clears the account's grants as a side effect of that outage.
+  if (offeredExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+
   // Order execs by the settings' provider order so the modal groups follow the executor picker.
   const providerOrder = (id: ProviderId) => {
     const i = PROVIDERS.findIndex((p) => p.id === id);
     return i === -1 ? PROVIDERS.length : i;
   };
-  const sortedExecs = [...globalExecs].sort((a, b) => providerOrder(execProvider(a)) - providerOrder(execProvider(b)));
+  const sortedExecs = [...offeredExecs].sort((a, b) => providerOrder(execProvider(a)) - providerOrder(execProvider(b)));
   const items: ManageSelectionItem[] = sortedExecs.map((exec) => {
     const prov = execProvider(exec);
     return {
@@ -135,14 +146,18 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   );
 
   const selected = new Set(user.allowed_execs);
-  const allowedInGlobal = sortedExecs.filter((e) => selected.has(e));
-  const restricted = allowedInGlobal.length > 0;
-  const summarySource = restricted ? allowedInGlobal : sortedExecs;
+  // The summary counts the user's OWN grants, not their intersection with what is currently offered. A
+  // grant whose model has since disappeared still restricts this account to nothing else, so folding it out
+  // here would report them as unrestricted — a permission surface reading wider than it is. The dead grant
+  // simply has no row to click; the PATCH filter drops it the next time the admin saves.
+  const grants = user.allowed_execs;
+  const restricted = grants.length > 0;
+  const summarySource = restricted ? grants : sortedExecs;
   const countText = restricted
     ? t.managePicker.modelsCount
-        .replace('{n}', String(allowedInGlobal.length))
-        .replace('{p}', String(new Set(allowedInGlobal.map(execProvider)).size))
-    : t.managePicker.allModelsCount.replace('{n}', String(globalExecs.length));
+        .replace('{n}', String(grants.length))
+        .replace('{p}', String(new Set(grants.map(execProvider)).size))
+    : t.managePicker.allModelsCount.replace('{n}', String(sortedExecs.length));
 
   const handleSave = async (next: Set<string>) => {
     try {

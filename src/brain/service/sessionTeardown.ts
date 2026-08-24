@@ -78,6 +78,10 @@ export class SessionTeardownService {
   async abort(userId: number, session?: string): Promise<void> {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
+    // An explicit stop on a turn the shutdown drain parked (Esc during the drain window) is the user
+    // cancelling that work — releasing the hold lets the turn unwind as aborted, and the durable park
+    // marker must go with it or the next boot would resume a turn the user just killed.
+    this.store.clearSessionPark(b.sessionId);
     // Esc/Stop before the turn produced any output discards the just-sent user turn: delete its durable
     // row and tell clients to pull the bubble + restore its text to the composer. Decided synchronously,
     // before the first await — JS is single-threaded, so turnProducedOutput cannot change under us between

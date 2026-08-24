@@ -402,6 +402,11 @@ describe('tool authority is resolved in exactly one place', () => {
   /** The whole dependency object being handed to a collaborator — the one honest way a module can carry
    *  the resolver without calling it (TurnRunner constructs TurnContextBuilder from its own deps). */
   const FORWARDS_DEPS = /\.\.\.(?:this\.)?d\s*,/;
+  /** The resolver itself handed to a collaborator that does call it — `toolAuthorityFor: deps.toolAuthorityFor`,
+   *  how platformTurnRecovery passes a parked turn's authority seam to resolvePlatformTurnAuthority. The
+   *  right-hand side must be a member READ, so neither the interface declaration nor a comment can satisfy
+   *  it; that is the same standard CALLS_RESOLVER holds to. */
+  const FORWARDS_RESOLVER = /\btoolAuthorityFor\s*:\s*\w+(?:\.\w+)*\.toolAuthorityFor\b/;
   /** `toolPolicy` written as an object PROPERTY, shorthand included. Case-sensitive, so the `ToolPolicy`
    *  type never counts. */
   const ESTABLISHES_POLICY = /\btoolPolicy\s*[,:]/;
@@ -416,7 +421,7 @@ describe('tool authority is resolved in exactly one place', () => {
     // A rename that stopped matching would leave an empty set quietly passing.
     expect(holders.length, 'the resolver seems to have been renamed — this check matches nothing').toBeGreaterThan(4);
     const offenders = holders
-      .filter(({ code }) => !CALLS_RESOLVER.test(code) && !FORWARDS_DEPS.test(code))
+      .filter(({ code }) => !CALLS_RESOLVER.test(code) && !FORWARDS_DEPS.test(code) && !FORWARDS_RESOLVER.test(code))
       .map(({ path }) => path);
     expect(offenders, 'naming the resolver is not resolving anything: call it, or forward your deps to something that does').toEqual([]);
   });
@@ -427,8 +432,11 @@ describe('tool authority is resolved in exactly one place', () => {
   // gate was inert and every sub-agent it spawned was minted with no allow-list at all.
   it('a module that resolves authority and establishes a turn scope puts the one on the other', () => {
     const surfaces = modules().filter(({ code }) => CALLS_RESOLVER.test(code) && /\brunWithPolicy\s*\(/.test(code));
+    // `brain/channels.ts` joined when boot resume started re-deriving a parked turn's authority
+    // (resolvePlatformTurnAuthority): it resolves the account's grant AND runs the resumed turn, so it is
+    // the same shape as the other two and is held to the same rule rather than exempted from it.
     expect(surfaces.map((m) => m.path).sort(), 'the turn surfaces this contract covers')
-      .toEqual(['brain/service/turnContextBuilder.ts', 'brain/worker/brainWorker.ts']);
+      .toEqual(['brain/channels.ts', 'brain/service/turnContextBuilder.ts', 'brain/worker/brainWorker.ts']);
     const offenders = surfaces.filter(({ code }) => !ESTABLISHES_POLICY.test(code)).map(({ path }) => path);
     expect(offenders, 'resolved authority that never reaches runWithPolicy gates nothing').toEqual([]);
   });

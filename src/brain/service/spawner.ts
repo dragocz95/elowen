@@ -5,6 +5,7 @@ import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
+import { isOfferableBrainModel } from '../../shared/execs.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { buildShareFileTool } from '../tools/shareFileTool.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
@@ -155,9 +156,29 @@ export class LiveSessionSpawner {
     // first provider in LIST order, not anyone's default — which once dropped a session on an
     // image-only model that cannot hold a conversation. Both parts must be set together: model ids are
     // not globally unique, so a bare model id could resolve under another provider's credentials.
-    const chatSel = settings?.model && settings.modelProvider
+    const storedSel = settings?.model && settings.modelProvider
       ? { provider: settings.modelProvider, model: settings.model }
       : undefined;
+    // A STORED preference is a fallback, not an instruction for this run. When the model it names no longer
+    // exists here — its provider was removed, or the provider survives but no longer lists that model — the
+    // session must still open, on the instance default, instead of refusing to start. Same rule the
+    // compaction pick above follows, and the reason editing Settings → Brain cannot lock anyone out of
+    // their own conversation. An EXPLICIT `opts.selection` keeps the opposite treatment:
+    // resolveBrainModelRoute refuses to substitute a provider someone actually named.
+    //
+    // Judged by the shared bound, not a local provider-id scan: a provider carrying a manual model list is
+    // an allow-list, so a stale MODEL on a live provider is as gone as a stale provider — and a custom
+    // endpoint would otherwise register that stale id ad hoc and quietly run it.
+    //
+    // Dropping it is never silent, and the stored row is deliberately left untouched: a model removed by
+    // mistake (or re-added later) restores the account's own choice, whereas rewriting the row here would
+    // spend the user's configuration on what may be a temporary state.
+    const chatSel = storedSel && !isOfferableBrainModel(storedSel.provider, storedSel.model, cfg.providers)
+      ? undefined
+      : storedSel;
+    if (storedSel && !chatSel) {
+      logger('brain').warn(`account ${ownerUserId}: model preference ${storedSel.provider}/${storedSel.model} is no longer configured in Settings → Brain — starting this session on the default instead`);
+    }
     const selection = opts.selection.provider || opts.selection.model ? opts.selection : chatSel;
     const route = resolveBrainModelRoute(registry, cfg, selection, compactSel);
     const { model } = route;

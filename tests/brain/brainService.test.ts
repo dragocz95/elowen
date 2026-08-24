@@ -4,6 +4,8 @@ import { realpathSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
+import { createBootRecovery } from '../../src/brain/recovery/providers.js';
+import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 import type { PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
@@ -149,6 +151,23 @@ function expectEchoRetracted(seen: readonly { type: string; durableId?: string }
   expect(seen.find((event) => event.type === 'discard_user')).toMatchObject({ durableId: echo?.durableId });
 }
 
+/** ONE boot's recovery chain, wired exactly as the daemon wires it (src/daemon/maintenance.ts). There is
+ *  deliberately no per-substrate sweep to call instead: the coordinator is the only way recovery runs, so
+ *  a test that drives recovery drives this — including the ordering between substrates, which is the part
+ *  a hand-wired call sequence in a test could silently get wrong while staying green.
+ *
+ *  A coordinator instance is ONE boot (it refuses a second claim pass), so a test simulating repeated
+ *  restarts builds a fresh one per boot — which is what {@link runBootRecovery} does per call. */
+const bootRecovery = (svc: BrainService) => createBootRecovery(svc, { info: () => {}, error: () => {} });
+
+/** Both phases of one boot: the synchronous claim pass, then the resume pass the daemon runs once the
+ *  platforms are up. Use {@link bootRecovery} directly when a test must observe the gap between them. */
+async function runBootRecovery(svc: BrainService): Promise<void> {
+  const recovery = bootRecovery(svc);
+  recovery.claimAll();
+  await recovery.resumeAll();
+}
+
 describe('BrainService', () => {
   let dirs: string[] = [];
   const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
@@ -256,6 +275,7 @@ describe('BrainService', () => {
       activeCount: workflowCount,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const reset = vi.fn();
@@ -371,6 +391,7 @@ describe('BrainService', () => {
       activeCount: () => 5,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
@@ -1978,6 +1999,7 @@ describe('BrainService', () => {
       activeCount: () => 0,
       isWorkflowLive: () => false,
       addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
@@ -4836,7 +4858,7 @@ describe('sub-agent session tap + owner steering', () => {
     // finished. Recovery reads lifecycle, not the display projection, so a restart must not respawn it.
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
 
@@ -5119,10 +5141,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-fg', sessionId: 'brain-ch-subagent-fg', status: 'running', task: 'inspect', tools: 1, seconds: 5 });
 
     // A restart is a NEW service over the same store — a fresh boot id, so the running row owned by the
-    // previous boot is a claimable orphan. reconcile now CLAIMS it (lifecycle=recovering) for phase-2
+    // previous boot is a claimable orphan. The claim pass now CLAIMS it (lifecycle=recovering) for phase-2
     // respawn rather than terminalizing it, and delivers nothing at boot.
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     expect(lc('delegate-fg')).toBe('recovering');
@@ -5153,8 +5175,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     ).run(Date.now() + 60_000);
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare(
       "SELECT lifecycle, state, owner_boot_id, lease_until, attempt FROM brain_subagent_runs WHERE tool_call_id = 'continue-finished'"
@@ -5188,7 +5209,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     expect((d.db.prepare(
       "SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-detached'"
@@ -5209,8 +5230,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-mut'").run(); // mark it as un-settled (crash-interrupted)
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-mut'").get() as { lifecycle: string; state: string };
     expect(row.lifecycle).toBe('recovery_required');
@@ -5221,6 +5241,42 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ status: 'error' });
     expect(pending[0]!.error).toContain('DelegateContinue');
+  });
+
+  it('boot recovery replays a child parked on its own delegation and feeds it the recovered grandchild result (D2)', async () => {
+    // The step-boundary drain deliberately exits while a delegated child is blocked ONLY on its own
+    // Delegate call — so this tail shape is the DESIGNED restart path. It must not park as
+    // recovery_required: the grandchild is recovered first (deepest-first ordering), its result is folded
+    // into the parent's recovery turn, and the parent completes normally.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const scope = { admin: true, owner: true, projectIds: [], permissionBoundary: null };
+    const child = 'brain-ch-subagent-blocked-parent';
+    const grandchild = 'brain-ch-subagent-grandchild';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: scope });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-blocked', sessionId: child, status: 'running', task: 'orchestrate', tools: 1, seconds: 5 });
+    d.store.upsertSubagentRun(child, { id: 'call-grand', sessionId: grandchild, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    // The child's crash-interrupted tail: a pending assistant whose Delegate call never got its result.
+    d.store.appendMessage({
+      id: 'a-blocked', sessionId: child, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'dcall-1', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-blocked'").run();
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
+    expect(lc('call-grand')).toBe('done');
+    expect(lc('call-blocked')).toBe('done'); // NOT recovery_required — an unanswered Delegate is a wait, not a side effect
+    // Proof of consumption: the grandchild's recovered result was delivered INSIDE the parent's recovery
+    // turn (it is in the child transcript), and the folded inbox rows were acknowledged, not left pending.
+    const transcript = d.store.getMessages(child).map((m) => m.content).join('\n');
+    expect(transcript).toContain('Recovered delegated result(s)');
+    expect(transcript).toContain(grandchild);
+    expect(d.store.pendingSubagentResults(child)).toEqual([]);
   });
 
   it('parks an unexpected recovery turn failure and notifies the parent instead of leaving a live claim', async () => {
@@ -5238,8 +5294,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable'));
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state, owner_boot_id, lease_until FROM brain_subagent_runs WHERE tool_call_id = 'delegate-failed-recovery'").get() as {
       lifecycle: string; state: string; owner_boot_id: string | null; lease_until: number | null;
@@ -5253,10 +5308,35 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
   });
 
-  it('boot reconcile terminalizes a workflow on a channel session no owner start() ever opens', async () => {
-    // The lazy per-session sweep hung off start(), which a channel/task session never reaches — its row
-    // stayed 'running' in the DB forever and only a display transform hid it, so the phantom came back the
-    // moment the origin went live again. A boot reconcile repairs the row itself.
+  it('midStepWork joins the real coordinator to the registry\'s live turn identities', async () => {
+    // The identity JOIN is the silent-failure surface: the factory keys holds/tool batches by
+    // spec.sessionId while the drain asks unsafeCount(activeTurnSessionIds()) — if those ever diverged,
+    // every restart would quietly burn the full fallback budget with a green suite. Prove through the
+    // REAL send-lock path that an in-flight turn reads 1 and an idle daemon reads 0.
+    const d = fakeDeps();
+    (d as unknown as { stepDrain: StepDrainCoordinator }).stepDrain = new StepDrainCoordinator();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    let release!: () => void;
+    d.session.prompt.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
+
+    const turn = svc.send({ userId: 1, text: 'work' });
+    // Wait until prompt() is genuinely in flight — the turn then holds BOTH locks of the topology
+    // (send-<id> and the bare id), and the exact count pins that they collapse onto ONE conversation.
+    // Reporting raw lock keys would read 2 here, i.e. phantom turns that never park and burn the budget.
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(await svc.midStepWork()).toBe(1);
+    release();
+    await turn;
+    await vi.waitFor(async () => expect(await svc.midStepWork()).toBe(0));
+  });
+
+  it('boot claims a running workflow and terminalizes it with a durable notice when resume is unavailable', async () => {
+    // The old sweep terminalized every running workflow in phase 1 (and only reached sessions that also
+    // held a delegation row). Now phase 1 CLAIMS the row — on a channel session no owner start() ever
+    // opens, and even with no nested delegation in flight, the old gating bug — and phase 2 asks the
+    // engine to resume it. With no engine (plugins unwired) the workflow is terminalized exactly as
+    // before, PLUS a durable completion so the origin conversation actually learns it died.
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
     d.store.upsertWorkflowRun('brain-ch-discord-general', {
@@ -5264,11 +5344,341 @@ describe('sub-agent abort sparing + restart reconcile', () => {
       nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [] }],
     });
 
-    new BrainService(d as never).reconcileDelegationsOnBoot();
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    // Phase 1 only claims — the row must not be terminalized before the engine had its chance to resume.
+    expect(d.store.getWorkflowRuns('brain-ch-discord-general')[0]?.status).toBe('running');
+    await recovery.resumeAll();
 
     const stored = d.store.getWorkflowRuns('brain-ch-discord-general')[0];
     expect(stored?.status).toBe('cancelled');
     expect(stored?.nodes[0]?.status).toBe('error');
+    // The durable notice: an inbox row against the WorkflowStart call, so the parent is woken with the truth.
+    const results = d.store.pendingSubagentResults('brain-ch-discord-general');
+    expect(results).toHaveLength(1);
+    expect(results[0]?.kind).toBe('workflow');
+    expect(results[0]?.status).toBe('error');
+    expect(results[0]?.result).toContain('interrupted by a daemon restart');
+  });
+
+  it('boot resume hands a claimed workflow back to the engine instead of terminalizing it', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    const resumeCalls: unknown[] = [];
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async (input: unknown) => { resumeCalls.push(input); return { resumed: true }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.upsertWorkflowRun('brain-ch-discord-general', {
+      id: 'wf-2', toolCallId: 'call-wf2', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [] }],
+    });
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    expect(resumeCalls).toHaveLength(1);
+    expect(resumeCalls[0]).toMatchObject({ workflowId: 'wf-2', parentSessionId: 'brain-ch-discord-general', toolCallId: 'call-wf2' });
+    // A resumed workflow keeps its running row (the engine's own snapshots drive it from here) and gets
+    // no synthetic interruption notice.
+    expect(d.store.getWorkflowRuns('brain-ch-discord-general')[0]?.status).toBe('running');
+    expect(d.store.pendingSubagentResults('brain-ch-discord-general')).toHaveLength(0);
+    // D4: a SUCCESSFUL resume resets the claim's attempt counter — otherwise four ordinary deploys under
+    // one long workflow would hit the resume cap and kill it healthy.
+    const attempt = (d.db.prepare("SELECT attempt FROM brain_workflows WHERE tool_call_id = 'call-wf2'").get() as { attempt: number }).attempt;
+    expect(attempt).toBe(0);
+    // D3: the hooks handed to the engine carry core's boundary arbiter, judging against the origin
+    // user's authority AS IT STANDS NOW — never the journal's own claims.
+    const hooks = (resumeCalls[0] as { hooks: { validateBoundary: (a: unknown) => { ok: boolean; reason?: string } } }).hooks;
+    const held = { admin: false, projectIds: [], owner: false, permissionBoundary: null };
+    expect(hooks.validateBoundary(held)).toEqual({ ok: true });
+    // The fixture user holds no all-project policy: a journal claiming admin is a widening — refused.
+    expect(hooks.validateBoundary({ ...held, admin: true }).ok).toBe(false);
+    // A channel origin never resumes owner authority (fail closed).
+    expect(hooks.validateBoundary({ ...held, owner: true }).ok).toBe(false);
+    // Garbage is not a delegable scope at all.
+    expect(hooks.validateBoundary({ widened: 'yes' }).ok).toBe(false);
+  });
+
+  it('boot workflow resume supersedes generic recovery of a delegation nested inside a claimed node', async () => {
+    // A node's own Delegate child has a brain_subagent_runs row under the NODE session. Respawning it
+    // generically AND re-running the node would do the same work twice — the resumed node re-issues the
+    // call itself — so the claim is released as terminal instead.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: true }),
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const nodeSession = 'brain-ch-subagent-wf-wf-3-n1-abc';
+    const nestedChild = 'brain-ch-subagent-sub-dlg-nested';
+    d.store.createSession({ id: 'origin-1', userId: 1, model: 'm' });
+    d.store.createSession({ id: nodeSession, userId: 1, model: 'm' });
+    d.store.createSession({ id: nestedChild, userId: 1, model: 'm', parentSessionId: nodeSession });
+    d.store.upsertWorkflowRun('origin-1', {
+      id: 'wf-3', toolCallId: 'call-wf3', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [], sessionId: nodeSession }],
+    });
+    d.store.upsertSubagentRun(nodeSession, { id: 'nested-call', sessionId: nestedChild, status: 'running', task: 'sub', tools: 1, seconds: 1 });
+
+    const restarted = new BrainService(d as never);
+    // Generic recovery before the workflow resume is the coordinator's declared `workflows depends on
+    // delegations` edge, not something this test arranges by calling two sweeps in the right order.
+    await runBootRecovery(restarted);
+
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'nested-call'").get() as { lifecycle: string };
+    // Not 'recovering' (respawned) and not left claimed: superseded as terminal error, without waking the
+    // node session with a synthetic result.
+    expect(row.lifecycle).toBe('error');
+    expect(d.store.pendingSubagentResults(nodeSession)).toHaveLength(0);
+  });
+
+  it('boot workflow resume also supersedes a run whose CHILD is a node session (future node progress rows)', async () => {
+    // Today workflow nodes emit no `subagent` progress, so no run row's CHILD is a node session — this
+    // pins the invariant the supersede logic depends on: should nodes ever gain progress rows
+    // (origin → node), generic recovery must NOT respawn the node the workflow resume is about to
+    // re-run, or one node runs twice with nothing reporting it.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: true }),
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const nodeSession = 'brain-ch-subagent-wf-wf-4-n1-abc';
+    d.store.createSession({ id: 'origin-2', userId: 1, model: 'm' });
+    d.store.createSession({ id: nodeSession, userId: 1, model: 'm', parentSessionId: 'origin-2' });
+    d.store.upsertWorkflowRun('origin-2', {
+      id: 'wf-4', toolCallId: 'call-wf4', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [], sessionId: nodeSession }],
+    });
+    d.store.upsertSubagentRun('origin-2', { id: 'node-progress', sessionId: nodeSession, status: 'running', task: 'node', tools: 1, seconds: 1 });
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'node-progress'").get() as { lifecycle: string };
+    expect(row.lifecycle).toBe('error'); // superseded — never respawned next to the workflow's own re-run
+  });
+
+  it('keeps a run on generic recovery when its supersede matched nothing, instead of orphaning it (D5)', async () => {
+    // supersedeClaimedRun is claim-guarded; a zero-row update means the claim does not hold the way the
+    // reconcile thinks. Dropping the run from pendingRecovery anyway would leave it `recovering` forever
+    // with no driver — the reconcile must honour the boolean and keep the run on the generic path.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => ({ resumed: true }),
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const nodeSession = 'brain-ch-subagent-wf-wf-5-n1-abc';
+    const nestedChild = 'brain-ch-subagent-sub-dlg-orphanable';
+    d.store.createSession({ id: 'origin-3', userId: 1, model: 'm' });
+    d.store.createSession({ id: nodeSession, userId: 1, model: 'm' });
+    d.store.createSession({ id: nestedChild, userId: 1, model: 'm', parentSessionId: nodeSession });
+    d.store.upsertWorkflowRun('origin-3', {
+      id: 'wf-5', toolCallId: 'call-wf5', status: 'running',
+      nodes: [{ id: 'n1', task: 'build', status: 'running', deps: [], sessionId: nodeSession }],
+    });
+    d.store.upsertSubagentRun(nodeSession, { id: 'orphanable', sessionId: nestedChild, status: 'running', task: 'sub', tools: 1, seconds: 1 });
+    vi.spyOn(d.store, 'supersedeClaimedRun').mockReturnValue(false);
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'orphanable'").get() as { lifecycle: string };
+    // Generic recovery DROVE it (here to recovery_required — the fixture child has no stored scope). The
+    // one forbidden outcome is `recovering`: a claim nobody will ever finish.
+    expect(row.lifecycle).not.toBe('recovering');
+  });
+
+  it('boot resume finishes a parked OWNER conversation: continuation at the tail only, marker cleared (the D1 shape)', async () => {
+    // THE regression shape: a turn parked at its LAST step boundary — all tool results answered, only the
+    // final model call left. The park marker is what makes leaving it safe; the sweep must produce and
+    // deliver that final answer without the user re-asking, appending strictly at the transcript's tail.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    // The rehydrated prefix a resume must not touch (prompt cache: the provider re-caches by byte prefix).
+    d.session.messages.push(
+      { role: 'user', content: 'do the thing' },
+      { role: 'assistant', content: 'tool call + answered result' },
+    );
+    const prefix = d.session.messages.slice();
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    // Exactly one hidden continuation — a custom system message, never a fake user bubble.
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume', display: false });
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: true });
+    // Tail-append only: every prefix row is untouched (same objects, same order), the resume's custom
+    // note and the produced answer follow AFTER them.
+    expect(d.session.messages.slice(0, prefix.length)).toEqual(prefix);
+    prefix.forEach((row, i) => expect(d.session.messages[i]).toBe(row));
+    expect(d.session.messages.at(-1)).toMatchObject({ role: 'assistant', stopReason: 'stop' });
+    // The park is spent: marker cleared, attempts reset — nothing resumes this conversation twice.
+    const row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).toBeNull();
+    expect(row.park_attempts).toBe(0);
+  });
+
+  it('a user message arriving before the sweep IS the continuation — no injected duplicate', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+
+    const restarted = new BrainService(d as never);
+    // The user speaks first (their message reached the daemon before phase 2 ran): admission clears the
+    // marker, so the sweep's claim-bump must lose and inject nothing on top.
+    await restarted.send({ userId: 1, text: 'never mind — new question', session: 'brain-1' });
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+    await runBootRecovery(restarted);
+
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    // Exactly one continuation ran: the user's own turn.
+    expect(d.session.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+
+    // And the RACE inside the sweep itself: the user's message lands between the worklist read and the
+    // dispatch. The durable claim-bump (UPDATE … WHERE parked_at IS NOT NULL) is what must lose then —
+    // simulated by clearing the marker as the worklist is handed out.
+    d.store.markSessionParked('brain-1');
+    const parkedRow = d.store.getSession('brain-1')!;
+    vi.spyOn(d.store, 'parkedSessions').mockImplementation(() => {
+      d.store.clearSessionPark('brain-1'); // the user's turn admission, winning the race
+      return [parkedRow];
+    });
+    await runBootRecovery(restarted);
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+  });
+
+  it('a turn that finished normally leaves no marker, so the sweep never produces a second answer', async () => {
+    // "Already answered" is decided from DURABLE state, not the transcript's shape: only an actual park
+    // writes parked_at, and a park by construction happens BEFORE the turn's final model call. A turn
+    // that settled during the drain simply has no marker.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const restarted = new BrainService(d as never);
+    await restarted.send({ userId: 1, text: 'quick question', session: 'brain-1' }); // settles fully
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+
+    await runBootRecovery(restarted);
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+  });
+
+  it('an explicit user abort of the parked turn clears the marker — the next boot must not resurrect stopped work', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const svc = new BrainService(d as never);
+    await svc.send({ userId: 1, text: 'long job', session: 'brain-1' }); // spawns the live session
+    d.store.markSessionParked('brain-1'); // the drain parks it
+    await svc.abort(1, 'brain-1');        // Esc during the drain window
+    expect(d.store.getSession('brain-1')!.parked_at).toBeNull();
+  });
+
+  it('fails closed on a parked conversation whose owner account is gone, and partitions channel markers to the platform sweep', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-9', userId: 9, model: 'm' });
+    d.store.markSessionParked('brain-9');
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-ch-discord-general'); // a platform channel park — the OTHER sweep's
+    (d.users as { get: unknown }).get = (id: number) => (id === 1 ? { name: 'Filip', username: 'filip' } : undefined);
+
+    const restarted = new BrainService(d as never);
+    // THE PARTITION, asserted where it actually lives — in the two worklists. Both providers resume inside
+    // one coordinator run now, so there is no window between the sweeps to observe it in; the claims are
+    // the honest seam anyway, since "neither sweep ever sees the other's markers" IS a property of them.
+    // A claim that stopped filtering would hand one sweep the other's rows and clear them as an invariant
+    // breach — which is exactly what these two lines refuse.
+    expect(restarted.claimParkedConversations().map((row) => row.id)).toEqual(['brain-9']);
+    expect(restarted.claimParkedPlatformTurns().map((row) => row.id)).toEqual(['brain-ch-discord-general']);
+
+    await runBootRecovery(restarted);
+
+    // No resume ran and nothing crashed. Each marker was cleared by its OWN sweep failing closed: the
+    // owner row because its account is gone, the channel row because it has no durable resume envelope.
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.store.getSession('brain-9')!.parked_at).toBeNull();
+    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
+  });
+
+  it('claims an answer an earlier boot computed but never posted, even though it carries no park marker', async () => {
+    // The promotion clears the marker on purpose — a computed answer is no longer a turn to run — so the
+    // delivery row has to be a worklist entry in its OWN right. If the claim only ever looked at
+    // parked_at, every answer whose post failed would be invisible to the next boot.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.promotePlatformTurnToDelivery('brain-ch-discord-general', {
+      reply: 'the answer nobody received', target: 'destination:discord:general',
+      platform: 'discord', platformUserId: '42', accountUserId: 1,
+    });
+    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
+
+    const restarted = new BrainService(d as never);
+    expect(restarted.claimParkedPlatformTurns().map((row) => row.id)).toEqual(['brain-ch-discord-general']);
+    // Still the platform sweep's alone — the owner sweep must not see it either.
+    expect(restarted.claimParkedConversations()).toEqual([]);
+  });
+
+  it('a failed resume keeps the marker with a durably counted attempt; the cap gives up VISIBLY', async () => {
+    // Idempotency across a boot that dies (or errors) while resuming: the attempt is bumped BEFORE the
+    // dispatch, the marker survives the failure, and the next boot retries — up to the cap, where the
+    // sweep clears the marker and tells the owner instead of stacking resume turns forever.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    // The resume turn reaches the model but errors — the custom note lands, no answer is produced.
+    d.session.sendCustomMessage.mockImplementation(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
+      d.session.messages.push({ role: 'custom', ...message } as never);
+      if (options?.triggerTurn) d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error' } as never);
+    });
+    const notified: unknown[][] = [];
+    (d as Record<string, unknown>).notifyTurnComplete = (...args: unknown[]) => { notified.push(args); };
+
+    const restarted = new BrainService(d as never);
+    // One coordinator per call — each is one boot, which is exactly what this cap counts.
+    await runBootRecovery(restarted); // attempt 1 — fails
+    let row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).not.toBeNull();
+    expect(row.park_attempts).toBe(1);
+
+    await runBootRecovery(restarted); // attempt 2 (next boot)
+    await runBootRecovery(restarted); // attempt 3
+    row = d.store.getSession('brain-1')!;
+    expect(row.park_attempts).toBe(3);
+    expect(notified).toHaveLength(0); // still trying — no give-up yet
+
+    await runBootRecovery(restarted); // past the cap: give up, visibly
+    row = d.store.getSession('brain-1')!;
+    expect(row.parked_at).toBeNull();
+    expect(notified).toHaveLength(1);
+    expect(String(notified[0]?.[2])).toContain('re-send');
   });
 
   it('boot reconcile survives a corrupt delegation row and still repairs every other session', async () => {
@@ -5283,7 +5693,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-orphan', sessionId: 'brain-ch-subagent-orphan', status: 'running', task: 'b', tools: 1, seconds: 1 });
     d.db.prepare("UPDATE brain_subagent_runs SET state = 'not json' WHERE tool_call_id = 'delegate-corrupt'").run();
 
-    new BrainService(d as never).reconcileDelegationsOnBoot();
+    bootRecovery(new BrainService(d as never)).claimAll();
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     // The claim's json_valid guard skips the corrupt row (so it can never throw and abort the whole claim)
@@ -5305,8 +5715,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("DELETE FROM brain_sessions WHERE id = 'brain-ch-subagent-vanished'").run();
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted);
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-vanished'").get() as { lifecycle: string }).lifecycle).toBe('error');
   });
@@ -5355,8 +5764,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_subagent_runs SET attempt = 3 WHERE tool_call_id = 'delegate-poison'").run();
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot(); // claim bumps attempt to 4 (> MAX)
-    await restarted.runDelegationRecovery();
+    await runBootRecovery(restarted); // the claim pass bumps attempt to 4 (> MAX), the resume pass gives up
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-poison'").get() as { lifecycle: string }).lifecycle).toBe('error');
     const pending = d.store.pendingSubagentResults(sessionId);
@@ -5372,7 +5780,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-bg', sessionId: 'brain-ch-subagent-bg', status: 'running', task: 'build', tools: 1, seconds: 2, background: true });
 
     const restarted = new BrainService(d as never);
-    restarted.reconcileDelegationsOnBoot();
+    bootRecovery(restarted).claimAll();
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-bg'").get() as { lifecycle: string }).lifecycle).toBe('recovering');
     expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);

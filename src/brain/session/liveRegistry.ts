@@ -161,6 +161,21 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     for (const key of this.locks.keys()) conversations.add(lockedConversation(key));
     return { turns: conversations.size, children };
   }
+  /** The conversations {@link busy} counts as turns, by IDENTITY — the step-boundary drain needs to ask
+   *  "is THIS turn parked" per session, which a count cannot answer. Same lock→conversation mapping as
+   *  busy(), so the two can never disagree about what is in flight. */
+  activeTurnSessionIds(): string[] {
+    const conversations = new Set<string>();
+    for (const key of this.locks.keys()) conversations.add(lockedConversation(key));
+    return [...conversations];
+  }
+  /** Every delegated child currently claimed live, across all parents — the drain-start log's identity
+   *  companion to busy().children. */
+  allChildSessionIds(): string[] {
+    const out = new Set<string>();
+    for (const claims of this.children.values()) for (const id of claims.keys()) out.add(id);
+    return [...out];
+  }
   requestPendingAbort(sessionId: string): void { this.pendingAborts.add(sessionId); }
   /** Observe a pending child abort without consuming it. Fast owner-steering needs this so the original
    * prompt completion can still consume the marker and settle as aborted. */

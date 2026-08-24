@@ -58,6 +58,64 @@ describe('PATCH /users/:id — admin manages permissions', () => {
     expect((await res.json()).allowed_execs).toEqual(['sonnet']);
   });
 
+  // The "stops being stored" half of the reported bug. Deleting a provider does not touch the global
+  // `allowedExecs` list, so its models linger there — and this filter used to accept a brain exec on the
+  // strength of that stale entry alone. An admin could therefore keep granting `alibaba/…` to a user long
+  // after the `alibaba` provider was removed, which is what kept the dead models alive in user records.
+  it('drops a brain exec whose provider is gone, even while allowedExecs still lists it', async () => {
+    const { app, db, adminTok, bob } = await setup();
+    const config = new ConfigStore(db);
+    config.update({
+      allowedExecs: ['sonnet', 'alibaba/qwen3.8-max', 'live/model'],
+      brain: { providers: [{ id: 'live', label: 'Live', type: 'openai', baseUrl: 'https://live.example/v1', models: ['model'], apiKey: 'k' }] },
+    });
+
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, {
+      allowed_execs: ['sonnet', 'live/model', 'alibaba/qwen3.8-max'],
+    }));
+
+    expect(res.status).toBe(200);
+    // The CLI exec and the brain exec on a LIVE provider survive; only the dead one is refused.
+    expect((await res.json()).allowed_execs).toEqual(['sonnet', 'live/model']);
+  });
+
+  // The same fact one level down: the provider survives, one of its MODELS is removed in Settings. The
+  // exec then still named a configured provider, so the write filter kept storing it — the shape the
+  // operator's own accounts were in (`ai-coresynth-io/kimi-k3` granted to two users long after the
+  // provider stopped listing it, while `kimi-coding/k3` remained a live model of the same bare name).
+  it('drops a brain exec whose provider no longer lists the model', async () => {
+    const { app, db, adminTok, bob } = await setup();
+    const config = new ConfigStore(db);
+    config.update({
+      allowedExecs: ['sonnet', 'coresynth/kimi-k3'],
+      brain: { providers: [
+        { id: 'coresynth', label: 'Coresynth', type: 'openai', baseUrl: 'https://cs.example/v1', models: ['deepseek/deepseek-v4-flash-vision-exp'], apiKey: 'k' },
+        { id: 'kimi-coding', label: 'Kimi', type: 'oauth-kimi', baseUrl: '', models: ['k3'] },
+        // No manual list: this endpoint's models come from its live catalogue, so nothing here may
+        // narrow it — an upstream that is merely DOWN must not cost anyone a grant.
+        { id: 'catalogue', label: 'Catalogue', type: 'openai', baseUrl: 'https://cat.example/v1', models: [], apiKey: 'k' },
+      ] },
+    });
+
+    const res = await app.request(`/users/${bob.id}`, patch(adminTok, {
+      allowed_execs: [
+        'sonnet',
+        'coresynth/kimi-k3',                                // removed from the provider's list → dropped
+        'coresynth/deepseek/deepseek-v4-flash-vision-exp',  // still listed (and its id carries slashes)
+        'kimi-coding/k3',                                   // a DIFFERENT provider's live k3 → survives
+        'catalogue/anything',                               // catalogue provider → survives
+      ],
+    }));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).allowed_execs).toEqual([
+      'sonnet',
+      'coresynth/deepseek/deepseek-v4-flash-vision-exp',
+      'kimi-coding/k3',
+      'catalogue/anything',
+    ]);
+  });
+
   it('a non-admin cannot edit anyone (403)', async () => {
     const { app, bobTok, bob } = await setup();
     expect((await app.request(`/users/${bob.id}`, patch(bobTok, { allowed_execs: ['sonnet'] }))).status).toBe(403);

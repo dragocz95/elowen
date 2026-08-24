@@ -2,6 +2,7 @@ import type { BrainService } from '../brain/brainService.js';
 import { sweepChatImages } from '../brain/chatImages.js';
 import { chatFilesDir, sweepChatFiles } from '../brain/chatFiles.js';
 import { isEvictable, vitality, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
+import { createBootRecovery } from '../brain/recovery/index.js';
 import type { BrainTerminalService } from '../brain/terminalService.js';
 import type { BrainWorkerService } from '../brain/worker/brainWorker.js';
 import type { EmbeddingQueue } from '../embeddings/embedQueue.js';
@@ -72,11 +73,18 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     // sweeps — they run through the plugin runner's registerBootReconcile/registerInterval hooks.
     // Restart zombies on the brain side: goals still marked 'active' whose in-memory continuation timers
     // died with the process. Pause them so nothing falsely claims to be running (the user /goal resumes).
+    // Deliberately NOT a recovery provider: it flips every active goal to 'paused' and resumes nothing at
+    // all, so it is zombie cleanup, and modelling it as recoverable work would misrepresent what it does.
     try { deps.brain?.reconcileGoalsOnBoot(); } catch (e) { deps.log.error('reconcileGoalsOnBoot failed', e); }
-    // Same on the delegation side: sub-agent runs and workflow DAGs still marked 'running' whose in-memory
-    // children died with the process. Synchronous and BEFORE startPlatforms, so no channel turn — and no
-    // client connecting the moment the port opens — can observe (or act on) a phantom running delegation.
-    try { deps.brain?.reconcileDelegationsOnBoot(); } catch (e) { deps.log.error('reconcileDelegationsOnBoot failed', e); }
+    // The boot recovery chain — interrupted delegations, workflow DAGs and parked owner conversations.
+    // Constructed HERE, in the daemon's own boot layer, which is what leaves the sub-agent runner with no
+    // coordinator at all: its local view is not authoritative, so it must never claim the daemon's rows.
+    const recovery = deps.brain ? createBootRecovery(deps.brain, deps.log) : undefined;
+    // Phase 1, the CLAIM pass: take durable ownership of every sub-agent run, workflow DAG and parked
+    // conversation still marked live by a previous boot. Synchronous and BEFORE startPlatforms, so no
+    // channel turn — and no client connecting the moment the port opens — can observe (or act on) a
+    // phantom running delegation. Per-provider failures are isolated inside the coordinator.
+    recovery?.claimAll(clock.now());
     // One-shot: reap chat terminals + tokens orphaned while the daemon was down (tmux died / conversation
     // deleted), and kill stray `elowen-chat-*` panes with no binding. Periodic sweep is scheduled below.
     void deps.brainTerminal?.sweep().catch((e) => deps.log.error('brain terminal sweep failed', e));
@@ -86,10 +94,13 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     void deps.pluginReconcile
       .then(() => deps.brain?.startPlatforms(deps.log))
       .then(() => announceBoot(deps.brain, deps.restartMarker, deps.bootMarker, deps.version))
-      // Boot phase 2 of delegation recovery: respawn the interrupted sub-agents claimed above, now that the
-      // platforms are up so their turns can actually run. After announceBoot, with its own catch, so a
-      // recovery failure neither blocks the boot announcement nor is misreported as a startPlatforms error.
-      .then(() => deps.brain?.runDelegationRecovery().catch((e) => deps.log.error('delegation recovery failed', e)))
+      // Phase 2, the RESUME pass: respawn the interrupted sub-agents, hand each claimed DAG back to the
+      // workflow engine, and continue every parked owner conversation — in that declared order, because a
+      // parked turn may be waiting on a result the earlier sweeps queue durably first. Runs only now that
+      // the platforms are up, since every recovery turn goes through the ordinary channel path, and after
+      // announceBoot with its own catch, so a recovery failure neither blocks the boot announcement nor is
+      // misreported as a startPlatforms error.
+      .then(() => recovery?.resumeAll().catch((e) => deps.log.error('boot recovery failed', e)))
       .catch((e) => deps.log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.

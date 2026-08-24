@@ -42,7 +42,11 @@ describe('cli-settings routes', () => {
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
-    const { app, restart, applyAutoCompactSettings, amyId, amyTok } = setup();
+    const { app, restart, applyAutoCompactSettings, amyId, amyTok, config } = setup();
+    // The pair has to name a model this installation actually has: a brain model that is not in Settings →
+    // Brain is refused for everyone, admin included (existence is not a permission — shared/execs.ts). The
+    // first model stays `claude-opus-4-8` so `serverDefault` is unchanged by the fixture.
+    config.update({ brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x/v1', models: ['claude-opus-4-8', 'ollama/kimi-k2.7-code'], apiKey: 'k' }] } });
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
     expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', compactModel: '', compactModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, autoCompactAtByModel: {}, advisorStyle: 'concise', personalityBody: '', userInstructions: '', discordUserId: '', whatsappNumber: '', telegramUserId: '', msteamsUserId: '', autoRecall: true, autoLiveRecall: true, autoSave: false, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);

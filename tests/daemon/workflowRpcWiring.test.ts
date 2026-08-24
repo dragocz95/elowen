@@ -94,6 +94,7 @@ describe('brainCore workflow RPC capability wiring', () => {
       activeCount: () => 0,
       isWorkflowLive: () => true,
       addNodesFromSession: (input: unknown) => { mutations.push(input); return { added: ['late'] }; },
+      resumeInterrupted: async () => ({ resumed: false }),
     });
     let releaseLookup!: () => void;
     const lookupGate = new Promise<void>((resolveLookup) => { releaseLookup = resolveLookup; });

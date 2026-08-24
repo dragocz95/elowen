@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toBrainEvent } from '../../src/brain/events.js';
+import { composingLabel } from '../../src/cli/chat/composeLabels.js';
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
@@ -138,6 +139,22 @@ describe('message_update → assistant stream events', () => {
     expect(delta({ _reason: 'Píšu soubor' }, 5_600)).toBeNull();
     // Reason plus a real path: both ride the hint.
     expect(delta({ _reason: 'Píšu soubor', path: 'a.ts' }, 5_900)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
+  });
+
+  // A model that writes the note as JSON text a second time (seen live on claude-opus-5, on every Delegate
+  // call of one session) put `Zad\u00e1v\u00e1m…` on the spinner. The whole path — streamed arguments to
+  // the label the CLI paints — must show the characters, including one outside the BMP.
+  it('paints the streamed note decoded, not as the raw escape run the model authored', () => {
+    const emitted = toBrainEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_delta', contentIndex: 0,
+        partial: { content: [{ type: 'toolCall', id: 'esc1', name: 'Delegate',
+          arguments: { _reason: 'Zad\\u00e1v\\u00e1m obnovu konverzac\\u00ed \\ud83d\\ude80…' } }] },
+      },
+    } as unknown as AgentSessionEvent, 9_000) as { type: string; reason?: string } | null;
+    expect(emitted?.reason).toBe('Zadávám obnovu konverzací 🚀…');
+    expect(composingLabel(emitted?.reason, 'Delegate', undefined, 'cs')).toBe('Zadávám obnovu konverzací 🚀…');
   });
 
   it('lets the first reason-bearing delta through even inside the throttle window', () => {

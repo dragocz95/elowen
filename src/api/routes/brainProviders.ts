@@ -1,10 +1,9 @@
-import { brainConfigFromElowen } from '../../brain/config.js';
+import { brainConfigFromElowen, configuredBrainProviders } from '../../brain/config.js';
 import { probeAzureHostedToolSearch } from '../../brain/hostedToolSearchProbe.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { hostedToolSearchFingerprint, isAzureOpenAIResponsesProvider } from '../../brain/session/hostedToolSearch.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { HOSTED_TOOL_SEARCH_PROTOCOL } from '../../shared/hostedToolSearchProtocol.js';
-import { brainProviderIds } from '../../store/configStore.js';
 import type { ElowenApp } from '../context.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
 
@@ -34,7 +33,7 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
     if (!u || u.is_admin) return c.json(models);
     const globalExecs = d.config.get().allowedExecs;
     // Judged on the structured identity — the gate asks the program, not the prefix of a string.
-    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, { program: m.program, provider: m.provider, model: m.model }, brainProviderIds(d.config))));
+    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, { program: m.program, provider: m.provider, model: m.model }, configuredBrainProviders(d.config, d.brainAuth))));
   });
 
   // Probe an OpenAI-compatible endpoint's /models for the provider add/edit dialog — so the admin

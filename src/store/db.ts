@@ -254,6 +254,11 @@ function applyAdditiveMigrations(db: Db): void {
   // filled from the next message onwards — the register simply shows no writer until then, rather than
   // this needing a backfill that would have to scan brain_messages to invent one.
   addColumn(db, 'brain_sessions', 'last_writer_user_id', 'INTEGER');
+  // Shutdown park marker + resume attempt counter (see brain_sessions in schema.sql). NULL/0 on every
+  // pre-upgrade row — nothing was parked before these columns existed, so the boot resume sweep sees
+  // exactly nothing to do on an upgraded database.
+  addColumn(db, 'brain_sessions', 'parked_at', 'TEXT');
+  addColumn(db, 'brain_sessions', 'park_attempts', 'INTEGER NOT NULL DEFAULT 0');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.
@@ -270,6 +275,13 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'brain_subagent_runs', 'attempt', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'brain_subagent_runs', 'owner_boot_id', 'TEXT');
   addColumn(db, 'brain_subagent_runs', 'lease_until', 'INTEGER');
+  // Restart-safe workflow resume (see brain_workflows in schema.sql): owner_boot_id marks which boot
+  // wrote the last running snapshot, attempt bounds resume retries. Rows written before these columns
+  // read as NULL-owner: a running NULL row is by definition from a dead pre-upgrade boot, so the boot
+  // reconcile may claim it — its resume then fails on the missing recovery journal and terminalizes,
+  // which is exactly the pre-upgrade behaviour for those rows.
+  addColumn(db, 'brain_workflows', 'owner_boot_id', 'TEXT');
+  addColumn(db, 'brain_workflows', 'attempt', 'INTEGER NOT NULL DEFAULT 0');
   // Backfill lifecycle from the legacy JSON state exactly once per row, then leave it to the store. A
   // terminal state maps straight through; a legacy `running` row becomes `legacy_interrupted`, NOT a
   // recovery candidate — it predates the owner_boot_id claim, so respawning it could repeat a mutation

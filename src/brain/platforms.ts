@@ -526,4 +526,19 @@ export class PlatformOrchestrator {
       throw new Error(`notification platform "${destination.platform}" has no notification sink`);
     }
   }
+
+  /** Whether {@link notify} could reach `channelId` RIGHT NOW: the value is a routed `destination:`
+   *  target that decodes, its platform adapter is started, and that adapter exposes a notification sink.
+   *  Never throws — an uninstalled plugin, a bot that failed to connect and a malformed target are all
+   *  exactly the "no" this question exists to give. The boot resume sweep asks it BEFORE spending a model
+   *  turn on a parked platform conversation whose answer could never be delivered. */
+  canDeliver(channelId: string): boolean {
+    try {
+      const destination = decodeNotificationDestination(channelId, this.knownPlatforms);
+      if (!destination) return false;
+      return this.started.some((p) => p.name === destination.platform && typeof p.notify === 'function');
+    } catch {
+      return false;
+    }
+  }
 }

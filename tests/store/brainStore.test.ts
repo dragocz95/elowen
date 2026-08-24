@@ -1786,6 +1786,53 @@ describe('BrainStore', () => {
       expect(store.upsertWorkflowRun('root', wf({ id: 'wf-3', toolCallId: 'call-3', background: 'yes' }))).toBe(false);
     });
 
+    it('claims restart-orphaned workflows for the current boot, including ones with no delegation row in flight', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.setDelegationBootId('boot-A');
+      // Running under boot-A (owner stamped by the upsert)…
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [] }))).toBe(true);
+      // …and a terminal one, which must never be claimable.
+      expect(store.upsertWorkflowRun('root', wf({ id: 'wf-done', toolCallId: 'call-done', status: 'done', nodes: [] }))).toBe(true);
+      // The same boot never claims its own live work.
+      expect(store.claimRecoverableWorkflows()).toEqual([]);
+      // A NEW boot claims the running orphan — deliberately without any brain_subagent_runs row: the old
+      // sweep was gated on runningDelegationParentSessionIds, so exactly this workflow escaped it and sat
+      // `running` forever.
+      store.setDelegationBootId('boot-B');
+      const claimed = store.claimRecoverableWorkflows();
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]).toMatchObject({ parentSessionId: 'root', toolCallId: 'call-1', workflowId: 'wf-1', attempt: 1 });
+      // The claim is durable: a third boot bumps the attempt again (the resume-crash-loop counter).
+      store.setDelegationBootId('boot-C');
+      expect(store.claimRecoverableWorkflows()[0]?.attempt).toBe(2);
+    });
+
+    it('a terminal snapshot clears the claim owner so the row is never claimed again', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.setDelegationBootId('boot-A');
+      store.upsertWorkflowRun('root', wf({ nodes: [] }));
+      store.upsertWorkflowRun('root', wf({ status: 'cancelled', nodes: [] }));
+      store.setDelegationBootId('boot-B');
+      expect(store.claimRecoverableWorkflows()).toEqual([]);
+    });
+
+    it('supersedeClaimedRun releases only a run this boot claimed, terminalizing it without a parent notice', () => {
+      store.createSession({ id: 'node-sess', userId: 1, model: 'm' });
+      store.createSession({ id: 'nested-child', userId: 1, model: 'm', parentSessionId: 'node-sess' });
+      store.setDelegationBootId('boot-A');
+      store.upsertSubagentRun('node-sess', { id: 'nested', sessionId: 'nested-child', status: 'running', task: 't', tools: 0, seconds: 0 });
+      store.setDelegationBootId('boot-B');
+      // Unclaimed (still lifecycle 'running' owned by boot-A): refuse — only a held claim may be released.
+      expect(store.supersedeClaimedRun('node-sess', 'nested', 'why')).toBe(false);
+      store.claimRecoverableRuns(30_000);
+      expect(store.supersedeClaimedRun('node-sess', 'nested', 'superseded by workflow resume')).toBe(true);
+      const row = db.prepare("SELECT lifecycle, owner_boot_id FROM brain_subagent_runs WHERE tool_call_id = 'nested'").get() as { lifecycle: string; owner_boot_id: string | null };
+      expect(row.lifecycle).toBe('error');
+      expect(row.owner_boot_id).toBeNull();
+      // Deliberately NO inbox row: the node session's interrupted turn is being replaced wholesale.
+      expect(store.pendingSubagentResults('node-sess')).toEqual([]);
+    });
+
     it('keeps only the newest snapshot per tool call, and binds a tool call to its first workflow id', () => {
       store.createSession({ id: 'root', userId: 1, model: 'm' });
       store.upsertWorkflowRun('root', wf({ nodes: [] }));

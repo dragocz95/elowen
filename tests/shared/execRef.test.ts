@@ -11,8 +11,9 @@ import {
 } from '../../src/shared/execs.js';
 import { resolveExecutor } from '../../src/shared/execRouting.js';
 /** The brain providers this installation has configured. A brain exec only skips the global
- *  allow-list when its provider is one of these — see isConfiguredBrainExec. */
-const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov'];
+ *  allow-list when its provider is one of these — see isOfferableExec. */
+const PROVIDERS = ['x', 'any', 'relay', 'other', 'anthropic', 'oauth-anthropic', 'prov']
+  .map((id) => ({ id, models: [] as string[] }));
 
 
 /**
@@ -144,7 +145,7 @@ describe('exec identity', () => {
     // Dropping the prefix widened what parses as a brain exec from "starts with elowen:" to "contains a
     // slash". The global allow-list bypass must therefore ask the narrower question — is this provider
     // CONFIGURED — or every typo becomes a brain exec and walks straight past the bound. Mutation: use
-    // isElowenExec instead of isConfiguredBrainExec in either gate and `bogus/model` is granted.
+    // isElowenExec instead of the provider-set test in either gate and `bogus/model` is granted.
     it('a slash-shaped string only skips the global bound when its provider is configured', () => {
       const bob = { is_admin: false, allowed_execs: [] };
       expect(isExecAllowedForUser(bob, globalExecs, 'relay/kimi', PROVIDERS)).toBe(true);

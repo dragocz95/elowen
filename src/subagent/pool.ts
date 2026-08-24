@@ -500,6 +500,23 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     return this.queue.depth + remote.reduce((sum, count) => sum + count, 0);
   }
 
+  /** Broadcast the shutdown drain latch to every live runner (see SubagentRunnerHost.beginDrain). */
+  beginDrain(): void {
+    for (const entry of this.runners) entry.host.beginDrain();
+  }
+
+  /** Mid-step turns across the whole pool, for the daemon's step-boundary drain. A poll failure counts
+   *  as 1 (fail closed — keep waiting rather than exit under an unobservable turn). Queued turns never
+   *  started anywhere, so the queue depth deliberately does NOT count: a draining daemon refuses new
+   *  work and whatever is queued is re-dispatched or recovered after the restart. */
+  async midStepWork(): Promise<number> {
+    const remote = await Promise.all(this.runners.map(async (entry) => {
+      try { return await entry.host.midStepWork(); }
+      catch { return 1; }
+    }));
+    return remote.reduce((sum, count) => sum + count, 0);
+  }
+
   reset(reason: string): void {
     this.stopped = true;
     this.generation += 1;

@@ -178,7 +178,7 @@ export class BrainStatusService {
   constructor(private d: StatusServiceDeps) {}
 
   private subagentRuns(sessionId: string) {
-    // Restart orphans are repaired durably at boot (BrainService.reconcileDelegationsOnBoot), so this is
+    // Restart orphans are repaired durably at boot (the `delegations` recovery provider's claim), so this is
     // NOT that fix — it is the read-time fallback for a row that goes stale WITHIN a process run: a child
     // whose live registration is already gone while its terminal upsert has not landed. Hiding it keeps a
     // dead child from rendering a phantom running spinner in the meantime.

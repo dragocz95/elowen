@@ -186,11 +186,67 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- with a per-row json_extract for every row of a listing. NULL where nobody identifiable has written
   -- yet (an unlinked sender, or a row that predates this column).
   last_writer_user_id INTEGER,
+  -- Shutdown park marker: when the step-boundary drain parked this conversation's live turn (see
+  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot recovery providers
+  -- (`owner-conversations` for owner rows, `platform-conversations` for platform channel rows — the two
+  -- partition the markers between them) can continue the turn from exactly there and deliver
+  -- the answer the restart interrupted. NULL = nothing parked. Written synchronously at the park (before
+  -- the process exits) and cleared by: a successful boot resume, the sweep failing closed, an explicit
+  -- user abort, or the user's own next message (their message IS the continuation then).
+  parked_at TEXT,
+  -- How many boot resumes have been attempted on the current park. Bumped durably BEFORE each attempt so
+  -- a boot that dies mid-resume still counts it; past the cap the sweep gives up visibly instead of
+  -- stacking resume turns forever. Reset whenever the marker clears.
+  park_attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_brain_sessions_user ON brain_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_brain_sessions_debug_updated ON brain_sessions(updated_at DESC, id DESC);
+
+-- Durable resume envelope for the platform channel turn currently in flight (channels.ts,
+-- PlatformTurnResumeEnvelope). Written when an ordinary platform turn starts and DELETED when it
+-- settles, so a surviving row means exactly one thing: the process died (or will one day park) with
+-- this turn unfinished. Its own table rather than a brain_sessions column on purpose: the lifecycle
+-- is per-TURN (replaced each turn, gone on settle) while the session row is per-conversation,
+-- `getSession` is a hot `SELECT *` that must not drag a verbatim multi-KB prompt blob into every
+-- read, and "no row" is an honest absent state that no session-write path can accidentally clobber.
+-- The envelope carries prompt INPUTS verbatim (byte-stability) and the ACCOUNT identity only —
+-- authority is re-derived from that account at read time (resolvePlatformTurnAuthority), never
+-- replayed from this row, so a stored permission set can never widen behind the operator's back.
+CREATE TABLE IF NOT EXISTS brain_platform_turn_envelopes (
+  session_id  TEXT PRIMARY KEY,
+  envelope    TEXT NOT NULL,
+  captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The SECOND durable state of a boot-resumed platform turn: the answer is computed but has not reached
+-- the room yet. An envelope row above means "this turn still needs a model turn"; a row HERE means "the
+-- answer already exists and only has to be posted". The two are mutually exclusive by construction —
+-- promotePlatformTurnToDelivery swaps one for the other inside a single transaction — and that is what
+-- makes a delivery retry structurally unable to spend a second model turn: the prompt inputs it would
+-- need are gone the instant the reply becomes durable.
+--
+-- Deliberately self-contained rather than a column on brain_sessions or on the envelope row: it is its
+-- OWN boot worklist entry (claimParkedPlatformTurns unions it in), so no other path that clears the park
+-- marker — turn admission when the room speaks next, an abort, a session teardown — can strand a
+-- computed answer where the resume would read it as "nothing to do". It carries everything a post needs
+-- (the exact text and the encoded destination) plus the sender→account claim, which is RE-PROVEN before
+-- the retry posts, so a re-delivery is never a back door around the authority check.
+--
+-- Cleared only by a confirmed post or by the attempt cap giving up visibly. `attempts` is bumped durably
+-- BEFORE each post, so a boot that dies mid-post still counts it: the retry is at-least-once and BOUNDED
+-- (a duplicate in a chat is self-explaining; silence is not).
+CREATE TABLE IF NOT EXISTS brain_platform_turn_deliveries (
+  session_id       TEXT PRIMARY KEY,
+  reply            TEXT NOT NULL,
+  target           TEXT NOT NULL,
+  platform         TEXT NOT NULL,
+  platform_user_id TEXT NOT NULL,
+  account_user_id  INTEGER NOT NULL,
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
 -- `pending` marks a row written MID-TURN, straight off PI's `message_end`, before the turn settled.
 -- Without those rows a daemon restart in the middle of a long turn threw away every tool call and every
 -- word the agent had produced: the settled `agent_end` was the only thing that ever reached SQLite. They
@@ -350,6 +406,11 @@ CREATE TABLE IF NOT EXISTS brain_workflows (
   workflow_id TEXT NOT NULL,
   state TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Which process wrote the last running snapshot (mirrors brain_subagent_runs.owner_boot_id): a
+  -- `running` row owned by a DEAD boot is a restart orphan the boot reconcile may claim for resume.
+  -- attempt bounds resume retries so a workflow that keeps crashing its own recovery caps out.
+  owner_boot_id TEXT,
+  attempt INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 -- Display panels a plugin pushed via ctx.emitCard (the todo checklist is the canonical one). They are

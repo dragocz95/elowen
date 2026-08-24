@@ -367,6 +367,15 @@ function withIncrementalToolStreaming(model: Model<Api>): Model<Api> {
 export function resolveBrainModelRoute(
   registry: ModelRegistry, cfg: BrainRuntimeConfig, sel?: BrainModelSelection, compactSel?: BrainModelSelection,
 ): BrainModelRoute {
+  // A selection that NAMES a provider is an instruction, not a hint. When that provider is gone — deleted
+  // in Settings, absent from a restored backup, or never present in this deployment — the old `?? providers[0]`
+  // quietly re-pointed the run at whatever happened to be first in list order, running the dead provider's
+  // model id under a different account's credentials and billing. That is unobservable from the outside and
+  // surfaces as a surprising invoice, so it fails loudly instead. An ABSENT provider is the other fact —
+  // "no preference" — and still resolves to the default below.
+  if (sel?.provider && !cfg.providers.some((p) => p.id === sel.provider)) {
+    throw new Error(`brain provider '${sel.provider}' is not configured — pick a model that still exists in Settings → Brain`);
+  }
   const entry = (sel?.provider ? cfg.providers.find((p) => p.id === sel.provider) : undefined) ?? cfg.providers[0];
   if (!entry) throw new Error('no brain provider configured');
   const providerName = registryProviderName(entry);

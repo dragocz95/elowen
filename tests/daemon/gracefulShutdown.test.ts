@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { installGracefulShutdown, RESTART_EXIT_CODE } from '../../src/daemon/bootstrap.js';
 import type { BrainService } from '../../src/brain/brainService.js';
+import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 
 /** A brain whose in-flight work follows a scripted sequence, one entry consumed per busy() call. The last
  *  entry repeats, so a test can end on "still busy" to exercise the budget expiring.
@@ -183,6 +184,98 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
       setTimeout(() => process.emit('SIGTERM'), 10); // impatient operator
     });
     expect(exited[0]).toBe(0);
+  });
+
+  it('exits at the STEP boundary while whole turns are still live, instead of burning the budget on them', async () => {
+    // The step-boundary drain: busy() keeps reporting a live turn (it IS live — parked at its boundary),
+    // but midStepWork() says nothing is mid-step, so leaving is safe (boot recovery resumes the turn from
+    // its answered pending tail). Under the old whole-turn predicate this scenario waited the entire
+    // 60 s budget — which is what made every deploy under a long agent turn a ten-minute outage.
+    const midStepSequence = [1, 1, 0];
+    let midStepReads = 0;
+    const { brain, state } = brainBusy([{ turns: 1, children: 1 }]);
+    (brain as unknown as { midStepWork: () => Promise<number> }).midStepWork =
+      async () => midStepSequence[Math.min(midStepReads++, midStepSequence.length - 1)]!;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // nowhere near the budget the old drain consumed
+    expect(midStepReads).toBe(3); // it waited for the mid-step count, not for busy() to reach zero
+    expect(state.reads).toBeGreaterThan(1);
+  }, 40_000);
+
+  it('still waits (and falls back to the budget) while a turn is genuinely mid-step', async () => {
+    // A wedged model call or local tool never reaches its boundary; the full budget remains the fallback.
+    const { brain } = brainBusy([{ turns: 1, children: 0 }]);
+    (brain as unknown as { midStepWork: () => Promise<number> }).midStepWork = async () => 1;
+    const exited = await runSignal(brain, { drainMs: 20 });
+    expect(exited).toEqual([0]);
+  });
+
+  it('drives a REAL coordinator through the real drain loop: park on beginDrain, then exit', async () => {
+    // The other step-boundary tests stub midStepWork; this one wires an actual StepDrainCoordinator with
+    // an installed hold, so the loop is proven against the real park/latch mechanics: the turn is
+    // mid-step until beginDrain latches the coordinator, its next boundary parks, and the drain exits.
+    const drainCoord = new StepDrainCoordinator();
+    const child = 'brain-ch-subagent-real-park';
+    const agent: { prepareNextTurnWithContext?: (turn: unknown, signal?: AbortSignal) => Promise<unknown> } = {};
+    drainCoord.installHold({ agent } as never, child);
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => {
+        drainCoord.begin();
+        // The agent loop reaches its next step boundary a moment later and parks there.
+        setTimeout(() => { void agent.prepareNextTurnWithContext!({}, new AbortController().signal); }, 20);
+      },
+      midStepWork: async () => drainCoord.unsafeCount([child]),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000, pollMs: 5 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // parked at the boundary, not the fallback budget
+  }, 40_000);
+
+  it('parks a long TOP-LEVEL owner turn at its boundary and exits in seconds, writing the durable marker', async () => {
+    // The operator's exact question: a restart while an agent works in ANOTHER conversation must not
+    // wait the 600 s fallback. An owner turn now parks like a sub-agent — its safety comes from the
+    // durable park marker (onParked), which the boot resume sweep turns back into the finished answer.
+    const marked: string[] = [];
+    const drainCoord = new StepDrainCoordinator({ onParked: (id) => { marked.push(id); } });
+    const owner = 'brain-1';
+    const agent: { prepareNextTurnWithContext?: (turn: unknown, signal?: AbortSignal) => Promise<unknown> } = {};
+    drainCoord.installHold({ agent } as never, owner);
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => {
+        drainCoord.begin();
+        // The long tool loop reaches its next step boundary a moment later and parks there.
+        setTimeout(() => { void agent.prepareNextTurnWithContext!({}, new AbortController().signal); }, 20);
+      },
+      midStepWork: async () => drainCoord.unsafeCount([owner]),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const startedAt = Date.now();
+    const exited = await runSignal(brain, { drainMs: 60_000, pollMs: 5 });
+    expect(exited).toEqual([0]);
+    expect(Date.now() - startedAt).toBeLessThan(30_000); // parked at the boundary, not the fallback budget
+    expect(marked).toEqual([owner]); // the marker the boot resume needs was written before the exit
+  }, 40_000);
+
+  it('latches the step drain in the runner pool too (beginDrain reaches the brain exactly once)', async () => {
+    // The daemon-side latch is what parks turns; BrainService.beginDrain also broadcasts to the pool.
+    // Here we only pin that the shutdown handler calls it before polling — the broadcast itself is
+    // BrainService wiring.
+    const order: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 0, children: 0, undelivered: 0 }),
+      beginDrain: () => order.push('beginDrain'),
+      midStepWork: async () => { order.push('poll'); return 0; },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    await runSignal(brain);
+    expect(order[0]).toBe('beginDrain');
+    expect(order).toContain('poll');
   });
 
   it('says what it is waiting for, so the stop is visible where only the boot used to be', async () => {

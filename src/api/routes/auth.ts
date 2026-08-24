@@ -4,8 +4,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
-import { isExecAllowedForUser, isConfiguredBrainExec } from '../../shared/execs.js';
-import { brainProviderIds } from '../../store/configStore.js';
+import { isExecAllowedForUser, isOfferableExec } from '../../shared/execs.js';
+import { configuredBrainProviders } from '../../brain/config.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
@@ -62,7 +62,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // isExecAllowedForUser in two ways: it had no admin bypass, and it applied the global allow-list to
       // `elowen:` brain execs, which are bounded by the configured providers instead. So a model the
       // brain picker offered could not be saved as the default here.
-      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec, brainProviderIds(d.config))) {
+      if (!isExecAllowedForUser(u, d.config.get().allowedExecs, b.default_exec, configuredBrainProviders(d.config, d.brainAuth))) {
         return c.json({ error: 'exec not allowed' }, 400);
       }
     }
@@ -173,7 +173,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // pick is already structured here, so it is judged as an ExecRef: the gate decides on `program`
     // instead of on a prefix this route would first have had to write into a string.
     const brainRef = (provider: string, model: string) => ({ program: 'elowen' as const, provider, model });
-    const providers = brainProviderIds(d.config);
+    const providers = configuredBrainProviders(d.config, d.brainAuth);
     if (patch.model && patch.modelProvider
       && !isExecAllowedForUser(u, d.config.get().allowedExecs, brainRef(patch.modelProvider, patch.model), providers)) {
       return c.json({ error: 'model not allowed' }, 400);
@@ -417,15 +417,14 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       users.setAdmin(id, b.is_admin);
     }
     if (Array.isArray(b.allowed_execs)) {
-      // Can't grant beyond what the daemon globally allows; keep only known execs (dedup). Brain execs
-      // are bounded by the configured providers, not KNOWN_EXECS, so they're granted directly — asked
-      // through the shared program test, not a prefix comparison of my own.
-      const globalAllowed = new Set(d.config.get().allowedExecs);
-      const providers = brainProviderIds(d.config);
-      // A brain exec is granted directly, but only when its provider is actually configured: the bare
-      // `provider/model` spelling means any typo now parses as a brain exec, and `isElowenExec` alone
-      // would wave it past the global bound.
-      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && (isConfiguredBrainExec(e, providers) || globalAllowed.has(e))))]);
+      // Can't grant beyond what this installation can actually run, and ONE predicate decides that for both
+      // programs: a CLI exec must be on the global list, a brain exec must have a configured provider.
+      // Asking the global list about a brain exec too — which this filter used to do as a fallback — is how
+      // a deleted provider's models stayed grantable: the deletion leaves them behind in `allowedExecs`,
+      // and that stale entry then wrote them straight back into a user's permission list.
+      const globalExecs = d.config.get().allowedExecs;
+      const providers = configuredBrainProviders(d.config, d.brainAuth);
+      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && isOfferableExec(e, globalExecs, providers)))]);
     }
     if (Array.isArray(b.disabled_tools)) {
       users.setDisabledTools(id, b.disabled_tools.filter((t) => typeof t === 'string'));

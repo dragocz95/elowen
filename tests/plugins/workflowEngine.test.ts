@@ -1,6 +1,6 @@
 import { afterAll, describe, it, expect } from 'vitest';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1587,5 +1587,167 @@ describe('WorkflowResume', () => {
     const { tools } = harness();
     const res = await tools.get('WorkflowResume')!.execute('r4-resume', { workflowId: 'wf-does-not-exist' });
     expect(res.content[0]!.text).toMatch(/^Error: no workflow/);
+  });
+});
+
+describe('workflow recovery journal + boot resume', () => {
+  const journalPathOf = (wfId: string) => resolve(workflowFilesDir, 'workflows', 'state', `${wfId}.json`);
+  const until = async (cond: () => boolean): Promise<void> => {
+    for (let i = 0; i < 400 && !cond(); i += 1) await new Promise((r) => setTimeout(r, 5));
+    if (!cond()) throw new Error('condition never became true');
+  };
+  type ResumeControl = {
+    resumeInterrupted(input: {
+      workflowId: string; parentSessionId: string; toolCallId: string;
+      hooks: {
+        emit: (u: unknown) => void;
+        complete: (c: { id: string; toolCallId: string; status: string; result: string }) => void;
+        stopChild: (sessionId: string) => Promise<{ stopped: boolean }>;
+        validateBoundary: (access: unknown) => { ok: boolean; reason?: string };
+      };
+    }): Promise<{ resumed: boolean; reason?: string }>;
+  };
+  const resumeControlOf = (h: ReturnType<typeof harness>): ResumeControl =>
+    h.controls.get('workflow') as unknown as ResumeControl;
+
+  it('writes a recovery journal while running and removes it once the workflow is terminal', async () => {
+    const h = harness();
+    let release!: () => void;
+    gate = { task: 'a', promise: new Promise<void>((r) => { release = r; }) };
+    const pending = h.tools.get('WorkflowStart')!.execute('j1', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await until(() => h.snapshots.length > 0);
+    const wfId = h.snapshots[0]!.id;
+    // The journal is on disk while the run can still be interrupted — this file IS the boot-resume input.
+    expect(existsSync(journalPathOf(wfId))).toBe(true);
+    release();
+    await pending;
+    // Terminal: the journal's job is over; a leftover file would claim an interrupted run that was not.
+    expect(existsSync(journalPathOf(wfId))).toBe(false);
+  });
+
+  it('resumes an interrupted workflow from its journal: done nodes kept, the interrupted node back in its own session', async () => {
+    // "Crash" harness: node a finishes, node b parks forever on the gate — the engine dies with the
+    // process (we simply stop talking to h1) and only the journal survives.
+    const h1 = harness();
+    gate = { task: 'b', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-resume', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }]),
+    });
+    await until(() => h1.runs.some((r) => r.task === 'b'));
+    const wfId = h1.snapshots[0]!.id;
+    const crashedChannel = h1.runs.find((r) => r.task === 'b')!.channelId;
+    expect(existsSync(journalPathOf(wfId))).toBe(true);
+
+    // "Rebooted" harness: a FRESH engine instance over the same data dir, exactly like a new daemon boot.
+    const h2 = harness();
+    const emits: { status: string }[] = [];
+    const completions: { id: string; toolCallId: string; status: string; result: string }[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-resume',
+      hooks: {
+        emit: (u) => emits.push(u as { status: string }),
+        complete: (c) => completions.push(c),
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await until(() => completions.length === 1);
+
+    // Only the interrupted node re-ran — the done node's FULL journaled result fed the summary instead.
+    expect(h2.launched).toEqual(['b']);
+    // …and it re-ran in its own conversation (same channel id), told to continue rather than start over.
+    expect(h2.runs[0]!.channelId).toBe(crashedChannel);
+    expect(h2.runs[0]!.fullTask).toContain('an earlier attempt at this node was interrupted');
+    const completion = completions[0]!;
+    expect(completion).toMatchObject({ id: wfId, toolCallId: 'call-resume', status: 'done' });
+    expect(completion.result).toContain('done:a');
+    expect(completion.result).toContain('done:b');
+    // Fresh snapshots flowed through the hook (they are what keeps the durable DAG row honest)…
+    expect(emits.length).toBeGreaterThan(0);
+    expect(emits[emits.length - 1]!.status).toBe('done');
+    // …and the finished resume disposed of its journal like any terminal workflow.
+    await until(() => !existsSync(journalPathOf(wfId)));
+  });
+
+  it('journals a PARALLEL node\'s terminal result, so resume does not redo it (no later session event covers it)', async () => {
+    // In a sequential DAG the next node's `session` event re-journals everything, masking a missing
+    // node-terminal write. With parallel roots nothing fires after `a` completes while `b` hangs — the
+    // terminal-write is the only thing that saves a's result across the crash.
+    const h1 = harness();
+    gate = { task: 'b-par', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-par', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a-par' }, { id: 'b', task: 'b-par' }]),
+    });
+    await until(() => h1.snapshots.some((s) => s.nodes.find((n) => n.id === 'a')?.status === 'done'));
+    const wfId = h1.snapshots[0]!.id;
+
+    const h2 = harness();
+    const completions: { status: string; result: string }[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-par',
+      hooks: {
+        emit: () => {},
+        complete: (c) => completions.push(c),
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await until(() => completions.length === 1);
+    expect(h2.launched).toEqual(['b-par']); // a-par's journaled result survived; only the hung node re-ran
+    expect(completions[0]!.result).toContain('done:a-par');
+  });
+
+  it('refuses to resume when core rejects a journaled boundary, and runs nothing (D3)', async () => {
+    // The journal is an agent-writable file: a widened (or merely stale) boundary must never be replayed
+    // as authority. Core's validateBoundary hook is the arbiter; the first refusal kills the resume
+    // BEFORE any node launches, and the dead journal is disposed of.
+    const h1 = harness();
+    gate = { task: 'a-sec', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-sec', { nodesFile: workflowFile([{ id: 'a', task: 'a-sec' }]) });
+    await until(() => h1.snapshots.length > 0);
+    const wfId = h1.snapshots[0]!.id;
+    expect(existsSync(journalPathOf(wfId))).toBe(true);
+
+    const h2 = harness();
+    const validated: unknown[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-sec',
+      hooks: {
+        emit: () => {},
+        complete: () => { throw new Error('must not complete a refused resume'); },
+        stopChild: async () => ({ stopped: true }),
+        validateBoundary: (access) => { validated.push(access); return { ok: false, reason: 'admin authority revoked since the crash' }; },
+      },
+    });
+    expect(outcome.resumed).toBe(false);
+    expect(outcome.reason).toContain('admin authority revoked');
+    expect(validated.length).toBeGreaterThan(0); // the journaled parentAccess actually went through the check
+    expect(h2.launched).toEqual([]); // nothing ran under the rejected boundary
+    expect(existsSync(journalPathOf(wfId))).toBe(false);
+  });
+
+  it('refuses a claim its journal does not match, so core terminalizes instead', async () => {
+    const h1 = harness();
+    gate = { task: 'a', promise: new Promise<void>(() => { /* never released */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-mismatch', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await until(() => h1.snapshots.length > 0);
+    const wfId = h1.snapshots[0]!.id;
+
+    const h2 = harness();
+    const hooks = { emit: () => {}, complete: () => {}, stopChild: async () => ({ stopped: true }), validateBoundary: () => ({ ok: true }) };
+    // Wrong origin session: the journal names brain-parent, so this claim must be refused outright —
+    // resuming under a different parent would deliver the summary to a conversation that never asked.
+    const wrongParent = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-other', toolCallId: 'call-mismatch', hooks,
+    });
+    expect(wrongParent.resumed).toBe(false);
+    // No journal at all (never started here): same honest refusal, with a reason core can log.
+    const noJournal = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: 'wf-never-existed', parentSessionId: 'brain-parent', toolCallId: 'x', hooks,
+    });
+    expect(noJournal.resumed).toBe(false);
+    expect(noJournal.reason).toBeTruthy();
   });
 });

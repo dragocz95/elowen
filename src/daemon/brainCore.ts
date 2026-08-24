@@ -27,6 +27,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
 import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { BrainService } from '../brain/brainService.js';
+import { StepDrainCoordinator } from '../brain/stepDrain.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -42,12 +43,13 @@ import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
-import { brainConfigFromElowen } from '../brain/config.js';
+import { brainConfigFromElowen, configuredBrainProviders } from '../brain/config.js';
 import { loadAgentRegistry, agentCatalog, type AgentDef } from '../brain/agents/agentRegistry.js';
 import { makeAgentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy, shapeBrainMessages } from '../brain/messageView.js';
-import { taskSessionId } from '../brain/sessionId.js';
+import { isSubagentSession, isTaskSession, taskSessionId } from '../brain/sessionId.js';
+import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
@@ -67,7 +69,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shared/execs.js';
-import { brainProviderIds } from '../store/configStore.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 
 const log = logger('daemon');
@@ -523,7 +524,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         const owner = users.list().find((u) => u.is_admin);
         const globalExecs = config.get().allowedExecs;
         return listBrainModels(c).then((models) =>
-          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), brainProviderIds(config))));
+          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), configuredBrainProviders(config, brainCreds))));
       },
       resolveProvider,
       // The SHARED embedder + live Settings→Memory config mapper, exposed to plugins as ctx.embeddings
@@ -677,6 +678,22 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Bounded ring of recent mutating-hook execution records. The brain's owner-chat hook runner is the
   // sole writer (via the audit sink below); the admin plugins API reads it (per-plugin hook-audit view).
   const hookAudit = new HookAuditBuffer();
+  // One step-boundary shutdown coordinator per PROCESS (daemon and each runner build their own core, so
+  // each gets exactly one). The factory installs its holds/bookkeeping on every spawned session; the
+  // shutdown drain reads it through BrainService.midStepWork. A parked OWNER conversation and a parked
+  // ordinary PLATFORM CHANNEL turn both write the durable park marker here, synchronously, so their boot
+  // resume sweeps can continue the turn — sub-agent sessions (the only ones a runner process ever parks)
+  // have their own run-row/journal recovery and deliberately leave no marker, and task-worker sessions
+  // never park at all. A platform channel turn is park-eligible only when its current turn's durable
+  // resume envelope proves a faithful resume exists (platformTurnParkEligible — fail closed, and never
+  // for cron/scheduled turns).
+  const stepDrain = new StepDrainCoordinator({
+    onParked: (sessionId) => {
+      if (isSubagentSession(sessionId) || isTaskSession(sessionId)) return;
+      try { brainStore.markSessionParked(sessionId); } catch (e) { log.error(`park marker write failed for ${sessionId}`, e); }
+    },
+    parksPlatformTurn: (sessionId) => platformTurnParkEligible(brainStore, sessionId),
+  });
   // Per-user embedded brain (the new advisor engine): an in-process PI agent session. Wired only when
   // a provider is configured (reuses the relay endpoint) and not for the in-memory test DB. Coexists
   // with the spawn-CLI advisor — routes degrade to 503 when left unwired.
@@ -730,9 +747,12 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         brainLimits: () => config.get().brain.limits,
         runtimeConfig: () => config.get().runtime,
         resolvePlatformUser,
-        // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
-        // bounded by the global list AND their personal whitelist (empty personal = global only).
-        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, brainProviderIds(config)),
+        // Same allow-list semantics as the task/session routes: admins unrestricted in their NARROWING,
+        // everyone else bounded by the global list AND their personal whitelist (empty personal = global
+        // only). A brain model that no longer exists in Settings → Brain is refused for everyone — that is
+        // an existence check, not a permission — which is what makes a session pinned to a removed model
+        // fall back to the default (lifecycle's candidate loop) instead of running it anyway.
+        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, configuredBrainProviders(config, brainCreds)),
         // Delegated scopes still need explicit project-id policies; platform human turns resolve only
         // through their linked account policy. The admin's token anchors shared channel sessions.
         policyForProjects,
@@ -740,6 +760,14 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // Present only in the daemon: a runner builds its core without one and therefore always runs a
         // nested delegation itself.
         ...(opts.subagentRunner ? { subagentRunner: opts.subagentRunner } : {}),
+        stepDrain,
+        // The remote half of the step-boundary drain, only where a runner pool exists and speaks the seam.
+        ...(opts.subagentRunner?.beginDrain && opts.subagentRunner.midStepWork ? {
+          remoteStepDrain: {
+            begin: () => opts.subagentRunner?.beginDrain?.(),
+            midStepWork: () => opts.subagentRunner?.midStepWork?.() ?? Promise.resolve(0),
+          },
+        } : {}),
         // The typed sub-agent registry, resolved host-side when a delegate call names a subagent_type.
         agents: () => getAgentRegistry(),
         // Private long-term memory: the owner-chat memory tools + per-turn retrieval injection + the
