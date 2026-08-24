@@ -1,14 +1,13 @@
 /**
  * The snake_case → TitleCase tool rename.
  *
- * Tool names are not just source literals: they are durable keys in user data — a user's tool deny-list
- * (`users.disabled_tools`), their saved permission rules (`user_settings['permissions']`), every
- * delegated child's frozen execution boundary (`brain_sessions.delegated_access`), and a platform role's
- * tool allow-list (`settings.data` → `plugins.config.*.rolePolicies[].tools`). Every one of those match
- * paths is an exact string compare, so a stale name does not raise: it stops matching. A stale DENY
- * silently RE-ENABLES its tool and the `write_file`/`edit_file` "ask" defaults stop prompting (fail
- * open); a stale ALLOW-list leaves a role with no tools at all (fail closed). This map is the migration's
- * whole contract (see db.ts).
+ * Tool names are not just source literals: they are durable keys in user data — a user's tool allow-list
+ * (`users.allowed_tools`) and deny-list (`users.disabled_tools`), their saved permission rules
+ * (`user_settings['permissions']`), and every delegated child's frozen execution boundary
+ * (`brain_sessions.delegated_access`). Every one of those match paths is an exact string compare, so a
+ * stale name does not raise: it stops matching. A stale DENY silently RE-ENABLES its tool and the
+ * `write_file`/`edit_file` "ask" defaults stop prompting (fail open); a stale ALLOW silently REMOVES a
+ * tool the account was granted (fail closed). This map is the migration's whole contract (see db.ts).
  *
  * Exact names only, by design. Anything absent passes through untouched, which is exactly right for the
  * three kinds of stored name we must not touch: bridged `mcp__*` names (minted at runtime from a remote

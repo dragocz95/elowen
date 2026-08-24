@@ -77,7 +77,7 @@ export class UsernameConflictError extends Error {
     this.name = 'UsernameConflictError';
   }
 }
-type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
+type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; allowed_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
 type ExternalIdentityRow = Row & { external_provider: string; external_tenant_id: string; external_subject_id: string; external_created_at: string };
 const canonicalExec = (value: unknown): string => {
   if (typeof value !== 'string' || !value) return '';
@@ -91,7 +91,7 @@ const readAllowedExecs = (value: string): string[] => {
   try { raw = JSON.parse(value) as unknown[]; } catch { raw = value.split(','); }
   return Array.isArray(raw) ? raw.map(canonicalExec).filter(Boolean) : [];
 };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], allowed_tools: r.allowed_tools ? r.allowed_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -301,10 +301,18 @@ export class UserStore {
     this.db.prepare('UPDATE users SET allowed_execs = ? WHERE id = ?').run(execs.map(canonicalExec).filter(Boolean).join(','), id);
     return this.get(id);
   }
-  /** Set the per-user tool DENY-list (plugin tool names disabled for this user's own brain sessions).
-   *  Empty → the user gets every enabled plugin tool. Tool names are comma-free, so a CSV is safe. */
+  /** Set the per-user tool DENY-list. Retained unread for one release as a rollback path behind
+   *  `allowed_tools`; nothing in the turn path consults it any more (see turnCapabilities). */
   setDisabledTools(id: number, tools: string[]): User | null {
     this.db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
+    return this.get(id);
+  }
+  /** Set the per-user tool ALLOW-list — the plugin tools this account may use at all. Empty means NO
+   *  plugin tool for a non-admin, which is the deny-by-default the list exists for: anything newly
+   *  installed stays invisible until an admin grants it. Admins are exempt (see turnCapabilities), so an
+   *  empty list never locks the operator out. Tool names are comma-free, so a CSV is safe. */
+  setAllowedTools(id: number, tools: string[]): User | null {
+    this.db.prepare('UPDATE users SET allowed_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
     return this.get(id);
   }
   /** Set the per-user plugin GRANT-list (names of `userGrantable` plugins this user may use). Empty →

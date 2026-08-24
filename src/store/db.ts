@@ -148,6 +148,12 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   // Per-user tool deny-list (CSV of plugin tool names disabled for this user's own brain sessions).
   addColumn(db, 'users', 'disabled_tools', "TEXT NOT NULL DEFAULT ''");
+  // Per-user tool ALLOW-list (CSV of plugin tool names). This is the authority a turn runs under: a plugin
+  // tool the writer's account does not name is neither offered to the model nor executable, so a newly
+  // installed plugin or MCP server stays invisible until an admin grants it. Empty on every migrated row,
+  // which alone would leave a non-admin with no plugin tools at all — deploy/migrate-tool-allowlist.js
+  // fills it from the live catalogue before anything reads it, and admins bypass the list entirely.
+  addColumn(db, 'users', 'allowed_tools', "TEXT NOT NULL DEFAULT ''");
   // Per-user plugin grant-list (CSV of plugin names). Empty on every migrated row, which is the
   // deny-by-default this feature wants: a `userGrantable` plugin stays admin-only until an admin hands
   // it out. Plugins that do not opt in are unaffected, so an upgrade changes nothing on its own.
@@ -726,12 +732,15 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
  *  open); a stale ALLOW-list leaves a platform role with no tools at all (fail closed). `rename` returns
  *  its input unchanged for anything it does not own. */
 function renameStoredToolNames(db: Db, rename: (name: string) => string): void {
-  // Per-user tool deny-list: a CSV of exact names.
-  const users = db.prepare("SELECT id, disabled_tools FROM users WHERE disabled_tools != ''")
-    .all() as { id: number; disabled_tools: string }[];
-  for (const u of users) {
-    const next = u.disabled_tools.split(',').map(rename).join(',');
-    if (next !== u.disabled_tools) db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run(next, u.id);
+  // The two per-user tool lists, each a CSV of exact names. Both must be rewritten: a stale entry in the
+  // DENY list silently re-enables its tool, and a stale entry in the ALLOW list silently removes one.
+  for (const column of ['disabled_tools', 'allowed_tools'] as const) {
+    const users = db.prepare(`SELECT id, ${column} AS names FROM users WHERE ${column} != ''`)
+      .all() as { id: number; names: string }[];
+    for (const u of users) {
+      const next = u.names.split(',').map(rename).join(',');
+      if (next !== u.names) db.prepare(`UPDATE users SET ${column} = ? WHERE id = ?`).run(next, u.id);
+    }
   }
   // Saved permission rules. Only the `tools` scope holds tool names — `bash` patterns are shell commands
   // ("git status*") and must not be touched. Rebuilding the map preserves JSON key order, which is
