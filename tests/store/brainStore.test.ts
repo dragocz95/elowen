@@ -676,6 +676,12 @@ describe('BrainStore', () => {
     aged('brain-ch-discord-123#0');       // live channel → must survive
     aged('brain-ch-msteams-a:xyz');       // live channel → must survive
     aged('convo');
+    // An idle channel is rolled over: the old transcript is re-keyed under a unique -arch- id and
+    // mayDeliverToSession refuses it forever, so it is collectable.
+    aged('brain-ch-discord-123#0-arch-mt6abc12');
+    // ...but a LIVE channel whose own name contains "-arch-" is not an archive. The SQL matches
+    // loosely, so without the exact predicate this row would be deleted while people still talk in it.
+    aged('brain-ch-discord-team-arch-notes#0');
     // A finished delegation still hanging under a live conversation: its own age decides, or the runs
     // that accumulate under a long-lived chat would never be collected at all.
     store.createSession({ id: 'live-root', userId: 7, model: 'm' }); spoke('live-root');
@@ -683,6 +689,7 @@ describe('BrainStore', () => {
 
     expect(store.staleConversationIds(7, 30).sort()).toEqual([
       'brain-ch-cron-job-nightly-arch-abc',
+      'brain-ch-discord-123#0-arch-mt6abc12',
       'brain-ch-subagent-sub-dlg-1',
       'brain-ch-subagent-sub-dlg-2',
       'convo',

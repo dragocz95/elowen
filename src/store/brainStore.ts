@@ -6,7 +6,7 @@ import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
-import { CHANNEL_PREFIX, TASK_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, TASK_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
@@ -347,9 +347,18 @@ export class BrainStore {
            -- and these are what actually accumulate. A real platform channel stays excluded.
            OR s.id LIKE '${SUBAGENT_PREFIX}%'
            OR s.id LIKE '${CRON_PREFIX}%'
+           -- Archived channel transcripts: a channel that sat quiet past the idle cutoff is rolled over
+           -- (its prompt cache has expired), the old transcript is re-keyed under a unique -arch- id and
+           -- the deterministic channel id is freed for a fresh session. mayDeliverToSession refuses the
+           -- archive outright, so nothing will ever be added to it again. Matched loosely here and
+           -- narrowed by the exact predicate below — a channel NAME could contain "-arch-" and must not
+           -- be mistaken for an archive while it is still live.
+           OR s.id LIKE '%-arch-%'
          )`
     ).all(userId) as { id: string }[];
-    return rows.map((row) => row.id);
+    return rows
+      .map((row) => row.id)
+      .filter((id) => !id.includes('-arch-') || isArchivedChannelSession(id));
   }
 
   /** Per-user overview stats for the users admin panel: total session count and the model used in the
