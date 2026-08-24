@@ -17,7 +17,7 @@ import { abortSessionWork } from '../session/abortSessionWork.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { resolveHostedToolSearchRoute } from '../session/hostedToolSearch.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
-import { runWithPolicy } from '../../plugins/policyContext.js';
+import { runWithPolicy, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
 import { callElowenApi } from '../../shared/apiClient.js';
 import { renderPromptFor } from '../../prompts/index.js';
@@ -61,10 +61,10 @@ export interface BrainWorkerDeps {
   userSettings?: (userId: number) => { autoCompactAt?: number; autoCompactAtByModel?: Record<string, number> };
   /** Raw global instructions for the task owner. Wrapped and escaped at worker spawn like owner chat. */
   userInstructions?: (userId: number) => string | undefined;
-  /** Tool names the task owner must not reach (their admin-set deny-list plus the tools of any
-   *  grant-gated plugin they hold no grant for). A worker runs unattended ON that account, so it gets
-   *  the same answer chat does — the same seam, so the two cannot drift into different rules. */
-  deniedTools?: (userId: number) => string[];
+  /** What the task owner may reach: the grant an admin gave that account, minus their deny-list and the
+   *  tools of any grant-gated plugin they hold no grant for. A worker runs unattended ON that account, so
+   *  it gets the same answer chat does — the same seam, so the two cannot drift into different rules. */
+  toolAuthorityFor?: (userId: number) => ToolPolicy | undefined;
   now?: () => number;
   idleMs?: number;
   createSession?: typeof createAgentSession;
@@ -222,9 +222,9 @@ export class BrainWorkerService {
     // Applied by NAME rather than as a policy: this factory takes no ToolPolicy, and a tool the owner
     // may not reach must not merely fail at execute time — its schema would still sit in their prompt.
     // An ownerless task keeps the full set: there is no account whose grants could withhold anything.
-    const denied = new Set(input.ownerId ? this.d.deniedTools?.(input.ownerId) ?? [] : []);
+    const authority = input.ownerId ? this.d.toolAuthorityFor?.(input.ownerId) : undefined;
     const pluginTools = composeSessionTools({
-      kind: 'task-worker', pluginTools: (plugins?.toolsFor(null) ?? []).filter((t) => !denied.has(t.name)),
+      kind: 'task-worker', pluginTools: (plugins?.toolsFor(null) ?? []).filter((t) => toolPermitted(t.name, authority)),
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
       // Task workers take the same veto gate. Wiring only the chat path would leave every guard a user
       // installs silently unenforced for exactly the sessions that run unattended.

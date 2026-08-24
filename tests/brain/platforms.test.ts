@@ -44,7 +44,7 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
     }) as never,
     platformOwner: () => 1,
     policyForUser: () => userPolicy,
-    disabledToolsFor: () => ['DiscordApi'], // Amy disabled this tool in her Elowen account
+    toolAuthorityFor: () => ({ deny: new Set(['DiscordApi']) }), // Amy disabled this tool in her Elowen account
     identity: linkedResolver(opts.linked),
     channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
     dispatch: noDispatch,
@@ -92,7 +92,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       policyForUser: () => userPolicy,
-      disabledToolsFor: () => ['DiscordApi'],
+      toolAuthorityFor: () => ({ deny: new Set(['DiscordApi']) }),
       identity: linkedResolver(false),
       channels: {
           sessionOwnerUserId: () => undefined,
@@ -247,7 +247,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
         plugins: async () => ({ platforms: [adapter] }) as never,
         platformOwner: () => 1,
         policyForUser: () => userPolicy,
-        disabledToolsFor: () => ['DiscordApi'],
+        toolAuthorityFor: () => ({ deny: new Set(['DiscordApi']) }),
         identity: linkedResolver(true), // resolves the sender to account 2
         channels: channels as never,
         dispatch: noDispatch,
@@ -495,7 +495,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
-      disabledToolsFor: () => ['terminal_exec'],
+      toolAuthorityFor: () => ({ deny: new Set(['terminal_exec']) }),
       identity: resolver,
       channels: channels as never,
       dispatch: dispatchInto(channels, resolver, () => rolePolicy),
@@ -734,7 +734,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [cron, discord], platformPromptsFor: (platform: string) => platform === 'discord' ? ['DIRECT SURFACE'] : [] }) as never,
       platformOwner: () => 1,
       policyForUser: () => userPolicy,
-      disabledToolsFor: () => ['DiscordApi'],
+      toolAuthorityFor: () => ({ deny: new Set(['DiscordApi']) }),
       identity: linkedResolver(false),
       channels: {
           sessionOwnerUserId: () => undefined,
@@ -929,7 +929,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       policyForUser: () => userPolicy,
-      disabledToolsFor: () => [], // nothing disabled
+      toolAuthorityFor: () => undefined, // nothing disabled
       identity: linkedResolver(true),
       channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,

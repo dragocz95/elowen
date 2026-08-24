@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { ungrantedPluginTools } from '../../src/plugins/toolGrants.js';
-import { deniedToolsForUser } from '../../src/brain/brainDeps.js';
+import { toolAuthorityForUser } from '../../src/brain/brainDeps.js';
 import type { BrainDeps } from '../../src/brain/brainDeps.js';
 import type { User } from '../../src/store/userStore.js';
 
@@ -19,7 +19,7 @@ const user = (over: Partial<User> = {}): User => ({
   id: 5, username: 'amy', is_admin: false, granted_plugins: [], disabled_tools: [], ...over,
 } as unknown as User);
 
-/** `deniedToolsForUser` only ever reads these two, and a Pick is what it declares. */
+/** `toolAuthorityForUser` only ever reads these two, and a Pick is what it declares. */
 const deps = (u: User | undefined, reg: PluginRegistry | undefined): Pick<BrainDeps, 'users' | 'plugins'> => ({
   users: { get: () => u } as unknown as BrainDeps['users'],
   plugins: { peek: () => reg } as unknown as BrainDeps['plugins'],
@@ -45,14 +45,20 @@ describe('per-user plugin grants on brain tools', () => {
 
   it('adds the ungranted tools to the account\'s own deny-list rather than replacing it', () => {
     const u = user({ disabled_tools: ['Bash'] });
-    expect(deniedToolsForUser(deps(u, registry()), 5)).toEqual(['Bash', 'GatedRead', 'GatedWrite']);
-    expect(deniedToolsForUser(deps(user({ disabled_tools: ['Bash'], granted_plugins: ['gated'] }), registry()), 5))
-      .toEqual(['Bash']);
+    const denyOf = (row: ReturnType<typeof user> | undefined, id = 5) =>
+      [...(toolAuthorityForUser(deps(row, registry()), id)?.deny ?? [])];
+    expect(denyOf(u)).toEqual(['Bash', 'GatedRead', 'GatedWrite']);
+    expect(denyOf(user({ disabled_tools: ['Bash'], granted_plugins: ['gated'] }))).toEqual(['Bash']);
   });
 
   it('withholds a gated tool from an id it cannot resolve, instead of handing it out', () => {
     // A deleted or unknown account must fail closed: "no row" is not "no restrictions".
-    expect(deniedToolsForUser(deps(undefined, registry()), 999)).toEqual(['GatedRead', 'GatedWrite']);
+    const policy = toolAuthorityForUser(deps(undefined, registry()), 999);
+    expect([...(policy?.deny ?? [])]).toEqual(['GatedRead', 'GatedWrite']);
+    // …and it receives no GRANT either. An absent row must not read as "unrestricted": that is the
+    // difference between a deleted account inheriting everything and inheriting nothing.
+    expect(policy?.allow).toBeDefined();
+    expect([...(policy?.allow ?? [])]).toEqual([]);
   });
 
   // A grant is enforced TWICE by design: `toolsFor` keeps the tool out of the session, and the deny-list

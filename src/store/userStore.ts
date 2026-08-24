@@ -134,8 +134,12 @@ export class UserStore {
 
   create(username: string, password: string): User {
     const isAdmin = this.count() === 0 ? 1 : 0; // the first user ever created is the admin
+    // A new account starts with an EMPTY tool grant, overriding the column's `*` default — that default
+    // exists only so migrating an instance does not strip accounts that predate the grant. A new account
+    // has no history to preserve, so it starts closed and an admin opens it. Admins bypass the grant, so
+    // the very first account (the operator) is unaffected.
     const info = this.db
-      .prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)')
+      .prepare("INSERT INTO users (username, password_hash, is_admin, allowed_tools) VALUES (?, ?, ?, '')")
       .run(username, hashPassword(password), isAdmin);
     return this.get(Number(info.lastInsertRowid))!;
   }
@@ -254,8 +258,8 @@ export class UserStore {
       }
       try {
         const info = this.db.prepare(`INSERT INTO users
-          (username, password_hash, is_admin, name, email)
-          VALUES (?, ?, 0, ?, ?)`)
+          (username, password_hash, is_admin, name, email, allowed_tools)
+          VALUES (?, ?, 0, ?, ?, '')`)
           .run(
             username,
             hashPassword(randomBytes(32).toString('base64url')),

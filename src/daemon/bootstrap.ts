@@ -21,7 +21,7 @@ import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
-import { deniedToolsForUser } from '../brain/brainDeps.js';
+import { toolAuthorityForUser } from '../brain/brainDeps.js';
 import { buildBrainCore } from './brainCore.js';
 import { SubagentRunnerPool } from '../subagent/pool.js';
 import { resolvePoolMax } from '../subagent/sizing.js';
@@ -262,7 +262,7 @@ export async function buildApp(opts: BuildOpts) {
       const body = userSettings.cliSettings(userId).personalityBody.trim();
       return body || undefined;
     },
-    deniedTools: (userId) => deniedToolsForUser({ users, plugins: pluginProvider }, userId),
+    toolAuthorityFor: (userId) => toolAuthorityForUser({ users, plugins: pluginProvider }, userId),
   });
   // The plugin host's late binding, so ctx.host.brainWorker() resolves from now on — the agents
   // plugin's spawn attaches through this accessor (its stuck detector and startup reconcile also read

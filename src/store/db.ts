@@ -150,10 +150,15 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'users', 'disabled_tools', "TEXT NOT NULL DEFAULT ''");
   // Per-user tool ALLOW-list (CSV of plugin tool names). This is the authority a turn runs under: a plugin
   // tool the writer's account does not name is neither offered to the model nor executable, so a newly
-  // installed plugin or MCP server stays invisible until an admin grants it. Empty on every migrated row,
-  // which alone would leave a non-admin with no plugin tools at all — deploy/migrate-tool-allowlist.js
-  // fills it from the live catalogue before anything reads it, and admins bypass the list entirely.
-  addColumn(db, 'users', 'allowed_tools', "TEXT NOT NULL DEFAULT ''");
+  // installed plugin or MCP server stays invisible until an admin grants it.
+  //
+  // The default is the `*` wildcard, NOT the empty string, and that is deliberate: ALTER TABLE writes the
+  // default into every existing row, so migrating an instance cannot silently strip its accounts of every
+  // plugin tool. Existing accounts therefore stay unrestricted until an admin narrows them (or
+  // deploy/migrate-tool-allowlist.js converts the wildcard into the explicit catalogue-minus-deny list,
+  // which is what actually starts the fail-closed behaviour for newly installed tools).
+  // A NEWLY created account is inserted with an empty list instead — see UserStore.create.
+  addColumn(db, 'users', 'allowed_tools', "TEXT NOT NULL DEFAULT '*'");
   // Per-user plugin grant-list (CSV of plugin names). Empty on every migrated row, which is the
   // deny-by-default this feature wants: a `userGrantable` plugin stays admin-only until an admin hands
   // it out. Plugins that do not opt in are unaffected, so an upgrade changes nothing on its own.
@@ -404,6 +409,8 @@ function makeUserIdsMonotonic(db: Db): void {
         is_admin INTEGER NOT NULL DEFAULT 0,
         allowed_execs TEXT NOT NULL DEFAULT '',
         disabled_tools TEXT NOT NULL DEFAULT '',
+        allowed_tools TEXT NOT NULL DEFAULT '*',
+        granted_plugins TEXT NOT NULL DEFAULT '',
         name TEXT NOT NULL DEFAULT '',
         email TEXT NOT NULL DEFAULT '',
         avatar TEXT NOT NULL DEFAULT '',
@@ -413,9 +420,11 @@ function makeUserIdsMonotonic(db: Db): void {
       );
       INSERT INTO users_new (
         id, username, password_hash, created_at, is_admin, allowed_execs, disabled_tools,
+        allowed_tools, granted_plugins,
         name, email, avatar, default_exec, advisor_exec, advisor_autostart
       ) SELECT
         id, username, password_hash, created_at, is_admin, allowed_execs, disabled_tools,
+        allowed_tools, granted_plugins,
         name, email, avatar, default_exec, advisor_exec, advisor_autostart
       FROM users;
       DROP TABLE users;
@@ -735,6 +744,11 @@ function renameStoredToolNames(db: Db, rename: (name: string) => string): void {
   // The two per-user tool lists, each a CSV of exact names. Both must be rewritten: a stale entry in the
   // DENY list silently re-enables its tool, and a stale entry in the ALLOW list silently removes one.
   for (const column of ['disabled_tools', 'allowed_tools'] as const) {
+    // A rename gate can fire BEFORE the column is added: the one-shot migrations run near the top of
+    // `migrate`, the `addColumn` calls further down. A column that does not exist yet also holds no stale
+    // name — it is about to be created carrying only its default — so skipping it loses nothing.
+    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    if (!columns.some((c) => c.name === column)) continue;
     const users = db.prepare(`SELECT id, ${column} AS names FROM users WHERE ${column} != ''`)
       .all() as { id: number; names: string }[];
     for (const u of users) {

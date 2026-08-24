@@ -1,4 +1,4 @@
-import type { ToolPolicy } from '../plugins/policyContext.js';
+import { toolPermitted, type ToolPolicy } from '../plugins/policyContext.js';
 import {
   normalizeNoninteractivePermissionBoundary,
   type NoninteractivePermissionBoundary,
@@ -417,10 +417,23 @@ export function packDelegatedPromptAppend(sections: readonly string[]): PackedDe
 }
 
 /** Rehydrate the execution-time plugin-tool policy. An empty allow-list is preserved as a real empty Set. */
-export function delegatedToolPolicy(scope: DelegatedExecutionScope, currentDenied: Iterable<string> = []): ToolPolicy | undefined {
+export function delegatedToolPolicy(
+  scope: DelegatedExecutionScope,
+  currentDenied: Iterable<string> = [],
+  currentAllow?: Iterable<string>,
+): ToolPolicy | undefined {
   const narrowed = withDelegatedDeniedTools(scope, currentDenied);
-  const allow = narrowed.toolPolicy?.allow;
   const deny = narrowed.toolPolicy?.deny;
+  // The captured scope stays authoritative, but the spawning ACCOUNT's current grant may still narrow it:
+  // a tool an admin has since revoked must not keep reaching a long-lived child through its frozen
+  // boundary. Intersection only — an account grant can never hand the child something its scope lacks.
+  const scopeAllow = narrowed.toolPolicy?.allow;
+  const account = currentAllow === undefined ? undefined : new Set(currentAllow);
+  const allow = account === undefined
+    ? scopeAllow
+    : scopeAllow === undefined
+      ? [...account]
+      : scopeAllow.filter((name) => toolPermitted(name, { allow: account }));
   if (allow === undefined && (!deny || deny.length === 0)) return undefined;
   return {
     ...(allow !== undefined ? { allow: new Set(allow) } : {}),

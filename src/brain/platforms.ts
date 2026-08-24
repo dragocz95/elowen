@@ -33,9 +33,9 @@ export interface PlatformOrchestratorDeps {
   /** A linked sender uses their Elowen account permissions wherever they write: this resolves that
    *  account's own project Policy. An unlinked sender receives no project or tool access. */
   policyForUser?: (userId: number) => Policy;
-  /** A linked user's own tool deny-list (their Account → disabled tools plus any per-user-granted plugin
-   *  they do not hold), applied for their platform turns. */
-  disabledToolsFor?: (userId: number) => string[];
+  /** A linked user's own tool authority — the grant an admin gave that account, minus their deny-list and
+   *  the tools of any grant-gated plugin they do not hold — applied for their platform turns. */
+  toolAuthorityFor?: (userId: number) => ToolPolicy | undefined;
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Where a DELEGATED turn actually executes — see SubagentDispatch. Every delegation reaches the host
@@ -98,7 +98,7 @@ export class PlatformOrchestrator {
             }
             const policy = this.d.policyForUser?.(src.origin.userId);
             if (!policy) throw new Error('direct origin account is unavailable');
-            const denied = this.d.disabledToolsFor?.(src.origin.userId) ?? [];
+            const originAuthority = this.d.toolAuthorityFor?.(src.origin.userId);
             const reply = await this.d.channels.send({
               channelId,
               ownerUserId: src.origin.userId,
@@ -108,7 +108,7 @@ export class PlatformOrchestrator {
               // source already frames the turn as scheduled; using the scheduled persona here would leave
               // a cold/evicted DM live under that persona for the next human message.
               promptAppend: plugins?.platformPromptsFor?.(destination.platform) ?? undefined,
-              toolPolicy: denied.length ? { deny: new Set(denied) } : undefined,
+              toolPolicy: originAuthority,
               identity: this.d.identity.forDirectChat(src.origin.userId, destination.platform, policy),
               writerUserId: src.origin.userId,
               historyPlatform: destination.platform,
@@ -230,7 +230,7 @@ export class PlatformOrchestrator {
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union
             // too, so a later settings change that re-enables a tool never widens an already-delegated run.
-            const delegatedAccess = withDelegatedDeniedTools(rawScope, this.d.disabledToolsFor?.(sessionOwner) ?? []);
+            const delegatedAccess = withDelegatedDeniedTools(rawScope, this.d.toolAuthorityFor?.(sessionOwner)?.deny ?? []);
             // Validated above for the owner lookup; re-checked here so the request below carries the
             // non-optional parent it actually has.
             if (!parentSessionId) throw new Error('invalid parent session');
@@ -333,8 +333,13 @@ export class PlatformOrchestrator {
           if (accountUserId != null) {
             if (!this.d.policyForUser) return undefined;
             policy = this.d.policyForUser(accountUserId);
-            const denied = [...new Set([...(this.d.disabledToolsFor?.(accountUserId) ?? []), ...turnDenied])];
-            toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
+            // `allow` comes from the ACCOUNT alone. A platform role no longer contributes a tool list:
+            // a room role is not an identity, so there is nobody to hold its grant against.
+            const account = this.d.toolAuthorityFor?.(accountUserId);
+            const deny = new Set([...(account?.deny ?? []), ...turnDenied]);
+            toolPolicy = account?.allow || deny.size
+              ? { ...(account?.allow ? { allow: account.allow } : {}), ...(deny.size ? { deny } : {}) }
+              : undefined;
           } else {
             // Only the exact instance-cron shape is accountless: no owner claim and no originating account
             // conversation. A stale owned/origin job must fail closed instead of widening to instance authority.

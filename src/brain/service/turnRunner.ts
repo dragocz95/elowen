@@ -1,5 +1,6 @@
 import { sendLockKey } from '../session/liveRegistry.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
+import type { ToolPolicy } from '../../plugins/policyContext.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { MemoryService } from '../memoryService.js';
@@ -86,10 +87,10 @@ interface TurnRunnerDeps {
   projects?: BrainDeps['projects'];
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   plugins(): Promise<PluginRegistry | undefined>;
-  /** Every tool name denied for a user (their `disabled_tools` plus the tools of any per-user-granted
-   *  plugin they do not hold). Resolved by the facade, which is the only layer holding the registry
-   *  synchronously. Absent (test doubles) → nothing is denied. */
-  deniedTools?(userId: number): string[];
+  /** What a user may reach: the grant an admin gave that account, minus their `disabled_tools` and the
+   *  tools of any per-user-granted plugin they do not hold. Resolved by the facade, which is the only
+   *  layer holding the registry synchronously. Absent (test doubles) → nothing is restricted. */
+  toolAuthorityFor?(userId: number): ToolPolicy | undefined;
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   sendDelegatedCustom?(userId: number, sessionId: string, customType: string, content: string, resultId: string): Promise<void>;

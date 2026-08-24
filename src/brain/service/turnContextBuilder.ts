@@ -45,7 +45,7 @@ interface TurnContextBuilderDeps {
   memoryCategoryStore?: MemoryCategoryStore;
   projects?: ProjectStore;
   plugins(): Promise<PluginRegistry | undefined>;
-  deniedTools?(userId: number): string[];
+  toolAuthorityFor?(userId: number): ToolPolicy | undefined;
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
   completeSubagent?(parentSessionId: string, userId: number, completion: SubagentCompletion): void;
@@ -383,8 +383,8 @@ export class TurnContextBuilder {
     // revoked plugin grant) — never with the turn, the mode or the message. Hiding them therefore costs
     // nothing in the normal case: the set is identical turn after turn and the cached prefix holds. An
     // admin edit does rewrite the prefix once, which is the correct price for a permission change.
-    const disabled = new Set(this.d.deniedTools?.(userId) ?? this.d.users.get(userId)?.disabled_tools ?? []);
-    const visibility = disabled.size ? { deny: disabled } : undefined;
+    const authority = this.d.toolAuthorityFor?.(userId);
+    const visibility = authority;
     // Plan mode's denials are ENFORCEMENT ONLY, deliberately kept out of the visible set. Tool schemas sit
     // at the front of the prompt, so narrowing them on a mode switch rewrites the whole cached prefix —
     // measured at ~$2.97 and 287,608 re-written tokens for a single switch, paid again on the way back.
@@ -392,7 +392,7 @@ export class TurnContextBuilder {
     // (built-ins included, since 471f1b1e), which is where a security rule belongs anyway. This mirrors
     // the reference implementation, whose plan mode likewise leaves the tool set alone and refuses at the
     // permission gate.
-    const enforced = new Set(disabled);
+    const enforced = new Set(authority?.deny ?? []);
     if (mode === 'plan') {
       for (const tool of live.session.getAllTools?.() ?? []) {
         if (!PLAN_MODE_CLAMPED_TOOLS.has(tool.name) && !live.planSafeToolNames.has(tool.name)) enforced.add(tool.name);
@@ -401,6 +401,12 @@ export class TurnContextBuilder {
     // Visibility keeps its OTHER duties untouched — sender roles in a shared channel, delegated agents'
     // allow-lists and deferred MCP tools all still flow through here; only the plan-mode part is withheld.
     applyToolVisibility(live.session, live.pluginToolNames, visibility, live.toolSearch);
-    return enforced.size ? { deny: enforced } : undefined;
+    // The account's GRANT rides along unchanged: plan mode only ever adds denials, so carrying `allow`
+    // through keeps the enforcement policy a superset of the visible one rather than a second opinion.
+    if (!authority?.allow && enforced.size === 0) return undefined;
+    return {
+      ...(authority?.allow ? { allow: authority.allow } : {}),
+      ...(enforced.size ? { deny: enforced } : {}),
+    };
   }
 }

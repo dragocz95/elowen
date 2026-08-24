@@ -1,7 +1,7 @@
 import type { BrainStore, RecoverableRun } from '../../store/brainStore.js';
 import { syntheticRestartResultId } from '../../store/brainStore.js';
 import { settlePartialTurn, outstandingToolCalls } from '../persistence.js';
-import { deniedToolsForUser } from '../brainDeps.js';
+import { toolAuthorityForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
@@ -451,7 +451,8 @@ export class DelegatedSessionService {
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
       : this.d.policyForProjects?.(scope.projectIds)
         ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
-    const deniedTools = [...deniedToolsForUser(this.d, userId), ...(opts?.extraDeny ?? [])];
+    const authority = toolAuthorityForUser(this.d, userId);
+    const deniedTools = [...(authority?.deny ?? []), ...(opts?.extraDeny ?? [])];
     return this.d.channelService.send({
       channelId: channelIdOf(sessionId),
       ownerUserId: row.user_id,
@@ -462,9 +463,11 @@ export class DelegatedSessionService {
       delegatedAccess: scope,
       promptAppend: scope.promptAppend,
       trusted: scope.admin,
-      // The captured allow/deny policy remains authoritative; current account disabled tools may only add
-      // a deny. A mid-run steer still executes under the already-running child's original turn scope.
-      toolPolicy: delegatedToolPolicy(scope, deniedTools),
+      // The captured allow/deny policy remains authoritative; the account's CURRENT authority may only
+      // narrow it further — its denials add, and its grant intersects, so a tool an admin has since
+      // revoked stops reaching the child. A mid-run steer still executes under the already-running
+      // child's original turn scope.
+      toolPolicy: delegatedToolPolicy(scope, deniedTools, authority?.allow),
       identity: this.d.identity.forDelegatedTurn(scope, row.user_id),
       // The child's OWN model, read back from its session row. Without this the continuation passed no
       // selection at all, and a child whose channel had since been evicted respawned on whatever

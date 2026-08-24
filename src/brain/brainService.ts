@@ -49,7 +49,7 @@ import { SessionProcessService } from './service/sessionProcesses.js';
 import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
-import { deniedToolsForUser } from './brainDeps.js';
+import { toolAuthorityForUser } from './brainDeps.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
@@ -261,7 +261,7 @@ export class BrainService {
       get memoryCategoryStore() { return d.memoryCategoryStore; },
       get projects() { return d.projects; },
       plugins: () => this.resolvePlugins(),
-      deniedTools: (userId) => deniedToolsForUser(d, userId),
+      toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
       get hookAudit() { return d.hookAudit; },
       get projectPath() { return d.projectPath; },
       sendDelegatedCustom: async (userId, sessionId, customType, content, resultId) => {
@@ -349,9 +349,9 @@ export class BrainService {
       recordActivity: d.recordActivity,
       platformOwner: d.platformOwner,
       agents: d.agents,
-      // A linked platform sender uses the same account policy and deny-list wherever they write.
+      // A linked platform sender uses the same account policy and tool grant wherever they write.
       policyForUser: d.policy,
-      disabledToolsFor: (userId) => deniedToolsForUser(d, userId),
+      toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
       identity: this.identity,
       channels: this.channelService,
       dispatch: this.subagents,

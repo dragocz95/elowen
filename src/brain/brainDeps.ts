@@ -1,4 +1,5 @@
 import { ungrantedPluginTools } from '../plugins/toolGrants.js';
+import type { ToolPolicy } from '../plugins/policyContext.js';
 import type { createAgentSession, ModelRuntime, ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { HookAuditBuffer } from '../shared/hookAudit.js';
@@ -27,7 +28,7 @@ export interface BrainDeps {
   store: BrainStore;
   users: {
     ensureAdvisorToken(userId: number): string;
-    get(userId: number): { name?: string; username?: string; is_admin?: boolean; disabled_tools?: string[]; granted_plugins?: string[] } | null | undefined;
+    get(userId: number): { name?: string; username?: string; is_admin?: boolean; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] } | null | undefined;
   };
   /** The provider set, or a live resolver so provider/OAuth changes apply without a daemon restart.
    *  A resolver returning null means "nothing configured yet" — `start` fails with a clear error. */
@@ -155,19 +156,47 @@ export interface BrainDeps {
   recordActivity?: (e: { actorUserId: number | null; surface: string; target: string }) => void;
 }
 
-/** Every tool name denied for a user's own sessions: the deny-list an admin set for them
- *  (`disabled_tools`), plus the tools of any `userGrantable` plugin they hold no grant for.
+/** What an ACCOUNT may reach, as one ToolPolicy. Three inputs, two of them subtractive:
  *
- *  One resolver so the three places that mint a ToolPolicy — owner chat, a channel's linked sender and a
- *  delegated child — cannot drift into three different answers about what a user may reach. An unknown
- *  user id resolves to "no grants", which withholds a grant-gated tool rather than handing it out.
+ *    - `allowed_tools`  the positive grant an admin gave this account. Absent from it means the tool is
+ *                       neither offered nor executable, so anything installed later stays invisible until
+ *                       an admin grants it. `['*']` is the pre-migration "unrestricted" marker.
+ *    - `disabled_tools` the older deny-list. Still honoured: until the migration folds it into the grant,
+ *                       dropping it would silently hand back every tool an admin took away.
+ *    - grant-gated plugins the account holds no `granted_plugins` entry for.
+ *
+ *  One resolver so the four places that mint a ToolPolicy — owner chat, a channel's linked sender, a
+ *  delegated child and the worker — cannot drift into different answers about what a user may reach.
+ *
+ *  ADMINS BYPASS THE GRANT. An operator cannot lock themselves out by narrowing their own account, and a
+ *  fresh instance whose admin has no grant yet still works. The deny-list still applies to them, because
+ *  that one is an explicit choice rather than an absence.
+ *
+ *  An unknown user id resolves to an EMPTY grant — no plugin tool at all — rather than to "unrestricted".
  */
-export function deniedToolsForUser(d: Pick<BrainDeps, 'users' | 'plugins'>, userId: number): string[] {
+export function toolAuthorityForUser(d: Pick<BrainDeps, 'users' | 'plugins'>, userId: number): ToolPolicy | undefined {
   const u = d.users.get(userId);
+  const isAdmin = u?.is_admin === true;
   const ungranted = ungrantedPluginTools(
-    { is_admin: u?.is_admin === true, granted_plugins: u?.granted_plugins ?? [] },
+    { is_admin: isAdmin, granted_plugins: u?.granted_plugins ?? [] },
     d.plugins?.peek(),
   );
-  const own = u?.disabled_tools ?? [];
-  return ungranted.length ? [...own, ...ungranted] : [...own];
+  const deny = [...(u?.disabled_tools ?? []), ...ungranted];
+  // Three distinct answers, and conflating any two of them is a security bug:
+  //   no row          → an EMPTY grant. A deleted or unknown account fails closed.
+  //   admin           → no grant restriction at all (see above).
+  //   row without the field → no restriction either. The column carries a `*` default, so a real row
+  //                     always has a value; an absent property means a partial shape (a test double, a
+  //                     caller-supplied stub), and reading that as "no tools" would silently strip a
+  //                     delegated child of the grant its scope legitimately captured.
+  //   row with []     → an empty grant, which is what a freshly created account starts with.
+  const allow = isAdmin ? undefined
+    : u == null ? []
+      : u.allowed_tools === undefined ? undefined
+        : u.allowed_tools;
+  if (!allow && deny.length === 0) return undefined;
+  return {
+    ...(allow ? { allow: new Set(allow) } : {}),
+    ...(deny.length ? { deny: new Set(deny) } : {}),
+  };
 }
