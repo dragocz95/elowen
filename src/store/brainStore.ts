@@ -53,6 +53,31 @@ export interface BrainSessionRow {
   park_attempts: number;
   created_at: string; updated_at: string;
 }
+/** A boot-resumed platform turn's answer that is computed but not yet posted (see
+ *  brain_platform_turn_deliveries in schema.sql). Everything a retry needs and nothing more: the exact
+ *  text, the encoded destination, and the sender→account claim the retry must RE-PROVE before posting. */
+export interface PendingPlatformDelivery {
+  sessionId: string;
+  reply: string;
+  /** Encoded `destination:` string (plugins/destinations.ts) — fail-closed, never a broadcast. */
+  target: string;
+  /** The platform half of the captured IDENTITY (envelope.identity.platform), i.e. exactly what the
+   *  binding proof is keyed on — not the orchestrator's routing platform. */
+  platform: string;
+  platformUserId: string;
+  accountUserId: number;
+  /** Post attempts already made on this answer; bumped durably before each one. */
+  attempts: number;
+}
+type PendingPlatformDeliveryRow = {
+  session_id: string; reply: string; target: string;
+  platform: string; platform_user_id: string; account_user_id: number; attempts: number;
+};
+const pendingPlatformDeliveryOf = (row: PendingPlatformDeliveryRow): PendingPlatformDelivery => ({
+  sessionId: row.session_id, reply: row.reply, target: row.target, platform: row.platform,
+  platformUserId: row.platform_user_id, accountUserId: row.account_user_id, attempts: row.attempts,
+});
+
 export interface BrainMessageRow {
   id: string; session_id: string; parent_id: string | null; role: string; content: string; created_at: string;
   /** Display-only whole-turn wall time, present on the settled run's last assistant row. */
@@ -298,6 +323,62 @@ export class BrainStore {
       'SELECT session_id, envelope, captured_at FROM brain_platform_turn_envelopes ORDER BY captured_at ASC, session_id ASC',
     ).all() as { session_id: string; envelope: string; captured_at: string }[])
       .map((row) => ({ sessionId: row.session_id, envelope: row.envelope, capturedAt: row.captured_at }));
+  }
+
+  /** THE PROMOTION: a resumed platform turn's answer stops being "a turn to run" and becomes "a message
+   *  to post" (see brain_platform_turn_deliveries in schema.sql). ONE transaction on purpose — the park
+   *  marker and the envelope go, the pending delivery appears, and no crash can leave a moment where
+   *  both halves exist (two model turns) or neither does (the answer lost). After it returns, the only
+   *  durable trace of this turn is text plus a destination: there is nothing left to run a model from. */
+  promotePlatformTurnToDelivery(sessionId: string, delivery: {
+    reply: string; target: string; platform: string; platformUserId: string; accountUserId: number;
+  }): PendingPlatformDelivery {
+    return this.db.transaction(() => {
+      this.db.prepare('UPDATE brain_sessions SET parked_at = NULL, park_attempts = 0 WHERE id = ?').run(sessionId);
+      this.db.prepare('DELETE FROM brain_platform_turn_envelopes WHERE session_id = ?').run(sessionId);
+      this.db.prepare(
+        `INSERT INTO brain_platform_turn_deliveries
+           (session_id, reply, target, platform, platform_user_id, account_user_id, attempts)
+         VALUES (@session_id, @reply, @target, @platform, @platform_user_id, @account_user_id, 0)
+         ON CONFLICT(session_id) DO UPDATE SET
+           reply = excluded.reply, target = excluded.target, platform = excluded.platform,
+           platform_user_id = excluded.platform_user_id, account_user_id = excluded.account_user_id,
+           attempts = 0, created_at = datetime('now')`,
+      ).run({
+        session_id: sessionId, reply: delivery.reply, target: delivery.target, platform: delivery.platform,
+        platform_user_id: delivery.platformUserId, account_user_id: delivery.accountUserId,
+      });
+      // Read back rather than echo the input: the caller posts from what is DURABLE, so a row that did
+      // not land the way it was written can never be delivered as if it had.
+      return this.pendingPlatformDelivery(sessionId)!;
+    })();
+  }
+
+  /** The computed-but-undelivered answer for one channel session, or undefined when there is none. */
+  pendingPlatformDelivery(sessionId: string): PendingPlatformDelivery | undefined {
+    const row = this.db.prepare('SELECT * FROM brain_platform_turn_deliveries WHERE session_id = ?')
+      .get(sessionId) as PendingPlatformDeliveryRow | undefined;
+    return row ? pendingPlatformDeliveryOf(row) : undefined;
+  }
+
+  /** Every answer a boot computed but never got posted — the delivery half of the sweep's worklist. */
+  pendingPlatformDeliveries(): PendingPlatformDelivery[] {
+    return (this.db.prepare(
+      'SELECT * FROM brain_platform_turn_deliveries ORDER BY created_at ASC, session_id ASC',
+    ).all() as PendingPlatformDeliveryRow[]).map(pendingPlatformDeliveryOf);
+  }
+
+  /** Claim one delivery attempt: bump the counter, but only while the row still stands. A false return
+   *  means the answer was posted (and the row cleared) since the sweep read its worklist, so this attempt
+   *  must not post it a second time. Bumped BEFORE the post, so a boot that dies mid-post still counts. */
+  claimPlatformDeliveryAttempt(sessionId: string): boolean {
+    return this.db.prepare('UPDATE brain_platform_turn_deliveries SET attempts = attempts + 1 WHERE session_id = ?')
+      .run(sessionId).changes > 0;
+  }
+
+  /** Drop a delivered (or durably given-up) answer. Idempotent. */
+  clearPlatformTurnDelivery(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_platform_turn_deliveries WHERE session_id = ?').run(sessionId);
   }
 
   /** Read a child's immutable delegation boundary. Both legacy NULL rows and malformed DB JSON are

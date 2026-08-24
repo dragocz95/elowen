@@ -1,4 +1,5 @@
 import type { BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
+import type { ParkedPlatformTurn } from '../platformTurnRecovery.js';
 import { BootRecoveryCoordinator } from './coordinator.js';
 import type { RecoveryLog, RecoveryOutcome } from './types.js';
 
@@ -15,8 +16,8 @@ export interface BootRecoveryHost {
   resumeWorkflow(workflow: RecoverableWorkflow): Promise<RecoveryOutcome>;
   claimParkedConversations(): readonly BrainSessionRow[];
   resumeParkedConversation(row: BrainSessionRow): Promise<RecoveryOutcome>;
-  claimParkedPlatformTurns(): readonly BrainSessionRow[];
-  resumeParkedPlatformTurn(row: BrainSessionRow): Promise<RecoveryOutcome>;
+  claimParkedPlatformTurns(): readonly ParkedPlatformTurn[];
+  resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome>;
 }
 
 /** The daemon's boot recovery chain. Built by the daemon's boot layer only — the sub-agent runner has no
@@ -71,8 +72,9 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
   // Ordinary platform channel turns the last shutdown parked: the same marker on the session row (the
   // two claims partition it — owner rows there, non-owner rows here) plus the turn's durable resume
   // envelope, resumed at the transcript's tail and DELIVERED back to the exact room or DM through the
-  // adapters' notification contract — see platformTurnRecovery.ts.
-  coordinator.register<BrainSessionRow>({
+  // adapters' notification contract. Its claim also picks up answers an EARLIER boot computed but never
+  // managed to post, which are re-sent as text and never recomputed — see platformTurnRecovery.ts.
+  coordinator.register<ParkedPlatformTurn>({
     id: 'platform-conversations',
     // Same reasoning as owner conversations: a parked channel turn may be waiting on a delegation's or a
     // workflow's result, which those sweeps queue durably first.

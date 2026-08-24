@@ -53,7 +53,7 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { deniedToolsForUser } from './brainDeps.js';
-import { resumePlatformTurn } from './platformTurnRecovery.js';
+import { resumePlatformTurn, type ParkedPlatformTurn } from './platformTurnRecovery.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
@@ -672,18 +672,34 @@ export class BrainService {
     }
   }
 
-  /** `platform-conversations` provider, CLAIM: every parked NON-owner session — ordinary platform channel
-   *  turns in practice; the resume fails closed (clearing the marker) on anything else that should never
-   *  carry one. The complement of claimParkedConversations, so the two sweeps partition the markers. */
-  claimParkedPlatformTurns(): BrainSessionRow[] {
-    return this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
+  /** `platform-conversations` provider, CLAIM: the two durable states this provider recovers, unioned.
+   *
+   *  - Every parked NON-owner session — ordinary platform channel turns in practice; the resume fails
+   *    closed (clearing the marker) on anything else that should never carry one. The complement of
+   *    claimParkedConversations, so the two sweeps partition the markers.
+   *  - Every answer an earlier boot COMPUTED but never managed to post. Those are worklist entries in
+   *    their OWN right rather than a flag on a parked row, because the promotion clears the park marker:
+   *    an answer that already exists is no longer a turn to run, and hanging it off a marker that turn
+   *    admission, an abort or a session teardown may clear would put it right back where it can be lost.
+   *
+   *  Disjoint by construction (promotePlatformTurnToDelivery clears the marker in the same transaction
+   *  that writes the delivery row), but deduplicated anyway so a hand-edited database cannot turn one
+   *  session into two items. */
+  claimParkedPlatformTurns(): ParkedPlatformTurn[] {
+    const parked = this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
+    const claimed = new Set(parked.map((row) => row.id));
+    const undelivered = this.d.store.pendingPlatformDeliveries()
+      .filter((delivery) => isNonUserSession(delivery.sessionId) && !claimed.has(delivery.sessionId))
+      .map((delivery) => ({ id: delivery.sessionId, park_attempts: 0 }));
+    return [...parked, ...undelivered];
   }
 
   /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn and deliver its
-   *  answer back to the room or DM it came from. All the policy — authority re-derived from the account
-   *  (never replayed), the attempt cap, the visible give-up, the no-double-reply order — lives in
+   *  answer back to the room or DM it came from — or, when an earlier boot already computed that answer,
+   *  post THAT text without spending a model turn. All the policy — authority re-derived from the account
+   *  (never replayed), both attempt caps, the visible give-ups, the compute/deliver split — lives in
    *  resumePlatformTurn; this only wires the brain in. */
-  async resumeParkedPlatformTurn(row: BrainSessionRow): Promise<RecoveryOutcome> {
+  async resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome> {
     return resumePlatformTurn({
       store: this.d.store,
       users: this.d.users,

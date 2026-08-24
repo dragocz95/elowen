@@ -219,6 +219,34 @@ CREATE TABLE IF NOT EXISTS brain_platform_turn_envelopes (
   envelope    TEXT NOT NULL,
   captured_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- The SECOND durable state of a boot-resumed platform turn: the answer is computed but has not reached
+-- the room yet. An envelope row above means "this turn still needs a model turn"; a row HERE means "the
+-- answer already exists and only has to be posted". The two are mutually exclusive by construction —
+-- promotePlatformTurnToDelivery swaps one for the other inside a single transaction — and that is what
+-- makes a delivery retry structurally unable to spend a second model turn: the prompt inputs it would
+-- need are gone the instant the reply becomes durable.
+--
+-- Deliberately self-contained rather than a column on brain_sessions or on the envelope row: it is its
+-- OWN boot worklist entry (claimParkedPlatformTurns unions it in), so no other path that clears the park
+-- marker — turn admission when the room speaks next, an abort, a session teardown — can strand a
+-- computed answer where the resume would read it as "nothing to do". It carries everything a post needs
+-- (the exact text and the encoded destination) plus the sender→account claim, which is RE-PROVEN before
+-- the retry posts, so a re-delivery is never a back door around the authority check.
+--
+-- Cleared only by a confirmed post or by the attempt cap giving up visibly. `attempts` is bumped durably
+-- BEFORE each post, so a boot that dies mid-post still counts it: the retry is at-least-once and BOUNDED
+-- (a duplicate in a chat is self-explaining; silence is not).
+CREATE TABLE IF NOT EXISTS brain_platform_turn_deliveries (
+  session_id       TEXT PRIMARY KEY,
+  reply            TEXT NOT NULL,
+  target           TEXT NOT NULL,
+  platform         TEXT NOT NULL,
+  platform_user_id TEXT NOT NULL,
+  account_user_id  INTEGER NOT NULL,
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
 -- `pending` marks a row written MID-TURN, straight off PI's `message_end`, before the turn settled.
 -- Without those rows a daemon restart in the middle of a long turn threw away every tool call and every
 -- word the agent had produced: the settled `agent_end` was the only thing that ever reached SQLite. They

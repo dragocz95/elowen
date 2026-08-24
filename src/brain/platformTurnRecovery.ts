@@ -2,7 +2,7 @@
  *
  *  The durable foundation is the per-turn resume envelope (channels.ts, PlatformTurnResumeEnvelope):
  *  captured before the turn's first model call, deleted when the turn settles, so a surviving row names
- *  exactly the turn a process death interrupted. This module owns the two decisions built on top of it:
+ *  exactly the turn a process death interrupted. This module owns the decisions built on top of it:
  *
  *  - PARK ELIGIBILITY ({@link platformTurnParkEligible}): whether the step-boundary shutdown drain may
  *    park a live platform turn at all. A turn parks only where a faithful boot resume exists, so this is
@@ -11,6 +11,8 @@
  *    no one waiting in a room).
  *  - THE RESUME ({@link resumePlatformTurn}): continue ONE parked platform conversation from its own
  *    transcript tail and deliver the answer to the exact room or DM the interrupted turn came from.
+ *  - THE RE-DELIVERY ({@link deliverPendingPlatformReply}): post an answer an EARLIER boot already
+ *    computed but never managed to hand over.
  *
  *  THE OUTBOUND DELIVERY CONTRACT. A live turn replies through the adapter's `listen` callback return
  *  value, which dies with the process; a resumed turn cannot use it. It delivers through the orchestrator
@@ -26,16 +28,36 @@
  *  land above messages that arrived later, and a fresh tail message cannot overtake anything by
  *  construction.
  *
- *  NO DOUBLE REPLY, decided from durable state only: the live path clears the envelope strictly before
- *  the reply string is handed back to the adapter, so an envelope on disk means the answer was never
- *  handed over. The resume mirrors that exact order — marker and envelope are cleared durably BEFORE the
- *  outbound post — so a crash between the two can lose one delivery (the answer stays readable in the
- *  durable transcript, and the loss is logged loudly) but can never post it twice. */
+ *  TWO DURABLE STATES, NEVER ONE. "The answer is computed" and "the answer is delivered" are separate
+ *  facts, so they are separate durable states and the transition between them is a single transaction
+ *  (BrainStore.promotePlatformTurnToDelivery):
+ *
+ *    envelope row + park marker  →  a turn that still needs a MODEL TURN   ({@link resumePlatformTurn})
+ *    pending delivery row        →  an answer that only needs a POST       ({@link deliverPendingPlatformReply})
+ *    neither                     →  nothing to do
+ *
+ *  Fusing the two — clearing everything before the post, as this module used to — meant an ordinary rate
+ *  limit threw the answer away for good: the model turn was paid for, the reply sat in the durable
+ *  transcript, and the room never heard anything. Splitting them collapses the objection that a retry
+ *  costs a second model turn, because a retry RE-SENDS EXISTING TEXT. That is structural, not a
+ *  convention: the promotion DELETES the envelope, so past it there are no prompt inputs left to run a
+ *  model from, and {@link deliverPendingPlatformReply} is typed against {@link PlatformDeliveryDeps},
+ *  which has no `send`.
+ *
+ *  THE AT-LEAST-ONCE CONSEQUENCE, deliberately accepted and BOUNDED. A post that actually landed but
+ *  whose acknowledgement was lost will be sent a second time. In a chat a duplicate is visible and
+ *  self-explaining while silence is not, so this is the lesser harm — but the attempts are capped like
+ *  every other recovery kind's ({@link MAX_PLATFORM_DELIVERY_ATTEMPTS}), counted durably BEFORE each post
+ *  so a boot that dies mid-post still counts it, and the give-up is loud in the log and posted into the
+ *  conversation rather than silent. Duplicates are also the only failure this can produce: nothing past
+ *  the promotion can produce a second, DIFFERENT answer. */
 import { randomUUID } from 'node:crypto';
+import type { PendingPlatformDelivery } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
 import { encodeNotificationDestination } from '../plugins/destinations.js';
 import {
   normalizePlatformTurnEnvelope,
+  provePlatformSenderBinding,
   resolvePlatformTurnAuthority,
   type ChannelSendOpts,
   type PlatformTurnResumeEnvelope,
@@ -46,6 +68,13 @@ import { CRON_PLATFORM, channelSessionId, isChannelSession, isSubagentSession, p
 /** Boot resume attempts per park marker before the sweep gives up — the same cap (and the same durable
  *  claim-bump discipline) as owner conversations, delegations and workflows all use. */
 export const MAX_PLATFORM_RESUME_ATTEMPTS = 3;
+
+/** Outbound posts of ONE computed answer before the sweep gives up on delivering it. Its own counter
+ *  rather than a share of the resume attempts above: those bound how often a MODEL TURN may be spent,
+ *  these bound how often free text may be re-posted, and a turn that burned two model attempts before
+ *  producing an answer must still get its three chances to deliver it. Same value (3), same
+ *  bump-before-you-act discipline, same visible give-up. */
+export const MAX_PLATFORM_DELIVERY_ATTEMPTS = 3;
 
 /** The hidden continuation injected into a parked platform conversation — the channel twin of
  *  brainService's PARKED_RESUME_NOTE, delivered through the same custom-message seam (`internalSystem`)
@@ -103,25 +132,21 @@ export function platformTurnParkEligible(
   return resumeDeliveryTarget(envelope) !== null;
 }
 
-/** What the resume needs from the brain. Narrow on purpose, mirroring BootRecoveryHost: BrainService
- *  wires its own store, channel service and platform orchestrator in; a test satisfies it with the same
- *  fakes the channel suites use. */
-export interface PlatformTurnRecoveryDeps {
+/** What POSTING a computed answer needs — and, just as importantly, what it does NOT: there is no `send`
+ *  here, so {@link deliverPendingPlatformReply} cannot reach the model even by mistake. This is the
+ *  structural half of "a delivery retry never re-runs the model"; the other half is that the promotion
+ *  transaction has already deleted the envelope it would need. */
+export interface PlatformDeliveryDeps {
   store: {
-    platformTurnEnvelope(sessionId: string): string | undefined;
-    clearPlatformTurnEnvelope(sessionId: string): void;
-    clearSessionPark(sessionId: string): void;
-    claimParkResumeAttempt(sessionId: string): boolean;
+    pendingPlatformDelivery(sessionId: string): PendingPlatformDelivery | undefined;
+    claimPlatformDeliveryAttempt(sessionId: string): boolean;
+    clearPlatformTurnDelivery(sessionId: string): void;
   };
   /** Account existence check — a policy resolver alone does not prove the account still exists. */
   users: { get(userId: number): unknown | null | undefined };
   /** Re-proves the platform sender → account binding (the daemon's live link resolver). null = the
    *  identity is no longer linked; wired fail-closed, so a wiring without a resolver refuses resumes. */
   resolvePlatformUser: (platform: string, platformUserId: string) => { id: number } | null;
-  policyForUser?: (userId: number) => Policy;
-  disabledToolsFor?: (userId: number) => string[];
-  /** The ordinary channel turn pipeline (ChannelSessionService.send) — the resume is one more send. */
-  send(opts: ChannelSendOpts, text: string): Promise<string>;
   /** Whether the outbound path could reach this target right now (PlatformOrchestrator.canDeliver):
    *  the platform is installed, connected and exposes a notification sink. Asked BEFORE the model turn,
    *  so an uninstalled plugin or a revoked bot fails closed without spending a turn. */
@@ -131,15 +156,120 @@ export interface PlatformTurnRecoveryDeps {
   log: { info(m: string): void; warn(m: string): void; error(m: string, e?: unknown): void };
 }
 
+/** What the full resume needs from the brain — the delivery seam above plus everything it takes to
+ *  COMPUTE an answer. Narrow on purpose, mirroring BootRecoveryHost: BrainService wires its own store,
+ *  channel service and platform orchestrator in; a test satisfies it with the same fakes the channel
+ *  suites use. */
+export interface PlatformTurnRecoveryDeps extends PlatformDeliveryDeps {
+  store: PlatformDeliveryDeps['store'] & {
+    platformTurnEnvelope(sessionId: string): string | undefined;
+    clearPlatformTurnEnvelope(sessionId: string): void;
+    clearSessionPark(sessionId: string): void;
+    claimParkResumeAttempt(sessionId: string): boolean;
+    /** Returns the row as it landed durably — the caller posts from THAT, never from its own input. */
+    promotePlatformTurnToDelivery(sessionId: string, delivery: {
+      reply: string; target: string; platform: string; platformUserId: string; accountUserId: number;
+    }): PendingPlatformDelivery;
+  };
+  policyForUser?: (userId: number) => Policy;
+  disabledToolsFor?: (userId: number) => string[];
+  /** The ordinary channel turn pipeline (ChannelSessionService.send) — the resume is one more send. */
+  send(opts: ChannelSendOpts, text: string): Promise<string>;
+}
+
+/** A best-effort user-facing notice into the affected conversation itself; the log is the durable record.
+ *  Never throws — a give-up must not become a second failure. */
+async function postNotice(deps: PlatformDeliveryDeps, sessionId: string, target: string, text: string): Promise<void> {
+  if (!deps.canDeliver(target)) return;
+  await deps.deliver(text, target).catch((e) => deps.log.error(`parked platform turn ${sessionId}: notice delivery failed`, e));
+}
+
+/** POST one already-computed answer. The whole point of the second durable state: this spends no model
+ *  turn — it cannot, its deps have no `send` and the promotion already deleted the envelope — so it is
+ *  free to retry until the cap.
+ *
+ *  The authority the answer was computed under is RE-PROVEN here, not inherited: a sender who unlinked,
+ *  or a platform id that was claimed by a different account, while the daemon was down must not receive
+ *  the old account's answer, and a retry must not be a back door around the check the model path makes.
+ *  That refusal is terminal — no later boot can conjure the binding back. */
+export async function deliverPendingPlatformReply(
+  deps: PlatformDeliveryDeps,
+  pending: PendingPlatformDelivery,
+): Promise<RecoveryOutcome> {
+  const { log } = deps;
+  const { sessionId, target } = pending;
+  if (pending.attempts >= MAX_PLATFORM_DELIVERY_ATTEMPTS) {
+    // Visible give-up rather than an answer that quietly rots in the table forever: the row goes, the log
+    // carries the diagnosis, and the conversation itself is told it needs a re-send.
+    deps.store.clearPlatformTurnDelivery(sessionId);
+    log.error(`parked platform turn ${sessionId}: the computed answer could not be delivered in `
+      + `${MAX_PLATFORM_DELIVERY_ATTEMPTS} attempts — giving up; the sender must re-send`);
+    await postNotice(deps, sessionId, target, RESUME_GIVE_UP_NOTICE);
+    return 'terminalized';
+  }
+  try {
+    provePlatformSenderBinding(pending, deps.resolvePlatformUser);
+    if (!deps.users.get(pending.accountUserId)) {
+      throw new Error(`account ${pending.accountUserId} no longer exists`);
+    }
+  } catch (e) {
+    deps.store.clearPlatformTurnDelivery(sessionId);
+    log.error(`parked platform turn ${sessionId}: authority refused — the computed answer will not be delivered`, e);
+    await postNotice(deps, sessionId, target, RESUME_REFUSED_NOTICE);
+    return 'terminalized';
+  }
+  // The durable claim, taken BEFORE the post so a boot that dies mid-post still counts the attempt and
+  // the retry stays bounded. A false return means the row was cleared since the worklist was read — the
+  // answer is already out — and posting now would be the duplicate this counter exists to bound.
+  if (!deps.store.claimPlatformDeliveryAttempt(sessionId)) {
+    log.info(`parked platform turn ${sessionId}: the computed answer was delivered before this attempt reached it — skipping`);
+    return 'released';
+  }
+  // Unavailability counts as a spent attempt like any other failed post: an uninstalled plugin or a
+  // revoked bot would otherwise keep this row alive across every future boot with nothing to show.
+  if (!deps.canDeliver(target)) {
+    log.error(`parked platform turn ${sessionId}: platform "${pending.platform}" is unavailable — the computed answer `
+      + `is still undelivered (attempt ${pending.attempts + 1}/${MAX_PLATFORM_DELIVERY_ATTEMPTS})`);
+    return 'failed';
+  }
+  try {
+    await deps.deliver(pending.reply, target);
+  } catch (e) {
+    log.error(`parked platform turn ${sessionId}: delivering the computed answer to "${pending.platform}" failed `
+      + `(attempt ${pending.attempts + 1}/${MAX_PLATFORM_DELIVERY_ATTEMPTS}); it stays pending for the next boot`, e);
+    // NOT 'resumed': the answer exists but nobody in that room has it, and the boot summary must not be
+    // the one place that gap is invisible.
+    return 'failed';
+  }
+  // Confirmed post — and only a confirmed post — retires the answer.
+  deps.store.clearPlatformTurnDelivery(sessionId);
+  log.info(`parked platform turn ${sessionId}: delivered the computed answer (attempt ${pending.attempts + 1})`);
+  return 'resumed';
+}
+
+/** One item of the `platform-conversations` provider's worklist. A parked session row satisfies it as it
+ *  stands; a pending delivery is claimed as one too (its `park_attempts` is meaningless — a delivery
+ *  counts its own attempts on its own row). Deliberately narrower than BrainSessionRow: nothing in this
+ *  module may reach for session columns it has not proven are still true. */
+export interface ParkedPlatformTurn {
+  id: string;
+  park_attempts: number;
+}
+
 /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn from its own
  *  transcript tail, then deliver the answer to the exact conversation it came from. Every refusal below
  *  clears the marker (terminal — nothing will retry what cannot ever succeed) while a FAILED resume turn
  *  keeps it (the attempt is durably counted, so the next boot retries up to the cap). */
 export async function resumePlatformTurn(
   deps: PlatformTurnRecoveryDeps,
-  row: { id: string; park_attempts: number },
+  row: ParkedPlatformTurn,
 ): Promise<RecoveryOutcome> {
   const { log } = deps;
+  // FIRST, before any envelope parsing or invariant check: a computed answer outranks everything else
+  // here, and this branch needs nothing but its own row. Asking later would let one of the fail-closed
+  // envelope refusals below read an answer that already exists as "nothing to do" and drop it.
+  const pending = deps.store.pendingPlatformDelivery(row.id);
+  if (pending) return deliverPendingPlatformReply(deps, pending);
   // Terminal stand-down: forget both durable halves of the interrupted turn.
   const terminalize = (): void => {
     deps.store.clearSessionPark(row.id);
@@ -171,11 +301,7 @@ export async function resumePlatformTurn(
     terminalize();
     return 'terminalized';
   }
-  // A best-effort user-facing notice into the affected conversation itself; the log is the durable record.
-  const notice = async (text: string): Promise<void> => {
-    if (!deps.canDeliver(target)) return;
-    await deps.deliver(text, target).catch((e) => log.error(`parked platform turn ${row.id}: notice delivery failed`, e));
-  };
+  const notice = (text: string): Promise<void> => postNotice(deps, row.id, target, text);
   // Deleted platform plugin, revoked bot, adapter that failed to connect: nothing this boot could deliver
   // to, and nothing a retry under the same conditions would fix — fail closed and stand down.
   if (!deps.canDeliver(target)) {
@@ -261,19 +387,20 @@ export async function resumePlatformTurn(
     log.error(`parked platform turn ${row.id}: the resume turn settled with an empty reply — nothing to deliver`);
     return 'terminalized';
   }
-  // Durable stand-down BEFORE the outbound post — the no-double-reply order (see the module doc). A crash
-  // or delivery failure past this point loses one post, never duplicates it; the answer itself is already
-  // durable in the transcript, and the failure is logged loudly rather than retried with a second turn.
-  terminalize();
-  try {
-    await deps.deliver(reply, target);
-    log.info(`boot resume finished parked platform turn ${row.id} (attempt ${row.park_attempts + 1}) and delivered the answer`);
-    return 'resumed';
-  } catch (e) {
-    log.error(`parked platform turn ${row.id}: the resumed answer was computed (it is in the transcript) but delivery to "${envelope.platform}" failed`, e);
-    // NOT 'resumed': the durable stand-down above already happened, so this post is lost for good and
-    // nobody in that room got an answer. Counting it as a success would make the boot summary the one
-    // place the at-most-once delivery gap is invisible.
-    return 'failed';
-  }
+  // THE PROMOTION, in ONE transaction and strictly BEFORE the post: the marker and the envelope go, and
+  // the computed answer becomes durably deliverable in their place. Past this line the model can never
+  // run for this turn again — the prompt inputs it would need no longer exist — and the answer can no
+  // longer be lost by a failed post, because only a confirmed post clears it.
+  const promoted = deps.store.promotePlatformTurnToDelivery(row.id, {
+    reply,
+    target,
+    // The IDENTITY's platform, i.e. exactly what the binding proof is keyed on — not `envelope.platform`,
+    // which is the orchestrator's routing name.
+    platform: envelope.identity.platform,
+    platformUserId: envelope.identity.userId,
+    accountUserId: authority.accountUserId,
+  });
+  log.info(`boot resume finished parked platform turn ${row.id} (attempt ${row.park_attempts + 1}); delivering the answer`);
+  // The first post is just the first delivery attempt: same counter, same cap, same code as every retry.
+  return deliverPendingPlatformReply(deps, promoted);
 }

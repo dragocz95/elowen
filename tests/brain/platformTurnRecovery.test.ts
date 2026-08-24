@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ChannelSessionService, type PlatformTurnResumeEnvelope } from '../../src/brain/channels.js';
 import {
+  MAX_PLATFORM_DELIVERY_ATTEMPTS,
   MAX_PLATFORM_RESUME_ATTEMPTS,
   platformTurnParkEligible,
   resumeDeliveryTarget,
@@ -182,9 +183,11 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     expect(brains[0]!.customSends).toHaveLength(1);
     expect(brains[0]!.customSends[0]!.customType).toBe('restart-resume');
     expect(store.getMessages(sessionId).filter((m) => m.role === 'user')).toHaveLength(0);
-    // Durable stand-down: marker and envelope both gone, so nothing can ever resume this turn again.
+    // Durable stand-down: marker and envelope gone (nothing can resume this turn again) and — because
+    // the post was CONFIRMED — no pending delivery either.
     expect(store.getSession(sessionId)!.parked_at).toBeNull();
     expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
 
     // A second sweep (a wiring mistake, or the next boot) finds durable state saying "done" and posts
     // nothing — the no-double-reply decision comes from the store, not from the transcript's shape.
@@ -310,21 +313,131 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     expect(store.getSession(sessionId)!.parked_at).toBeNull();
   });
 
-  it('stands down durably BEFORE the outbound post, so a delivery failure can never double-post later', async () => {
-    const { store, sessionId, deps, park } = setup();
+  it('a post that fails is retried by the next boot from the computed answer, never by a second model turn', async () => {
+    const { store, brains, sessionId, delivered, deps, park } = setup();
     const row = park(envelopeFor());
     deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
 
-    // Resolves rather than rejecting — a rejection would abort the rest of the sweep — but reports the
-    // loss as `failed`, never `resumed`: the stand-down already happened, so nobody in that room will
-    // ever receive this answer. Calling it a success would make the boot summary the one place the
-    // at-most-once delivery gap is invisible.
+    // Resolves rather than rejecting — a rejection would abort the rest of the sweep — and reports
+    // `failed`, never `resumed`: the answer exists but nobody in that room has it yet.
     await expect(resumePlatformTurn(deps, row)).resolves.toBe('failed');
+    expect(brains).toHaveLength(1);
 
-    // The marker fell before the post was attempted: the loss is logged, the answer stays in the
-    // transcript, and no later sweep can re-run the turn and post it twice.
-    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+    // The next boot finds the computed answer durably deliverable and posts THAT text. No second model
+    // turn: the envelope the model path runs from was consumed when the answer became durable.
+    deps.deliver = async (text, target) => { delivered.push({ text, target }); };
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('resumed');
+    expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
+    expect(brains).toHaveLength(1);
+    // Confirmed: the answer is retired, so no third boot re-posts it.
+    expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
+  });
+
+  it('never re-runs the model on a delivery retry: the envelope is consumed the moment the answer lands', async () => {
+    const { store, spawn, sessionId, deps, park } = setup();
+    const row = park(envelopeFor());
+    deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+
+    await resumePlatformTurn(deps, row);
+
+    // The two durable states are mutually exclusive: the promotion swapped the prompt inputs a model
+    // turn would need for the finished text. There is nothing left to spend a turn on.
     expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(store.pendingPlatformDelivery(sessionId)).toMatchObject({
+      reply: 'resumed answer', target: 'destination:discord:ops',
+      platform: 'discord', platformUserId: '42', accountUserId: 7, attempts: 1,
+    });
+    spawn.mockClear();
+
+    // Two more boots, both failing to post: still not one further spawn.
+    await resumePlatformTurn(deps, store.getSession(sessionId)!);
+    await resumePlatformTurn(deps, store.getSession(sessionId)!);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('caps the delivery retries and then gives up VISIBLY instead of re-posting forever', async () => {
+    const { store, brains, sessionId, delivered, deps, park } = setup();
+    const row = park(envelopeFor());
+    const failing = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+    deps.deliver = failing;
+
+    // The boot that computes the answer posts once; each later boot spends exactly one more attempt.
+    await expect(resumePlatformTurn(deps, row)).resolves.toBe('failed');
+    for (let i = 1; i < MAX_PLATFORM_DELIVERY_ATTEMPTS; i += 1) {
+      await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('failed');
+    }
+    expect(failing).toHaveBeenCalledTimes(MAX_PLATFORM_DELIVERY_ATTEMPTS);
+    expect(store.pendingPlatformDelivery(sessionId)!.attempts).toBe(MAX_PLATFORM_DELIVERY_ATTEMPTS);
+
+    // Past the cap the answer is durably given up on — and the room is TOLD, not left silent.
+    deps.deliver = async (text, target) => { delivered.push({ text, target }); };
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('terminalized');
+    expect(failing).toHaveBeenCalledTimes(MAX_PLATFORM_DELIVERY_ATTEMPTS);
+    expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toMatch(/re-send/);
+    expect(delivered[0]!.text).not.toBe('resumed answer');
+    // One model turn paid for, across the whole bounded retry sequence.
+    expect(brains).toHaveLength(1);
+  });
+
+  it('a delivery retry re-proves the sender → account binding: a vanished account refuses to post', async () => {
+    const { store, brains, sessionId, delivered, deps, park } = setup();
+    const row = park(envelopeFor());
+    deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+    await resumePlatformTurn(deps, row);
+    expect(store.pendingPlatformDelivery(sessionId)).toBeDefined();
+
+    // The account was deleted between the two boots. A pending answer must not become a back door
+    // around the check the model path makes.
+    deps.users.get = vi.fn(() => undefined) as never;
+    deps.deliver = async (text, target) => { delivered.push({ text, target }); };
+
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('terminalized');
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toMatch(/could not be resumed/);
+    expect(delivered[0]!.text).not.toBe('resumed answer');
+    // Terminal — no later boot retries a binding that cannot come back.
+    expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
+    expect(brains).toHaveLength(1);
+  });
+
+  it('a delivery retry refuses a platform identity that unlinked or was relinked to another account', async () => {
+    for (const resolver of [() => null, () => ({ id: 9 })]) {
+      const { store, sessionId, delivered, deps, park } = setup();
+      const row = park(envelopeFor());
+      deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+      await resumePlatformTurn(deps, row);
+
+      deps.resolvePlatformUser = vi.fn(resolver);
+      deps.deliver = async (text, target) => { delivered.push({ text, target }); };
+
+      await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('terminalized');
+
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.text).toMatch(/could not be resumed/);
+      expect(delivered[0]!.text).not.toBe('resumed answer');
+      expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
+    }
+  });
+
+  it('an unavailable platform spends an attempt rather than posting or stranding the answer forever', async () => {
+    const { store, sessionId, delivered, deps, park } = setup();
+    const row = park(envelopeFor());
+    deps.deliver = vi.fn(async () => { throw new Error('discord API POST → HTTP 500'); });
+    await resumePlatformTurn(deps, row);
+
+    // The Discord plugin is uninstalled before the next boot. Nothing can be posted — including the
+    // give-up notice — but the retry must stay bounded rather than living on every future boot.
+    deps.canDeliver = () => false;
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('failed');
+    expect(store.pendingPlatformDelivery(sessionId)!.attempts).toBe(2);
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('failed');
+    await expect(resumePlatformTurn(deps, store.getSession(sessionId)!)).resolves.toBe('terminalized');
+    expect(store.pendingPlatformDelivery(sessionId)).toBeUndefined();
+    expect(delivered).toHaveLength(0);
   });
 
   it('an uninstalled/unconnected platform fails closed: marker cleared, no turn, no crash', async () => {

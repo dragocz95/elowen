@@ -5628,6 +5628,24 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
   });
 
+  it('claims an answer an earlier boot computed but never posted, even though it carries no park marker', async () => {
+    // The promotion clears the marker on purpose — a computed answer is no longer a turn to run — so the
+    // delivery row has to be a worklist entry in its OWN right. If the claim only ever looked at
+    // parked_at, every answer whose post failed would be invisible to the next boot.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    d.store.promotePlatformTurnToDelivery('brain-ch-discord-general', {
+      reply: 'the answer nobody received', target: 'destination:discord:general',
+      platform: 'discord', platformUserId: '42', accountUserId: 1,
+    });
+    expect(d.store.getSession('brain-ch-discord-general')!.parked_at).toBeNull();
+
+    const restarted = new BrainService(d as never);
+    expect(restarted.claimParkedPlatformTurns().map((row) => row.id)).toEqual(['brain-ch-discord-general']);
+    // Still the platform sweep's alone — the owner sweep must not see it either.
+    expect(restarted.claimParkedConversations()).toEqual([]);
+  });
+
   it('a failed resume keeps the marker with a durably counted attempt; the cap gives up VISIBLY', async () => {
     // Idempotency across a boot that dies (or errors) while resuming: the attempt is bumped BEFORE the
     // dispatch, the marker survives the failure, and the next boot retries — up to the cap, where the

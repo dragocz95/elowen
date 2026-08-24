@@ -234,6 +234,31 @@ export interface PlatformTurnAuthorityDeps {
   disabledToolsFor?: (userId: number) => string[];
 }
 
+/** Re-prove ONE captured platform sender → account binding, or throw.
+ *
+ *  The captured account id is a stored CLAIM about who the platform sender was. The live path proves that
+ *  binding on every inbound message (resolvePlatformUser); anything acting on a captured turn must prove
+ *  it again, because the sender may have unlinked — or the platform id may have been claimed by a
+ *  different account — while the daemon was down. An account row merely existing is not that proof.
+ *
+ *  Split out of {@link resolvePlatformTurnAuthority} because re-DELIVERING an already computed answer
+ *  needs exactly this proof and nothing else: it runs no model and holds no tools, so it has no use for
+ *  a policy — but it must not become a back door around the check. One proof, two callers. */
+export function provePlatformSenderBinding(
+  claim: { platform: string; platformUserId: string; accountUserId: number | null },
+  resolvePlatformUser: (platform: string, platformUserId: string) => { id: number } | null,
+): number {
+  if (claim.accountUserId === null) {
+    throw new Error('captured platform turn has no verified account — refusing to resume it');
+  }
+  const linked = resolvePlatformUser(claim.platform, claim.platformUserId);
+  if (!linked || linked.id !== claim.accountUserId) {
+    throw new Error(`captured platform identity ${claim.platform}/${claim.platformUserId} `
+      + `no longer links to account ${claim.accountUserId} — refusing to resume it`);
+  }
+  return claim.accountUserId;
+}
+
 /** Re-derive a captured platform turn's authority from its ACCOUNT — never from the envelope. An
  *  envelope with no verified account, or whose account no longer resolves, throws: the correct answer
  *  to unresolvable authority is refusal, not a fallback to operator (or any other) authority. The
@@ -243,28 +268,21 @@ export function resolvePlatformTurnAuthority(
   envelope: PlatformTurnResumeEnvelope,
   deps: PlatformTurnAuthorityDeps,
 ): { accountUserId: number; policy: Policy; toolPolicy?: ToolPolicy } {
-  if (envelope.accountUserId === null) {
-    throw new Error('captured platform turn has no verified account — refusing to resume it');
-  }
-  // The captured account id is a stored CLAIM about who the platform sender was. The live path proves
-  // that binding on every inbound message (resolvePlatformUser); a resume must prove it again, because
-  // the sender may have unlinked — or the platform id may have been claimed by a different account —
-  // while the daemon was down. An account row merely existing is not that proof.
-  const linked = deps.resolvePlatformUser(envelope.identity.platform, envelope.identity.userId);
-  if (!linked || linked.id !== envelope.accountUserId) {
-    throw new Error(`captured platform identity ${envelope.identity.platform}/${envelope.identity.userId} `
-      + `no longer links to account ${envelope.accountUserId} — refusing to resume it`);
-  }
-  const policy = deps.policyForUser(envelope.accountUserId);
+  const accountUserId = provePlatformSenderBinding({
+    platform: envelope.identity.platform,
+    platformUserId: envelope.identity.userId,
+    accountUserId: envelope.accountUserId,
+  }, deps.resolvePlatformUser);
+  const policy = deps.policyForUser(accountUserId);
   if (!policy) {
-    throw new Error(`captured platform turn account ${envelope.accountUserId} no longer resolves — refusing to resume it`);
+    throw new Error(`captured platform turn account ${accountUserId} no longer resolves — refusing to resume it`);
   }
   const denied = new Set([
-    ...(deps.disabledToolsFor?.(envelope.accountUserId) ?? []),
+    ...(deps.disabledToolsFor?.(accountUserId) ?? []),
     ...(envelope.deniedTools ?? []),
   ]);
   return {
-    accountUserId: envelope.accountUserId,
+    accountUserId,
     policy,
     ...(denied.size ? { toolPolicy: { deny: denied } } : {}),
   };
