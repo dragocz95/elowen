@@ -9,7 +9,8 @@ import { openWorkDb } from '../../helpers/workDb.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
 import { TaskRefs } from '../../../src/store/taskRefs.js';
 import { EventBus } from '../../../src/api/sse.js';
-import { currentWorkDir, currentSessionId } from '../../../src/plugins/policyContext.js';
+import { currentWorkDir, currentSessionId, currentToolPolicy, type ToolPolicy } from '../../../src/plugins/policyContext.js';
+import { currentAccess } from '../../../src/plugins/pathGuard.js';
 import { UserPromptStore } from '../../../src/store/userPromptStore.js';
 import { PromptService } from '../../../src/prompts/promptService.js';
 import { RefTaskStore } from '../../helpers/refStores.js';
@@ -22,12 +23,17 @@ function fakeSession() {
   const releases: (() => void)[] = [];
   const workDirs: (string | undefined)[] = [];
   const sessionIds: (string | undefined)[] = [];
+  const toolPolicies: (ToolPolicy | undefined)[] = [];
+  /** What the subagent plugin would forward to a child spawned from this run (ctx.currentAccess). */
+  const delegableAllow: (string[] | undefined)[] = [];
   const session = {
     sessionId: 'pi-1',
     messages: [{ usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.02 } } }],
     prompt: vi.fn(() => {
       workDirs.push(currentWorkDir());
       sessionIds.push(currentSessionId());
+      toolPolicies.push(currentToolPolicy());
+      delegableAllow.push(currentAccess().toolPolicy?.allow);
       return new Promise<void>((res) => releases.push(res));
     }),
     subscribe: vi.fn(() => () => {}),
@@ -35,10 +41,10 @@ function fakeSession() {
     abort: vi.fn(async () => {}),
     setSteeringMode: vi.fn(),
   };
-  return { session, workDirs, sessionIds, release: () => releases.shift()?.() };
+  return { session, workDirs, sessionIds, toolPolicies, delegableAllow, release: () => releases.shift()?.() };
 }
 
-function setup(opts: { idleMs?: number; prompts?: unknown; userInstructions?: (userId: number) => string | undefined } = {}) {
+function setup(opts: { idleMs?: number; prompts?: unknown; userInstructions?: (userId: number) => string | undefined; toolAuthorityFor?: (userId: number) => ToolPolicy | undefined } = {}) {
   const db = openWorkDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
   const tasks = new RefTaskStore(db);
@@ -47,7 +53,7 @@ function setup(opts: { idleMs?: number; prompts?: unknown; userInstructions?: (u
   const bus = new EventBus();
   const published: unknown[] = [];
   bus.subscribe((e) => { published.push(e); });
-  const { session, workDirs, sessionIds, release } = fakeSession();
+  const { session, workDirs, sessionIds, toolPolicies, delegableAllow, release } = fakeSession();
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
   const recorded: unknown[] = [];
   const systemPrompts: string[] = [];
@@ -66,10 +72,11 @@ function setup(opts: { idleMs?: number; prompts?: unknown; userInstructions?: (u
     fetchImpl: fetchImpl as never,
     prompts: opts.prompts as never,
     userInstructions: opts.userInstructions,
+    ...(opts.toolAuthorityFor ? { toolAuthorityFor: opts.toolAuthorityFor } : {}),
     resourceLoaderFactory: (o) => { systemPrompts.push(o.systemPrompt, ...(o.appendSystemPrompt ?? [])); return undefined; },
   });
   const launchInput = { projectId: 1, projectPath: '/repo', taskId: 'T-1', agentName: 'a1', spec: { program: 'elowen', model: 'relay/kimi' } };
-  return { svc, tasks, session, workDirs, sessionIds, release, fetchImpl, recorded, systemPrompts, published, launchInput, createSession, advance: (ms: number) => { now += ms; }, db };
+  return { svc, tasks, session, workDirs, sessionIds, toolPolicies, delegableAllow, release, fetchImpl, recorded, systemPrompts, published, launchInput, createSession, advance: (ms: number) => { now += ms; }, db };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -156,6 +163,23 @@ describe('BrainWorkerService', () => {
     expect(sessionIds).toEqual(['brain-task-T-1']);
     release(); await settle(); // kickoff settles unclosed → nudge runs as a fresh scope
     expect(sessionIds).toEqual(['brain-task-T-1', 'brain-task-T-1']);
+  });
+
+  // The compose-time name filter shapes only what THIS session advertises. Everything downstream of the
+  // turn — the execute-time gate, and above all a sub-agent this worker spawns — reads the authority off
+  // the turn scope. Without it `ctx.currentAccess()` reported no toolPolicy at all, the subagent plugin
+  // minted the child with `allow: undefined`, and the child ran the FULL plugin catalogue: a task worker
+  // was a way for a narrowly granted account to reach every tool on the instance.
+  it("every run establishes the task owner's grant on the turn scope, so a delegated child inherits it", async () => {
+    const { svc, launchInput, toolPolicies, delegableAllow, release } = setup({
+      toolAuthorityFor: (userId) => (userId === 42 ? { allow: new Set(['Read']), deny: new Set(['Bash']) } : undefined),
+    });
+    await svc.launch({ ...launchInput, ownerId: 42 });
+    expect(toolPolicies).toEqual([{ allow: new Set(['Read']), deny: new Set(['Bash']) }]);
+    expect(delegableAllow).toEqual([['Read']]);
+    release(); await settle(); // kickoff settles unclosed → the nudge runs as a fresh scope
+    expect(toolPolicies).toEqual([{ allow: new Set(['Read']), deny: new Set(['Bash']) }, { allow: new Set(['Read']), deny: new Set(['Bash']) }]);
+    expect(delegableAllow).toEqual([['Read'], ['Read']]);
   });
 
   it('an unclosed agent_end gets one nudge, then the task reverts to open with a resume note', async () => {

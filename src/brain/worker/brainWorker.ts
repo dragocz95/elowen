@@ -104,6 +104,8 @@ interface LiveWorker {
   closed: boolean;
   /** Accumulates the provider-reported cost of this worker's OpenRouter completions (see openrouterMeter). */
   meter: CostMeter;
+  /** The task owner's resolved tool authority, established on EVERY run of this worker (see launch). */
+  toolPolicy: ToolPolicy | undefined;
 }
 
 /** Parse the exec's model part: `provider/model` when the provider id is configured, else treat the
@@ -219,9 +221,11 @@ export class BrainWorkerService {
     const toolHookBus = plugins && plugins.hooks.length > 0
       ? new PluginHookBus({ hooks: plugins.hooks, hookOwners: plugins.hookOwners, capabilities: plugins.pluginCapabilities, logger: log })
       : undefined;
-    // Applied by NAME rather than as a policy: this factory takes no ToolPolicy, and a tool the owner
-    // may not reach must not merely fail at execute time — its schema would still sit in their prompt.
-    // An ownerless task keeps the full set: there is no account whose grants could withhold anything.
+    // Applied by NAME here so a tool the owner may not reach is not merely refused at execute time — its
+    // schema would still sit in their prompt. That name filter is NOT the enforcement: the same authority
+    // is established on the turn scope below, which is what the execute-time gate and every delegated
+    // child read. An ownerless task keeps the full set: there is no account whose grants could withhold
+    // anything.
     const authority = input.ownerId ? this.d.toolAuthorityFor?.(input.ownerId) : undefined;
     const pluginTools = composeSessionTools({
       kind: 'task-worker', pluginTools: (plugins?.toolsFor(null) ?? []).filter((t) => toolPermitted(t.name, authority)),
@@ -302,7 +306,7 @@ export class BrainWorkerService {
     const worker: LiveWorker = {
       session, sessionName, sessionId, taskId: input.taskId, projectId: input.projectId, cwd,
       provider: route.providerId, model: model.id,
-      lastEventAt: this.now(), nudged: false, closed: false, meter: newCostMeter(),
+      lastEventAt: this.now(), nudged: false, closed: false, meter: newCostMeter(), toolPolicy: authority,
     };
     this.live.set(sessionName, worker);
     session.subscribe(() => { worker.lastEventAt = this.now(); }); // liveness for the idle watchdog
@@ -321,7 +325,11 @@ export class BrainWorkerService {
     // read-before-modify guard, and the ownership of background processes. Omitting it did not merely
     // hide the id — it silently DISABLED both, and left every worker's background processes sharing one
     // anonymous scope where they could read each other's output.
-    void runWithMeter(worker.meter, () => runWithPolicy(policy, () => session.prompt(kickoff), { workDir: cwd, sessionId }))
+    // toolPolicy establishes the OWNER's tool authority on the turn scope. The compose-time name filter
+    // above cannot stand in for it: it only shapes what this session advertises, while the execute-time
+    // gate, and every sub-agent this worker delegates to, read the authority from here. Without it a task
+    // worker's children were minted with no allow-list at all and ran the full plugin catalogue.
+    void runWithMeter(worker.meter, () => runWithPolicy(policy, () => session.prompt(kickoff), { workDir: cwd, sessionId, toolPolicy: authority }))
       .then(() => this.onAgentEnd(worker, policy))
       .catch((e: unknown) => {
         log.error(`brain worker ${sessionName} failed: ${String(e)}`);
@@ -343,7 +351,7 @@ export class BrainWorkerService {
       const nudge = 'You ended your turn without closing the task. If the work is complete, call ElowenCloseTask now with a summary; otherwise finish the remaining work first, then close.';
       projectUserTurn(this.d.store, worker.sessionId, nudge);
       try {
-        await runWithMeter(worker.meter, () => runWithPolicy(policy, () => worker.session.prompt(nudge), { workDir: worker.cwd, sessionId: worker.sessionId }));
+        await runWithMeter(worker.meter, () => runWithPolicy(policy, () => worker.session.prompt(nudge), { workDir: worker.cwd, sessionId: worker.sessionId, toolPolicy: worker.toolPolicy }));
         return this.onAgentEnd(worker, policy);
       } catch (e) {
         log.error(`brain worker ${worker.sessionName} nudge failed: ${String(e)}`);
