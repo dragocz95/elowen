@@ -16,6 +16,7 @@ const HOURS = 24;
 const LANE = 26;   // vertical room per person
 const PEAK = 22;   // how tall a full-strength hour draws
 const OVERLAP = 8; // how far a layer rides up over the one above — what makes it a ridgeline
+const SCALE = 2.2; // viewBox units → px; the one number that tunes the ridgeline's height
 
 /** Each person gets a hue rotated off the skin's own accent, so the tile inherits Midnight or Chetty
  *  branding instead of carrying a second palette. Rotation beats a fixed list: it never collides with
@@ -59,8 +60,12 @@ function Ridgeline({ people, t }: { people: PulsePerson[]; t: LocaleDict }) {
       <svg
         viewBox={`0 0 ${HOURS - 1} ${height}`}
         preserveAspectRatio="none"
-        className="h-[--ridge-h] w-full"
-        style={{ '--ridge-h': `${height * 2.2}px` } as React.CSSProperties}
+        className="w-full"
+        // Height is set inline on purpose. An SVG with no height resolves it from the viewBox ratio,
+        // which here is a tall, narrow 23:84 — stretched to the tile width that renders ~2700px.
+        // Tailwind's CSS-variable arbitrary values are version-sensitive, so the px value goes straight
+        // on the element instead of through a utility class.
+        style={{ height: `${height * SCALE}px` }}
         role="img"
         aria-label={t.dashboard.pulseAria}
       >
