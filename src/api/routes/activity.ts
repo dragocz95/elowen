@@ -1,6 +1,9 @@
 import { queryInt } from '../validation.js';
 import { isTeamFeedRow } from '../../store/eventStore.js';
+import { isSubagentSession } from '../../brain/sessionId.js';
 import type { ElowenApp, RouteContext } from '../context.js';
+
+const HOURS_IN_DAY = 24;
 
 /** Where a turn came from, as the pulse tile labels it. The rollup stores platform turns as
  *  'platform:<name>', local CLI turns as 'local', daemon-internal work as 'internal', and web turns
@@ -65,13 +68,15 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
    *  rollup also carries the surface: platform turns are stored as 'platform:discord', 'platform:cron'
    *  and friends, so where somebody works needs no second table. */
   app.get('/activity/pulse', (c) => {
-    const days = queryInt(c.req.query('days'), { min: 1, max: 90, fallback: 14 });
-
     // Live turns first, so "working" reflects the daemon's own state rather than the last recorded event.
     // One row per person: somebody with three running turns is one person on the tile, and their titles
     // are collected so the tile can say what they are on rather than picking one at random.
     const live = new Map<number, string[]>();
-    for (const { userId, title } of d.brain?.presence() ?? []) {
+    let runningAgents = 0;
+    for (const { userId, sessionId, title } of d.brain?.presence() ?? []) {
+      // A delegated session is a sub-agent, not a person at a keyboard: counted for the "running agents"
+      // headline and then skipped, so a busy delegation never draws a second row for its owner.
+      if (isSubagentSession(sessionId)) { runningAgents += 1; continue; }
       if (userId === null) continue;
       const titles = live.get(userId) ?? [];
       if (title) titles.push(title);
@@ -84,13 +89,23 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
     // Today on the rollup's own UTC day basis, which is how the rows are keyed — asking in local time
     // would silently drop the evening's turns for anyone east of UTC.
     const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const usage = d.usageOrigins?.topOrigins({ group: 'pair', fromIso: today, limit: 500 }) ?? [];
-    const spend = new Map<number, { turns: number; tokens: number; cost: number | null; surfaces: string[] }>();
+    const spend = new Map<number, {
+      turns: number; tokens: number; cost: number | null;
+      input: number; cacheRead: number; surfaces: string[];
+    }>();
     for (const row of usage) {
       if (row.userId === null) continue;
-      const acc = spend.get(row.userId) ?? { turns: 0, tokens: 0, cost: null, surfaces: [] };
+      const acc = spend.get(row.userId)
+        ?? { turns: 0, tokens: 0, cost: null, input: 0, cacheRead: 0, surfaces: [] };
       acc.turns += row.turns;
       acc.tokens += row.tokens;
+      // Cache economics come from the same rollup row rather than a second pass: `cacheRead` is context
+      // served from a warm prefix, `input` is context paid for fresh, and their ratio is what the tile
+      // reports. Keeping both sums lets the instance figure be weighted rather than an average of averages.
+      acc.input += row.input;
+      acc.cacheRead += row.cacheRead;
       // A rollup row without a cost is a turn nobody priced, not a free one: keep null distinct from 0
       // so the tile can say "not priced" instead of quietly reporting zero dollars.
       if (row.cost !== null) acc.cost = (acc.cost ?? 0) + row.cost;
@@ -99,18 +114,37 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
       spend.set(row.userId, acc);
     }
 
-    const rhythm = new Map<number, { day: string; hour: number; count: number }[]>();
-    for (const b of d.events?.heatmapByUser(days) ?? []) {
-      const rows = rhythm.get(b.userId) ?? [];
-      rows.push({ day: b.day, hour: b.hour, count: b.count });
-      rhythm.set(b.userId, rows);
+    // Two days of buckets: today fills the curves, yesterday is the baseline the headline compares against.
+    const hours = new Map<number, number[]>();
+    let turnsYesterday = 0;
+    for (const b of d.events?.heatmapByUser(1) ?? []) {
+      if (b.day === today) {
+        const row = hours.get(b.userId) ?? Array<number>(HOURS_IN_DAY).fill(0);
+        if (b.hour >= 0 && b.hour < HOURS_IN_DAY) row[b.hour] = (row[b.hour] ?? 0) + b.count;
+        hours.set(b.userId, row);
+      } else if (b.day === yesterday) {
+        turnsYesterday += b.count;
+      }
     }
 
-    const ids = new Set([...live.keys(), ...seen.keys(), ...spend.keys(), ...rhythm.keys()]);
+    const recall = d.memoryStore?.recallActivityToday() ?? { byUser: [], byHour: [] };
+    const recallByUser = new Map(recall.byUser.map((r) => [r.userId, r.count]));
+    const memoryByHour = Array<number>(HOURS_IN_DAY).fill(0);
+    for (const r of recall.byHour) {
+      if (r.hour >= 0 && r.hour < HOURS_IN_DAY) memoryByHour[r.hour] = r.count;
+    }
+
+    // Every trace of somebody today counts as being on the tile. Recalls are included because the usage
+    // rollup is written when a turn SETTLES: mid-turn, a person can already have pulled memories while
+    // having no spend row yet, and leaving them out would drop the very person who is working.
+    const ids = new Set([
+      ...live.keys(), ...seen.keys(), ...spend.keys(), ...hours.keys(), ...recallByUser.keys(),
+    ]);
     const people = [...ids].flatMap((id) => {
       const u = d.users?.get(id);
       if (!u) return [];
       const s = spend.get(id);
+      const context = (s?.cacheRead ?? 0) + (s?.input ?? 0);
       return [{
         userId: id,
         label: u.name || u.username,
@@ -122,12 +156,16 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
         turns: s?.turns ?? 0,
         tokens: s?.tokens ?? 0,
         cost: s?.cost ?? null,
+        // Null rather than 0 when nothing ran today: a person with no turns has no cache ratio, and a
+        // confident "0 %" would read as a catastrophically cold cache instead of an absent measurement.
+        cacheHitPct: context > 0 ? ((s?.cacheRead ?? 0) / context) * 100 : null,
+        memoryHits: recallByUser.get(id) ?? 0,
         surfaces: s?.surfaces ?? [],
-        rhythm: rhythm.get(id) ?? [],
+        hoursToday: hours.get(id) ?? Array<number>(HOURS_IN_DAY).fill(0),
       }];
     });
     // Whoever is working, then whoever burned the most today, then most recently seen. Sorting by spend
-    // rather than name keeps the tallest ridgeline layers near the top, where the eye starts.
+    // rather than name keeps the busiest curves at the top, where the eye starts.
     people.sort((a, b) =>
       Number(b.working) - Number(a.working) || b.tokens - a.tokens || b.lastTs.localeCompare(a.lastTs));
 
@@ -139,9 +177,35 @@ export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void 
       }),
       { turns: 0, tokens: 0, cost: null as number | null },
     );
+    const contextTotal = [...spend.values()].reduce((n, s) => n + s.cacheRead + s.input, 0);
+    const cacheReadTotal = [...spend.values()].reduce((n, s) => n + s.cacheRead, 0);
+
+    // Yesterday's totals, read the same way, so the tile can say "+3 vs. yesterday" without the browser
+    // asking a second time. Grouped by user because only the sums are needed, not the origin breakdown.
+    const priorRows = d.usageOrigins?.topOrigins(
+      { group: 'user', fromIso: yesterday, toIso: yesterday, limit: 500 },
+    ) ?? [];
+    const prior = priorRows.reduce(
+      (acc, r) => ({ people: acc.people + 1, turns: acc.turns + r.turns, tokens: acc.tokens + r.tokens }),
+      { people: 0, turns: 0, tokens: 0 },
+    );
+
     // Distinguish "nobody spent anything" from "the rollup is not there": without this the tile would
     // render a confident $0 for an instance whose usage store failed to open.
-    return c.json({ days, today, people, totals, spendAvailable: Boolean(d.usageOrigins) });
+    return c.json({
+      today,
+      people,
+      totals: {
+        ...totals,
+        activePeople: people.length,
+        runningAgents,
+        memoryHits: recall.byUser.reduce((n, r) => n + r.count, 0),
+        cacheHitPct: contextTotal > 0 ? (cacheReadTotal / contextTotal) * 100 : null,
+      },
+      yesterday: { people: prior.people, turns: prior.turns || turnsYesterday, tokens: prior.tokens },
+      memoryByHour,
+      spendAvailable: Boolean(d.usageOrigins),
+    });
   });
 
   /** Hourly volume behind the dashboard heatmap. Counts only -- who did what is the feed's job -- and

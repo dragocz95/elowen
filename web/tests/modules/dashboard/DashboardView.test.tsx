@@ -15,17 +15,20 @@ const server = setupServer(
   http.get('*/api/activity/presence', () => HttpResponse.json([
     { userId: 1, username: 'admin', label: 'Filip', working: true },
   ])),
-  // The tile draws its ridgeline from /activity/pulse, which carries the per-person rhythm the old
-  // /activity/heatmap route used to serve instance-wide. Without this handler the tile renders empty
-  // and the chart assertion below fails for a reason that has nothing to do with the dashboard.
+  // The pulse tile draws its curves from /activity/pulse, which carries each person's hourly series.
+  // Without this handler the tile renders empty and the assertions below fail for a reason that has
+  // nothing to do with the dashboard.
   http.get('*/api/activity/pulse', () => HttpResponse.json({
-    days: 14, today: '2026-06-30', spendAvailable: true,
+    today: '2026-06-30', spendAvailable: true,
     people: [{
       userId: 1, label: 'Filip', username: 'admin', working: true, title: '',
       lastTs: '2026-06-30 12:00:00', turns: 2, tokens: 1500, cost: 3.5,
-      surfaces: ['web'], rhythm: [{ day: '2026-06-30', hour: 12, count: 2 }],
+      cacheHitPct: 88, memoryHits: 12, surfaces: ['web'],
+      hoursToday: Array.from({ length: 24 }, (_, h) => (h === 12 ? 2 : 0)),
     }],
-    totals: { turns: 2, tokens: 1500, cost: 3.5 },
+    totals: { turns: 2, tokens: 1500, cost: 3.5, activePeople: 1, runningAgents: 0, memoryHits: 12, cacheHitPct: 88 },
+    yesterday: { people: 1, turns: 1, tokens: 800 },
+    memoryByHour: Array.from({ length: 24 }, () => 0),
   })),
   // The hero's own reads. Health decides presence (a failing probe greys the mascot to "Offline"),
   // the plugin listing gates the cron pod, and usage feeds the month figure.
@@ -45,7 +48,9 @@ describe('DashboardView', () => {
     expect(await screen.findAllByText(/Filip/)).not.toHaveLength(0);
     expect(await screen.findByText(/working now: Filip/i)).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Activity by hour over the last two weeks' })).toBeInTheDocument();
+    // The pulse tile's own content, not just its heading. The chart is not asserted here: jsdom
+    // computes no layout, so Recharts measures zero and renders nothing — see TeamPulseTile.test.tsx.
+    expect(screen.getByRole('columnheader', { name: 'User' })).toBeInTheDocument();
   });
 
   // The hero was deleted wholesale with the agents/work cleanup, because two of its four pods read

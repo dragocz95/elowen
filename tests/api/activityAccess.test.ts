@@ -9,6 +9,7 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openDb } from '../../src/store/db.js';
 import { UsageOriginStore } from '../../src/store/usageOriginStore.js';
+import { MemoryStore } from '../../src/store/memoryStore.js';
 
 function setup() {
   const db = openDb(':memory:');
@@ -66,8 +67,15 @@ describe('GET /activity/pulse', () => {
     ({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, cost: 0.25, ...over });
   const pulse = async (app: ReturnType<typeof setupPulse>['app'], tok: string) =>
     (await (await app.request('/activity/pulse', auth(tok))).json()) as {
-      people: { userId: number; tokens: number; cost: number | null; surfaces: string[]; turns: number }[];
-      totals: { turns: number; tokens: number; cost: number | null }; spendAvailable: boolean;
+      people: {
+        userId: number; tokens: number; cost: number | null; surfaces: string[]; turns: number;
+        cacheHitPct: number | null; memoryHits: number; title: string; hoursToday: number[];
+      }[];
+      totals: {
+        turns: number; tokens: number; cost: number | null;
+        runningAgents: number; memoryHits: number; cacheHitPct: number | null;
+      };
+      spendAvailable: boolean;
     };
 
   it('adds up a person\'s turns across the surfaces they worked from', async () => {
@@ -106,6 +114,73 @@ describe('GET /activity/pulse', () => {
   it('says the rollup is available so the tile can tell zero from missing', async () => {
     const { app, tok } = setupPulse();
     expect((await pulse(app, tok)).spendAvailable).toBe(true);
+  });
+
+  it('weighs the cache ratio by context rather than averaging the rows', async () => {
+    const { app, usageOrigins, tok, adminId } = setupPulse();
+    const now = Date.now();
+    // One big warm turn and one small cold one. Averaging the two ratios would say ~50 %; weighting by
+    // context says ~90 %, which is what the money actually did.
+    usageOrigins.addTurn(adminId, { value: 'local', kind: 'local', trusted: true },
+      { ...usage(), input: 100, cacheRead: 900, total: 1000 }, now);
+    usageOrigins.addTurn(adminId, { value: 'internal', kind: 'internal', trusted: true },
+      { ...usage(), input: 100, cacheRead: 0, total: 100 }, now);
+
+    const body = await pulse(app, tok);
+    expect(body.people.find((p) => p.userId === adminId)!.cacheHitPct).toBeCloseTo(81.8, 1);
+    expect(body.totals.cacheHitPct).toBeCloseTo(81.8, 1);
+  });
+
+  it('leaves the cache ratio null when nothing ran, rather than reporting a cold zero', async () => {
+    const { app, tok, users } = setupPulse();
+    const idle = users.create('idle', 'pw');
+    // Somebody with no turns today has no ratio to report. A confident 0 % would read as a cache that
+    // never hits, which is a different — and alarming — claim than "no measurement".
+    const body = await pulse(app, tok);
+    expect(body.people.find((p) => p.userId === idle.id)?.cacheHitPct ?? null).toBeNull();
+    expect(body.totals.cacheHitPct).toBeNull();
+  });
+
+  it('counts a delegated session as a running agent, not as a person at a keyboard', async () => {
+    const db = openDb(':memory:');
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const events = new EventStore(db);
+    const brain = {
+      presence: () => [
+        { userId: admin.id, sessionId: `brain-${admin.id}`, title: 'Real work' },
+        { userId: admin.id, sessionId: 'brain-ch-subagent-abc', title: 'Delegated brief' },
+      ],
+    } as never;
+    const app = createServer({
+      bus: new EventBus(), events, project: { id: 1, path: '/o' }, clock: new FakeClock(0),
+      config: new ConfigStore(db), users, projects: new ProjectStore(db),
+      usageOrigins: new UsageOriginStore(db), brain,
+    });
+    const body = await pulse(app, users.issueToken(admin.id));
+
+    expect(body.totals.runningAgents).toBe(1);
+    // The sub-agent must not double the owner's row, and must not steal the title of their own turn.
+    expect(body.people.filter((p) => p.userId === admin.id)).toHaveLength(1);
+    expect(body.people.find((p) => p.userId === admin.id)!.title).toBe('Real work');
+  });
+
+  it('reports the memories each person recalled today', async () => {
+    const db = openDb(':memory:');
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const memoryStore = new MemoryStore(db);
+    const made = memoryStore.add(admin.id, { body: 'a fact' }, 'test', 'seed');
+    memoryStore.markUsed(admin.id, [made.id]);
+    const app = createServer({
+      bus: new EventBus(), events: new EventStore(db), project: { id: 1, path: '/o' },
+      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db),
+      usageOrigins: new UsageOriginStore(db), memoryStore,
+    });
+    const body = await pulse(app, users.issueToken(admin.id));
+
+    expect(body.people.find((p) => p.userId === admin.id)!.memoryHits).toBe(1);
+    expect(body.totals.memoryHits).toBe(1);
   });
 });
 

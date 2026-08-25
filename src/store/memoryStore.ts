@@ -301,6 +301,35 @@ export class MemoryStore {
     return rows.map((row) => row.used_at);
   }
 
+  /** Today's recall volume across the whole instance: how many memories each person's turns pulled in,
+   *  plus the same total broken down by hour. Instance-wide rather than owner-scoped — like
+   *  {@link purgeUsageEventsOlderThan} below — because the dashboard's pulse tile reports on the team as
+   *  a whole by the instance owner's decision (see the /activity/pulse route for that call).
+   *
+   *  Hours are UTC, the same basis `activity_buckets` keys its own rollup with, so the two series the
+   *  tile draws sit on one clock and the client can shift both by a single offset. Bounded with a range
+   *  on `used_at` rather than `date(used_at) = date('now')` so the comparison stays sargable. */
+  recallActivityToday(): {
+    byUser: { userId: number; count: number }[];
+    byHour: { hour: number; count: number }[];
+  } {
+    const since = "strftime('%Y-%m-%d 00:00:00','now')";
+    const byUser = this.db.prepare(
+      `SELECT user_id AS userId, COUNT(*) AS count
+         FROM memory_usage_events
+        WHERE used_at >= ${since}
+        GROUP BY user_id`
+    ).all() as { userId: number; count: number }[];
+    const byHour = this.db.prepare(
+      `SELECT CAST(strftime('%H', used_at) AS INTEGER) AS hour, COUNT(*) AS count
+         FROM memory_usage_events
+        WHERE used_at >= ${since}
+        GROUP BY hour
+        ORDER BY hour`
+    ).all() as { hour: number; count: number }[];
+    return { byUser, byHour };
+  }
+
   /** Drop usage events older than `days`. Called by the daily retention sweep — this table grows with
    *  every recall (hundreds of rows a day), so it is the one memory table that needs age pruning.
    *  `days` is clamped here rather than bound as a parameter because SQLite's datetime() modifier takes

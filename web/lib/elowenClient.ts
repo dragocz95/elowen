@@ -357,8 +357,8 @@ export const elowenClient = {
   deleteUser: (id: number) => req<{ ok: boolean }>(`/users/${id}`, { method: 'DELETE' }),
   /** Who is around — names only, never what they are working on. */
   activityPresence: () => req<PresenceEntry[]>('/activity/presence'),
-  /** The team pulse tile: who is around, on what, today's spend, and each person's hourly rhythm. */
-  activityPulse: (days: number) => req<PulseResponse>(`/activity/pulse?days=${days}`),
+  /** The team pulse tile: who is around, on what, today's spend, cache economics and the hourly curves. */
+  activityPulse: () => req<PulseResponse>('/activity/pulse'),
   activity: (opts?: { limit?: number; type?: string; target?: string }) => {
     const qs = new URLSearchParams({ ...(opts?.limit ? { limit: String(opts.limit) } : {}), ...(opts?.type ? { type: opts.type } : {}), ...(opts?.target ? { target: opts.target } : {}) }).toString();
     return req<ActivityEvent[]>(`/activity${qs ? `?${qs}` : ''}`);

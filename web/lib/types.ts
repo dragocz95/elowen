@@ -581,11 +581,6 @@ export interface PluginSubagent { name: string; description: string; tools: 'rea
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };
-/** One hour of a person's rhythm on the pulse tile. Counts only -- who did what is the feed's job.
- *  Not exported: it used to back an instance-wide `/activity/heatmap` that callers imported directly,
- *  and now reaches the UI only as `PulsePerson.rhythm`. */
-interface HeatmapBucket { day: string; hour: number; count: number }
-
 /** Somebody on the presence rail. `working` is the daemon's LIVE view of a running turn; `lastTs` is
  *  when they were last seen, which is what keeps the rail populated the rest of the day. */
 export interface PresenceEntry {
@@ -617,17 +612,37 @@ export interface PulsePerson {
   tokens: number;
   /** null when no contributing turn carried a price — distinct from 0, which means "priced at zero". */
   cost: number | null;
+  /** Share of context served from a warm cache prefix, 0–100. Null when nothing ran today: a person with
+   *  no turns has no ratio, and "0 %" would read as a cold cache rather than an absent measurement. */
+  cacheHitPct: number | null;
+  /** Memories this person's turns recalled today. */
+  memoryHits: number;
   /** Where today's turns came from: 'web', 'cli', 'internal', 'discord', 'cron', … */
   surfaces: string[];
-  rhythm: HeatmapBucket[];
+  /** Turns per hour, exactly 24 entries, indexed by UTC hour — the same basis `memoryByHour` uses, so
+   *  the chart shifts both series into local time with one offset. */
+  hoursToday: number[];
 }
 
 /** The whole team pulse tile in one response. */
 export interface PulseResponse {
-  days: number;
   today: string;
   people: PulsePerson[];
-  totals: { turns: number; tokens: number; cost: number | null };
+  totals: {
+    turns: number;
+    tokens: number;
+    cost: number | null;
+    activePeople: number;
+    /** Delegated sessions streaming right now — sub-agents, not people. */
+    runningAgents: number;
+    memoryHits: number;
+    /** Instance-wide cache hit share, weighted by context rather than averaged across people. */
+    cacheHitPct: number | null;
+  };
+  /** Yesterday's totals, so each headline can carry a delta without a second request. */
+  yesterday: { people: number; turns: number; tokens: number };
+  /** Instance-wide memory recalls per UTC hour, 24 entries. */
+  memoryByHour: number[];
   /** False when the usage rollup is unavailable, so the tile says so instead of a confident $0. */
   spendAvailable: boolean;
 }

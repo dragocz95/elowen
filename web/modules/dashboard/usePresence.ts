@@ -1,6 +1,5 @@
 'use client';
 import { useHealth, usePulse } from '../../lib/queries';
-import { DAYS } from './TeamPulseTile';
 import type { PulsePerson } from '../../lib/types';
 
 export type PresenceState = 'offline' | 'idle' | 'thinking' | 'working' | 'needs_input' | 'success' | 'error';
@@ -28,7 +27,7 @@ export interface Presence {
  */
 export function usePresence(): Presence {
   const health = useHealth();
-  const pulse = usePulse(DAYS);
+  const pulse = usePulse();
   const offline = health.isError || (health.data != null && health.data.ok !== true);
   const working = (pulse.data?.people ?? []).filter((person) => person.working);
 

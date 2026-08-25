@@ -8,7 +8,6 @@ import { nextCronRun } from '../../lib/cron';
 import { appendFilament, lightFilament } from '../../lib/cosmosFilaments';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
-import { DAYS } from './TeamPulseTile';
 import { usePulse, useModelUsage, useUsageByDay, useCronJobs, useMe, usePluginPresent } from '../../lib/queries';
 import { ElowenPresence } from './ElowenPresence';
 import type { PresenceState } from './usePresence';
@@ -69,7 +68,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
   // Who is around, from the daemon's LIVE view of running turns rather than anything inferred from
   // history. This is the same request the pulse tile below makes, so the two cannot disagree about
   // who is working — react-query serves both from one cache entry.
-  const pulse = usePulse(DAYS);
+  const pulse = usePulse();
   const people = pulse.data?.people ?? [];
   const working = people.filter((person) => person.working).length;
   const turnsToday = pulse.data?.totals.turns ?? 0;
@@ -114,7 +113,7 @@ export function HeroCosmos({ now, state, presenceLabel }: {
       // "0 · 0" and say nothing about whether the instance was busy at all today.
       detail: working > 0
         ? t.dashboard.workingUnit
-        : t.dashboard.pulseTurns.replace('{count}', String(turnsToday)).replace('{days}', String(DAYS)),
+        : t.dashboard.pulseTurnsToday.replace('{count}', String(turnsToday)),
       href: '/chat',
     },
     ...(cron ? [{

@@ -116,8 +116,8 @@ export const usePresence = () =>
 
 /** The team pulse tile. Invalidated by the same SSE 'activity' event as the feed, so somebody starting
  *  a turn lights up their layer without a poll. */
-export const usePulse = (days: number) =>
-  useQuery({ queryKey: ['activity-pulse', days], queryFn: () => elowenClient.activityPulse(days) });
+export const usePulse = () =>
+  useQuery({ queryKey: ['activity-pulse'], queryFn: elowenClient.activityPulse });
 
 export const useActivity = (type?: string, limit?: number) =>
   // SSE activity events invalidate this key; no polling is needed. `limit` joins
