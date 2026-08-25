@@ -38,6 +38,11 @@ const PLATFORM_LITERAL_EXEMPTIONS: readonly { file: string; snippet: string; rea
     reason: 'declares the union itself — wireContract may import nothing, and the test below pins it to the descriptors',
   },
   {
+    file: 'shared/wireContract.ts',
+    snippet: "export type PlatformLinkKey = 'discordUserId' | 'msteamsUserId' | 'telegramUserId' | 'whatsappNumber';",
+    reason: 'declares the web-visible CliSettings key union; platformIdentity.ts types its runtime descriptors against this shared wire contract',
+  },
+  {
     file: 'store/db.ts',
     snippet: "for (const name of ['discord', 'whatsapp']) if (configs?.[name])",
     reason: 'the plugins carrying a `visionModel` config — a DIFFERENT set that happens to share two names, mirrored in configStore',
@@ -110,6 +115,10 @@ describe('platform identity is data, not literals', () => {
     expect(union, 'wireContract no longer declares PlatformSurface').toBeTruthy();
     const declared = [...(union ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
     expect([...declared].sort()).toEqual([...PLATFORM_SURFACES].sort());
+    const linkUnion = wire.match(/export type PlatformLinkKey = ([^;]+);/)?.[1];
+    expect(linkUnion, 'wireContract no longer declares PlatformLinkKey').toBeTruthy();
+    const declaredLinkKeys = [...(linkUnion ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect([...declaredLinkKeys].sort()).toEqual([...PLATFORM_LINK_KEYS].sort());
     // …and the generated values really do carry every platform.
     for (const platform of PLATFORM_SURFACES) {
       expect(ACTIVITY_SURFACES as readonly string[]).toContain(platform);

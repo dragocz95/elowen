@@ -1,6 +1,10 @@
 /** Structured identity of a live agent tmux session, derived from the daemon's own naming
  *  convention. The daemon owns how it names sessions, so classifying them here keeps the role a
- *  first-class fact the API exposes — clients never reverse-engineer meaning from the raw name. */
+ *  first-class fact the API exposes — clients never reverse-engineer meaning from the raw name.
+ *
+ *  This remains production code: the brain-terminal janitor uses the `chat` classification to reap stray
+ *  interactive sessions. The advisor/worker role branches preserve the naming contract shared with the
+ *  installed agent runtime, even though that runtime is no longer statically imported by core. */
 type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor' | 'chat';
 
 export interface SessionInfo {

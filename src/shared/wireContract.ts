@@ -126,6 +126,10 @@ export interface BrainPendingPlan { id?: string; plan: string }
  *  tests/contract/platformIdentityContract.test.ts fails if the descriptor set and this union diverge. */
 export type PlatformSurface = 'discord' | 'msteams' | 'telegram' | 'whatsapp';
 
+/** The account-setting keys that carry a linked platform identity. This is a wire-visible type so the web
+ *  can model `CliSettings` without importing the daemon's runtime identity descriptors. */
+export type PlatformLinkKey = 'discordUserId' | 'msteamsUserId' | 'telegramUserId' | 'whatsappNumber';
+
 /** Which chat surface exposes a slash command. Part of the wire contract because `GET /brain/commands`
  *  serves the filtered list to every surface (CLI, web dock, platform bots). The platform half follows
  *  the platform set, so the next platform reaches every slash-command surface from one declaration; the

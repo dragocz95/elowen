@@ -6,7 +6,6 @@ import type { LiveEventReplay } from './liveEventReplay.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
 import type { TurnMode } from '../service/turnRequest.js';
 import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
-import type { ApplyCompaction } from './factory.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
 import type { StoredChatImage } from '../chatImages.js';
 
@@ -48,6 +47,10 @@ export interface TurnContextBlocks {
   beforeUser: string;
   afterUser: string;
 }
+
+/** Re-apply the live session's compaction threshold without respawning it. The live session owns this
+ *  seam; the factory only supplies its implementation while assembling the session. */
+export type ApplyCompaction = (proactive: boolean, atPercent: number) => void;
 
 /** One live brain conversation: the PI session plus its settings, event fanout and per-turn context.
  *  Shared by the chat brain, the channel service and the live registry. */

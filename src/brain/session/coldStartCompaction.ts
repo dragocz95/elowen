@@ -1,9 +1,9 @@
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import { parseDbTs } from '../../shared/time.js';
 import { logger } from '../../shared/logger.js';
 import { runCompaction } from '../events.js';
 import { sessionHasWorkInFlight, type SessionQuiescenceDeps } from '../service/sessionQuiescence.js';
 import { LONG_CACHE_TTL_MS } from './cacheTiming.js';
-import type { LiveBrain } from './liveBrain.js';
 
 /** Cold-start auto-compaction policy: the pure decision pieces behind the turn runner's
  *  pre-turn compaction (BrainTurnRunner.maybeColdStartCompaction).
@@ -125,6 +125,16 @@ export interface ColdStartCompactionDeps extends SessionQuiescenceDeps {
   store: SessionQuiescenceDeps['store'] & { lastMessageAt(sessionId: string): string | undefined };
 }
 
+/** The live-session facts the trigger reads. Structural on purpose: the policy is usable by both owner
+ *  chat and platform channels without importing the concrete live-session module. */
+export interface ColdCompactionSession {
+  session: AgentSession;
+  sessionId: string;
+  interactedAt?: number;
+  lastRequestCacheTtlMs?: number;
+  assessColdCompaction?: AssessColdCompaction;
+}
+
 /** Compact the conversation at the START of a turn that follows a provably expired prompt cache — before
  *  its first provider request, under the lock the turn already holds.
  *
@@ -143,7 +153,7 @@ export interface ColdStartCompactionDeps extends SessionQuiescenceDeps {
  *  on its full history, and the circuit breaker counts the failure through its own session subscription.
  *  No loop guard is needed — the turn that follows appends fresh messages, which closes the gate until
  *  the next full idle-past-TTL epoch. */
-export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live: LiveBrain): Promise<void> {
+export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live: ColdCompactionSession): Promise<void> {
   const assess = live.assessColdCompaction;
   if (!assess) return;
   if (live.session.isStreaming || live.session.isCompacting) return;

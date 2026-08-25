@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -36,11 +36,31 @@ describe('dependencies kept for plugins that live in the registry', () => {
     expect(manifest.dependencies[pkg], `${pkg} is required by ${reason}`).toBeDefined();
   });
 
-  it('exempts only dependencies without a bundled consumer from Knip', () => {
+  /** Both directions, DERIVED rather than listed. The rule is the one stated at the top of this file: a
+   *  dependency is exempt from Knip exactly when nothing in `src/` imports it. Hard-coding either side
+   *  goes stale the moment core starts or stops using one — which is precisely what happened to
+   *  `elowen-plugin-shared`, listed here as having "no bundled consumer" long after `src/plugins/loader.ts`
+   *  and `src/plugins/manifest.ts` began importing `PLUGIN_SHARED_API_VERSION` from it. Knip reports a
+   *  stale exemption as a configuration hint, so the two drifted apart quietly. */
+  it('exempts a dependency from Knip exactly when nothing in src/ imports it', () => {
     const knip = JSON.parse(readFileSync(join(repoRoot, 'knip.json'), 'utf-8')) as { ignoreDependencies: string[] };
-    for (const pkg of ['botframework-connector', 'grammy', 'baileys', 'qrcode']) {
-      expect(knip.ignoreDependencies, `${pkg} has no bundled consumer and must stay exempt`).toContain(pkg);
+    const sources = (function walk(dir: string, out: string[] = []): string[] {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, out);
+        else if (/\.ts$/.test(entry.name)) out.push(readFileSync(full, 'utf-8'));
+      }
+      return out;
+    })(join(repoRoot, 'src')).join('\n');
+
+    for (const pkg of Object.keys(REGISTRY_PLUGIN_DEPENDENCIES)) {
+      const importedLocally = new RegExp(`from '${pkg.replace(/[/\\-]/g, '\\$&')}'`).test(sources);
+      expect(
+        knip.ignoreDependencies.includes(pkg),
+        importedLocally
+          ? `${pkg} IS imported under src/, so the exemption is stale and Knip rejects it`
+          : `${pkg} has no consumer under src/ and must stay exempt`,
+      ).toBe(!importedLocally);
     }
-    expect(knip.ignoreDependencies, 'elowen-plugin-shared has no bundled consumer and must stay exempt').toContain('elowen-plugin-shared');
   });
 });

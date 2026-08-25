@@ -5,6 +5,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate, settlePartialTurn, type SettledTurnUsage } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import type { ApplyCompaction } from './liveBrain.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
 import type { StepDrainCoordinator } from '../stepDrain.js';
 import { createCompactionModelRoute, type CompactionModelRoute } from './compactionModelRoute.js';
@@ -260,11 +261,6 @@ export function compactionKeepRecentTokens(triggerTokens: number, fixedCostToken
 function compactionFloorSeedEstimate(fixedCostTokens: number): number {
   return fixedCostTokens + COMPACTION_SUMMARY_ALLOWANCE + COMPACTION_TAIL_MIN;
 }
-
-/** Re-applies a live session's compaction threshold: `proactive` is the auto-compact toggle,
- *  `atPercent` the context-fill percentage it fires at. Returned by the factory so a settings change
- *  reaches the running conversation without a respawn. */
-export type ApplyCompaction = (proactive: boolean, atPercent: number) => void;
 
 /** The effective auto-compact percentage for one model: the user's per-model override (keyed
  *  `providerId/model`, the same convention as the operator context-window map) when set, else the global

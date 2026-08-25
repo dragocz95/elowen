@@ -47,7 +47,7 @@ export interface PlatformIdentityDescriptor {
   /** Adapter platform id. Doubles as the plugin name and the chat/activity surface name. */
   readonly platform: PlatformSurface;
   /** `user_settings.key` holding the link, and the `CliSettings` field name exposed to the account UI. */
-  readonly linkSettingKey: string;
+  readonly linkSettingKey: PlatformLinkKey;
   /** Name of the partial UNIQUE index guarding `linkSettingKey`. Pinned per platform because these
    *  indexes already exist on live databases — deriving a new name would silently leave the old index
    *  in place and the real one uncreated, which is a data migration nobody asked for. */
@@ -65,7 +65,7 @@ export interface PlatformIdentityDescriptor {
   readonly bootstrap?: PlatformIdentityBootstrap;
 }
 
-import type { PlatformSurface } from './wireContract.js';
+import type { PlatformLinkKey, PlatformSurface } from './wireContract.js';
 
 const digits = (raw: string): string => raw.replace(/[^\d]/g, '');
 
@@ -130,9 +130,7 @@ export const PLATFORM_IDENTITIES = [
 /** Re-exported so consumers take the platform set and its descriptors from ONE module. Not every
  *  surface is a platform — the CLI, the web chat, cron and delegated runs have no platform identity —
  *  so surface unions ADD to this rather than replacing it. */
-export type { PlatformSurface };
-/** The `CliSettings` / `user_settings` keys that hold a platform link. */
-export type PlatformLinkKey = (typeof PLATFORM_IDENTITIES)[number]['linkSettingKey'];
+export type { PlatformLinkKey, PlatformSurface };
 
 export const PLATFORM_SURFACES: readonly PlatformSurface[] = PLATFORM_IDENTITIES.map((d) => d.platform);
 export const PLATFORM_LINK_KEYS: readonly PlatformLinkKey[] = PLATFORM_IDENTITIES.map((d) => d.linkSettingKey);

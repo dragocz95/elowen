@@ -2,6 +2,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { UserStore } from '../store/userStore.js';
 import type { BrainStore, BrainTerminalRow } from '../store/brainStore.js';
 import { brainTerminalName, isOwnedUserSession } from './sessionId.js';
+import { classifySession } from '../shared/sessionInfo.js';
 import { logger } from '../shared/logger.js';
 import { Singleflight } from '../shared/singleflight.js';
 
@@ -122,7 +123,7 @@ export class BrainTerminalService {
       }
     }
     for (const name of live) {
-      if (name.startsWith('elowen-chat-') && !bound.has(name)) await this.d.tmux.kill(name); // malformed / pre-restart debris
+      if (classifySession(name).role === 'chat' && !bound.has(name)) await this.d.tmux.kill(name); // malformed / pre-restart debris
     }
   }
 }

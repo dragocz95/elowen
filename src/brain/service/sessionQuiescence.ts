@@ -1,7 +1,6 @@
 import type { BrainStore } from '../../store/brainStore.js';
 import { processRegistry } from '../processRegistry.js';
 import type { ElicitationRegistry } from '../elicitation.js';
-import type { LiveBrain } from '../session/liveBrain.js';
 
 /** The ONE fail-closed definition of "this conversation has WORK in flight", shared by every caller
  *  that would otherwise destroy or rewrite a live context — the detach-only stop and the idle reaper
@@ -10,9 +9,23 @@ import type { LiveBrain } from '../session/liveBrain.js';
  *  result). Two hand-maintained copies of this rule is how they drift apart, and a drifted copy fails
  *  OPEN for exactly one caller. */
 
+/** The subset of one live session the predicate reads. Kept structural so the quiescence policy does not
+ *  depend on the session implementation or create a cycle back into the live registry. */
+export interface QuiescenceLiveSession {
+  session: {
+    isStreaming: boolean;
+    getSteeringMessages(): readonly unknown[];
+    getFollowUpMessages(): readonly unknown[];
+  };
+  queuedSteer?: readonly unknown[];
+  queuedFollowUp?: readonly unknown[];
+  pendingCompactionEchoes?: readonly unknown[];
+  deliveringUserEchoes?: readonly unknown[];
+}
+
 /** The subset of the live registry the predicate reads — structural, so tests drive it with fakes. */
 interface QuiescenceSessions {
-  get(sessionId: string): LiveBrain | undefined;
+  get(sessionId: string): QuiescenceLiveSession | undefined;
   isParentAborting(sessionId: string): boolean;
   hasPendingAbort(sessionId: string): boolean;
   hasActiveChildren(sessionId: string): boolean;
