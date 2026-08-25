@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { CONTROL_COMMANDS } from '../../packages/plugin-shared/chatCommands.mjs';
 import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
 import type { SlashSurface } from '../../src/brain/slashCommands.js';
+import { SERVER_COMMANDS } from '../../src/api/routes/brainChat.js';
 import { PLATFORM_SURFACES } from '../../src/shared/platformIdentity.js';
 
 describe('slash command registry', () => {
@@ -376,13 +377,15 @@ describe('slash command registry', () => {
     });
 
     /** `execution` is what `POST /brain/command` dispatches on (src/api/routes/brainChat.ts): an `action`
-     *  that is also `session-control`. Its switch must therefore have a case for exactly these names —
-     *  adding a seventh without one would answer 400 for a command the catalog advertises as server-run. */
-    it('keeps the server-dispatchable set equal to the switch in POST /brain/command', () => {
+     *  that is also `session-control`. Both halves of that sentence are read from the code that lives it —
+     *  the catalog on one side, the route's own SERVER_COMMANDS table on the other — because a literal
+     *  list of the six names here would be a THIRD copy, and the copy that stays green while the route
+     *  loses a command. Dropping a handler, or declaring a server-run command without one, fails this. */
+    it('keeps the server-dispatchable set equal to the dispatch table of POST /brain/command', () => {
       const dispatchable = SLASH_COMMANDS
         .filter((c) => c.kind === 'action' && c.execution === 'session-control')
         .map((c) => c.name);
-      expect(dispatchable.sort()).toEqual(['clear', 'compact', 'fast', 'new', 'restart', 'stop']);
+      expect(dispatchable.sort()).toEqual(Object.keys(SERVER_COMMANDS).sort());
     });
 
     /** The duplicated `context` name stays two commands, and `execution` is now the field that PROVES it:

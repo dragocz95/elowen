@@ -2,10 +2,10 @@ import { parseBody } from '../validation.js';
 import { brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainTerminalSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
-import type { ElowenApp } from '../context.js';
+import type { ElowenApp, ElowenContext } from '../context.js';
 import { clientOrigin } from '../clientIp.js';
 import { PLATFORM_SURFACES } from '../../shared/platformIdentity.js';
-import type { BrainRouteContext } from './brainRouteContext.js';
+import type { BrainRouteContext, BrainService } from './brainRouteContext.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
  *  the length so a stray large payload can't bloat the summary prompt. Undefined means "default compaction". */
@@ -14,6 +14,69 @@ function compactInstruction(v: unknown): string | undefined {
   const trimmed = v.trim();
   return trimmed ? trimmed.slice(0, 2000) : undefined;
 }
+
+/** The `POST /brain/command` body: `name` selects the command and the remaining fields are per-command,
+ *  so it stays a permissive hand-rolled read rather than one zod schema (mirrors the streaming handler). */
+type ServerCommandBody = { name?: unknown; session?: unknown; on?: unknown; instruction?: unknown };
+
+interface ServerCommandRun {
+  c: ElowenContext;
+  brain: BrainService;
+  route: BrainRouteContext;
+  body: ServerCommandBody;
+}
+
+type ServerCommandHandler = (run: ServerCommandRun) => Response | Promise<Response>;
+
+/** Every command `POST /brain/command` actually executes, keyed by the catalog name it implements.
+ *
+ *  This table IS the endpoint's dispatch set: the names it can run are its keys and nowhere else, so
+ *  tests/brain/slashCommands.test.ts reads those keys to hold the set equal to the catalog's `action` +
+ *  `session-control` entries (src/brain/slashCommands.ts). Declaring a command server-run without adding
+ *  it here therefore fails the suite instead of answering 400 in production, and dropping an entry the
+ *  catalog still advertises fails it the same way — which a `switch` could not, because a missing `case`
+ *  is indistinguishable from a `default` that was always meant to be reached. */
+export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
+  stop: async ({ c, brain, body }) => {
+    await brain.abort(c.get('user').id, typeof body.session === 'string' ? body.session : undefined);
+    return c.json({ ok: true, message: 'Agent stopped.' });
+  },
+  new: async ({ c, brain }) => c.json({
+    ok: true, message: 'Started a fresh conversation.', data: await brain.start(c.get('user').id, { fresh: true }),
+  }),
+  // Destructive and deliberate: it empties the caller's own conversation in place. A conversation with
+  // work in flight throws, which the route's catch turns into a 409 carrying the reason.
+  clear: async ({ c, brain, body }) => {
+    const data = await brain.clearSession(c.get('user').id, typeof body.session === 'string' ? body.session : undefined);
+    return c.json({ ok: true, message: 'Conversation cleared.', data });
+  },
+  compact: async ({ c, brain, route, body }) => {
+    const target = typeof body.session === 'string' ? body.session : undefined;
+    // A compaction runs a summarizing model turn, so its tokens are spend like any other and are
+    // attributed to whoever asked for it. preflightSend is used purely as the ownership-checked
+    // resolver of "which conversation is this about"; a failure here is not this route's error.
+    try { route.pinOrigin(c, brain.preflightSend(c.get('user').id, target)); } catch { /* no conversation to attribute */ }
+    const r = await brain.compact(c.get('user').id, target, compactInstruction(body.instruction));
+    return c.json({
+      ok: true,
+      message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'),
+      data: { usage: r.usage },
+    });
+  },
+  fast: ({ c, brain, body }) => {
+    const r = brain.setFast(
+      c.get('user').id,
+      typeof body.on === 'boolean' ? body.on : undefined,
+      typeof body.session === 'string' ? body.session : undefined,
+    );
+    return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
+  },
+  restart: async ({ c, route }) => {
+    if (!route.d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
+    await route.d.restartDaemon(c.get('user').id);
+    return c.json({ ok: true, message: 'Restarting the Elowen daemon…' });
+  },
+};
 
 export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext): void {
   const { d, forbidden, pinOrigin, withBrain } = route;
@@ -222,52 +285,26 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // Execute a server-side slash command through ONE dispatch path for every surface. Pickers
   // (`model`/`think`) and info (`stats`/`help`) stay client-side (their own endpoints / rendering).
   //
-  // The catalog decides what is dispatchable here, not this switch: a command must be an `action` (so a
-  // client-rendered kind can never be executed by name) AND `session-control` (so a `surface-local`
-  // action like /maskot, or an adapter-owned one like /voice, is refused up front rather than falling
-  // through to a `default` that happens to have no case).
+  // The catalog decides what runs here, and SERVER_COMMANDS is what runs it: a command must be an
+  // `action` (so a client-rendered kind can never be executed by name) AND a `session-control` one this
+  // module implements. The two ways of failing that answer differently, and deliberately so — see below.
   app.post('/brain/command', withBrain(async (c, brain) => {
     const user = c.get('user');
-    // Polymorphic dispatch body: `name` selects the command and the remaining fields are per-command, so
-    // this one stays a permissive hand-rolled read rather than a single zod schema (mirrors the streaming
-    // handler). A bad `name` is a 400 below either way.
-    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; session?: unknown; on?: unknown; instruction?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as ServerCommandBody;
     const cmd = typeof body.name === 'string' ? findCommand(body.name) : undefined;
-    if (!cmd || cmd.kind !== 'action' || cmd.execution !== 'session-control') return c.json({ error: 'unknown command' }, 400);
+    // A name the catalog does not carry as an executable `action` is not a command this endpoint knows at
+    // all — a typo, a picker like /model, an info like /stats.
+    if (!cmd || cmd.kind !== 'action') return c.json({ error: 'unknown command' }, 400);
     if (cmd.adminOnly && !user.is_admin) return c.json({ error: 'forbidden' }, 403);
-    try {
-      switch (cmd.name) {
-        case 'stop': await brain.abort(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: 'Agent stopped.' });
-        case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await brain.start(user.id, { fresh: true }) });
-        // Destructive and deliberate: it empties the caller's own conversation in place. A conversation
-        // with work in flight throws, which the catch below turns into a 409 carrying the reason.
-        case 'clear': {
-          const data = await brain.clearSession(user.id, typeof body.session === 'string' ? body.session : undefined);
-          return c.json({ ok: true, message: 'Conversation cleared.', data });
-        }
-        case 'compact': {
-          const target = typeof body.session === 'string' ? body.session : undefined;
-          // A compaction runs a summarizing model turn, so its tokens are spend like any other and are
-          // attributed to whoever asked for it. preflightSend is used purely as the ownership-checked
-          // resolver of "which conversation is this about"; a failure here is not this route's error.
-          try { pinOrigin(c, brain.preflightSend(user.id, target)); } catch { /* no conversation to attribute */ }
-          const r = await brain.compact(user.id, target, compactInstruction(body.instruction));
-          return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } });
-        }
-        case 'fast': {
-          const r = brain.setFast(user.id, typeof body.on === 'boolean' ? body.on : undefined, typeof body.session === 'string' ? body.session : undefined);
-          return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
-        }
-        case 'restart':
-          if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
-          await d.restartDaemon(user.id);
-          return c.json({ ok: true, message: 'Restarting the Elowen daemon…' });
-        // Unreachable while the catalog's `session-control` actions all have a case above — which
-        // tests/brain/slashCommands.test.ts holds. Kept so adding one without its case answers a 400
-        // instead of falling off the end of the handler.
-        default: return c.json({ error: 'command is not server-dispatchable' }, 400);
-      }
-    } catch (e) { return c.json({ error: (e as Error).message }, 409); }
+    // …whereas a real action this endpoint does not RUN — a `surface-local` one like /goal or /maskot, an
+    // adapter-owned one like /voice — is a known command aimed at the wrong place, and this endpoint has
+    // said so in exactly these words since long before the catalog carried `execution`. No client branches
+    // on either string today; both are shown to the person, and telling someone "no such command" about a
+    // command they can see in their own menu sends them looking for the wrong problem.
+    const run: ServerCommandHandler | undefined = cmd.execution === 'session-control' ? SERVER_COMMANDS[cmd.name] : undefined;
+    if (!run) return c.json({ error: 'command is not server-dispatchable' }, 400);
+    try { return await run({ c, brain, route, body }); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
 
   app.post('/brain/send', withBrain(async (c, brain) => {
