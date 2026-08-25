@@ -1072,6 +1072,16 @@ export class BrainStore {
     return this.delegation.countPendingDeliveries();
   }
 
+  /** @see BrainDelegationStore.pendingDeliveryParentSessionIds */
+  pendingDeliveryParentSessionIds(): string[] {
+    return this.delegation.pendingDeliveryParentSessionIds();
+  }
+
+  /** @see BrainDelegationStore.hasPendingDelivery */
+  hasPendingDelivery(parentSessionId: string): boolean {
+    return this.delegation.hasPendingDelivery(parentSessionId);
+  }
+
   /** @see BrainDelegationStore.discardOrphanedDeliveries */
   discardOrphanedDeliveries(): number {
     return this.delegation.discardOrphanedDeliveries();
@@ -1079,6 +1089,10 @@ export class BrainStore {
 
   acknowledgeSubagentResult(parentSessionId: string, resultId: string): boolean {
     return this.delegation.acknowledgeSubagentResult(parentSessionId, resultId);
+  }
+
+  requeueSubagentResult(parentSessionId: string, resultId: string): boolean {
+    return this.delegation.requeueSubagentResult(parentSessionId, resultId);
   }
 
   noteSubagentResultFailure(parentSessionId: string, resultId: string): void {

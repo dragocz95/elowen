@@ -5,7 +5,7 @@ import { PluginServiceRunner } from '../plugins/serviceRunner.js';
 import type { DelegatedContinueResult, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
-import type { BrainSearchHit, BrainGoalRow, BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
+import type { BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
 import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
@@ -54,6 +54,7 @@ import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { toolAuthorityForUser } from './brainDeps.js';
 import { resumePlatformTurn, type ParkedPlatformTurn } from './platformTurnRecovery.js';
+import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
@@ -92,6 +93,12 @@ const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversati
   + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
   + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
   + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
+
+/** A result-specific follow-up when the durable custom result reached context but its parent retry ended before
+ * answering. This is not the generic restart note: the result remains the subject and no work is replayed. */
+const RESULT_CONTINUATION_NOTE = 'A recovered delegated result is already present immediately above in this conversation, '
+  + 'but the parent turn ended before answering the user. Continue from that result now and give the user the answer it enables. '
+  + 'Do not repeat the result block, redo the delegated work, or discuss the recovery mechanism.';
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
  *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI.
@@ -169,6 +176,9 @@ export class BrainService {
   /** Sub-agent delegation: boot reconcile, drill-in reads/continuations, and the single delegated-turn
    *  dispatch. Owns every path that touches a `brain-ch-subagent-*` child. */
   private delegated: DelegatedSessionService;
+  /** Top-level owner parents whose claimed children will enqueue a result during this boot. The owner
+   * recovery provider claims them before that enqueue exists, then wakes them after delegation recovery. */
+  private bootOwnerResultParents = new Set<string>();
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -531,7 +541,11 @@ export class BrainService {
    *  after this one. */
   claimDelegationRecovery(): RecoverableRun[] {
     this.delegated.reconcileDelegationsOnBoot();
-    return this.delegated.takePendingRecovery();
+    const runs = this.delegated.takePendingRecovery();
+    this.bootOwnerResultParents = new Set(
+      runs.map((run) => run.parentSessionId).filter((sessionId) => !isNonUserSession(sessionId))
+    );
+    return runs;
   }
 
   /** `delegations` provider, ORDER: deepest first — see DelegatedSessionService.orderForRecovery. */
@@ -602,40 +616,119 @@ export class BrainService {
     return 'terminalized';
   }
 
-  /** `owner-conversations` provider, CLAIM: every OWNER conversation the last shutdown parked. Parked
-   *  platform channel turns are the `platform-conversations` provider's (claimParkedPlatformTurns) — the
-   *  two sweeps partition the marker table so neither ever clears the other's work as an invariant
-   *  breach. The durable claim itself is per-conversation and stays in the resume
-   *  (claimParkResumeAttempt), which is what lets the user's own message win the race against this sweep. */
-  claimParkedConversations(): BrainSessionRow[] {
-    return this.d.store.parkedSessions().filter((row) => !isNonUserSession(row.id));
+  /** `owner-conversations` provider, CLAIM: every top-level owner that needs a boot wake.
+   *
+   *  Genuine shutdown parks still come from parkedSessions and remain partitioned from platform turns.
+   *  Result wakes come from the raw durable outbox plus parents whose claimed child will enqueue a result
+   *  later in this boot. The latter must be named during CLAIM because every provider claims before any
+   *  provider resumes; the dependency on `delegations` then guarantees the result exists before this item
+   *  runs. One item per conversation, tagged so a result wake is never mistaken for a generic restart. */
+  claimParkedConversations(): OwnerConversationRecovery[] {
+    const claimed = new Map<string, OwnerConversationRecovery>();
+    for (const row of this.d.store.parkedSessions()) {
+      if (isNonUserSession(row.id)) continue;
+      claimed.set(row.id, { row, parked: true, resultsExpected: false });
+    }
+    const resultParents = new Set([
+      ...this.d.store.pendingDeliveryParentSessionIds(),
+      ...this.bootOwnerResultParents,
+    ]);
+    this.bootOwnerResultParents.clear();
+    for (const sessionId of resultParents) {
+      if (isNonUserSession(sessionId)) continue;
+      const row = this.d.store.getSession(sessionId);
+      if (!row) continue;
+      this.turnRunner.requireSettledResultDelivery(sessionId);
+      const existing = claimed.get(sessionId);
+      if (existing) existing.resultsExpected = true;
+      else claimed.set(sessionId, { row, parked: false, resultsExpected: true });
+    }
+    return [...claimed.values()];
   }
 
-  /** `owner-conversations` provider, RESUME: continue ONE parked OWNER conversation from its own tail
-   *  (see stepDrain.ts — the park wrote a durable marker on the session row).
+  /** `owner-conversations` provider, RESUME: wake one top-level owner conversation after boot.
    *
-   *  The conversation is resumed BY ITSELF: a hidden custom system message (never a fake user bubble)
-   *  triggers one continuation turn at the transcript's tail, exactly the shape sendDelegated uses for a
-   *  delegated child — never a history rewrite, so the cached prefix stays byte-identical. Ordering rule
-   *  against the user speaking first: turn admission clears the marker, and the durable claim-bump below
-   *  succeeds only while the marker still stands, so the user's own message always wins and no duplicate
-   *  continuation is injected. */
-  async resumeParkedConversation(row: { id: string; user_id: number; title: string; park_attempts: number }): Promise<RecoveryOutcome> {
+   *  A pending-result item runs the existing durable outbox drain; the result itself is the continuation,
+   *  so it never receives the generic restart note. A pure parked turn keeps the original behavior: a
+   *  hidden custom system message triggers one continuation at the transcript tail, and the marker CAS lets
+   *  the user's own message win without a duplicate continuation. */
+  async resumeParkedConversation(item: OwnerConversationRecovery): Promise<RecoveryOutcome> {
+    const { row } = item;
     const log = logger('brain');
-    // Fail closed on anything the park invariant says cannot happen: only top-level owner conversations
-    // ever carry a marker (the onParked wiring refuses non-user sessions), and a marker without a live
-    // owner account has nobody to resume for. Clear rather than retry — a resume here could run a turn
-    // under authority that no longer exists.
+    try {
+    // Fail closed on anything the owner-worklist invariant says cannot happen: a non-owner session or a
+    // missing account has nobody whose authority can safely run the recovery turn. A genuine park marker
+    // is cleared; a pending result stays durable for diagnosis rather than being acknowledged unread.
     if (isNonUserSession(row.id)) {
-      log.warn(`park marker on non-owner session ${row.id} — invariant breach; clearing without resume`);
-      this.d.store.clearSessionPark(row.id);
+      log.warn(`owner recovery item on non-owner session ${row.id} — invariant breach; clearing park without resume`);
+      if (item.parked) this.d.store.clearSessionPark(row.id);
       return 'released';
     }
     if (!this.d.users.get(row.user_id)) {
-      log.warn(`parked conversation ${row.id}: owner account ${row.user_id} no longer exists; clearing without resume`);
-      this.d.store.clearSessionPark(row.id);
+      log.warn(`owner recovery item ${row.id}: owner account ${row.user_id} no longer exists; clearing park without resume`);
+      if (item.parked) this.d.store.clearSessionPark(row.id);
       return 'released';
     }
+
+    if (item.resultsExpected) {
+      const hadPending = this.d.store.hasPendingDelivery(row.id);
+      if (hadPending) {
+        // The drain distinguishes durable delivery from a fresh settled parent answer. If the custom result
+        // landed but its parent retry ended first, trigger one result-specific continuation. Every row the
+        // complete joined drain acknowledged is returned for durable requeue if that continuation fails.
+        const delivery = await this.turnRunner.drainPendingSubagentResults(row.user_id, row.id, true);
+        this.turnRunner.consumeSettledResultOutcome(row.id);
+        let answered = delivery.answered;
+        if (this.d.store.hasPendingDelivery(row.id) && delivery.deliveredPending.length === 0) {
+          log.error(`boot result wake for ${row.id} left undelivered result(s) pending; durable outbox retained`);
+          return 'failed';
+        }
+        if (!answered) {
+          try {
+            const continuation = await this.turnRunner.sendCustomSystem(
+              row.user_id,
+              row.id,
+              'subagent-result-resume',
+              RESULT_CONTINUATION_NOTE,
+              `subagent-result-resume-${randomUUID()}`,
+            );
+            answered = continuation === 'landed';
+          } catch (error) {
+            log.error(`boot result continuation failed for owner conversation ${row.id}`, error);
+          }
+          if (!answered) {
+            log.error(`boot result wake reached owner conversation ${row.id} but produced no settled parent answer; durable outbox retained`);
+            return 'failed';
+          }
+          for (const result of delivery.deliveredPending) {
+            this.turnRunner.acknowledgeDeliveredResult(row.id, result.id, result.toolCallId, result.kind);
+          }
+          if (this.d.store.hasPendingDelivery(row.id)) {
+            log.error(`boot result continuation for ${row.id} left unrelated pending delivery work; durable outbox retained`);
+            return 'failed';
+          }
+        }
+        if (item.parked) this.d.store.clearSessionPark(row.id);
+        log.info(`boot delivered pending delegated result(s) to owner conversation ${row.id}`);
+        if (this.attachments.watchingCount(row.id) === 0) {
+          this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
+        }
+        return 'resumed';
+      }
+      const completed = this.turnRunner.consumeSettledResultOutcome(row.id);
+      if (completed?.answered) {
+        if (item.parked) this.d.store.clearSessionPark(row.id);
+        log.info(`boot observed an already-settled delegated result answer for owner conversation ${row.id}`);
+        if (this.attachments.watchingCount(row.id) === 0) {
+          this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
+        }
+        return 'resumed';
+      }
+      // The user's own turn may have drained the result after the claim pass. A result-only wake then has
+      // nothing left to do; a genuinely parked turn still needs its ordinary restart continuation below.
+      if (!item.parked) return 'released';
+    }
+
     if (row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
       // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
       // owner's phone is told the conversation needs their message — the same push channel a finished
@@ -682,6 +775,9 @@ export class BrainService {
       // the retry is already durably arranged here, so this is a counted outcome, not an escape.
       log.error(`boot resume failed for parked conversation ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
       return 'failed';
+    }
+    } finally {
+      if (item.resultsExpected) this.turnRunner.releaseSettledResultDelivery(row.id);
     }
   }
 

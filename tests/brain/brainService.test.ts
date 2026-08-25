@@ -827,12 +827,25 @@ describe('BrainService', () => {
     d.session.sendCustomMessage.mockImplementationOnce(() => new Promise<void>((resolve) => {
       release = () => { d.session.messages.push({ role: 'assistant', content: 'a', stopReason: 'stop' } as never); resolve(); };
     }));
-    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    const runner = (svc as unknown as { turnRunner: {
+      acceptSubagentCompletion(parent: string, userId: number, result: unknown): void;
+      drainPendingSubagentResults(userId: number, parent: string): Promise<unknown>;
+    } }).turnRunner;
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'result-a', toolCallId: 'call-a', sessionId: 'brain-ch-subagent-a', status: 'done', task: 'a', result: 'a', tools: 1, seconds: 1 });
     await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
     runner.acceptSubagentCompletion(sessionId, 1, { id: 'result-b', toolCallId: 'call-b', sessionId: 'brain-ch-subagent-b', status: 'done', task: 'b', result: 'b', tools: 1, seconds: 1 });
+    let joinedSettled = false;
+    let joinedOutcome: { acknowledged: { id: string }[] } | undefined;
+    const joined = runner.drainPendingSubagentResults(1, sessionId).then((outcome) => {
+      joinedSettled = true;
+      joinedOutcome = outcome as { acknowledged: { id: string }[] };
+    });
+    await Promise.resolve();
+    expect(joinedSettled).toBe(false); // an overlapping caller joins the in-flight drain instead of returning
     release();
-    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    await joined;
+    expect(joinedOutcome?.acknowledged.map((result) => result.id).sort()).toEqual(['result-a', 'result-b']);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
     expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
   });
 
@@ -5216,6 +5229,190 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     ).get() as { lifecycle: string }).lifecycle).toBe('recovering');
   });
 
+  it('boot recovery wakes an idle owner for a delegated result left pending by an earlier boot', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-prior-result';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-prior', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-prior', toolCallId: 'call-prior', sessionId: child, status: 'done', task: 'inspect',
+      result: 'the durable answer', tools: 1, seconds: 2,
+    });
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({
+      customType: 'subagent-result', details: { resultId: 'result-prior' }, display: false,
+    });
+    expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
+    expect(d.store.getSession('brain-1')?.parked_at).toBeNull();
+  });
+
+  it('finishes a result-only wake when the recovered result landed before its parent could answer', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-result-only-cancelled';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-result-only-cancelled', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-only-cancelled', toolCallId: 'call-result-only-cancelled', sessionId: child,
+      status: 'done', task: 'inspect', result: 'the durable answer', tools: 1, seconds: 2,
+    });
+    d.session.sendCustomMessage.mockImplementationOnce(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: message.details } as never); // result landed, parent retry cancelled
+    });
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await restarted.start(1, { session: 'brain-1' }); // an ordinary start() drain wins before owner recovery
+    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    expect(d.store.pendingSubagentResults('brain-1')).toHaveLength(1); // claim-time escalation kept it durable
+    await recovery.resumeAll();
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
+    expect(d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType)).toEqual([
+      'subagent-result', 'subagent-result-resume',
+    ]);
+    expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
+  });
+
+  it('claims recovered owner parents before results exist and still wakes them after the user speaks', async () => {
+    const d = fakeDeps();
+    const firstBoot = new BrainService(d as never);
+    const { sessionId } = await firstBoot.start(1);
+    const scope = { admin: true, owner: true, projectIds: [], permissionBoundary: null };
+    const runs = [
+      { call: 'call-foreground', child: 'brain-ch-subagent-recovered-foreground', background: false },
+      { call: 'call-background', child: 'brain-ch-subagent-recovered-background', background: true },
+    ];
+    for (const run of runs) {
+      d.store.createSession({ id: run.child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+      d.store.upsertSubagentRun(sessionId, {
+        id: run.call, sessionId: run.child, status: 'running', task: run.call, tools: 1, seconds: 2,
+        ...(run.background ? { background: true, autoDeliver: true } : {}),
+      });
+    }
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll(); // owner work is claimed now, before either recovered result exists
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    await restarted.send({ userId: 1, text: 'a newer message arrived first', session: sessionId });
+    await recovery.resumeAll();
+
+    const delivered = d.session.sendCustomMessage.mock.calls
+      .map((call) => call[0] as { customType?: string; details?: { resultId?: string } })
+      .filter((message) => message.customType === 'subagent-result');
+    expect(delivered).toHaveLength(2);
+    expect(delivered.map((message) => message.details?.resultId).sort()).toEqual([
+      `restart-${sessionId}-call-background`,
+      `restart-${sessionId}-call-foreground`,
+    ]);
+    expect(d.session.sendCustomMessage.mock.calls.some((call) =>
+      (call[0] as { customType?: string }).customType === 'restart-resume')).toBe(false);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+  });
+
+  it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    const child = 'brain-ch-subagent-parked-result';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-parked-result', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-parked', toolCallId: 'call-parked-result', sessionId: child, status: 'done', task: 'inspect',
+      result: 'the answer the parked turn needed', tools: 1, seconds: 2,
+    });
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await restarted.start(1, { session: 'brain-1' }); // result answers before owner recovery reaches the parked row
+    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    await recovery.resumeAll();
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({
+      customType: 'subagent-result', details: { resultId: 'result-parked' }, display: false,
+    });
+    expect(d.session.sendCustomMessage.mock.calls.some((call) =>
+      (call[0] as { customType?: string }).customType === 'restart-resume')).toBe(false);
+    expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
+    expect(d.store.getSession('brain-1')).toMatchObject({ parked_at: null, park_attempts: 0 });
+  });
+
+  it('lets a later recovered result answer for an earlier landed-unanswered result', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    for (const suffix of ['first', 'second']) {
+      const child = `brain-ch-subagent-multi-${suffix}`;
+      d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+      d.store.upsertSubagentRun('brain-1', {
+        id: `call-multi-${suffix}`, sessionId: child, status: 'done', task: suffix, tools: 1, seconds: 2,
+        background: true, autoDeliver: true,
+      });
+      d.store.enqueueSubagentResult('brain-1', {
+        id: `result-multi-${suffix}`, toolCallId: `call-multi-${suffix}`, sessionId: child,
+        status: 'done', task: suffix, result: `${suffix} answer`, tools: 1, seconds: 2,
+      });
+    }
+    d.session.sendCustomMessage.mockImplementationOnce(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: message.details } as never); // first lands without an answer
+    });
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2); // the second result answers for both; no third nudge
+    expect(d.session.sendCustomMessage.mock.calls.some((call) =>
+      (call[0] as { customType?: string }).customType === 'subagent-result-resume')).toBe(false);
+    expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
+    expect(d.store.getSession('brain-1')?.parked_at).toBeNull();
+  });
+
+  it('keeps a genuine park when result delivery lands but its parent retry is cancelled before answering', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    const restarted = new BrainService(d as never);
+    await restarted.start(1, { session: 'brain-1' });
+    d.session.messages.push({ role: 'assistant', content: 'an older answer', stopReason: 'stop' } as never);
+    d.session.sendCustomMessage.mockImplementation(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: message.details } as never); // both result and continuation land, neither answers
+    });
+    const child = 'brain-ch-subagent-cancelled-parent-retry';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-cancelled-parent-retry', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-cancelled-parent-retry', toolCallId: 'call-cancelled-parent-retry', sessionId: child,
+      status: 'done', task: 'inspect', result: 'the answer still needs a parent reply', tools: 1, seconds: 2,
+    });
+
+    await runBootRecovery(restarted);
+
+    expect(d.store.pendingSubagentResults('brain-1')).toHaveLength(1); // restored for the next boot, still duplicate-safe by result id
+    expect(d.store.getSession('brain-1')?.parked_at).not.toBeNull(); // the interrupted owner turn is unfinished
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2); // result delivery plus one result-specific continuation
+  });
+
   it('boot recovery parks a run as recovery_required when the interrupted tail has an unanswered tool call', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -5235,12 +5432,13 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-mut'").get() as { lifecycle: string; state: string };
     expect(row.lifecycle).toBe('recovery_required');
     expect(JSON.parse(row.state).recoveryReason).toContain('Write');
-    expect(d.session.sendCustomMessage).not.toHaveBeenCalled(); // no blind respawn — the parent decides
-    // But the parent still learns about it: a notice reaches the durable inbox pointing at DelegateContinue.
-    const pending = d.store.pendingSubagentResults(sessionId);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({ status: 'error' });
-    expect(pending[0]!.error).toContain('DelegateContinue');
+    expect(d.session.prompt).not.toHaveBeenCalled(); // no blind child respawn — the parent decides
+    // The old assertion expected this notice to remain pending forever. Boot recovery must now wake the
+    // owner with it, while preserving the recovery_required decision and DelegateContinue instruction.
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
   it('boot recovery replays a child parked on its own delegation and feeds it the recovered grandchild result (D2)', async () => {
@@ -5303,9 +5501,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(row.owner_boot_id).toBeNull();
     expect(row.lease_until).toBeNull();
     expect(JSON.parse(row.state)).toMatchObject({ status: 'error', detail: expect.stringContaining('provider unavailable') });
-    expect(d.store.pendingSubagentResults(sessionId)[0]).toMatchObject({
-      status: 'error', error: expect.stringContaining('DelegateContinue'),
-    });
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
   it('midStepWork joins the real coordinator to the registry\'s live turn identities', async () => {
@@ -5616,7 +5815,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     // the honest seam anyway, since "neither sweep ever sees the other's markers" IS a property of them.
     // A claim that stopped filtering would hand one sweep the other's rows and clear them as an invariant
     // breach — which is exactly what these two lines refuse.
-    expect(restarted.claimParkedConversations().map((row) => row.id)).toEqual(['brain-9']);
+    expect(restarted.claimParkedConversations().map((item) => item.row.id)).toEqual(['brain-9']);
     expect(restarted.claimParkedPlatformTurns().map((row) => row.id)).toEqual(['brain-ch-discord-general']);
 
     await runBootRecovery(restarted);
@@ -5767,9 +5966,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     await runBootRecovery(restarted); // the claim pass bumps attempt to 4 (> MAX), the resume pass gives up
 
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'delegate-poison'").get() as { lifecycle: string }).lifecycle).toBe('error');
-    const pending = d.store.pendingSubagentResults(sessionId);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.status).toBe('error');
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('could not be recovered');
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
   it('boot reconcile claims a background non-autoDeliver orphan for recovery too', async () => {

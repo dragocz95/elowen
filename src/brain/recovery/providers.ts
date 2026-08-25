@@ -3,6 +3,14 @@ import type { ParkedPlatformTurn } from '../platformTurnRecovery.js';
 import { BootRecoveryCoordinator } from './coordinator.js';
 import type { RecoveryLog, RecoveryOutcome } from './types.js';
 
+/** One top-level owner wake. A genuine park and durable delegated-result delivery may coincide, but they
+ * remain distinct reasons: a result wake is valid even when the user's own message cleared the park marker. */
+export interface OwnerConversationRecovery {
+  row: BrainSessionRow;
+  parked: boolean;
+  resultsExpected: boolean;
+}
+
 /** What the four built-in providers need from the brain. Narrow on purpose: the coordinator drives
  *  claim/order/resume and nothing else, so this seam exposes exactly those verbs — BrainService satisfies
  *  it structurally, and a test can satisfy it with a stub instead of a whole brain. */
@@ -14,8 +22,8 @@ export interface BootRecoveryHost {
   recoverDelegation(run: RecoverableRun): Promise<RecoveryOutcome>;
   claimWorkflowRecovery(): readonly RecoverableWorkflow[];
   resumeWorkflow(workflow: RecoverableWorkflow): Promise<RecoveryOutcome>;
-  claimParkedConversations(): readonly BrainSessionRow[];
-  resumeParkedConversation(row: BrainSessionRow): Promise<RecoveryOutcome>;
+  claimParkedConversations(): readonly OwnerConversationRecovery[];
+  resumeParkedConversation(item: OwnerConversationRecovery): Promise<RecoveryOutcome>;
   claimParkedPlatformTurns(): readonly ParkedPlatformTurn[];
   resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome>;
 }
@@ -56,17 +64,17 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     resume: (workflow) => host.resumeWorkflow(workflow),
   });
 
-  // Owner conversations the last shutdown parked at a step boundary: a marker on the session row, resumed
-  // by appending a hidden system message at the transcript's TAIL.
-  coordinator.register<BrainSessionRow>({
+  // Owner conversations needing a boot wake: either the last shutdown parked their turn, or their durable
+  // delegated-result outbox has work. One provider owns both because both resume the same owner transcript;
+  // the tagged item keeps a result wake from being mistaken for a generic interrupted-turn continuation.
+  coordinator.register<OwnerConversationRecovery>({
     id: 'owner-conversations',
-    // After BOTH sweeps: a parked owner turn may be waiting on a delegation's or a workflow's result,
-    // which those sweeps queue durably first.
+    // After BOTH sweeps: every recovered result expected by this worklist is durable before its owner wakes.
     dependsOn: ['delegations', 'workflows'],
     claim: () => host.claimParkedConversations(),
     // Concurrent: these are independent owner turns, exactly as they would be in normal operation.
     parallel: true,
-    resume: (row) => host.resumeParkedConversation(row),
+    resume: (item) => host.resumeParkedConversation(item),
   });
 
   // Ordinary platform channel turns the last shutdown parked: the same marker on the session row (the

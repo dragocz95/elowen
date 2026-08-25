@@ -681,6 +681,27 @@ export class BrainDelegationStore {
     return row?.n ?? 0;
   }
 
+  /** Parent conversations with durable delivery work, independent of whether each payload is usable.
+   *
+   *  Boot recovery needs the raw queue as its wake source: parsing through pendingSubagentResults would
+   *  hide a malformed row and falsely report that the parent had no work. The delivery drain still owns
+   *  validation and the diagnostic for such a row. */
+  pendingDeliveryParentSessionIds(): string[] {
+    const rows = this.db.prepare(
+      `SELECT DISTINCT parent_session_id FROM brain_subagent_results
+        WHERE delivery_state = 'pending' ORDER BY parent_session_id`
+    ).all() as { parent_session_id: string }[];
+    return rows.map((row) => row.parent_session_id);
+  }
+
+  /** Raw queue presence for one parent. Unlike pendingSubagentResults, malformed payloads still count. */
+  hasPendingDelivery(parentSessionId: string): boolean {
+    return this.db.prepare(
+      `SELECT 1 FROM brain_subagent_results
+        WHERE parent_session_id = ? AND delivery_state = 'pending' LIMIT 1`
+    ).get(parentSessionId) !== undefined;
+  }
+
   /** Retire pending results whose parent can never take them, and report how many. Boot-time sweep.
    *
    *  A delegated result is delivered by steering it into the parent, but the row only flips to
@@ -763,6 +784,13 @@ export class BrainDelegationStore {
     return this.db.prepare(
       `UPDATE brain_subagent_results SET delivery_state = 'acknowledged'
        WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'pending'`
+    ).run(parentSessionId, resultId).changes === 1;
+  }
+
+  requeueSubagentResult(parentSessionId: string, resultId: string): boolean {
+    return this.db.prepare(
+      `UPDATE brain_subagent_results SET delivery_state = 'pending'
+       WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'acknowledged'`
     ).run(parentSessionId, resultId).changes === 1;
   }
 

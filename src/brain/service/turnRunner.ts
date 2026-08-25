@@ -47,7 +47,13 @@ type CustomResultMessage = { role?: string; details?: { resultId?: string } };
  *  `steered` — PI accepted it into the RUNNING turn's steering queue and will inject it before that turn's
  *              next model call. Not yet provable: a stop that clears PI's queue in between would erase it,
  *              so the row stays pending until a later drain SEES it in the transcript. */
-type CustomDelivery = 'landed' | 'steered';
+type CustomDelivery = 'landed' | 'landed-unanswered' | 'steered';
+
+export interface PendingResultDrainOutcome {
+  answered: boolean;
+  acknowledged: { id: string; toolCallId: string; kind: 'subagent' | 'workflow' }[];
+  deliveredPending: { id: string; toolCallId: string; kind: 'subagent' | 'workflow' }[];
+}
 
 /** Is this result's hidden custom message already in the session's live context? It carries our result id,
  *  so its presence is the only honest answer to "did this land?", whatever became of the turn that was
@@ -113,8 +119,16 @@ interface TurnRunnerDeps {
  *  kickoff, auto-compact and the goal judge. */
 export class BrainTurnRunner {
   private contextBuilder: TurnContextBuilder;
-  private readonly resultDrains = new Set<string>();
+  /** One shared promise per parent: overlapping wake paths join the same delivery instead of silently
+   * returning while the only drain that can wake the conversation is still in flight. */
+  private readonly resultDrains = new Map<string, {
+    promise: Promise<PendingResultDrainOutcome>;
+    state: { deferUnanswered: boolean };
+  }>();
   private readonly resultRetryTimers = new Map<string, NodeJS.Timeout>();
+  /** Boot-claimed owner wakes require a settled answer even if an ordinary start() drain wins the race. */
+  private readonly settledResultParents = new Set<string>();
+  private readonly settledResultOutcomes = new Map<string, PendingResultDrainOutcome>();
   /** Results steered into a still-running turn, per parent session: handed to PI but not yet visible in
    *  the transcript. A steered row stays pending on purpose (PI's queue can still be cleared by a stop),
    *  so the next drain would otherwise re-send it and the model would read the same result twice. The
@@ -167,7 +181,7 @@ export class BrainTurnRunner {
       // Deliberately OUTSIDE the send/session locks: the turn we are steering into is the one holding them,
       // so taking them would mean waiting for exactly the turn we want to reach — which is the behaviour
       // this path replaces. Same reasoning as ChannelService.trySteerIntoRunningTurn.
-      if (resultId && resultInContext(running.session.messages as CustomResultMessage[], resultId)) return 'landed';
+      if (resultId && resultInContext(running.session.messages as CustomResultMessage[], resultId)) return 'landed-unanswered';
       // Already handed to PI by an earlier drain and still queued (see steeredInFlight). Two children
       // finishing close together is the ordinary case under fan-out, not a rare race.
       if (resultId && this.steeredInFlight.get(target)?.has(resultId)) return 'steered';
@@ -186,12 +200,13 @@ export class BrainTurnRunner {
 
     // The bare session lock (inner) is nested under the outer `send-` lock, matching a user turn's own
     // ordering (send-<id> → <id>), so this never deadlocks against a concurrent send()/compact/stop.
-    await this.serial(sendLockKey(target), () => this.serial(target, async () => {
+    return this.serial(sendLockKey(target), () => this.serial(target, async (): Promise<CustomDelivery> => {
       const live = this.d.sessions.get(target);
       if (!live) throw new Error('brain not started for user');
       // An earlier steer that landed while we queued behind that turn is already in the context. Sending a
-      // second copy is the one failure mode this whole durable pipeline must not produce.
-      if (resultId && resultInContext(live.session.messages as CustomResultMessage[], resultId)) return;
+      // second copy is the one failure mode this whole durable pipeline must not produce. It did not produce
+      // a fresh answer in THIS delivery, which matters to a genuinely parked owner turn.
+      if (resultId && resultInContext(live.session.messages as CustomResultMessage[], resultId)) return 'landed-unanswered';
       const before = lastAssistant(live.session.messages as { role?: string }[]);
       const context = this.contextBuilder.buildScope(userId, live);
       await context.run(() => live.session.sendCustomMessage(message, { triggerTurn: true, deliverAs: 'followUp' }));
@@ -207,7 +222,7 @@ export class BrainTurnRunner {
       if (!settled || settled === before) {
         if (!landed) throw new Error('sub-agent result was not processed by the parent model');
         logger('brain-subagent').info(`sub-agent result for ${target} entered the context of a cancelled parent retry; acknowledging without retry`);
-        return;
+        return 'landed-unanswered';
       }
       // Two ways to get here. The user aborted the turn mid-flight (Esc / stop). Or the parent's own model
       // turn errored — which says nothing about the CHILD's result: the delivery budget exists for a
@@ -217,9 +232,10 @@ export class BrainTurnRunner {
         const why = settled.stopReason === 'aborted' ? 'aborted' : 'errored';
         if (!landed) throw new Error(settled.errorMessage?.trim() || `parent turn ${why} before the sub-agent result reached its context`);
         logger('brain-subagent').info(`sub-agent result for ${target} entered the context of an ${why} parent turn; acknowledging without retry`);
+        return 'landed-unanswered';
       }
+      return 'landed';
     }));
-    return 'landed';
   }
 
   resultDeliveryWorkCount(): number {
@@ -251,68 +267,147 @@ export class BrainTurnRunner {
     void this.drainPendingSubagentResults(userId, parentSessionId);
   }
 
+  requireSettledResultDelivery(parentSessionId: string): void {
+    this.settledResultParents.add(parentSessionId);
+  }
+
+  consumeSettledResultOutcome(parentSessionId: string): PendingResultDrainOutcome | undefined {
+    const outcome = this.settledResultOutcomes.get(parentSessionId);
+    this.settledResultOutcomes.delete(parentSessionId);
+    return outcome;
+  }
+
+  releaseSettledResultDelivery(parentSessionId: string): void {
+    this.settledResultParents.delete(parentSessionId);
+    this.settledResultOutcomes.delete(parentSessionId);
+  }
+
   /** Deliver every durable pending result serially after any active owner turn. A failed transport or
    * model turn leaves the row pending and schedules bounded retry; no permanent poller exists. */
-  async drainPendingSubagentResults(userId: number, parentSessionId: string): Promise<void> {
-    if (this.resultDrains.has(parentSessionId)) return;
-    this.resultDrains.add(parentSessionId);
+  async drainPendingSubagentResults(userId: number, parentSessionId: string, deferUnanswered = false): Promise<PendingResultDrainOutcome> {
+    deferUnanswered ||= this.settledResultParents.has(parentSessionId);
+    const existing = this.resultDrains.get(parentSessionId);
+    if (existing) {
+      if (deferUnanswered) existing.state.deferUnanswered = true;
+      const first = await existing.promise;
+      // A caller may arrive after the active drain's final empty scan but before its promise settles. Its
+      // newly enqueued row was not part of that run; once the shared promise cleans up, drain that tail too.
+      if (this.d.store.pendingSubagentResults(parentSessionId).length === 0) return first;
+      const tail = await this.drainPendingSubagentResults(userId, parentSessionId, deferUnanswered);
+      return {
+        // A tail result's new answer includes the earlier custom messages already in context; if the tail
+        // delivered anything, its answer state supersedes the earlier drain rather than AND-ing with it.
+        answered: tail.acknowledged.length + tail.deliveredPending.length > 0 ? tail.answered : first.answered,
+        acknowledged: [...first.acknowledged, ...tail.acknowledged],
+        deliveredPending: [...first.deliveredPending, ...tail.deliveredPending],
+      };
+    }
+    // Defer body execution one microtask so the map owns the promise before ensureLive or another nested
+    // wake can re-enter this method. The wrapper includes cleanup, so joiners resume only after the map is
+    // free for a late-arriving tail drain.
+    const state = { deferUnanswered };
+    const run = Promise.resolve().then(() => this.runPendingSubagentResultDrain(userId, parentSessionId, state));
+    let drain: Promise<PendingResultDrainOutcome>;
+    drain = run.then((outcome) => {
+      // A stronger boot caller may join after an ordinary drain already acknowledged an unanswered row.
+      // Requeue before the shared promise resolves, so continuation delivery never opens a crash-loss gap.
+      if (!state.deferUnanswered || outcome.answered || outcome.acknowledged.length === 0) return outcome;
+      const deliveredPending = [...outcome.deliveredPending];
+      const acknowledged = [] as PendingResultDrainOutcome['acknowledged'];
+      for (const result of outcome.acknowledged) {
+        if (this.d.store.requeueSubagentResult(parentSessionId, result.id)) deliveredPending.push(result);
+        else acknowledged.push(result);
+      }
+      return { ...outcome, acknowledged, deliveredPending };
+    }).then((outcome) => {
+      if (this.settledResultParents.has(parentSessionId)) this.settledResultOutcomes.set(parentSessionId, outcome);
+      return outcome;
+    }).finally(() => {
+      if (this.resultDrains.get(parentSessionId)?.promise === drain) this.resultDrains.delete(parentSessionId);
+    });
+    this.resultDrains.set(parentSessionId, { promise: drain, state });
+    return drain;
+  }
+
+  private async runPendingSubagentResultDrain(userId: number, parentSessionId: string, state: { deferUnanswered: boolean }): Promise<PendingResultDrainOutcome> {
+    let allAnswered = true;
+    const acknowledged: PendingResultDrainOutcome['acknowledged'] = [];
+    const deliveredPending: PendingResultDrainOutcome['deliveredPending'] = [];
     const oldTimer = this.resultRetryTimers.get(parentSessionId);
     if (oldTimer) { clearTimeout(oldTimer); this.resultRetryTimers.delete(parentSessionId); }
-    try {
-      // Each result gets at most one shot per drain, so a poisoned one cannot sit at the head of the queue
-      // failing forever and starve everything behind it — the user would silently stop receiving any
-      // delegated work at all. It is still retried on the next drain: the cause may be an outage that
-      // outlives the timed retries, and the result is only worthless once it is delivered.
-      const attempted = new Set<string>();
-      while (true) {
-        const result = this.d.store.pendingSubagentResults(parentSessionId).find((row) => !attempted.has(row.id));
-        if (!result) break;
-        attempted.add(result.id);
-        const content = result.kind === 'workflow'
-          // A workflow delivers one whole-DAG summary body (which itself names each node's outcome), so
-          // it rides a <workflow-result> block rather than the sub-agent <result>/<error> split.
-          ? '<system-reminder>\n'
-            + `<workflow-result id="${xmlEscape(result.id)}" status="${result.status}">\n`
-            + `<task>${xmlEscape(result.task)}</task>\n<result>${xmlEscape(result.result ?? '(the workflow returned nothing)')}</result>\n</workflow-result>\n`
-            + '<instruction>A background workflow finished. Incorporate this result into your current work. '
-            + 'The node transcripts remain available separately; do not claim their internal tool calls as your own.</instruction>\n'
-            + '</system-reminder>'
-          : '<system-reminder>\n'
-            + `<subagent-result id="${xmlEscape(result.id)}" session="${xmlEscape(result.sessionId)}" status="${result.status}">\n`
-            + `<task>${xmlEscape(result.task)}</task>\n`
-            + `${result.status === 'done'
-              ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
-              : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`}\n</subagent-result>\n`
-            + '<instruction>A background sub-agent finished. Incorporate this result into your current work. '
-            + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
-            + '</system-reminder>';
-        try {
-          const delivery = await this.sendCustomSystem(userId, parentSessionId, 'subagent-result', content, result.id);
-          // Steered into a running turn: PI holds it, but "PI accepted it" is not "the parent's context has
-          // it" — a stop clearing PI's queue in between would erase it. Leave the row pending and move on to
-          // the rest of the queue; the post-turn drain finds the message in the transcript and acknowledges
-          // it there, or re-delivers it for real. Not a failure: no attempt spent, no retry timer.
-          if (delivery === 'steered') continue;
-          if (this.d.store.acknowledgeSubagentResult(parentSessionId, result.id)) {
-            this.publishResultDelivery(parentSessionId, result.toolCallId, 'acknowledged');
-          }
-        } catch (error) {
-          const cause = error instanceof Error ? error.message : String(error);
-          this.d.store.noteSubagentResultFailure(parentSessionId, result.id);
-          logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} failed delivery attempt ${result.attempts + 1}/${MAX_RESULT_DELIVERY_ATTEMPTS}: ${cause}`);
-          if (result.attempts + 1 >= MAX_RESULT_DELIVERY_ATTEMPTS) {
-            // Out of timed retries: stop arming a timer for it, but move on to the rest of the queue rather
-            // than letting it block them. It keeps its one shot per later drain.
-            logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} exhausted ${MAX_RESULT_DELIVERY_ATTEMPTS} timed delivery attempts (last: ${cause}); it stays pending with no timer armed and is only retried once the user sends another message`);
+    // Each result gets at most one shot per drain, so a poisoned one cannot sit at the head of the queue
+    // failing forever and starve everything behind it — the user would silently stop receiving any
+    // delegated work at all. It is still retried on the next drain: the cause may be an outage that
+    // outlives the timed retries, and the result is only worthless once it is delivered.
+    const attempted = new Set<string>();
+    while (true) {
+      const result = this.d.store.pendingSubagentResults(parentSessionId).find((row) => !attempted.has(row.id));
+      if (!result) break;
+      attempted.add(result.id);
+      const content = result.kind === 'workflow'
+        // A workflow delivers one whole-DAG summary body (which itself names each node's outcome), so
+        // it rides a <workflow-result> block rather than the sub-agent <result>/<error> split.
+        ? '<system-reminder>\n'
+          + `<workflow-result id="${xmlEscape(result.id)}" status="${result.status}">\n`
+          + `<task>${xmlEscape(result.task)}</task>\n<result>${xmlEscape(result.result ?? '(the workflow returned nothing)')}</result>\n</workflow-result>\n`
+          + '<instruction>A background workflow finished. Incorporate this result into your current work. '
+          + 'The node transcripts remain available separately; do not claim their internal tool calls as your own.</instruction>\n'
+          + '</system-reminder>'
+        : '<system-reminder>\n'
+          + `<subagent-result id="${xmlEscape(result.id)}" session="${xmlEscape(result.sessionId)}" status="${result.status}">\n`
+          + `<task>${xmlEscape(result.task)}</task>\n`
+          + `${result.status === 'done'
+            ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
+            : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`}\n</subagent-result>\n`
+          + '<instruction>A background sub-agent finished. Incorporate this result into your current work. '
+          + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
+          + '</system-reminder>';
+      try {
+        const delivery = await this.sendCustomSystem(userId, parentSessionId, 'subagent-result', content, result.id);
+        // Steered into a running turn: PI holds it, but "PI accepted it" is not "the parent's context has
+        // it" — a stop clearing PI's queue in between would erase it. Leave the row pending and move on to
+        // the rest of the queue; the post-turn drain finds the message in the transcript and acknowledges
+        // it there, or re-delivers it for real. Not a failure: no attempt spent, no retry timer.
+        if (delivery === 'steered') continue;
+        if (delivery === 'landed-unanswered') {
+          allAnswered = false;
+          if (state.deferUnanswered) {
+            deliveredPending.push({ id: result.id, toolCallId: result.toolCallId, kind: result.kind });
             continue;
           }
-          this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
-          return;
+        } else if (delivery === 'landed') {
+          allAnswered = true;
+          for (const pending of deliveredPending.splice(0)) {
+            if (!this.d.store.acknowledgeSubagentResult(parentSessionId, pending.id)) continue;
+            acknowledged.push(pending);
+            if (pending.kind === 'subagent') this.publishResultDelivery(parentSessionId, pending.toolCallId, 'acknowledged');
+          }
         }
+        if (this.d.store.acknowledgeSubagentResult(parentSessionId, result.id)) {
+          acknowledged.push({ id: result.id, toolCallId: result.toolCallId, kind: result.kind });
+          this.publishResultDelivery(parentSessionId, result.toolCallId, 'acknowledged');
+        }
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : String(error);
+        this.d.store.noteSubagentResultFailure(parentSessionId, result.id);
+        logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} failed delivery attempt ${result.attempts + 1}/${MAX_RESULT_DELIVERY_ATTEMPTS}: ${cause}`);
+        if (result.attempts + 1 >= MAX_RESULT_DELIVERY_ATTEMPTS) {
+          // Out of timed retries: stop arming a timer for it, but move on to the rest of the queue rather
+          // than letting it block them. It keeps its one shot per later drain.
+          logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} exhausted ${MAX_RESULT_DELIVERY_ATTEMPTS} timed delivery attempts (last: ${cause}); it stays pending with no timer armed and is only retried once the user sends another message`);
+          continue;
+        }
+        this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
+        return { answered: false, acknowledged, deliveredPending };
       }
-    } finally {
-      this.resultDrains.delete(parentSessionId);
     }
+    return { answered: allAnswered, acknowledged, deliveredPending };
+  }
+
+  /** Acknowledge a boot-delivered row only after its dedicated owner continuation settles. */
+  acknowledgeDeliveredResult(parentSessionId: string, resultId: string, toolCallId: string, kind: 'subagent' | 'workflow'): void {
+    if (!this.d.store.acknowledgeSubagentResult(parentSessionId, resultId)) return;
+    if (kind === 'subagent') this.publishResultDelivery(parentSessionId, toolCallId, 'acknowledged');
   }
 
   private publishResultDelivery(parentSessionId: string, toolCallId: string, delivery: 'pending' | 'acknowledged'): void {
