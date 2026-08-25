@@ -14,7 +14,9 @@ const row = (over: Partial<ActivityEvent>): ActivityEvent => ({
   id: 1, ts: '2026-08-22 20:00:00', type: 'turn', target: 'brain-1', detail: 'claude-opus-5',
   project_id: null, label: '', actor_user_id: 1, actor_label: 'Filip Džudža',
   actor_username: 'filip', actor_avatar: null, surface: 'web',
-  count: 1, last_ts: '2026-08-22 20:05:00', ...over,
+  count: 1, last_ts: '2026-08-22 20:05:00',
+  // A turn with no tools is filtered out of the tile, so the default row carries one.
+  tools: [{ name: 'Read', count: 1 }], ...over,
 });
 
 const server = setupServer();
@@ -28,16 +30,17 @@ function mount(rows: ActivityEvent[], working: { userId: number; label: string; 
 }
 
 describe('ActivityTile — team feed rows', () => {
-  it('leads with the person and names the surface they worked from', async () => {
+  it('leads with the person who did the work', async () => {
     mount([row({})]);
     expect(await screen.findByText('Filip Džudža')).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`${en.dashboard.ev.turn}.*${en.dashboard.surfaces.web}`))).toBeInTheDocument();
+    // Where they worked is the badge on their avatar, which PlatformIcon names in its title.
+    expect(screen.getByTitle(/Web app/)).toBeInTheDocument();
   });
 
   it('shows how many identical events a row folds', async () => {
     mount([row({ count: 7, surface: 'discord' })]);
     expect(await screen.findByText(/×7/)).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(en.dashboard.surfaces.discord))).toBeInTheDocument();
+    expect(screen.getByTitle(/Discord/)).toBeInTheDocument();
   });
 
   it('says what the turn ran instead of only where it ran', async () => {
@@ -51,10 +54,16 @@ describe('ActivityTile — team feed rows', () => {
     expect(screen.queryByText(new RegExp(`${en.dashboard.ev.turn}.*${en.dashboard.surfaces.web}`))).not.toBeInTheDocument();
   });
 
-  it('falls back to the surface when the turn has no tools to show', async () => {
-    // Tools age out of the daemon's read window, and older rows never had them. The row must still speak.
-    mount([row({ tools: [] })]);
-    expect(await screen.findByText(new RegExp(`${en.dashboard.ev.turn}.*${en.dashboard.surfaces.web}`))).toBeInTheDocument();
+  it('leaves out a turn that has nothing to show but its own existence', async () => {
+    // "Somebody was here" is what the pulse tile reports, and better. A feed row with no tools is a
+    // blank line pretending to be news, so it does not get drawn at all.
+    mount([
+      row({ id: 1, tools: [] }),
+      row({ id: 2, actor_label: 'Patricie', tools: [{ name: 'Bash', count: 1 }] }),
+    ]);
+
+    expect(await screen.findByText('Patricie')).toBeInTheDocument();
+    expect(screen.queryByText('Filip Džudža')).not.toBeInTheDocument();
   });
 
   it('drops the MCP namespace from a tool name but keeps it in the title', async () => {

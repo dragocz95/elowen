@@ -109,6 +109,19 @@ describe('GET /activity tool attribution', () => {
     expect(row!.tools).toEqual([]);
   });
 
+  it('picks up a tool the moment it is recorded, without waiting out a cache window', async () => {
+    const { app, brainStore, sessionId, tok } = setupTools();
+    appendTools(brainStore, sessionId, 'm1', ['Read']);
+    expect((await feed(app, tok))[0]!.tools).toEqual([{ name: 'Read', count: 1 }]);
+
+    // The read is cached, but keyed on the newest message rowid rather than on a clock — so new work
+    // appears in the very next request instead of after a TTL nobody can see.
+    appendTools(brainStore, sessionId, 'm2', ['Bash']);
+
+    const [row] = await feed(app, tok);
+    expect(row!.tools).toEqual([{ name: 'Read', count: 1 }, { name: 'Bash', count: 1 }]);
+  });
+
   it('survives a transcript row it cannot parse', async () => {
     const { app, brainStore, sessionId, tok } = setupTools();
     appendTools(brainStore, sessionId, 'm1', ['Bash']);

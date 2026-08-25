@@ -599,6 +599,16 @@ export class BrainStore {
       .run(Math.max(0, Math.round(durationMs)), messageId, sessionId);
   }
 
+  /** The newest message rowid, as a change stamp for callers that cache a derived read.
+   *
+   *  `MAX(rowid)` is free (SQLite reads the last b-tree page) where `MAX(created_at)` costs ~60 ms on
+   *  this table, because only `session_id` is indexed. Any new message raises it, so a cache keyed on
+   *  it refreshes the moment work happens instead of on a timer. */
+  lastMessageRowId(): number {
+    const row = this.db.prepare('SELECT MAX(rowid) AS id FROM brain_messages').get() as { id: number | null };
+    return row.id ?? 0;
+  }
+
   /** Which tools each session ran recently, newest first — what the activity feed draws under a name.
    *
    *  Read from `brain_messages` because tool calls are recorded nowhere else: `events` knows only THAT
@@ -611,33 +621,32 @@ export class BrainStore {
    *  message must not take down the whole timeline. */
   recentToolCalls(opts: { sinceHours: number; limit: number }): Map<string, { at: string; names: string[] }[]> {
     const hours = Math.max(1, Math.min(48, Math.trunc(opts.sinceHours)));
-    const limit = Math.max(1, Math.min(600, Math.trunc(opts.limit)));
+    const limit = Math.max(1, Math.min(20_000, Math.trunc(opts.limit)));
+    // The names are extracted by SQLite rather than by parsing message bodies in JS. Both cost about the
+    // same per row, but this never hands multi-kilobyte transcript JSON to the JS heap, so the SAME
+    // ~95 ms covers the whole six-hour window instead of the ~400 newest messages (measured on the live
+    // database: 2132 tool calls across 27 sessions, versus 418 from one hour). `json_valid` keeps a
+    // corrupt row from aborting the query — this feeds a decorative column and must never be fatal.
     const rows = this.db.prepare(
-      `SELECT session_id, content, created_at
-         FROM brain_messages
-        WHERE role = 'assistant'
-          AND created_at >= datetime('now', ?)
-        ORDER BY created_at DESC
+      `SELECT m.session_id AS sessionId, m.created_at AS at, je.value ->> '$.name' AS name
+         FROM brain_messages m, json_each(m.content, '$.content') je
+        WHERE m.role = 'assistant'
+          AND m.created_at >= datetime('now', ?)
+          AND json_valid(m.content)
+          AND je.value ->> '$.type' = 'toolCall'
+          AND je.value ->> '$.name' IS NOT NULL
+        ORDER BY m.created_at DESC
         LIMIT ?`
-    ).all(`-${hours} hours`, limit) as { session_id: string; content: string; created_at: string }[];
+    ).all(`-${hours} hours`, limit) as { sessionId: string; at: string; name: string }[];
 
+    // Re-fold into one entry per message timestamp, which is the shape the caller matches on.
     const out = new Map<string, { at: string; names: string[] }[]>();
     for (const row of rows) {
-      let names: string[] = [];
-      try {
-        const parsed = JSON.parse(row.content) as { content?: unknown };
-        if (!Array.isArray(parsed.content)) continue;
-        names = parsed.content
-          .filter((part): part is { type: string; name: string } =>
-            !!part && typeof part === 'object'
-            && (part as { type?: unknown }).type === 'toolCall'
-            && typeof (part as { name?: unknown }).name === 'string')
-          .map((part) => part.name);
-      } catch { continue; }
-      if (names.length === 0) continue;
-      const list = out.get(row.session_id) ?? [];
-      list.push({ at: row.created_at, names });
-      out.set(row.session_id, list);
+      const list = out.get(row.sessionId) ?? [];
+      const last = list[list.length - 1];
+      if (last && last.at === row.at) last.names.push(row.name);
+      else list.push({ at: row.at, names: [row.name] });
+      out.set(row.sessionId, list);
     }
     return out;
   }

@@ -6,7 +6,7 @@ import { parseTs, compactElapsed } from '../../lib/format';
 import { LoadingState } from '../../components/ui/states';
 import { Avatar } from '../../components/ui/Avatar';
 import { PlatformIcon } from '../../components/ui/PlatformIcon';
-import { ToolPills } from './ToolPills';
+import { ToolTrail } from './ToolTrail';
 import type { ActivityEvent } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
 
@@ -105,7 +105,7 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
             for that window — an older row, or a turn whose tools have aged out of the read window. */}
         <span className="mt-1 block min-w-0">
           {teamFeed && event.tools?.length ? (
-            <ToolPills tools={event.tools} />
+            <ToolTrail tools={event.tools} />
           ) : (
             <span className="block truncate text-[11px] leading-tight text-text-muted">
               {teamFeed
@@ -128,13 +128,18 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
 /** The journal's chronological spine: newest daemon activity first, without a card shell. */
 export function ActivityTile({ limit = 14 }: { limit?: number }) {
   const { t } = useTranslation();
-  // Fetch a little more than the tile shows: `signal` rows are dropped client-side, and asking for the
-  // exact limit could leave the spine short. The server-side default is 200 rows — far more than a
-  // five-row tile can use.
-  const activity = useActivity(undefined, limit * 2 + 2);
+  // Fetch well past what the tile shows: rows are dropped client-side below, and asking for the exact
+  // limit would leave the spine short. The server-side default is 200 rows.
+  const activity = useActivity(undefined, limit * 5);
   // Presence also carries recently-seen people for the pulse rail; this line is only about NOW.
   const working = (usePresence().data ?? []).filter((p) => p.working);
-  const rows = (activity.data ?? []).filter((e) => e.type !== 'signal').slice(0, limit);
+  // A turn with no tools has nothing to say beyond "somebody was here", which the pulse tile already
+  // reports better. Tools age out of the daemon's read window, so this also keeps the feed to the
+  // stretch of the day it can actually describe rather than padding it with empty rows.
+  const rows = (activity.data ?? [])
+    .filter((e) => e.type !== 'signal')
+    .filter((e) => e.type !== 'turn' || (e.tools?.length ?? 0) > 0)
+    .slice(0, limit);
   return (
     <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">
       <header className="mb-3 flex items-center justify-between gap-3">

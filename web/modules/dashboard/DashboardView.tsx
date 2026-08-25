@@ -24,7 +24,9 @@ export function DashboardView() {
           <HeroNowTile now={nowMs} />
         </MotionReveal>
         <MotionReveal delay={0.06} className="relative z-[1] @container">
-          <div className="grid w-full grid-cols-1 gap-x-10 gap-y-2 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          {/* Not an even split: the feed is a list of short rows and reads fine narrow, while the pulse
+              tile carries a chart and a seven-column table that earn every pixel they get. */}
+          <div className="grid w-full grid-cols-1 gap-x-8 gap-y-2 @4xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
             <ActivityTile />
             <TeamPulseTile />
           </div>

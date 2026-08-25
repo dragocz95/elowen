@@ -22,18 +22,23 @@ function surfaceOf(origin: string | null, kind: string | null): string {
 export function registerActivityRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, accessibleProjects } = ctx;
 
-  /** Tool calls are read by parsing message bodies, which is far too expensive to repeat per request on
-   *  a synchronous database. The window is short and the cache lives on the app instance rather than the
-   *  module, so tests and multiple apps never share one. */
-  const TOOL_CACHE_TTL_MS = 30_000;
+  /** Tool calls are read by extracting them from message bodies, which is too expensive to repeat on
+   *  every request against a synchronous database.
+   *
+   *  The cache is keyed on the newest message rowid rather than on a TTL, which is what makes the feed
+   *  live: a timer would either serve a stale feed for its whole window or pay the read on a schedule
+   *  nobody asked for, while the rowid changes exactly when new work lands and costs nothing to check.
+   *  It lives on the app instance rather than the module, so tests and multiple apps never share one. */
   const TOOL_WINDOW_HOURS = 6;
-  let toolCache: { at: number; data: Map<string, { at: string; names: string[] }[]> } | null = null;
+  let toolCache: { stamp: number; data: Map<string, { at: string; names: string[] }[]> } | null = null;
   const toolCalls = (): Map<string, { at: string; names: string[] }[]> => {
-    const now = Date.now();
-    if (toolCache && now - toolCache.at < TOOL_CACHE_TTL_MS) return toolCache.data;
-    const data = d.brainStore?.recentToolCalls({ sinceHours: TOOL_WINDOW_HOURS, limit: 400 })
-      ?? new Map<string, { at: string; names: string[] }[]>();
-    toolCache = { at: now, data };
+    if (!d.brainStore) return new Map();
+    const stamp = d.brainStore.lastMessageRowId();
+    if (toolCache && toolCache.stamp === stamp) return toolCache.data;
+    // The cap counts TOOL CALLS, not messages: SQLite does the extraction, so the whole window fits in
+    // roughly the time the old row-capped read took for its first hour. It stays as a runaway guard.
+    const data = d.brainStore.recentToolCalls({ sinceHours: TOOL_WINDOW_HOURS, limit: 8000 });
+    toolCache = { stamp, data };
     return data;
   };
 
