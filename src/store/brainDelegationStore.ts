@@ -626,7 +626,7 @@ export class BrainDelegationStore {
        ON CONFLICT(parent_session_id, tool_call_id) DO UPDATE SET
          result_id = excluded.result_id, child_session_id = excluded.child_session_id,
          status = excluded.status, task = excluded.task, payload = excluded.payload,
-         attempts = 0, delivery_state = 'pending'
+         attempts = 0, wake_attempts = 0, delivery_state = 'pending'
        WHERE brain_subagent_results.result_id LIKE '${SYNTHETIC_RESTART_RESULT_PREFIX}%'
          AND excluded.result_id NOT LIKE '${SYNTHETIC_RESTART_RESULT_PREFIX}%'`
     ).run(result.id, parentSessionId, result.toolCallId, result.sessionId, result.status, result.task, payload);
@@ -700,6 +700,29 @@ export class BrainDelegationStore {
       `SELECT 1 FROM brain_subagent_results
         WHERE parent_session_id = ? AND delivery_state = 'pending' LIMIT 1`
     ).get(parentSessionId) !== undefined;
+  }
+
+  pendingDeliveryWakeAttempts(parentSessionId: string): number {
+    const row = this.db.prepare(
+      `SELECT MAX(wake_attempts) AS attempts FROM brain_subagent_results
+        WHERE parent_session_id = ? AND delivery_state = 'pending'`
+    ).get(parentSessionId) as { attempts: number | null } | undefined;
+    return row?.attempts ?? 0;
+  }
+
+  notePendingDeliveryWakeFailure(parentSessionId: string): number {
+    this.db.prepare(
+      `UPDATE brain_subagent_results SET wake_attempts = wake_attempts + 1
+        WHERE parent_session_id = ? AND delivery_state = 'pending'`
+    ).run(parentSessionId);
+    return this.pendingDeliveryWakeAttempts(parentSessionId);
+  }
+
+  abandonPendingDeliveries(parentSessionId: string): number {
+    return this.db.prepare(
+      `UPDATE brain_subagent_results SET delivery_state = 'acknowledged'
+        WHERE parent_session_id = ? AND delivery_state = 'pending'`
+    ).run(parentSessionId).changes;
   }
 
   /** Retire pending results whose parent can never take them, and report how many. Boot-time sweep.

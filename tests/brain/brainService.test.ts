@@ -5410,7 +5410,100 @@ describe('sub-agent abort sparing + restart reconcile', () => {
 
     expect(d.store.pendingSubagentResults('brain-1')).toHaveLength(1); // restored for the next boot, still duplicate-safe by result id
     expect(d.store.getSession('brain-1')?.parked_at).not.toBeNull(); // the interrupted owner turn is unfinished
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2); // result delivery plus one result-specific continuation
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(3); // result delivery, result continuation, then the counted generic parked retry
+  });
+
+  it('bounds a malformed result wake and preserves the parked visible give-up across repeated boots', async () => {
+    const d = fakeDeps();
+    d.notifyTurnComplete = vi.fn();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    d.db.prepare(`INSERT INTO brain_subagent_results
+      (result_id, parent_session_id, tool_call_id, child_session_id, status, task, payload)
+      VALUES ('malformed-result', 'brain-1', 'call-malformed', 'brain-ch-subagent-malformed', 'done', 'inspect', 'null')`).run();
+    d.session.sendCustomMessage.mockImplementation(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push(
+        { role: 'custom', details: message.details } as never,
+        { role: 'assistant', content: '', stopReason: 'error', errorMessage: 'provider unavailable' } as never,
+      );
+    });
+
+    for (let boot = 1; boot <= 3; boot += 1) {
+      await runBootRecovery(new BrainService(d as never));
+      expect(d.store.getSession('brain-1')).toMatchObject({ parked_at: expect.any(String), park_attempts: boot });
+      if (boot < 3) expect(d.store.pendingDeliveryWakeAttempts('brain-1')).toBe(boot);
+      else expect(d.store.hasPendingDelivery('brain-1')).toBe(false);
+    }
+    await runBootRecovery(new BrainService(d as never));
+
+    expect(d.store.getSession('brain-1')).toMatchObject({ parked_at: null, park_attempts: 0 });
+    expect(d.store.hasPendingDelivery('brain-1')).toBe(false);
+    expect(d.notifyTurnComplete).toHaveBeenCalledWith(
+      1,
+      expect.any(String),
+      expect.stringContaining('please re-send your last message'),
+    );
+  });
+
+  it('caps an unanswered result-only wake instead of starting one continuation on every boot forever', async () => {
+    const d = fakeDeps();
+    d.notifyTurnComplete = vi.fn();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-result-wake-cap';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-result-wake-cap', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-wake-cap', toolCallId: 'call-result-wake-cap', sessionId: child,
+      status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 2,
+    });
+    d.session.sendCustomMessage.mockImplementation(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: message.details } as never);
+    });
+
+    const callsPerBoot: number[] = [];
+    for (let boot = 1; boot <= 4; boot += 1) {
+      const before = d.session.sendCustomMessage.mock.calls.length;
+      await runBootRecovery(new BrainService(d as never));
+      callsPerBoot.push(d.session.sendCustomMessage.mock.calls.length - before);
+    }
+
+    expect(callsPerBoot).toEqual([2, 1, 1, 0]);
+    expect(d.store.hasPendingDelivery('brain-1')).toBe(false);
+    expect(d.notifyTurnComplete).toHaveBeenCalledWith(
+      1,
+      expect.any(String),
+      expect.stringContaining('could not be delivered automatically'),
+    );
+  });
+
+  it('does not stack a result continuation after the user clears the parked marker by speaking or aborting', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    const child = 'brain-ch-subagent-result-cas';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    d.store.upsertSubagentRun('brain-1', {
+      id: 'call-result-cas', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
+      background: true, autoDeliver: true,
+    });
+    d.store.enqueueSubagentResult('brain-1', {
+      id: 'result-cas', toolCallId: 'call-result-cas', sessionId: child,
+      status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 2,
+    });
+    d.session.sendCustomMessage.mockImplementationOnce(async (message: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: message.details } as never);
+      d.store.clearSessionPark('brain-1'); // the user's admitted turn or abort wins before continuation claim
+    });
+
+    await runBootRecovery(new BrainService(d as never));
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
+    expect(d.store.getSession('brain-1')?.parked_at).toBeNull();
+    expect(d.store.hasPendingDelivery('brain-1')).toBe(true);
   });
 
   it('boot recovery parks a run as recovery_required when the interrupted tail has an unanswered tool call', async () => {

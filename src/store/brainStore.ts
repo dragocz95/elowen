@@ -292,6 +292,14 @@ export class BrainStore {
     ).run(id).changes > 0;
   }
 
+  /** Result-specific continuation CAS: unlike claimParkResumeAttempt this does not spend the generic park
+   * retry budget. It only proves the user has not spoken or aborted since the boot worklist was claimed. */
+  claimParkedResultContinuation(id: string): boolean {
+    return this.db.prepare(
+      'UPDATE brain_sessions SET parked_at = parked_at WHERE id = ? AND parked_at IS NOT NULL',
+    ).run(id).changes > 0;
+  }
+
   /** Capture (or replace) the durable resume envelope for a platform channel turn that is about to run
    *  (see brain_platform_turn_envelopes in schema.sql). Written synchronously before the turn's first
    *  async boundary so a process death mid-turn always leaves the row behind. The payload is an opaque
@@ -1080,6 +1088,18 @@ export class BrainStore {
   /** @see BrainDelegationStore.hasPendingDelivery */
   hasPendingDelivery(parentSessionId: string): boolean {
     return this.delegation.hasPendingDelivery(parentSessionId);
+  }
+
+  pendingDeliveryWakeAttempts(parentSessionId: string): number {
+    return this.delegation.pendingDeliveryWakeAttempts(parentSessionId);
+  }
+
+  notePendingDeliveryWakeFailure(parentSessionId: string): number {
+    return this.delegation.notePendingDeliveryWakeFailure(parentSessionId);
+  }
+
+  abandonPendingDeliveries(parentSessionId: string): number {
+    return this.delegation.abandonPendingDeliveries(parentSessionId);
   }
 
   /** @see BrainDelegationStore.discardOrphanedDeliveries */

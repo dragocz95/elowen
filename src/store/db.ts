@@ -264,6 +264,9 @@ function applyAdditiveMigrations(db: Db): void {
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.
   addColumn(db, 'brain_subagent_results', 'kind', "TEXT NOT NULL DEFAULT 'subagent'");
   addColumn(db, 'brain_subagent_results', 'workflow_id', 'TEXT');
+  // Boot owner wake failures are bounded independently from transport delivery retries. Existing pending
+  // rows start at zero and are counted only when a whole boot cannot produce a settled owner answer.
+  addColumn(db, 'brain_subagent_results', 'wake_attempts', 'INTEGER NOT NULL DEFAULT 0');
   // Host-owned recovery lifecycle for delegated runs (see brain_subagent_runs in schema.sql). All
   // nullable/zero-default so a row written before these columns existed reads as legacy: a later data
   // migration backfills `lifecycle` from the JSON `state`, and boot recovery only ever claims rows an

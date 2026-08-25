@@ -83,6 +83,7 @@ const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
  *  Bumped durably BEFORE each attempt, so a boot that dies mid-resume still counts — three genuine
  *  chances, then a visible give-up instead of stacking resume turns on a conversation forever. */
 const MAX_PARK_RESUME_ATTEMPTS = 3;
+const MAX_RESULT_WAKE_ATTEMPTS = 3;
 
 /** The hidden continuation a boot resume injects into a parked conversation. Delivered through PI's
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
@@ -670,53 +671,92 @@ export class BrainService {
       return 'released';
     }
 
+    // The generic parked-turn budget must win even when a poison result row is also present. Otherwise the
+    // result branch can starve this visible give-up forever.
+    if (item.parked && row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
+      this.d.store.abandonPendingDeliveries(row.id);
+      this.d.store.clearSessionPark(row.id);
+      log.error(`parked conversation ${row.id} exhausted ${MAX_PARK_RESUME_ATTEMPTS} boot resume attempts — giving up; the user must re-send`);
+      this.d.notifyTurnComplete?.(row.user_id, row.title, 'A restart interrupted this conversation and it could not be resumed automatically — please re-send your last message.');
+      return 'terminalized';
+    }
+
+    const failResultWake = (reason: string): RecoveryOutcome | null => {
+      const attempts = this.d.store.notePendingDeliveryWakeFailure(row.id);
+      log.error(`${reason} (result wake attempt ${attempts}/${MAX_RESULT_WAKE_ATTEMPTS})`);
+      if (attempts < MAX_RESULT_WAKE_ATTEMPTS) return item.parked ? null : 'failed';
+      this.d.store.abandonPendingDeliveries(row.id);
+      if (item.parked) return null;
+      this.d.notifyTurnComplete?.(row.user_id, row.title, 'A recovered delegated result could not be delivered automatically — please send a message to continue this conversation.');
+      return 'terminalized';
+    };
+
+    let resultWakeFailed = false;
     if (item.resultsExpected) {
       const hadPending = this.d.store.hasPendingDelivery(row.id);
       if (hadPending) {
-        // The drain distinguishes durable delivery from a fresh settled parent answer. If the custom result
-        // landed but its parent retry ended first, trigger one result-specific continuation. Every row the
-        // complete joined drain acknowledged is returned for durable requeue if that continuation fails.
-        const delivery = await this.turnRunner.drainPendingSubagentResults(row.user_id, row.id, true);
-        this.turnRunner.consumeSettledResultOutcome(row.id);
-        let answered = delivery.answered;
-        if (this.d.store.hasPendingDelivery(row.id) && delivery.deliveredPending.length === 0) {
-          log.error(`boot result wake for ${row.id} left undelivered result(s) pending; durable outbox retained`);
-          return 'failed';
-        }
-        if (!answered) {
-          try {
-            const continuation = await this.turnRunner.sendCustomSystem(
-              row.user_id,
-              row.id,
-              'subagent-result-resume',
-              RESULT_CONTINUATION_NOTE,
-              `subagent-result-resume-${randomUUID()}`,
-            );
-            answered = continuation === 'landed';
-          } catch (error) {
-            log.error(`boot result continuation failed for owner conversation ${row.id}`, error);
+        if (this.d.store.pendingDeliveryWakeAttempts(row.id) >= MAX_RESULT_WAKE_ATTEMPTS) {
+          this.d.store.abandonPendingDeliveries(row.id);
+          resultWakeFailed = true;
+          if (!item.parked) {
+            this.d.notifyTurnComplete?.(row.user_id, row.title, 'A recovered delegated result could not be delivered automatically — please send a message to continue this conversation.');
+            return 'terminalized';
+          }
+        } else resultWake: {
+          // The drain distinguishes durable delivery from a fresh settled parent answer. If the custom result
+          // landed but its parent retry ended first, trigger one result-specific continuation. Every row the
+          // complete joined drain acknowledged is returned for durable requeue if that continuation fails.
+          const delivery = await this.turnRunner.drainPendingSubagentResults(row.user_id, row.id, true);
+          let answered = delivery.answered;
+          if (this.d.store.hasPendingDelivery(row.id) && delivery.deliveredPending.length === 0) {
+            const failure = failResultWake(`boot result wake for ${row.id} left undelivered result(s) pending; durable outbox retained`);
+            if (failure) return failure;
+            resultWakeFailed = true;
+            break resultWake;
           }
           if (!answered) {
-            log.error(`boot result wake reached owner conversation ${row.id} but produced no settled parent answer; durable outbox retained`);
-            return 'failed';
+            if (item.parked && !this.d.store.claimParkedResultContinuation(row.id)) {
+              log.info(`parked conversation ${row.id}: marker cleared before result continuation (the user spoke or aborted) — skipping wake`);
+              return 'released';
+            }
+            try {
+              const continuation = await this.turnRunner.sendCustomSystem(
+                row.user_id,
+                row.id,
+                'subagent-result-resume',
+                RESULT_CONTINUATION_NOTE,
+                `subagent-result-resume-${randomUUID()}`,
+              );
+              answered = continuation === 'landed';
+            } catch (error) {
+              log.error(`boot result continuation failed for owner conversation ${row.id}`, error);
+            }
+            if (!answered) {
+              const failure = failResultWake(`boot result wake reached owner conversation ${row.id} but produced no settled parent answer; durable outbox retained`);
+              if (failure) return failure;
+              resultWakeFailed = true;
+              break resultWake;
+            }
+            for (const result of delivery.deliveredPending) {
+              this.turnRunner.acknowledgeDeliveredResult(row.id, result.id, result.toolCallId, result.kind);
+            }
+            if (this.d.store.hasPendingDelivery(row.id)) {
+              const failure = failResultWake(`boot result continuation for ${row.id} left unrelated pending delivery work; durable outbox retained`);
+              if (failure) return failure;
+              resultWakeFailed = true;
+              break resultWake;
+            }
           }
-          for (const result of delivery.deliveredPending) {
-            this.turnRunner.acknowledgeDeliveredResult(row.id, result.id, result.toolCallId, result.kind);
+          if (item.parked) this.d.store.clearSessionPark(row.id);
+          log.info(`boot delivered pending delegated result(s) to owner conversation ${row.id}`);
+          if (this.attachments.watchingCount(row.id) === 0) {
+            this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
           }
-          if (this.d.store.hasPendingDelivery(row.id)) {
-            log.error(`boot result continuation for ${row.id} left unrelated pending delivery work; durable outbox retained`);
-            return 'failed';
-          }
+          return 'resumed';
         }
-        if (item.parked) this.d.store.clearSessionPark(row.id);
-        log.info(`boot delivered pending delegated result(s) to owner conversation ${row.id}`);
-        if (this.attachments.watchingCount(row.id) === 0) {
-          this.d.notifyTurnComplete?.(row.user_id, this.d.store.getSession(row.id)?.title ?? '', lastAssistantTextIn(this.d.store.getLatestTurn(row.id)));
-        }
-        return 'resumed';
       }
       const completed = this.turnRunner.consumeSettledResultOutcome(row.id);
-      if (completed?.answered) {
+      if (!resultWakeFailed && completed?.answered) {
         if (item.parked) this.d.store.clearSessionPark(row.id);
         log.info(`boot observed an already-settled delegated result answer for owner conversation ${row.id}`);
         if (this.attachments.watchingCount(row.id) === 0) {
@@ -729,16 +769,6 @@ export class BrainService {
       if (!item.parked) return 'released';
     }
 
-    if (row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
-      // Visible give-up: the marker goes (no further stacking), the log carries the diagnosis, and the
-      // owner's phone is told the conversation needs their message — the same push channel a finished
-      // answer uses. The failed attempts themselves are already visible in the transcript as errored
-      // turns, so the conversation does not look silently healthy.
-      this.d.store.clearSessionPark(row.id);
-      log.error(`parked conversation ${row.id} exhausted ${MAX_PARK_RESUME_ATTEMPTS} boot resume attempts — giving up; the user must re-send`);
-      this.d.notifyTurnComplete?.(row.user_id, row.title, 'A restart interrupted this conversation and it could not be resumed automatically — please re-send your last message.');
-      return 'terminalized';
-    }
     // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
     // race means the user already spoke (admission cleared the marker) or aborted — their input is the
     // continuation, and injecting ours on top is exactly the double-continuation this guards against.
@@ -751,12 +781,14 @@ export class BrainService {
       // forgiveness (`resultInContext(…, undefined)`) matches ANY custom row lacking a resultId — our
       // own note included — and would report an errored resume as landed; and it keeps a crashed-boot
       // retry honest (a second attempt's note is a different id, never mistaken for the first).
+      const beforeResume = this.sessions.get(row.id)?.session.messages.length ?? 0;
       await this.turnRunner.sendCustomSystem(row.user_id, row.id, 'restart-resume', PARKED_RESUME_NOTE, `restart-resume-${randomUUID()}`);
       // sendCustomSystem throws on definite non-delivery but forgives a turn that ERRORED after the
       // note entered the context (right for sub-agent results, whose delivery is the note itself — not
       // for us, where the deliverable is the ANSWER the triggered turn produces). Verify the outcome:
-      // the live session must now end in an assistant that settled normally.
-      const settled = lastAssistant(this.sessions.get(row.id)?.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[] ?? []);
+      // this attempt itself must have produced a normally settled assistant, not merely inherit an older one.
+      const messages = this.sessions.get(row.id)?.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[] ?? [];
+      const settled = lastAssistant(messages.slice(beforeResume));
       if (!settled || settled.stopReason === 'aborted' || settled.stopReason === 'error') {
         throw new Error(settled?.errorMessage?.trim() || `the resume turn ${settled?.stopReason ?? 'produced no assistant reply'}`);
       }

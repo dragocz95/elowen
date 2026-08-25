@@ -459,6 +459,7 @@ CREATE TABLE IF NOT EXISTS brain_subagent_results (
   payload TEXT NOT NULL,
   delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'acknowledged')),
   attempts INTEGER NOT NULL DEFAULT 0,
+  wake_attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (parent_session_id, tool_call_id)
 );
