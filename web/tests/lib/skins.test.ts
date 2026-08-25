@@ -38,6 +38,26 @@ describe('skin registry contract', () => {
     expect(imports.sort()).toEqual([...SKINS].sort());
   });
 
+  /** Split a selector list on its TOP-LEVEL commas only.
+   *
+   *  A plain `split(',')` cuts inside `:is()`, `:where()` and `:not()` too, and each fragment it produces
+   *  then looks like a bare unscoped selector. A correctly scoped rule such as
+   *  `:root[data-skin='x'] :is(.a, .b) .c` was therefore reported as an unscoped `.b` — a false alarm
+   *  that says the skin leaks into every instance, which is the one thing this check exists to catch. */
+  const splitSelectorList = (selector: string): string[] => {
+    const parts: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (const ch of selector) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+      current += ch;
+    }
+    parts.push(current);
+    return parts;
+  };
+
   it('every rule in every skin is scoped under its own data-skin attribute', () => {
     for (const skin of SKINS) {
       const css = readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8');
@@ -47,7 +67,7 @@ describe('skin registry contract', () => {
       const selectors = [...bare.matchAll(/(^|\})\s*([^@{}]+)\{/g)].map((m) => m[2]!.trim());
       expect(selectors.length).toBeGreaterThan(0);
       for (const selector of selectors) {
-        for (const part of selector.split(',')) {
+        for (const part of splitSelectorList(selector)) {
           expect(part.trim(), `unscoped selector in ${skin}/skin.css: "${part.trim()}"`)
             .toContain(`[data-skin='${skin}']`);
         }
