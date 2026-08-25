@@ -8,7 +8,7 @@ import { formatTokens, formatCost } from '../../lib/format';
 import type { LocaleDict } from '../../lib/i18n/types';
 import type { PulsePerson } from '../../lib/types';
 
-const DAYS = 14;
+export const DAYS = 14;
 const HOURS = 24;
 
 /** Ridgeline geometry. The viewBox is in hour units so the path maths stays readable; the SVG is then

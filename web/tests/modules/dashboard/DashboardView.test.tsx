@@ -27,6 +27,12 @@ const server = setupServer(
     }],
     totals: { turns: 2, tokens: 1500, cost: 3.5 },
   })),
+  // The hero's own reads. Health decides presence (a failing probe greys the mascot to "Offline"),
+  // the plugin listing gates the cron pod, and usage feeds the month figure.
+  http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.28.11' })),
+  http.get('*/api/plugins/ui', () => HttpResponse.json([])),
+  http.get('*/api/usage/by-model', () => HttpResponse.json([])),
+  http.get('*/api/usage/by-day', () => HttpResponse.json([])),
 );
 beforeAll(() => server.listen());
 afterAll(() => server.close());
@@ -40,5 +46,19 @@ describe('DashboardView', () => {
     expect(await screen.findByText(/working now: Filip/i)).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Activity by hour over the last two weeks' })).toBeInTheDocument();
+  });
+
+  // The hero was deleted wholesale with the agents/work cleanup, because two of its four pods read
+  // that domain — and nothing failed, because nothing asserted it was there. This is that assertion.
+  it('leads with the hero: the greeting, who is mid-turn, and the composer', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+
+    // The greeting is time-of-day dependent, so the heading is asserted by role rather than by text.
+    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
+    // Presence comes from the pulse's live `working` flag, not from history.
+    expect(await screen.findByText(/working now: 1/i)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /Elowen: /i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/what can i do for you/i)).toBeInTheDocument();
   });
 });
