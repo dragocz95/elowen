@@ -12,14 +12,14 @@ import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
-import { useAgentsPlugin, useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
+import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
 import { useBrand } from '../../lib/brand';
 import { LogsModal } from '../../modules/settings/LogsModal';
 import { ConversationDiagnosticsModal } from '../../modules/settings/ConversationDiagnosticsModal';
 import { formatBytes } from '../../lib/format';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
-import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
+import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -97,7 +97,6 @@ export default function SettingsPage() {
   const system = useSystem();
   const systemUpdate = useSystemUpdate();
   const systemRestart = useSystemRestart();
-  const cleanup = useCleanupAll();
   const me = useMe();
   const brand = useBrand();
   const brainModels = useBrainModels();
@@ -111,8 +110,6 @@ export default function SettingsPage() {
   // Plugin-contributed Settings sections ride the same live listing as the sidebar's plugin worlds:
   // toggling a plugin invalidates the query and its sections appear/disappear without a reload.
   const pluginUi = usePluginUi(locale);
-  // Drives the "delete all data" confirm dialog (Data section).
-  const [cleanupOpen, setCleanupOpen] = useState(false);
   // Whether the log viewer is open (Data section). Mounted only while open, so its queries stay idle
   // until someone actually asks to read the logs.
   const [logsOpen, setLogsOpen] = useState(false);
@@ -343,7 +340,7 @@ export default function SettingsPage() {
   // these use the shared footer save button.
 
   const models = allModels(customModels, hiddenPresets);
-  const visibleProviders = agentsUi ? PROVIDERS : PROVIDERS.filter((p) => p.embedded);
+  const visibleProviders = PROVIDERS.filter((provider) => provider.embedded);
 
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
   // Providers the user has actually configured (non-empty binary; edited in the agents plugin's
@@ -508,20 +505,13 @@ export default function SettingsPage() {
             })}
 
             {modelQuery.trim() && ![
-              ...(agentsUi ? models.map((m) => `${PROVIDERS.find((provider) => provider.id === execProvider(m.exec))?.label ?? ''} ${m.label} ${m.exec} ${execModel(m.exec)} ${modelNotes[m.exec] ?? ''}`) : []),
+
               ...(brainModels.data ?? []).map((m) => `${PROVIDERS.find((provider) => provider.id === 'elowen')?.label ?? ''} ${m.model} ${m.exec} ${m.providerLabel}`),
             ].some((value) => value.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase())) ? (
               <SettingsState>{t.settings.modelNoMatches}</SettingsState>
             ) : null}
 
-            {/* Custom models are CLI-agent execs — adding one without the agents plugin is meaningless. */}
-            {agentsUi ? (
-              <div className="settings-document__footer">
-                <Button variant="ghost" icon={Plus} onClick={() => { setEditingExec(null); setShowAddForm(true); }}>
-                  {t.settings.addModel}
-                </Button>
-              </div>
-            ) : null}
+
           </>
         </SettingsPanel>
 
@@ -573,7 +563,7 @@ export default function SettingsPage() {
                   actions={system.data?.updateAvailable ? (
                     <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
                       onSuccess: () => toast(t.settings.updateStarted),
-                      onError: (e) => toast(e instanceof ElowenApiError && e.code === 'mission_running' ? t.settings.updateBlockedMission : String(e), 'error'),
+                      onError: (e) => toast(String(e), 'error'),
                     })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
                   ) : (
                     <button type="button" className="spatial-inline-action" onClick={() => { void system.refetch(); }}>{t.settings.checkUpdates}<RefreshCw size={13} aria-hidden /></button>
@@ -717,17 +707,7 @@ export default function SettingsPage() {
             icon={ScrollText}
             actions={<Button icon={ScrollText} onClick={() => setLogsOpen(true)}>{t.settings.logsOpen}</Button>}
           />
-          <SettingsGroup
-            title={t.settings.dangerZone}
-            description={t.settings.cleanupDesc}
-            icon={Trash2}
-            tone="danger"
-            actions={<Button variant="danger" icon={Trash2} disabled={cleanup.isPending} onClick={() => setCleanupOpen(true)}>
-                {t.settings.cleanupButton}
-              </Button>}
-          >
-            <SettingsState tone="danger">{t.settings.cleanupConfirmDesc}</SettingsState>
-          </SettingsGroup>
+
         </SettingsPanel>
 
       </SpatialControlDeck>
@@ -771,20 +751,7 @@ export default function SettingsPage() {
         onClose={() => setPendingDelete(null)}
       />
 
-      <ConfirmDialog
-        open={cleanupOpen}
-        title={t.settings.cleanupConfirmTitle}
-        description={t.settings.cleanupConfirmDesc}
-        confirmLabel={t.settings.cleanupButton}
-        onConfirm={() => {
-          setCleanupOpen(false);
-          cleanup.mutate(undefined, {
-            onSuccess: (r) => toast(t.settings.cleanupDone.replace('{tasks}', String(r.tasks)).replace('{missions}', String(r.missions))),
-            onError: (e) => toast(String(e), 'error'),
-          });
-        }}
-        onClose={() => setCleanupOpen(false)}
-      />
+
     </ModuleShell>
   );
 }

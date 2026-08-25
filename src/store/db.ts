@@ -172,13 +172,7 @@ function applyAdditiveMigrations(db: Db): void {
   // on login. Additive so existing DBs gain them with sensible defaults (autostart on once chosen).
   addColumn(db, 'users', 'advisor_exec', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'advisor_autostart', 'INTEGER NOT NULL DEFAULT 1');
-  // Token scope: spawned agents get a 'agent'-scoped token (worker/overseer/pilot verbs only),
-  // never the admin's full token. Pre-existing rows default to 'full' (interactive user sessions).
   addColumn(db, 'auth_tokens', 'scope', "TEXT NOT NULL DEFAULT 'full'");
-  // The task an 'agent'-scoped token was minted for. A worker spawned on task A must not be able to
-  // mutate task B through the API, and project-level gating cannot see an intra-project crossing.
-  // NULL = unbound (interactive tokens, and the shared service token the overseer/pilot still use).
-  addColumn(db, 'auth_tokens', 'task_id', 'TEXT');
   // Timeline drill-down: events carry the project they belong to (derived from the task at write
   // time) so the UI can scope/link an event to its repo. Nullable — mission/signal events have none.
   // The index is created here (not in schema.sql) so it runs *after* the column exists on migrated DBs.
@@ -197,9 +191,6 @@ function applyAdditiveMigrations(db: Db): void {
   // Created HERE, not in schema.sql: that file is applied first, so on a pre-existing database the
   // index would reference columns the ALTERs above have not added yet and abort the whole migration.
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_actor_bucket ON events(actor_user_id, type, last_ts DESC)');
-  // Per-project override of the GitHub PR-native workflow. NULL = inherit the global autopilot default;
-  // 1/0 = force on/off for this project (each project can run a different flow). Old DBs default NULL.
-  addColumn(db, 'projects', 'pr_enabled', 'INTEGER');
   // The mission_pr/missions column additions that used to sit here (fix_rounds, last_feedback,
   // created_by, pilot_exec, overseer_exec) moved to the agents plugin's migration v2, and the
   // tasks/task_usage ones (description … resume_note, created_by; reasoning, cost_source, currency,
@@ -452,6 +443,8 @@ function makeUserIdsMonotonic(db: Db): void {
  *  by a deletion, and it is exactly what a recycled id would silently inherit — someone else's
  *  conversations, memories, devices or settings. */
 const USER_REFERENCE_COLUMNS: readonly (readonly [table: string, column: string])[] = [
+  // Temporary physical-table ownership: keep retired work/agents references in the anti-reuse ceiling
+  // until a separately-authorized migration drops those tables. This reads ids only and deletes no rows.
   ['tasks', 'created_by'], ['missions', 'created_by'],
   ['user_settings', 'user_id'], ['user_push_subscriptions', 'user_id'],
   ['brain_sessions', 'user_id'], ['brain_goals', 'user_id'],
@@ -476,9 +469,8 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
   let highest = (db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM users').get() as { m: number }).m;
   for (const [table, column] of USER_REFERENCE_COLUMNS) {
     if (!tableExists.get(table)) continue; // a database predating this table simply has nothing to contribute
-    // Column tolerance: missions.created_by is added by the AGENTS PLUGIN's migration v2 now, so an
-    // ancient DB upgrading with the plugin disabled may hold the table without the column — which
-    // also means no row ever referenced a user through it.
+    // A retired plugin table may exist at an older physical schema version without this column; then no
+    // row ever referenced a user through it, so the tolerant read correctly contributes zero.
     const m = tolerateMissingPluginTables(
       () => (db.prepare(`SELECT COALESCE(MAX(${column}), 0) AS m FROM ${table}`).get() as { m: number }).m, 0);
     if (m > highest) highest = m;
@@ -692,11 +684,6 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
         if (root.modelNotes && typeof root.modelNotes === 'object' && !Array.isArray(root.modelNotes)) {
           root.modelNotes = Object.fromEntries(Object.entries(root.modelNotes as Record<string, unknown>).map(([k, v]) => [canonical(k) as string, v]));
         }
-        const autopilot = root.autopilot as Record<string, unknown> | undefined;
-        if (autopilot) {
-          autopilot.pilotExec = canonical(autopilot.pilotExec);
-          autopilot.overseerExec = canonical(autopilot.overseerExec);
-        }
         const defaults = root.defaults as Record<string, unknown> | undefined;
         if (defaults) defaults.exec = canonical(defaults.exec);
         const configs = (root.plugins as { config?: Record<string, Record<string, unknown>> } | undefined)?.config;
@@ -706,7 +693,6 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
       if (next && next !== settings.data) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(next);
     }
 
-    const tableExists = (name: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
     const users = db.prepare('SELECT id, allowed_execs, default_exec, advisor_exec FROM users').all() as Array<{ id: number; allowed_execs: string; default_exec: string; advisor_exec: string }>;
     for (const user of users) {
       const allowed = user.allowed_execs.split(',').map(v => canonical(v) as string).join(',');
@@ -714,36 +700,6 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
       const advisorExec = canonical(user.advisor_exec) as string;
       if (allowed !== user.allowed_execs || defaultExec !== user.default_exec || advisorExec !== user.advisor_exec) {
         db.prepare('UPDATE users SET allowed_execs = ?, default_exec = ?, advisor_exec = ? WHERE id = ?').run(allowed, defaultExec, advisorExec, user.id);
-      }
-    }
-    // These three tables belong to PLUGINS (tasks/task_usage to work, missions to agents), so core knows
-    // that they may exist but not what shape they are in: the plugin adds its columns from its own
-    // migrations, which run long after openDb(). `tableExists` alone was therefore not enough — an older
-    // database still carries `missions` from the days it lived in core, without the `pilot_exec` the
-    // plugin adds today, and reading it threw out of openDb() and took the entire daemon start with it.
-    // A column that is not there holds no exec value to rewrite, so skipping is also the correct answer.
-    if (tableExists('tasks')) {
-      // Every `exec:` label, not just the prefixed ones: v13 also has to reach values that carry no
-      // prefix at all, and a narrower LIKE would skip exactly those.
-      const rows = tolerateMissingPluginTables(() => db.prepare("SELECT id, labels FROM tasks WHERE labels LIKE '%exec:%'").all() as Array<{ id: string; labels: string }>, []);
-      for (const row of rows) {
-        const labels = row.labels.split(',').map(label => label.startsWith('exec:') ? `exec:${canonical(label.slice('exec:'.length)) as string}` : label).join(',');
-        if (labels !== row.labels) db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels, row.id);
-      }
-    }
-    if (tableExists('missions')) {
-      const rows = tolerateMissingPluginTables(() => db.prepare('SELECT id, pilot_exec, overseer_exec FROM missions').all() as Array<{ id: string; pilot_exec: string; overseer_exec: string }>, []);
-      for (const row of rows) {
-        const pilot = canonical(row.pilot_exec) as string;
-        const overseer = canonical(row.overseer_exec) as string;
-        if (pilot !== row.pilot_exec || overseer !== row.overseer_exec) db.prepare('UPDATE missions SET pilot_exec = ?, overseer_exec = ? WHERE id = ?').run(pilot, overseer, row.id);
-      }
-    }
-    if (tableExists('task_usage')) {
-      const rows = tolerateMissingPluginTables(() => db.prepare("SELECT task_id, exec FROM task_usage WHERE exec != ''").all() as Array<{ task_id: string; exec: string }>, []);
-      for (const row of rows) {
-        const next = canonical(row.exec) as string;
-        if (next !== row.exec) db.prepare('UPDATE task_usage SET exec = ? WHERE task_id = ?').run(next, row.task_id);
       }
     }
   }

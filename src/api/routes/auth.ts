@@ -5,7 +5,7 @@ import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema, userCreateSchema } from '../schemas/auth.js';
 import { editablePrompts, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { isExecAllowedForUser, isOfferableExec } from '../../shared/execs.js';
-import { configuredBrainProviders } from '../../brain/config.js';
+import { configuredBrainProviders, DEFAULT_BRAIN_MODEL } from '../../brain/config.js';
 import { grantablePluginNames } from '../../shared/pluginAccess.js';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
@@ -45,7 +45,6 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!user) return c.json({ error: 'invalid credentials' }, 401);
     ctx.loginRateLimiter.clear(ip); // a valid login clears the counter so an earlier typo streak can't lock the user out
     const token = users.issueToken(user.id);
-    void d.advisor?.ensureOnLogin(user.id); // fire-and-forget: bring the user's advisor back up; never block login
     // Surface the token's TTL so the web BFF can persist the session cookie for exactly as long as the
     // daemon will accept the token — otherwise it falls back to a session cookie the browser drops early.
     return c.json({ token, user, tokenTtlDays: d.config.get().security.tokenTtlDays });
@@ -123,10 +122,10 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
   // Per-user CLI/brain settings (model override + auto-compact) — self-service, consumed by `elowen chat`.
   // `serverDefault` tells the UI what "empty model" resolves to: the first dedicated brain provider's
-  // first model, else the autopilot relay model (the brain's legacy fallback).
+  // first model, else the explicit core default used by clients before a provider is configured.
   const serverDefaultModel = () => {
     const cfg = d.config.get();
-    return cfg.brain.providers[0]?.models[0] || cfg.autopilot.model;
+    return cfg.brain.providers[0]?.models[0] || DEFAULT_BRAIN_MODEL;
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
@@ -371,7 +370,6 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     //     so running it first leaves the binding unresolvable and the terminal alive.
     // Deleting the user row last also makes a failed cleanup safely retryable: every step below is
     // idempotent, and while the row still exists the admin can simply repeat the request.
-    await d.advisor?.stop(id);
     // Dispose any live conversations (+ their terminals/processes) for the user, then hard-delete ALL of
     // their brain data and push devices. Without this a deleted user's private transcripts and browser
     // subscriptions survive.

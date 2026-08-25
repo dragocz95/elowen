@@ -1,62 +1,11 @@
 'use client';
-import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { clearToken } from './token';
 import { QUERY_KEYS } from './queries';
-import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
+import type { ConfigPatch, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, NavLayout, CronJob, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail, PluginSkill, SessionTask } from './types';
 
-type TaskCacheSnapshot = Array<[QueryKey, Task[] | undefined]>;
-
-/** Apply one task patch to every all/project-scoped task cache. The snapshot is restored on failure,
- * while SSE/invalidation remains the final source of truth after the mutation settles. */
-async function optimisticTaskPatch(qc: QueryClient, id: string, patch: Partial<Task>): Promise<TaskCacheSnapshot> {
-  await qc.cancelQueries({ queryKey: QUERY_KEYS.tasks });
-  const snapshots = qc.getQueriesData<Task[]>({ queryKey: QUERY_KEYS.tasks });
-  qc.setQueriesData<Task[]>({ queryKey: QUERY_KEYS.tasks }, (current) => current?.map((task) => task.id === id ? { ...task, ...patch } : task));
-  return snapshots;
-}
-
-function restoreTaskCaches(qc: QueryClient, snapshots?: TaskCacheSnapshot) {
-  for (const [queryKey, value] of snapshots ?? []) qc.setQueryData(queryKey, value);
-}
-
-export function useSpawn() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: { taskId: string; exec?: string }) => elowenClient.spawn(input),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }); qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }); },
-  });
-}
-export function useCreateTask() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (input: CreateTaskInput) => elowenClient.createTask(input), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
-}
-export function useUpdateTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: string; patch: UpdateTaskInput }) => elowenClient.updateTask(v.id, v.patch),
-    onMutate: (v) => optimisticTaskPatch(qc, v.id, v.patch as Partial<Task>),
-    onError: (_error, _variables, snapshots) => restoreTaskCaches(qc, snapshots),
-    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }),
-  });
-}
-export function useDeleteTask() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.deleteTask(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
-}
-export function useDeleteMission() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (epicId: string) => elowenClient.deleteMission(epicId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
-    },
-  });
-}
-/** Admin: destructively reset all usage stores. Invalidates every cache usage is read from — by-model
- *  (Stats), by-day (the dashboard's daily chart) and the per-task usage badges — so nothing keeps
- *  showing pre-reset numbers until an unrelated refetch happens to catch up. */
+/** Admin: clear the caller's brain usage and origin rollup. */
 export function useResetUsage() {
   const qc = useQueryClient();
   return useMutation({
@@ -64,111 +13,11 @@ export function useResetUsage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.usageByModel });
       qc.invalidateQueries({ queryKey: QUERY_KEYS.usageByDay });
-      qc.invalidateQueries({ queryKey: ['task-usage'] });
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.usageByOrigin });
     },
   });
 }
 
-export function useCleanupAll() {
-  const qc = useQueryClient();
-  // cleanupAll disengages every mission, kills the elowen- sessions and wipes tasks + events. Invalidate
-  // exactly those caches (+ the session signals derived from them) instead of a wildcard
-  // `invalidateQueries()` — config/system/users/usage don't change, so refetching them just
-  // re-hammers the daemon for no reason.
-  return useMutation({
-    mutationFn: () => elowenClient.cleanupAll(),
-    onSuccess: () => {
-      for (const queryKey of [QUERY_KEYS.tasks, QUERY_KEYS.missions, QUERY_KEYS.sessions, QUERY_KEYS.sessionSignals, ['activity']]) {
-        qc.invalidateQueries({ queryKey });
-      }
-    },
-  });
-}
-export function usePlanTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: PlanInput) => elowenClient.planTask(input),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }); qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }); },
-  });
-}
-export function useInsertPhases() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { epicId: string; body: InsertPhasesInput }) => elowenClient.insertPhases(v.epicId, v.body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
-    },
-  });
-}
-export function useCloseTask() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.closeTask(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
-}
-export function useSetTaskStatus() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: string; status: string }) => elowenClient.setTaskStatus(v.id, v.status),
-    onMutate: (v) => optimisticTaskPatch(qc, v.id, { status: v.status as Task['status'] }),
-    onError: (_error, _variables, snapshots) => restoreTaskCaches(qc, snapshots),
-    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }),
-  });
-}
-export function useApproveGate() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.approveGate(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
-}
-export function useReplyAsk() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { taskId: string; askId: string; text: string }) => elowenClient.replyAsk(v.taskId, v.askId, v.text),
-    onSuccess: (_r, v) => { qc.invalidateQueries({ queryKey: ['pending-asks'] }); qc.invalidateQueries({ queryKey: ['task-activity', v.taskId] }); },
-  });
-}
-export function useSetTaskExec() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: string; exec: string }) => elowenClient.setTaskExec(v.id, v.exec), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
-}
-export function useKillSession() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (name: string) => elowenClient.killSession(name), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }) });
-}
-/** Admin: open (or reuse) an `elowen chat` terminal for the active brain conversation. Refreshing
- *  /sessions lets the newly-created chat terminal resolve its role/label when the pane mounts. */
-export function useOpenBrainTerminal() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (session: string) => elowenClient.brainTerminal(session),
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }),
-  });
-}
-export function useSendInput() {
-  return useMutation({ mutationFn: (v: { name: string; keys: string[] }) => elowenClient.sendKeys(v.name, v.keys) });
-}
-export function useEngage() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (input: EngageInput) => elowenClient.engage(input), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
-export function usePauseMission() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.pauseMission(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
-export function useResumeMission() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.resumeMission(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
-export function useDisengage() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.disengageMission(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
-export function useOpenMissionPr() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.openMissionPr(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
-export function useMergeMissionPr() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.mergeMissionPr(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }) });
-}
 export function useUpdateConfig() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: ConfigPatch) => elowenClient.updateConfig(patch), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.config }) });
@@ -183,10 +32,6 @@ export function useSystemUpdate() {
  *  seconds anyway; the System panel's regular polling picks the service back up on its own. */
 export function useSystemRestart() {
   return useMutation({ mutationFn: (target: 'daemon' | 'web') => elowenClient.systemRestart(target) });
-}
-export function useInstallSkills() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: () => elowenClient.installSkills(), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.systemSkills }) });
 }
 export function useLogin() {
   return useMutation({ mutationFn: (v: { username: string; password: string }) => elowenClient.login(v.username, v.password) });
@@ -460,7 +305,7 @@ export function useCreateProject() {
 }
 export function useUpdateProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string; pr_enabled?: boolean | null }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes, pr_enabled: v.pr_enabled }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+  return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
 }
 export function useRemoveProject() {
   const qc = useQueryClient();
@@ -677,19 +522,5 @@ export function useReclassifyMemories() {
   return useMutation({
     mutationFn: (body?: { limit?: number; includeCategorized?: boolean }) => elowenClient.reclassifyMemories(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }),
-  });
-}
-export function useAdvisorStart() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (exec: string) => elowenClient.advisorStart(exec),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.advisorStatus }); qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }); },
-  });
-}
-export function useAdvisorStop() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => elowenClient.advisorStop(),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.advisorStatus }); qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }); },
   });
 }

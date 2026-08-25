@@ -19,7 +19,7 @@ import type { BrainRouteContext } from './brainRouteContext.js';
  *  decides what it can do with one.
  */
 export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden } = route;
+  const { d } = route;
 
   /** The projects this account may write into, as upload candidates — the same decision a platform room's
    *  attachment goes through (see brain/channelAttachments.ts), which is why the rule itself is shared. */
@@ -33,9 +33,6 @@ export function registerBrainUploadRoutes(app: ElowenApp, route: BrainRouteConte
   };
 
   app.post('/brain/uploads', async (c) => {
-    // Writing a file into somebody's project is a mutation, and every other brain mutation is closed to
-    // an agent-scoped token. An upload has no reason to be the one exception.
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
 
     const u = c.get('user');
     const raw = c.req.raw.body;

@@ -4,6 +4,10 @@ import { OAUTH_BUILTIN } from './providers.js';
 import type { BrainCredentialAccess } from './providerUsage.js';
 import type { BrainProviderModels } from '../shared/execs.js';
 
+/** Client-facing model placeholder before the operator configures a provider. It is display/default
+ * metadata only; brainConfigFromElowen still returns null until a reachable provider exists. */
+export const DEFAULT_BRAIN_MODEL = 'gpt-4o-mini';
+
 const OAUTH_LABELS: Record<string, string> = {
   'oauth-anthropic': 'Claude account',
   'oauth-github-copilot': 'GitHub Copilot',
@@ -15,7 +19,6 @@ const OAUTH_LABELS: Record<string, string> = {
  *  1. dedicated `brain.providers` entries,
  *  2. synthetic entries for connected OAuth accounts that have no explicit entry (connecting an
  *     account in Settings → Brain is enough — its models appear without extra configuration),
- *  3. with neither, the autopilot relay endpoint as a synthetic OpenAI-compatible provider.
  *  Returns null when nothing usable is configured — the brain routes degrade to 503. */
 export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredentialAccess): BrainRuntimeConfig | null {
   // An `oauth-*` entry carries only the account's MODEL SELECTION: buildBrainRegistry registers no
@@ -44,12 +47,7 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
     }
   }
 
-  if (providers.length === 0) {
-    const s = config.get();
-    const apiKey = config.apiKey();
-    if (!apiKey || !s.autopilot.apiUrl || !s.autopilot.model) return null;
-    providers.push({ id: 'relay', label: 'Relay', type: 'openai', baseUrl: s.autopilot.apiUrl, models: [s.autopilot.model], apiKey, origin: 'relay' });
-  }
+  if (providers.length === 0) return null;
   return { providers, contextWindows: config.get().brain.modelContextWindows };
 }
 
@@ -67,7 +65,6 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
  *  - a connected OAuth account with NO explicit entry counts too: brainConfigFromElowen serves its models
  *    under that synthetic id, so a picker offers them and the gate has to recognise them or fail closed on
  *    a perfectly valid setup.
- *  - the relay fallback counts on the same grounds.
  *
  * The MODEL list travels with the id for the same reason the id survives a missing credential: an entry
  * whose account is disconnected keeps the list that bounds it, so an outage cannot silently widen the bound

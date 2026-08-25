@@ -7,11 +7,9 @@ export const createProjectSchema = z.object({
   notes: z.string().optional(),
 });
 
-/** Edit a project. All fields optional; the trim / icon-is-image / pr_enabled tri-state rules stay in
- *  the handler. pr_enabled: null = inherit the global default, a boolean = force on/off. */
+/** Edit a project. All fields optional; trimming and icon validation stay in the handler. */
 export const updateProjectSchema = z.object({
   path: z.string().optional(),
   notes: z.string().optional(),
   icon: z.string().optional(),
-  pr_enabled: z.boolean().nullable().optional(),
 });

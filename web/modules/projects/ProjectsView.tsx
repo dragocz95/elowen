@@ -1,6 +1,6 @@
 'use client';
 import { useDeferredValue, useMemo, useState } from 'react';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, Github, FileText, Layers3 } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectGit, useEditorPlugin, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -9,8 +9,6 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
-import { Segmented } from '../../components/ui/Segmented';
-import { SelectMenu, type SelectMenuOption } from '../../components/ui/SelectMenu';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { EmptyState, ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
@@ -24,11 +22,7 @@ import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu'
 import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
 import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
-import { usePersistentState } from '../../lib/usePersistentState';
 import { copyText } from '../../lib/clipboard';
-
-type ProjectFilter = 'all' | 'inherit' | 'override';
-const PROJECT_FILTERS: readonly ProjectFilter[] = ['all', 'inherit', 'override'];
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -40,9 +34,7 @@ export function ProjectsView() {
   const isAdmin = useMe().data?.user?.is_admin ?? false;
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  // Search is transient (an immediate intent); the bucket filter is a view setting and survives a reload.
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = usePersistentState<ProjectFilter>('elowen.projects.filter', 'all', PROJECT_FILTERS);
   const deferredQuery = useDeferredValue(query);
 
   const openProjectEditor = (projectId: number | null, commit: string | null, working = false) => {
@@ -61,8 +53,7 @@ export function ProjectsView() {
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const removeProject = useRemoveProject();
-  // Project pending removal — drives the confirm dialog. Removal detaches the project from elowen
-  // (tasks/missions/access) but never touches files on disk; the backend rejects the home project.
+  // Removal detaches the project from Elowen but never touches files on disk.
   const [removing, setRemoving] = useState<Project | null>(null);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
@@ -94,9 +85,7 @@ export function ProjectsView() {
   const [editProject, setEditProject] = useState<Project | null>(null);
   const [editPath, setEditPath] = useState('');
   const [editNotes, setEditNotes] = useState('');
-  // Per-project GitHub PR-flow override: null = inherit the global default, true/false = force on/off.
-  const [editPrEnabled, setEditPrEnabled] = useState<boolean | null>(null);
-  const openEdit = (p: Project) => { setEditProject(p); setEditPath(p.path); setEditNotes(p.notes); setEditPrEnabled(p.pr_enabled); };
+  const openEdit = (p: Project) => { setEditProject(p); setEditPath(p.path); setEditNotes(p.notes); };
   // The single source of truth for a project's actions, offered identically by the row's hover menu and by
   // the right-click menu. Grouped rather than flat because only the right-click menu draws dividers, and a
   // second copy of the list is exactly how the two menus drifted apart before.
@@ -133,7 +122,7 @@ export function ProjectsView() {
   function handleUpdate() {
     if (!editProject) return;
     updateProject.mutate(
-      { id: editProject.id, path: editPath, notes: editNotes, pr_enabled: editPrEnabled },
+      { id: editProject.id, path: editPath, notes: editNotes },
       {
         onSuccess: () => { setEditProject(null); toast(t.projects.updated); },
         onError: (e) => toast(String(e), 'error'),
@@ -156,28 +145,19 @@ export function ProjectsView() {
 
   const filteredProjects = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
-    return (projects.data ?? []).filter((project) => {
-      if (filter === 'inherit' && project.pr_enabled !== null) return false;
-      if (filter === 'override' && project.pr_enabled === null) return false;
-      return !needle || `${project.slug} ${project.path} ${project.notes}`.toLowerCase().includes(needle);
-    });
-  }, [deferredQuery, filter, projects.data]);
+    return (projects.data ?? []).filter((project) => !needle || `${project.slug} ${project.path} ${project.notes}`.toLowerCase().includes(needle));
+  }, [deferredQuery, projects.data]);
 
   const summary = useMemo(() => {
     const items = projects.data ?? [];
     return {
-      overrides: items.filter((project) => project.pr_enabled !== null).length,
       icons: items.filter((project) => Boolean(project.icon)).length,
       documented: items.filter((project) => Boolean(project.notes.trim())).length,
     };
   }, [projects.data]);
 
   const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
-  const FILTER_OPTIONS: SelectMenuOption<ProjectFilter>[] = [
-    { value: 'all', label: t.projects.filterAll, icon: <Layers3 size={14} /> },
-    { value: 'inherit', label: t.projects.filterInherited, icon: <Github size={14} /> },
-    { value: 'override', label: t.projects.filterOverrides, icon: <GitBranch size={14} /> },
-  ];
+
 
   const navigateProject = (project: Project, direction: 'next' | 'previous' | 'home' | 'end') => {
     const index = filteredProjects.findIndex((item) => item.id === project.id);
@@ -203,7 +183,6 @@ export function ProjectsView() {
           action: isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined,
           metrics: <>
             <WorkspaceMetric label={t.projects.metricProjects} value={projects.data?.length ?? 0} icon={FolderGit2} />
-            <WorkspaceMetric label={t.projects.metricOverrides} value={summary.overrides} icon={GitBranch} />
             <WorkspaceMetric label={t.projects.metricIcons} value={summary.icons} icon={ImageIcon} />
             <WorkspaceMetric label={t.projects.metricDocumented} value={summary.documented} icon={FileText} />
           </>,
@@ -215,7 +194,6 @@ export function ProjectsView() {
               <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.projects.searchPlaceholder} className="pl-9" />
             </div>
-            <SelectMenu value={filter} onChange={setFilter} options={FILTER_OPTIONS} label={t.projects.filterLabel} className="min-w-[11rem]" />
           </ControlSurfaceToolbar>
 
           {projects.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
@@ -227,12 +205,11 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(10rem,1fr) 8rem 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="projects-register">
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(10rem,1fr) 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header>{t.projects.columnProject}</DataTableCell>
                         <DataTableCell header priority="wide">{t.projects.columnPath}</DataTableCell>
                         <DataTableCell header priority="wide">{t.projects.columnNotes}</DataTableCell>
-                        <DataTableCell header priority="wide">{t.projects.columnPrFlow}</DataTableCell>
                         <DataTableCell header><span className="sr-only">{t.common.actions}</span></DataTableCell>
                       </DataTableRow>
                       {filteredProjects.map((project) => {
@@ -267,7 +244,6 @@ export function ProjectsView() {
                             </DataTableCell>
                             <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted"><Folder size={11} className="mr-1.5 inline" aria-hidden />{project.path}</DataTableCell>
                             <DataTableCell priority="wide" className="truncate text-xs text-text-muted">{project.notes || '—'}</DataTableCell>
-                            <DataTableCell priority="wide"><span className="text-xs text-text-muted">{project.pr_enabled === null ? t.projects.prFlowInherit : project.pr_enabled ? t.projects.prFlowOn : t.projects.prFlowOff}</span></DataTableCell>
                             <DataTableCell onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
                                 label={`${project.slug}: ${t.common.actions}`}
@@ -402,17 +378,7 @@ export function ProjectsView() {
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
             </Field>
-            <Field label={t.projects.prFlowLabel} hint={t.help.projectPrFlow}>
-              <Segmented
-                value={editPrEnabled === null ? 'default' : editPrEnabled ? 'on' : 'off'}
-                onChange={(v) => setEditPrEnabled(v === 'default' ? null : v === 'on')}
-                options={[
-                  { value: 'default', label: t.projects.prFlowInherit },
-                  { value: 'on', label: t.projects.prFlowOn },
-                  { value: 'off', label: t.projects.prFlowOff },
-                ]}
-              />
-            </Field>
+
           </ModalBody>
           <ModalFooter>
             <Button variant="danger" icon={Trash2} onClick={() => { const p = editProject; setEditProject(null); setRemoving(p); }}>{t.projects.removeProject}</Button>

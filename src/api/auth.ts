@@ -48,7 +48,6 @@ export function authMiddleware(users: UserStore, tokenTtlDays?: () => number): M
     c.set('user', principal.user);
     c.set('token', token);
     c.set('tokenScope', principal.scope);
-    c.set('agentTask', principal.taskId);
     return next();
   };
 }

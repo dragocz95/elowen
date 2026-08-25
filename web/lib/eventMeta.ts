@@ -1,16 +1,7 @@
-import { ListChecks, Rocket, Radio, ShieldCheck, Circle, Globe, Terminal, MessageCircle, Users, Send, Phone, Clock, type LucideIcon } from 'lucide-react';
+import { Circle, Globe, Terminal, MessageCircle, Users, Send, Phone, Clock, type LucideIcon } from 'lucide-react';
 
-/** Icon per activity-event kind. Host-owned: the activity log is a core surface (the dashboard tile,
- *  `/activity`) that outlives whichever plugin produced the event. */
-export function eventIcon(type: string): LucideIcon {
-  switch (type) {
-    case 'task': return ListChecks;
-    case 'mission': return Rocket;
-    case 'signal': return Radio;
-    case 'review': return ShieldCheck;
-    default: return Circle;
-  }
-}
+/** Plugin activity kinds are opaque to core, so unknown kinds use a neutral mark. */
+export function eventIcon(_type: string): LucideIcon { return Circle; }
 
 /** Icon per activity SURFACE — the place a turn came from. An unrecognised surface (including the
  *  honest 'unknown' the daemon records when a client did not identify itself) falls back to a neutral

@@ -49,7 +49,8 @@ import { IconButton } from '../components/ui/IconButton';
 import { ActionMenu } from '../components/ui/ActionMenu';
 import { ContextMenu, DIVIDER } from '../components/ui/ContextMenu';
 import { ChangeStrip } from '../components/ui/ChangeStrip';
-import { TaskUsageBadge } from '../components/ui/TaskUsageBadge';
+import { ProgressRibbon } from '../components/ui/ProgressRibbon';
+import { PatchView } from '../components/ui/PatchView';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../components/ui/SelectionSummary';
@@ -67,16 +68,9 @@ import { Checkbox } from '../components/ui/Checkbox';
 import { DataTable, DataTableCell, DataTableRow } from '../components/ui/DataTable';
 import { DateRangeFilter } from '../components/ui/DateRangeFilter';
 import { ExecutorPicker } from '../components/ui/ExecutorPicker';
-import { AgentIdentityStrip } from '../components/ui/AgentIdentityStrip';
-import { AgentStatusDot } from '../components/ui/AgentStatusDot';
-import { ProgressRibbon } from '../components/ui/ProgressRibbon';
-import { PatchView } from '../components/ui/PatchView';
-import { ProjectIcon } from '../components/ui/ProjectIcon';
-import { TaskContextLine } from '../components/ui/TaskContextLine';
 import { Spinner } from '../components/ui/states';
 import { MotionLayout } from '../components/ui/Motion';
 import { WorkspaceDetailRail } from '../components/ui/WorkspacePrimitives';
-import { TONE_TEXT } from '../components/ui/tone';
 import { PROVIDERS, ProviderLogo } from '../modules/settings/providers';
 import { SettingsDocument, SettingsGroup, SettingsRow } from '../modules/settings/SettingsSurface';
 import { PluginConfigEditor } from '../modules/settings/PluginConfigEditor';
@@ -96,44 +90,25 @@ import { usePersistentState } from './usePersistentState';
 import { useProjectFilter } from './useProjectFilter';
 import { useFillHeight } from './useFillHeight';
 import {
-  useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
-  useEscalations, usePendingAsks, usePluginUi, useBrainModels, useSystemSkills, useUsers, usePlugins,
+  useConfig, usePluginUi, useBrainModels, useUsers, usePlugins,
   useCronJobs, useNotificationDestinations, usePluginSkills, usePluginSubagents, usePluginDetail,
   useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
   useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
-  useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
-  useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
-  useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin, useWorkPlugin,
+  useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useEditorPlugin,
 } from './queries';
 import {
-  useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
-  useUpdateConfig, useInstallSkills, useSaveCronJob, useDeleteCronJob,
+  useUpdateConfig, useSaveCronJob, useDeleteCronJob,
   useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
   useSavePluginSubagent, useDeletePluginSubagent, useSavePluginConfig,
   useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
-  useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
-  useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
-  useOpenMissionPr, useMergeMissionPr, useResetUsage,
+  useResetUsage,
 } from './mutations';
-import {
-  needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
-  taskBlockers, taskSessionName, taskAgentName, taskElapsed, taskElapsedMs, taskStartedMs, phaseDetails,
-} from './agentUtils';
-import { epicChildren, epicEffectiveStatus, epicLive, epicProgress, phaseIds } from './taskTree';
-import {
-  DEFAULT_RANGE, inRange, isStoredRange, parseRange, serializeRange, rangeBounds, rangeWindowCapHours,
-} from './dateRange';
-import { execModel } from './modelProvider';
-import { formatTaskTime, formatCost, formatDuration } from './format';
+import { formatCost, formatDuration } from './format';
 import { fileIcon } from './fileIcon';
 import { dirName } from './filePath';
 import { openTerminalWindow } from './openTerminalWindow';
-import { useSessionStall } from './useSessionStall';
-import { useTaskControls } from './useTaskControls';
 import { buildUsageSummary } from './usageBars';
 import { eventIcon } from './eventMeta';
-import { statusTone } from './statusTone';
-import { taskTypeMeta } from './taskMeta';
 
 /** Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
@@ -300,10 +275,7 @@ export function ensurePluginUiRuntime(): void {
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
     // Curated: what a plugin page needs to look native. Growing this list is cheap; shrinking it is a
-    // breaking change — so every addition is deliberate. The second block is the agents-extraction
-    // surface (F3): the workspace/control-surface primitives and terminal views its moved pages compose.
-    // The third block is the settings-extraction surface (moved CLI-agents + autopilot sections): the
-    // settings document primitives, the model/provider pickers and the autosave indicator.
+    // breaking change, so every addition is deliberate.
     components: {
       Button, Input, Avatar: PluginAvatar, Badge, Field, HelpTip, Modal, ModalBody, ModalFooter,
       Toggle, ModuleHeader, Segmented, SelectMenu, EntityList, EntityRow, LoadingState, LoadingLine, ErrorState, EmptyState,
@@ -313,7 +285,7 @@ export function ensurePluginUiRuntime(): void {
       WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
-      TaskUsageBadge, ConfirmDialog, TerminalModal, LiveTail,
+      ConfirmDialog, TerminalModal, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, PluginConfigEditor, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       // Which of the two settings renderings a section's groups/rows use. A section that declares
       // `layout: 'orbital'` in its manifest wraps itself in this, exactly as the core sections do.
@@ -323,78 +295,37 @@ export function ensurePluginUiRuntime(): void {
       // the caption+hint wrapper the user detail puts above each of these summaries, shared so a plugin
       // showing a managed selection reads as the same thing rather than an approximation of it.
       ManageSelectionModal, SelectionSummary, DetailBlock, BrainModelField, MarkdownAssetEditor,
-      // The work-extraction surface (F4): the task/kanban/timeline/stats views compose these. They are
-      // app chrome shared with the surfaces that stay (the dashboard renders task shapes too), which is
-      // why they live here rather than inside the plugin bundle.
       Checkbox, DataTable, DataTableRow, DataTableCell, DateRangeFilter, ExecutorPicker,
-      AgentIdentityStrip, AgentStatusDot, ProgressRibbon, PatchView, ProjectIcon, TaskContextLine,
-      Spinner, MotionLayout, WorkspaceDetailRail,
+      ProgressRibbon, PatchView, Spinner, MotionLayout, WorkspaceDetailRail,
     } as Record<string, ComponentType<never>>,
     // React hooks a plugin page may call (safe across the boundary — the bundle runs on the HOST's
     // React instance). The data hooks keep the react-query cache + SSE signal store in the app, so a
     // plugin page and the core tasks UI share one cache and one invalidation path.
     hooks: {
       useTranslation, useToast, usePersistentState,
-      useTasks, useConfig, useSessionInfos, useSessionSignals, useSessionSignal,
-      useEscalations, usePendingAsks,
-      useKillSession, useSendInput, useSetTaskStatus, useResumeMission, useApproveGate, useReplyAsk,
-      useUpdateConfig,
-      useBrainModels, useSystemSkills, useInstallSkills, useAutoSaveStatus, usePluginStrings,
+      useConfig, useUpdateConfig,
+      useBrainModels, useAutoSaveStatus, usePluginStrings,
       useUsers, usePlugins, usePluginConfigDraft,
-      // Cron-job data hooks stay in the core lib (the dashboard's cron tile shares their cache);
-      // the cronjob plugin's settings editor reaches them here.
       useCronJobs, useNotificationDestinations, useSaveCronJob, useDeleteCronJob,
-      // A plugin's own config slice, read and written through the SAME cache entry the Plugins
-      // settings detail uses. A bundle that fetched it by hand instead would hold a private copy of a
-      // value two surfaces edit: the save invalidates the shared key, so both re-read the server's
-      // answer (which secrets are stored) rather than each believing its own last render.
       usePluginDetail, useSavePluginConfig,
       usePluginSkills, useCreatePluginSkill, useUpdatePluginSkill, useDeletePluginSkill,
       usePluginSubagents, useSavePluginSubagent, useDeletePluginSubagent,
-      // The editor plugin owns the UI and API routes; these host-bound query/mutation hooks retain the
-      // shared react-query cache for the project surfaces that link into it.
       useProjects, useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit,
       useProjectCommitFileDiff, useProjectChanged, useProjectChanges,
       useWriteProjectFile, useNewProjectFile, useNewProjectDir, useRenameProjectEntry, useCopyProjectEntry, useDeleteProjectEntry,
-      // Layout/selection behaviour shared with the built-in workspaces: the same persisted project
-      // filter Tasks and Kanban use, and the same window-measured fill height.
       useMobile, useProjectFilter, useFillHeight,
-      // The work plugin owns the task domain (tables, routes, tools, pages) but not a second copy of
-      // the browser's data plane: these hooks keep ONE react-query cache and ONE SSE invalidation path,
-      // shared with the core surfaces that still read tasks (dashboard tiles, the notification bell).
-      // `useUsageByOrigin` is admin-only at the ROUTE; exporting it here widens nothing — a bundle
-      // calling it as a non-admin gets the same 403 any other caller would.
-      useAllDeps, useMissions, useSessions, useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin,
-      useProjectsCommits, useTaskConversation, useTaskBrainConversation, useTaskCommits,
-      // `useWorkPlugin` is here for the same reason the core surfaces use it: a bundle that links to a
-      // task page must not offer that link when no plugin serves one (the address would land on the
-      // "this plugin is not installed" placeholder).
-      useTaskCommitFileDiff, useMissionNotes, usePlanJob, useAgentsPlugin, useEditorPlugin, useWorkPlugin,
-      useCreateTask, useUpdateTask, useDeleteTask, useCloseTask, useSpawn, useSetTaskExec, usePlanTask,
-      useInsertPhases, useDeleteMission, useEngage, usePauseMission, useDisengage,
-      useOpenMissionPr, useMergeMissionPr, useResetUsage,
-      useSessionStall, useTaskControls,
+      useMe, useActivity, useModelUsage, useUsageByDay, useUsageByOrigin, useResetUsage, useEditorPlugin,
       // Batched queries against the host's react-query client: a bundle that imported the library
       // itself would get a second QueryClient context and read an empty cache.
       useQueries,
     },
     // Pure helpers shared with plugin bundles (session/task mapping, formatting, error shaping).
     utils: {
-      needsInputSessions, taskForSession, missionEpicId, keysForOption, agentDisplayName, taskExec,
-      execModel, formatTaskTime, apiErrorMessage, taskTypeMeta, contextMenuDivider: DIVIDER,
+      apiErrorMessage, contextMenuDivider: DIVIDER,
       allModels, cliProviders: PROVIDERS,
       compactElapsed, parseTs, isValidSchedule, baseName, copyText,
-      // The Monaco theme is shared, not copied: the host embeds editors of its own (logs, personality,
-      // plugin config) and a plugin bundle carrying its own colour table would drift from the UI.
-      // The picker travels with it: a bundle that registered both tables but named one itself would
-      // stay on the dark editor under a light skin.
       defineEditorThemes, editorTheme,
-      // Task/mission/date/formatting helpers the moved work views compose. `elowenClient` is the app's
-      // one HTTP client — a bundle narrows it to the calls it makes rather than shipping a second one.
-      taskBlockers, taskSessionName, taskAgentName, taskElapsed, taskElapsedMs, taskStartedMs, phaseDetails,
-      epicChildren, epicEffectiveStatus, epicLive, epicProgress, phaseIds,
-      DEFAULT_RANGE, inRange, isStoredRange, parseRange, serializeRange, rangeBounds, rangeWindowCapHours,
-      formatCost, formatDuration, fileIcon, dirName, openTerminalWindow, statusTone, TONE_TEXT,
+      formatCost, formatDuration, fileIcon, dirName, openTerminalWindow,
       buildUsageSummary, eventIcon, elowenClient, ElowenApiError,
     },
     api,

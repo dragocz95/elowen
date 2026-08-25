@@ -30,12 +30,12 @@ const debugError = (c: ElowenContext, error: unknown): Response => {
 };
 
 export function registerBrainDebugRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden } = route;
+  const { d } = route;
 
   // Raw model prompts may contain private user/tool data. Every response in this namespace — including
-  // auth failures and 404s — is private and non-cacheable. Agent-scope tokens are denied even for admins.
+  // auth failures and 404s — is private and non-cacheable.
   app.use('/brain/debug/*', async (c, next) => {
-    if (forbidden(c) || !c.get('user')?.is_admin) {
+    if (!c.get('user')?.is_admin) {
       const response = c.json({ error: 'forbidden' }, 403);
       response.headers.set('Cache-Control', 'private, no-store');
       return response;
@@ -50,7 +50,7 @@ export function registerBrainDebugRoutes(app: ElowenApp, route: BrainRouteContex
       return c.json(d.brain.debugSessions({
         cursor: c.req.query('cursor'), limit: debugNumber(c.req.query('limit')), search: c.req.query('search'),
         from: debugDate(c.req.query('from')), to: debugDate(c.req.query('to'), true), userId: debugNumber(c.req.query('userId')),
-        surface: debugEnum(c.req.query('surface'), ['conversation', 'channel', 'task', 'subagent'] as const),
+        surface: debugEnum(c.req.query('surface'), ['conversation', 'channel', 'subagent'] as const),
         provider: c.req.query('provider'), model: c.req.query('model'),
         status: debugEnum(c.req.query('status'), ['pending', 'succeeded', 'error', 'interrupted', 'captured', 'legacy'] as const),
       }));

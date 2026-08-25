@@ -1,77 +1,24 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
-import * as m from 'motion/react-m';
-import { NeedsInputBanner } from '../../components/ui/NeedsInputBanner';
+import { useRef } from 'react';
 import { FinishSetupBanner } from '../../components/ui/FinishSetupBanner';
 import { MotionReveal } from '../../components/ui/Motion';
-import { motionTransition } from '../../lib/motion';
-import { useEffects } from '../../lib/useEffects';
-import { HeroNowTile } from './HeroNowTile';
 import { JournalTrunk } from './JournalTrunk';
 import { ActivityTile } from './ActivityTile';
 import { TeamPulseTile } from './TeamPulseTile';
-import { TodayTasksTile } from './TodayTasksTile';
-import { useWorkPlugin } from '../../lib/queries';
 import { WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
-/** A clock that re-renders every 30s (enough for an HH:MM display, keeps the month window + elapsed live). */
-function useNow(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
-
-/** The personal-agent home: one dominant, conversational Elowen presence followed by a quieter layer
- *  of human attention, today's work and telemetry. Mission control stays in Work/Tasks. */
+/** The workspace home: setup posture, recent activity and team presence. */
 export function DashboardView() {
-  const now = useNow();
-  const nowMs = now.getTime();
-  // Today's work is the work plugin's data. Without it the tile's own empty state ("nothing scheduled
-  // for today") would be a statement about a register this instance does not have.
-  const work = useWorkPlugin();
-  const { resolvedMode } = useEffects();
   const fieldRef = useRef<HTMLDivElement>(null);
-
   return (
     <WorkspacePage className="dashboard-workspace flex flex-col gap-5">
       <FinishSetupBanner />
-      <NeedsInputBanner />
-
-      {/* One field for the hero and the journal: the trunk filament flows from the mascot's core
-          down into the journal spine, so the whole page hangs off the same being. */}
       <div ref={fieldRef} className="relative flex flex-col gap-5">
         <JournalTrunk containerRef={fieldRef} />
-
-        {/* Transform-only entrance. Fractional opacity over the hero's blurred presence aura makes
-            Chromium brighten the whole hero before it settles (same artifact RouteTransition works
-            around), so the hero rises without fading. */}
-        <m.div
-          className="relative z-[1]"
-          initial={resolvedMode === 'full' ? { y: 10 } : false}
-          animate={{ y: 0 }}
-          transition={motionTransition}
-        >
-          <HeroNowTile now={nowMs} />
-        </m.div>
-
-        {/* One continuous journal below the hero — open sections in the cosmos atmosphere (glowing
-            labels, the shared spine) instead of hairline-ruled boxes; the operational signals orbit
-            the mascot in the hero cosmos above. */}
         <MotionReveal delay={0.06} className="relative z-[1] @container">
-          {/* Full width like the hero above it, not a 46rem column with empty space beside it — the
-              two sections are equal halves so the page reads as one consistent surface. One column
-              while narrow, where a 24-cell hour row would be unreadable side by side. */}
           <div className="grid w-full grid-cols-1 gap-x-10 gap-y-2 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-col gap-2">
-              <ActivityTile />
-              {work ? <TodayTasksTile now={nowMs} /> : null}
-            </div>
-            <div className="flex min-w-0 flex-col gap-2">
-              <TeamPulseTile />
-            </div>
+            <ActivityTile />
+            <TeamPulseTile />
           </div>
         </MotionReveal>
       </div>

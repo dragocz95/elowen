@@ -13,7 +13,7 @@ import type { LiveBrain } from '../session/liveBrain.js';
 import { queuedWithPending } from '../session/queueMirror.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
-import { isNonUserSession, isChannelSession, isTaskSession, channelIdOf, platformOfSession, defaultUserSessionId } from '../sessionId.js';
+import { isNonUserSession, isChannelSession, channelIdOf, platformOfSession, defaultUserSessionId } from '../sessionId.js';
 import { terminalizeWorkflow } from '../workflowRuns.js';
 import { withTimeout } from '../../shared/withTimeout.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -441,7 +441,7 @@ export class BrainStatusService {
       const running = channel ? !!this.d.sessions.channelGet(channelIdOf(s.id)) : this.d.sessions.has(s.id);
       return {
         id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
-        kind: channel ? 'channel' as const : isTaskSession(s.id) ? 'task' as const : 'conversation' as const,
+        kind: channel ? 'channel' as const : 'conversation' as const,
         tokens: tokens[s.id] ?? 0,
         platform: platformOfSession(s.id),
         direct: s.direct === 1,

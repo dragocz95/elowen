@@ -360,11 +360,9 @@ export interface BrainLimits {
   goalMaxTurns: number;
   channelSessionCap: number;
   delegateContextChars: number;
-  /** How many of a task's most recent `elowen ask` turns travel to the overseer as its context. */
-  askHistoryTurns: number;
 }
 
-export type BrainDebugSurface = 'conversation' | 'channel' | 'task' | 'subagent';
+export type BrainDebugSurface = 'conversation' | 'channel' | 'subagent';
 export type BrainDebugRequestKind = 'chat' | 'compaction' | 'remote_compaction';
 export type BrainDebugRequestStatus = 'pending' | 'succeeded' | 'error' | 'interrupted';
 
@@ -693,7 +691,7 @@ export interface BrainGoalState {
   updated_at: string;
 }
 
-/** One file's +added/−deleted churn within a commit — a project's git log rows and a task's frozen
+/** One file's +added/−deleted churn within a commit — a project's git log rows and a frozen
  *  change list both render from this. */
 export interface CommitFileChange { path: string; added: number; deleted: number }
 

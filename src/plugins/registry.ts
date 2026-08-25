@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostConfig, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostAdvisor, PluginHostStores, PluginHostTerminals, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginBrainWorker, PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
 import type { McpBridgeSnapshot } from './mcpSnapshot.js';
@@ -112,11 +112,9 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
-  missions: ['engine', 'spawn', 'planFlow', 'planJobs', 'decisionQueue', 'missionGit', 'agents', 'gitLock', 'missions', 'liveTaskUsage', 'advisor', 'onTaskClosed'],
-  tasks: ['store', 'readiness', 'usage'],
 };
 
-/** A missing account is not plugin-access open mode: shared channels, task workers and unlinked callers
+/** A missing account is not plugin-access open mode: shared channels and unlinked callers
  *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
 const UNGRANTED_PLUGIN_USER: PluginAccessUser = { is_admin: false, granted_plugins: [] };
 const DESTINATION_PROVIDER_TIMEOUT_MS = 5_000;
@@ -135,8 +133,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
-/** What the host process actually has on hand for ctx.host — brainWorker resolves LIVE because
- *  bootstrap constructs it after the plugin load (late wiring, same as SpawnService.attachBrainWorker). */
+/** What the host process actually has on hand for ctx.host. Optional live accessors let a future
+ * plugin bind infrastructure after registry construction without rebuilding the registry. */
 export interface PluginHostWiring {
   tmux?: TmuxDriver;
   brainWorker?: () => PluginBrainWorker | undefined;
@@ -144,15 +142,10 @@ export interface PluginHostWiring {
   stores?: PluginHostStores;
   externalUsers?: PluginHostExternalUsers;
   prompts?: PluginHostPrompts;
-  config?: PluginHostConfig;
   relayClient?: (cfg: RelayConfig) => InferenceClient;
   git?: PluginHost['git'] extends () => infer G ? G : never;
   /** Live accessor — the PushSender is constructed after the plugin load (bootstrap late wiring). */
   push?: () => PluginHostPush | undefined;
-  /** Live accessor — chat-terminal/ticket services are constructed after the plugin load. */
-  terminals?: () => PluginHostTerminals | undefined;
-  /** Live accessor — the advisor collaborators are constructed after the plugin load. */
-  advisor?: () => PluginHostAdvisor | undefined;
   /** The typed sub-agent catalog editor (core-owned; the subagent plugin's editor surface). */
   subagentCatalog?: PluginSubagentCatalog;
   /** The canonical lexical-and-symlink project path guard, kept in core for extracted file operations. */
@@ -205,9 +198,6 @@ export class PluginRegistry {
    *  `user_prompts` keep matching when a template migrates from core into a plugin. */
   readonly promptEntries: { plugin: string; entry: PluginPromptEntry }[] = [];
   readonly promptSources = new Map<string, { plugin: string; file: string }>();
-  /** Plugin-contributed event→project resolvers (tenancy for core-shaped events whose data moved into a
-   *  plugin). Consulted by eventProjectId after the core lookups; first non-null wins. */
-  readonly eventProjectResolvers: { plugin: string; fn: (e: ElowenEvent) => number | null }[] = [];
   /** Activity-log persistence resolvers (see PluginContext.registerEventRowResolver). */
   readonly eventRowResolvers: { plugin: string; fn: (e: ElowenEvent) => EventPersistenceRow | null | undefined }[] = [];
   /** First-run readiness rows (see PluginContext.registerReadinessCheck). */
@@ -335,7 +325,6 @@ export class PluginRegistry {
     this.services.push(...other.services);
     this.bootReconciles.push(...other.bootReconciles);
     this.userRemovedHandlers.push(...other.userRemovedHandlers);
-    this.eventProjectResolvers.push(...other.eventProjectResolvers);
     this.eventRowResolvers.push(...other.eventRowResolvers);
     this.readinessChecks.push(...other.readinessChecks);
     // MCP tool names are a flat namespace on the daemon's /mcp server — first-writer-wins, like tools.
@@ -979,10 +968,6 @@ export class PluginRegistry {
         if (!capabilities.mutates?.includes('events')) throw new Error(`plugin "${name}" did not declare the mutates:['events'] capability`);
         deleteEvents?.(target);
       },
-      registerEventProjectResolver: (fn) => {
-        if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventProjectResolver refused: missing mutates:['events'] capability`); return; }
-        this.eventProjectResolvers.push({ plugin: name, fn });
-      },
       registerEventRowResolver: (fn) => {
         if (!capabilities.mutates?.includes('events')) { scoped.warn(`registerEventRowResolver refused: missing mutates:['events'] capability`); return; }
         this.eventRowResolvers.push({ plugin: name, fn });
@@ -1072,11 +1057,6 @@ export class PluginRegistry {
           if (!host?.prompts) throw new Error('no prompt service wired for plugins in this process');
           return host.prompts;
         },
-        config: () => {
-          if (!capabilities.reads?.includes('config')) throw new Error(`plugin "${name}" did not declare the reads:['config'] capability`);
-          if (!host?.config) throw new Error('no workspace config wired for plugins in this process');
-          return host.config;
-        },
         relayClient: (cfg) => {
           if (!capabilities.reads?.includes('inference')) throw new Error(`plugin "${name}" did not declare the reads:['inference'] capability`);
           if (!host?.relayClient) throw new Error('no relay client factory wired for plugins in this process');
@@ -1092,18 +1072,6 @@ export class PluginRegistry {
           const sender = host?.push?.();
           if (!sender) throw new Error('the push transport is not available in this process (daemon-only, wired after boot)');
           return sender;
-        },
-        terminals: () => {
-          if (!capabilities.reads?.includes('terminals')) throw new Error(`plugin "${name}" did not declare the reads:['terminals'] capability`);
-          const t = host?.terminals?.();
-          if (!t) throw new Error('the terminal controls are not available in this process (daemon-only, wired after boot)');
-          return t;
-        },
-        advisor: () => {
-          if (!capabilities.reads?.includes('terminals')) throw new Error(`plugin "${name}" did not declare the reads:['terminals'] capability`);
-          const a = host?.advisor?.();
-          if (!a) throw new Error('the advisor collaborators are not available in this process (daemon-only, wired after boot)');
-          return a;
         },
         subagentCatalog: () => {
           if (!capabilities.reads?.includes('subagent-catalog')) throw new Error(`plugin "${name}" did not declare the reads:['subagent-catalog'] capability`);

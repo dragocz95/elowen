@@ -37,7 +37,7 @@ function sessionPageOpts(rawLimit?: string, rawOffset?: string): { limit?: numbe
  *  caller's own conversation (`brain-<userId>`). Degrades gracefully when the brain is not wired. */
 export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   const route = createBrainRouteContext(ctx);
-  const { d, forbidden, pinOrigin, withBrain } = route;
+  const { d, pinOrigin, withBrain } = route;
   // One usage poller per provider that publishes a subscription rate-limit rail, keyed by the pi provider
   // id the active model reports. Each returns null until its OAuth account is connected, so the route can
   // look one up unconditionally and simply get null when the active model has no rail.
@@ -52,7 +52,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   app.get('/brain/status', async c => {
     if (!d.brain) return c.json({ running: false, sessionId: null, model: '', usage: null, statusline: null, project: { cwd: null, branch: null }, mcp: null });
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     // The statusline plugin's display toggles ride along (no secrets in there), so any chat client —
     // web dock or CLI — renders the same user-configured statusline without an admin-only call.
     const statusline = d.config.get().plugins.enabled.includes('statusline')
@@ -79,7 +78,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
    *  model's provider (OpenAI Codex, Kimi, …). Kept separate from the hot status poll: the CLI can refresh
    *  these slow-changing limits independently. Returns null when the active model has no usage rail. */
   app.get('/brain/rate-limits', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.brain) return c.json(null);
     try {
       const status = d.brain.status(c.get('user').id, c.req.query('session'));
@@ -102,7 +100,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
    *  active model. The settings page renders a per-account usage rail from this; accounts without a usable
    *  OAuth credential (or no rail) return null and are omitted. */
   app.get('/brain/rate-limits/all', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const entries = await Promise.all(
       Object.entries(usageServices).map(async ([provider, service]) => [provider, await service.getUsage()] as const),
     );
@@ -133,7 +130,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // bare array every current caller consumes; present → a { items, total, hasMore } window.
   app.get('/brain/sessions', async c => {
     if (!d.brain) return c.json([]);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const opts = sessionPageOpts(c.req.query('limit'), c.req.query('offset'));
     return c.json(opts ? d.brain.listSessions(c.get('user').id, opts) : d.brain.listSessions(c.get('user').id));
   });
@@ -143,7 +139,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // so `:id` below never captures "managed-sessions". Admin-only (channel/task sessions are shared state).
   app.get('/brain/managed-sessions', async c => {
     if (!d.brain) return c.json([]);
-    if (forbidden(c) || !c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
+    if (!c.get('user')?.is_admin) return c.json({ error: 'forbidden' }, 403);
     return c.json(d.brain.listManagedSessions(c.get('user').id));
   });
   // Delete EVERYTHING the caller was shown (the panel's confirmed "delete all"). Registered before the
@@ -164,7 +160,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // only processes they own (`ownsProcess`), so one operator's shell output never reaches another's panel.
   const denyNonOwner = (c: { get: (k: 'tokenScope' | 'user') => unknown }): boolean => {
     const u = c.get('user') as { id: number } | undefined; // absent during setup mode (0 users) — fail closed
-    return forbidden(c as { get: (k: 'tokenScope') => string }) || !u || !d.brain?.isOwner(u.id);
+    return !u || !d.brain?.isOwner(u.id);
   };
   app.get('/brain/processes', c => {
     if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
@@ -188,7 +184,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // yield [] — the store enforces that, plus the ownership scoping.
   app.get('/brain/search', async c => {
     if (!d.brain) return c.json([]);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     return c.json(d.brain.searchMessages(c.get('user').id, c.req.query('q') ?? ''));
   });
 
@@ -196,7 +191,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // Loaded straight from an <img>: through the web proxy the request carries the session cookie, which the
   // proxy turns into a daemon bearer, so this needs no signed link — it is a normal authenticated GET.
   app.get('/brain/chat-images/:file', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.chatImagesDir || !d.brainStore) return c.json({ error: 'not found' }, 404);
     const file = c.req.param('file');
     // Shape first, and only then the database: the ownership check scans message content for this string,
@@ -223,7 +217,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // Agent-shared general files. This intentionally differs from chat-images: arbitrary bytes — especially
   // HTML — must NEVER render from the app's own origin, so every response is a forced opaque download.
   app.get('/brain/chat-files/:file', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     if (!d.chatImagesDir || !d.brainStore) return c.json({ error: 'not found' }, 404);
     const file = c.req.param('file');
     // Shape BEFORE the database for the same reason as images: `%`/`_` must not widen the LIKE scan.
@@ -244,7 +237,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // Generated images (image-gen plugin) — name is strictly sanitized, path stays inside the data dir.
   app.get('/brain/images/:file', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const file = c.req.param('file');
     if (!d.pluginDataRoot || !/^[a-z0-9]+\.png$/.test(file)) return c.json({ error: 'not found' }, 404);
     // Generated + edited images live in their respective plugin data dirs; try each.
@@ -287,7 +279,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // path segment (`/export`) so it never collides with the `:id` delete/patch handlers above.
   app.get('/brain/sessions/:id/export', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const format = c.req.query('format') === 'jsonl' ? 'jsonl' : 'html';
     let out;
     try { out = await d.brain.exportSession(c.get('user').id, c.req.param('id'), format); }
@@ -316,7 +307,6 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // someone else's conversation.
   app.get('/brain/messages', async c => {
     if (!d.brain) return c.json([]);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const session = c.req.query('session');
     const page = messagePageOpts(c.req.query('limit'), c.req.query('before'));
     const access = { anyOwner: !!c.get('user')?.is_admin };

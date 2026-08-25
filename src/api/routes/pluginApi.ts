@@ -25,17 +25,11 @@ async function dispatchPluginApi(
   ctx: RouteContext,
   match: { plugin: string; userGrantable: boolean; handler: PluginApiRoute['handler']; access: PluginApiAccess; remainder: string; params?: Record<string, string> },
 ) {
-  // Declared access, enforced centrally. An agent service token reaches ONLY a route that opted into
-  // `access: 'agent'` (it runs with skipped permissions — same deny-by-default as the core agent
-  // allow-list); task-level pinning is the handler's job via `auth.agentTask`. `admin` uses the
-  // setup-tolerant gate the core config routes use, so onboarding can configure an admin-level plugin.
-  const scope = c.get('tokenScope') === 'agent' ? 'agent' as const : 'user' as const;
-  if (scope === 'agent' && match.access !== 'agent') return c.json({ error: 'forbidden' }, 403);
-  if (scope === 'user' && match.access === 'admin' && ctx.notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
+  // Declared access is enforced centrally; admin uses the setup-tolerant core gate.
+  if (match.access === 'admin' && ctx.notAdminUnlessSetup(c)) return c.json({ error: 'forbidden' }, 403);
   // Per-user grant, for a plugin whose manifest opted in. Checked HERE rather than per route, so a
-  // plugin cannot grow an ungated endpoint by forgetting one. An agent token is out of scope: it already
-  // passed the stricter `access: 'agent'` gate and acts for a task, not for an account.
-  if (scope === 'user' && match.userGrantable && !isPluginAllowedForUser(c.get('user'), { name: match.plugin, userGrantable: true })) {
+  // plugin cannot grow an ungated endpoint by forgetting one.
+  if (match.userGrantable && !isPluginAllowedForUser(c.get('user'), { name: match.plugin, userGrantable: true })) {
     // Say it in the log. From the user's seat a missing grant looks exactly like a broken feature, and an
     // operator debugging that has nothing else to go on — the response is a bare 403 by design.
     log.info(`plugin ${match.plugin} refused for user ${c.get('user')?.id ?? 'anonymous'}: not granted`);
@@ -61,26 +55,17 @@ async function dispatchPluginApi(
     auth: {
       userId: c.get('user')?.id ?? null,
       admin: !ctx.notAdmin(c),
-      tokenScope: scope,
-      agentTask: c.get('agentTask') ?? null,
+      tokenScope: 'user',
       accessibleProjects: projects === null ? null : [...projects],
     },
   };
 
   // The handler runs inside an IDENTITY scope so `ctx.currentIdentity()` answers in an API handler the
-  // same way it does in a tool — a plugin that owns per-user data needs one way to ask "whose request is
-  // this?", not two. It is explicitly not a turn scope: no Policy, no tool policy, no session id, so
-  // `isAdminSession()` stays false and the path guard keeps refusing.
-  // An AGENT token carries no account: it is issued to the daemon's service principal, so `auth.userId`
-  // names the operator rather than anyone the request is for. Handing that on as the acting account would
-  // make `ctx.userConfig()` inside an agent-scope route read the OPERATOR's per-account values (their
-  // credentials) for work that belongs to a task. No account is the honest answer; a route that needs the
-  // task's owner must resolve it from `auth.agentTask`.
-  const actingUserId = scope === 'agent' ? null : request.auth.userId;
+  // same way it does in a tool. It is explicitly not a turn scope: no Policy, tool policy or session id.
   const identity: TurnIdentity = {
     platform: 'http',
     userId: String(request.auth.userId ?? ''),
-    ...(actingUserId !== null ? { elowenUserId: actingUserId } : {}),
+    ...(request.auth.userId !== null ? { elowenUserId: request.auth.userId } : {}),
     ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
     admin: request.auth.admin,
     // Same rule as inside a turn (see `operatesInstance`), not a second opinion: this used to compare the

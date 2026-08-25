@@ -8,7 +8,7 @@ import type { ElowenApp } from '../context.js';
 import type { BrainRouteContext } from './brainRouteContext.js';
 
 export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden, notAdminUnlessSetup } = route;
+  const { d, notAdminUnlessSetup } = route;
 
   // The pickable models across every configured brain provider — dedicated entries, connected OAuth
   // accounts, or the relay fallback (feeds the Account → CLI dropdown and the CLI /model picker).
@@ -22,7 +22,6 @@ export function registerBrainProviderRoutes(app: ElowenApp, route: BrainRouteCon
   // or the plugin registry reads it, and it goes away in the migration's cleanup phase. Non-admins only
   // see models their allow-list permits — this single server-side filter covers web AND CLI.
   app.get('/brain/models', async c => {
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = brainConfigFromElowen(d.config, d.brainAuth);
     if (!cfg) return c.json([]);
     const models = (await listBrainModels(cfg)).map((m) => {

@@ -1,4 +1,3 @@
-import { tolerateMissingPluginTables } from './db.js';
 import type { Db } from './db.js';
 import { ACTIVITY_KINDS, type ElowenEvent } from '../api/sse.js';
 import type { EventPersistenceRow } from '../plugins/api.js';
@@ -34,17 +33,10 @@ export function isTeamFeedRow(row: { type: string; surface?: string }): boolean 
  *  line, short enough that the feed still shows the shape of someone's afternoon. */
 const AGGREGATION_WINDOW_MINUTES = 10;
 
-/** The CORE persistence mapping: only the event shapes core itself owns. Everything agents-domain
- *  (mission/review/decision/message/signal) is mapped by the agents plugin's registered row resolver —
- *  with that plugin disabled those events are simply not persisted, matching the rest of the
- *  disabled-plugin degradation. Old rows are untouched either way: the resolver emits the exact same
- *  `type` strings the core mapping used to, so the persisted timeline stays one continuous format. */
+/** The core persistence mapping. Plugin events remain opaque and plugin row resolvers may map any
+ *  additional plugin-owned event shape registered through the generic bus. */
 function coreToRow(e: ElowenEvent): EventPersistenceRow | null {
   switch (e.type) {
-    case 'task': return { type: 'task', target: e.taskId, detail: e.status, labelTitleId: e.taskId };
-    case 'change': return null; // transient live-refresh ping (git is its own source of truth) — not persisted
-    case 'ask': return null; // transient pending-ask nudge for the Escalations inbox — not persisted
-    case 'plan': return null; // transient job-status ping — not part of the persistent timeline
     // transient "your memory counters moved" nudge — memory_events is the durable record for memories
     case 'memory': return null;
     // The target stays the external identity, because that is what an audit trail has to pin down. The
@@ -54,7 +46,7 @@ function coreToRow(e: ElowenEvent): EventPersistenceRow | null {
     // A plugin event lands in the timeline as `plugin:<name>` so the feed can filter per plugin; the
     // payload is the plugin's own JSON (rendered by its UI, opaque to the core).
     case 'plugin': return { type: `plugin:${e.plugin}`, target: e.kind, detail: JSON.stringify(e.data ?? null) };
-    default: return null; // plugin-domain shapes — a registered row resolver may claim them below
+    default: return null;
   }
 }
 
@@ -80,24 +72,8 @@ export class EventStore {
     if (e.type === 'activity') { this.recordActivity(e, projectId ?? null); return; }
     const r = this.toRow(e);
     if (!r) return;
-    // Stamp the event with its owning project so the timeline can scope it to the right repo. The bus
-    // subscriber resolves the project for EVERY event type and passes it in; a direct caller that
-    // omits it falls back to the row's task lookup (rows without a labelTitleId stay null).
-    // `tasks` is a WORK-PLUGIN table: with that plugin disabled the timeline stays core and still
-    // records the event, it merely has no task to derive a project or a label from (another plugin's
-    // resolver can still name one — an agents mission event labels itself with its epic).
-    const task = r.labelTitleId
-      ? tolerateMissingPluginTables(
-          () => this.db.prepare('SELECT project_id, title FROM tasks WHERE id = ?').get(r.labelTitleId) as { project_id: number; title: string } | undefined,
-          undefined)
-      : undefined;
-    let pid = projectId;
-    if (pid === undefined) pid = task?.project_id ?? null;
-    // Snapshot a human label now so the event still reads as a name after its task/epic is deleted
-    // (events outlive tasks). The row names the task whose title labels it (task/review → the task,
-    // mission → its epic); signal/plan rows carry no title id — the target already reads as a name.
-    // A row that set `label` itself has no task behind it at all and wins outright.
-    const label = r.label ?? task?.title ?? '';
+    const pid = projectId ?? null;
+    const label = r.label ?? '';
     this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, pid, label);
   }
   /** Write one team-feed event, folding it into an existing row when an identical one is already in

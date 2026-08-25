@@ -32,10 +32,7 @@ type SessionKind =
   | 'trusted-channel'
   /** A shared platform channel driven by OTHER, role-scoped people — the owner's full-scope Elowen* API
    *  tools are withheld; only Policy-guarded plugin tools load. */
-  | 'foreign-channel'
-  /** An elowen-exec task worker — its one control-plane tool (close-own-task) is baked in by the
-   *  caller; plugin tools ride along, but never the owner's Elowen* API tools. */
-  | 'task-worker';
+  | 'foreign-channel';
 
 /** What a plugin tool call produced — the payload the `tools.call.after` hook receives. `params` is the
  *  tool's input object (second `execute` argument) and `result` its resolved return value; both stay
@@ -66,18 +63,16 @@ interface SessionToolDeferralSpec {
 
 export interface CapabilitySpec {
   kind: SessionKind;
-  /** PRIVATE per-user long-term memory tools — composed for every interactive session (owner-chat + all
-   *  channel kinds), NOT task-workers. Each memory tool re-checks the acting identity at execute time and
-   *  keys on a resolved elowenUserId, so a caller only ever reaches their OWN memory and an unlinked/
-   *  anonymous sender (no elowenUserId) or a task-worker (no identity) gets a locked no-op. */
+  /** PRIVATE per-user long-term memory tools. Each tool re-checks the acting identity at execute time and
+   *  keys on a resolved elowenUserId, so a caller only ever reaches their own memory and an unlinked or
+   *  anonymous sender gets a locked no-op. */
   memoryTools?: () => ToolDefinition[];
   /** Deferred-tool metadata is evaluated only after every non-ToolSearch group has been built once. */
   toolDeferral?: SessionToolDeferralSpec;
   /** The `ToolSearch` built-in, composed for every INTERACTIVE session that actually defers tools. The
    *  deferred set is handed to the factory so it can close over the same handle the session receives. */
   toolSearch?: (deferred: Set<string>) => ToolDefinition[];
-  /** Core sharing tools (`ShareImage` and `ShareFile`). Interactive sessions only: a task worker has no
-   *  person-facing surface to receive them. */
+  /** Core sharing tools (`ShareImage` and `ShareFile`). */
   shareImage?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
   /** name → the accounts a composed plugin tool belongs to. Set only where a session composes several
@@ -318,15 +313,10 @@ function toolDeferralCandidates(
  *  (gatePermissions), the single choke point the per-user allow/ask/deny rules act on. */
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
-  const interactive = spec.kind !== 'task-worker';
-  // Memory tools ride every INTERACTIVE session (owner-chat + all channel kinds): memory is per-user, so
-  // any linked sender reaches THEIR OWN memory from any surface (web/CLI chat or a Discord channel). The
-  // tools re-check identity at execute time and key on the resolved elowenUserId, so an unlinked/anonymous
-  // sender gets a locked no-op and no one can reach another user's memory. Task-workers (no identity)
-  // never compose them.
-  const memoryTools = interactive ? (spec.memoryTools?.() ?? []) : [];
-  // Same reasoning as memory: every interactive surface has a reader, a task worker does not.
-  const shareImageTools = interactive ? (spec.shareImage?.() ?? []) : [];
+  // Memory tools re-check identity at execute time and key on the resolved user, so an unlinked sender
+  // gets a locked no-op and no caller can reach another user's memory.
+  const memoryTools = spec.memoryTools?.() ?? [];
+  const shareImageTools = spec.shareImage?.() ?? [];
   // Plan mode is an owner-chat concept — a channel, cron or sub-agent turn carries no mode at all
   // (currentTurnMode), so there would be nothing for this tool to exit. Composed unconditionally for the
   // owner rather than only while planning, mirroring the reference: the tool is what REFUSES outside plan
@@ -339,7 +329,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // sequence as the legacy composition with ToolSearch removed: policy observes the full registered set,
   // while an empty deferred result leaves every existing definition and byte position untouched.
   const withoutToolSearch = [...memoryTools, ...shareImageTools, ...pluginTools, ...planTools];
-  const deferred = interactive && spec.toolDeferral
+  const deferred = spec.toolDeferral
     ? computeDeferredToolNames(
         toolDeferralCandidates(withoutToolSearch, spec.toolDeferral, spec.personalToolOwners),
         spec.toolDeferral.overrides, spec.toolDeferral.options)

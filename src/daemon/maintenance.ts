@@ -4,7 +4,6 @@ import { chatFilesDir, sweepChatFiles } from '../brain/chatFiles.js';
 import { isEvictable, vitality, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 import { createBootRecovery } from '../brain/recovery/index.js';
 import type { BrainTerminalService } from '../brain/terminalService.js';
-import type { BrainWorkerService } from '../brain/worker/brainWorker.js';
 import type { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { SystemClock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
@@ -47,7 +46,6 @@ export function runMemoryEvictionSweep(deps: MemoryEvictionSweepDeps): number {
 interface MaintenanceDeps {
   brain: BrainService | undefined;
   brainTerminal: BrainTerminalService | undefined;
-  brainWorkers: BrainWorkerService;
   brainStore: BrainStore;
   chatImagesDir: string | undefined;
   config: ConfigStore;
@@ -204,12 +202,11 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     const stopIdleSessionReap = clock.setInterval(() => {
       void deps.brain?.reapIdleLiveSessions().catch((e) => deps.log.error('idle live-session reap failed', e));
     }, 60_000);
-    const stopBrainWorkerWatchdog = deps.brainWorkers.startWatchdog();
     // Memory embed queue: fill in missing/stale memory vectors in the background. No-ops until an
     // embedding provider/model is configured; one bad memory never aborts a drain (caught + logged).
     const stopEmbedQueue = clock.setInterval(() => {
       void deps.embedQueue.drain().catch((e) => deps.log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopTicketSweep(); stopTerminalSweep(); stopIdleSessionReap(); stopBrainWorkerWatchdog(); stopEmbedQueue(); };
+    return () => { stopTokenPurge(); stopEventPurge(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopTicketSweep(); stopTerminalSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
   };
 }

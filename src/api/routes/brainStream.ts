@@ -6,12 +6,11 @@ import type { ElowenApp } from '../context.js';
 import { messagePageOpts, type BrainRouteContext } from './brainRouteContext.js';
 
 export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteContext): void {
-  const { d, forbidden } = route;
+  const { d } = route;
   // Live events of the ACTIVE conversation by default, or of one explicitly owned session when
   // `?session=<id>` is given (the sub-agent drill-in stream — survives that session's respawns).
   app.get('/brain/stream', c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
-    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const brain = d.brain;
     const userId = c.get('user').id;
     const session = c.req.query('session');

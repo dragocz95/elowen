@@ -95,9 +95,7 @@ async function provisionedMenu(info: InstallInfo, version: string): Promise<void
       try {
         // Shared updater: self-locating npm --prefix + systemd-aware restart (same path as `elowen update`).
         const r = await update(process.env, { current: version });
-        const message = r.updated
-          ? (r.restartDeferred ? `Installed ${r.to} — restart deferred (a mission is running).` : `Updated ${r.from} → ${r.to} and restarted.`)
-          : `Already on the latest version (${r.to}).`;
+        const message = r.updated ? `Updated ${r.from} → ${r.to} and restarted.` : `Already on the latest version (${r.to}).`;
         lastReport = { title: 'Update', body: message };
       } catch (e) {
         const message = `Update failed: ${(e as Error).message}`;
