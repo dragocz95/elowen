@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { MarketplaceService, parseRegistry, MarketplaceError } from '../../src/plugins/marketplace.js';
 import { discoverPlugins } from '../../src/plugins/loader.js';
 
@@ -11,13 +12,18 @@ let dirs: string[] = [];
 const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
+/** The version requirements a fixture plugin can declare: the daemon it needs (a minimum) and the
+ *  shared-helper contract it was built against (an exact major). */
+type Requires = { requiresCore?: string; requiresSharedApi?: number };
+
 /** One plugin folder (manifest + entry) inside a `plugins/<name>` root. */
-function writePlugin(pluginsRoot: string, name: string, version: string, requiresCore?: string): string {
+function writePlugin(pluginsRoot: string, name: string, version: string, requires: Requires = {}): string {
   const dir = join(pluginsRoot, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version, apiVersion: '1', description: `${name} plugin`, entry: 'index.mjs',
-    ...(requiresCore ? { requiresCore } : {}),
+    ...(requires.requiresCore ? { requiresCore: requires.requiresCore } : {}),
+    ...(requires.requiresSharedApi !== undefined ? { requiresSharedApi: requires.requiresSharedApi } : {}),
     provides: { tools: [`${name}_tool`] },
   }));
   writeFileSync(join(dir, 'index.mjs'), 'export function register(){}');
@@ -25,7 +31,7 @@ function writePlugin(pluginsRoot: string, name: string, version: string, require
 }
 
 /** Build a registry-repo fixture: registry.json + plugins/<name>/ for each entry. */
-function writeRegistryFixture(root: string, entries: { name: string; version: string; requiresCore?: string }[], extraNames: string[] = []): void {
+function writeRegistryFixture(root: string, entries: ({ name: string; version: string } & Requires)[], extraNames: string[] = []): void {
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, 'registry.json'), JSON.stringify({
     schema: 1,
@@ -33,7 +39,7 @@ function writeRegistryFixture(root: string, entries: { name: string; version: st
       .map((e) => ({ ...e, description: (e as { description?: string }).description ?? `${e.name} desc`, category: 'utility' })),
   }));
   const pluginsDir = join(root, 'plugins');
-  for (const e of entries) writePlugin(pluginsDir, e.name, e.version, e.requiresCore);
+  for (const e of entries) writePlugin(pluginsDir, e.name, e.version, e);
 }
 
 /** A fake `git` exec: `clone` copies the fixture registry into the target dir; the rest no-op. When
@@ -78,7 +84,7 @@ interface Harness {
 }
 
 function setup(opts: {
-  registryEntries: { name: string; version: string; requiresCore?: string }[];
+  registryEntries: ({ name: string; version: string } & Requires)[];
   bundled?: { name: string; version: string }[];
   installed?: { name: string; version: string }[];
   hostileNames?: string[];
@@ -306,6 +312,32 @@ describe('MarketplaceService.install', () => {
     });
     const running = (JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as { version: string }).version;
     await expect(svc.install('weather')).rejects.toThrow(new RegExp(`999\\.0\\.0.*${running.replace(/\./g, '\\.')}`));
+  });
+
+  /** The shared-helper contract, refused one step earlier than the loader does it. `requiresCore` cannot
+   *  stand in for this: the shared package ships inside the daemon, so its contract can move without the
+   *  daemon's own version moving at all — which is exactly what happened when an export was removed while
+   *  core stayed on the same number. Catching it at install keeps a plugin the host cannot link off disk
+   *  entirely, instead of leaving it installed-but-skipped. */
+  it('refuses a plugin built against a different shared-helper contract, and leaves nothing installed', async () => {
+    const { svc, userDir, enabled, reload } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0', requiresSharedApi: 999 }],
+    });
+    await expect(svc.install('weather')).rejects.toThrow(/elowen-plugin-shared API 999/);
+    expect(existsSync(join(userDir, 'weather'))).toBe(false);
+    expect(enabled).not.toContain('weather');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('installs a plugin that declares the shared contract this daemon ships', async () => {
+    // The permissive direction, for the same reason the requiresCore pair has one: a gate that refuses
+    // everything passes its own rejection test while blocking every adapter in the registry.
+    const { svc, userDir, enabled } = setup({
+      registryEntries: [{ name: 'weather', version: '1.0.0', requiresSharedApi: PLUGIN_SHARED_API_VERSION }],
+    });
+    await svc.install('weather');
+    expect(existsSync(join(userDir, 'weather', 'index.mjs'))).toBe(true);
+    expect(enabled).toContain('weather');
   });
 
   it('installs when the requirement is satisfied — the gate must fail in both directions', async () => {

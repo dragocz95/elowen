@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { parseManifest, PLUGIN_API_VERSION } from '../../src/plugins/manifest.js';
 
 const good = { name: 'skills', version: '0.1.0', apiVersion: PLUGIN_API_VERSION, description: 'x', entry: 'index.mjs' };
@@ -143,6 +144,46 @@ describe('parseManifest', () => {
   });
   it('rejects a non-object', () => {
     expect(() => parseManifest('nope')).toThrow();
+  });
+
+  /** The shared-helper contract, which is the axis `apiVersion` and `requiresCore` both miss: the package
+   *  ships INSIDE the daemon and a plugin links against the host's copy, so a plugin can be too new or too
+   *  old for the running core without either of those numbers moving. Left unchecked it fails as a
+   *  link-time SyntaxError from inside import(), which is why this refusal has to be a manifest one. */
+  describe('shared-helper contract (requiresSharedApi)', () => {
+    it('accepts the contract this daemon actually ships', () => {
+      expect(parseManifest({ ...good, requiresSharedApi: PLUGIN_SHARED_API_VERSION }).requiresSharedApi)
+        .toBe(PLUGIN_SHARED_API_VERSION);
+    });
+
+    it('refuses a plugin built for a NEWER contract, and says the daemon is the side that must move', () => {
+      expect(() => parseManifest({ ...good, requiresSharedApi: PLUGIN_SHARED_API_VERSION + 1 }))
+        .toThrow(/needs elowen-plugin-shared API \d+, but this daemon ships \d+ — update Elowen/);
+    });
+
+    it('refuses a plugin built for an OLDER contract, and says the plugin is the side that must move', () => {
+      // The direction the reviewer reproduced: the host removed an export the plugin still imports. Both
+      // ends must be refused — a one-sided gate only moves the SyntaxError to the other upgrade order.
+      expect(() => parseManifest({ ...good, requiresSharedApi: PLUGIN_SHARED_API_VERSION - 1 }))
+        .toThrow(/needs elowen-plugin-shared API \d+, but this daemon ships \d+ — update skills/);
+    });
+
+    it('names the plugin and both versions, so the log says which side is which', () => {
+      expect(() => parseManifest({ ...good, name: 'discord', requiresSharedApi: 99 }))
+        .toThrow(`"discord" needs elowen-plugin-shared API 99, but this daemon ships ${PLUGIN_SHARED_API_VERSION} — update Elowen so the two match`);
+    });
+
+    it('leaves a plugin that declares nothing alone — absent means "does not use the shared helpers"', () => {
+      // Every plugin published before the field existed is in this state. Defaulting it to a major would
+      // refuse every one of them on the next core update, including the many that never import the package.
+      expect(parseManifest(good).requiresSharedApi).toBeUndefined();
+    });
+
+    it('rejects a malformed declaration rather than coercing it into a match', () => {
+      for (const bad of ['2', 2.5, 0, -1, null]) {
+        expect(() => parseManifest({ ...good, requiresSharedApi: bad }), String(bad)).toThrow();
+      }
+    });
   });
 });
 

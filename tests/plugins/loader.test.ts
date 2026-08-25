@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 
 // Delegate to the real fs except readdirSync, which tests override to simulate an arbitrary on-disk
@@ -160,6 +162,95 @@ describe('loadPlugins', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /** The shared-helper contract, refused at the only moment that works.
+   *
+   *  A plugin links against the HOST's copy of `elowen-plugin-shared`, so removing an export from it
+   *  breaks every already-installed plugin that imports the export — as a link-time SyntaxError raised by
+   *  `import()` itself, before any code of the plugin's own could check a version. The manifest gate is
+   *  what gets in front of that, and these fixtures import a binding that genuinely does not exist so the
+   *  ordering is real rather than asserted: if the gate ran a line later, the SyntaxError would win and
+   *  both messages below would be the wrong one. */
+  describe('shared-helper contract', () => {
+    /** An entry that cannot be imported, by two independent routes: it links a binding
+     *  `elowen-plugin-shared` genuinely does not export (Node raises that at LINK time, which is the real
+     *  failure this gate exists for) and its module body throws on the line after. The second route is
+     *  what makes the ordering assertions below hold under a test runner that resolves ESM itself and
+     *  turns the missing binding into `undefined` instead of a SyntaxError — either way, reaching the
+     *  import at all produces a different message than the gate's. */
+    const UNIMPORTABLE = "import { CONTROL_COMMANDS } from 'elowen-plugin-shared/chatCommands';\n"
+      + "throw new Error('MODULE BODY RAN: ' + String(CONTROL_COMMANDS));\n"
+      + 'export function register(){}';
+
+    /** Build the fixture the way the installer really leaves a plugin on disk: its bare
+     *  `elowen-plugin-shared` imports resolve through a `node_modules` symlink to the HOST's, which is the
+     *  whole reason a plugin runs against the daemon's copy instead of its own. */
+    async function loadFixture(name: string, body: string, extra: Record<string, unknown>) {
+      const dir = mkdtempSync(join(tmpdir(), 'elowen-sharedapi-'));
+      try {
+        const pluginDir = makePlugin(dir, name, body, '1', extra);
+        symlinkSync(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(pluginDir, 'node_modules'), 'dir');
+        const errors: string[] = [];
+        const reg = await loadPlugins({ dirs: [dir], enabled: [name], logger: { info() {}, warn() {}, error: (m) => errors.push(m) } });
+        return { errors, reg };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    const load = (name: string, extra: Record<string, unknown>) => loadFixture(name, UNIMPORTABLE, extra);
+
+    it('refuses a plugin built for an OLDER contract before its entry is imported', async () => {
+      const { errors, reg } = await load('stale', { requiresSharedApi: PLUGIN_SHARED_API_VERSION - 1 });
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain(`needs elowen-plugin-shared API ${PLUGIN_SHARED_API_VERSION - 1}`);
+      expect(errors[0]).toContain(`this daemon ships ${PLUGIN_SHARED_API_VERSION}`);
+      expect(errors[0]).toContain('update stale');
+      // The ordering proof: this entry cannot be imported without failing, so the version message can only
+      // be the reported one if nothing ever tried.
+      expect(errors[0]).not.toContain('MODULE BODY RAN');
+      expect(reg.promptFragments).toEqual([]);
+    });
+
+    it('refuses a plugin built for a NEWER contract too, so neither upgrade order reaches the import', async () => {
+      const { errors } = await load('ahead', { requiresSharedApi: PLUGIN_SHARED_API_VERSION + 1 });
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('update Elowen');
+      expect(errors[0]).not.toContain('MODULE BODY RAN');
+    });
+
+    /** A plugin published BEFORE this field existed declares no contract, so there is nothing to compare
+     *  and it does reach the import. That case cannot be gated by a manifest that cannot speak — but the
+     *  SyntaxError Node raises names a missing binding, not a cause, so the log has to say what it means.
+     *  Driven through a module-body throw carrying that exact message: the runner used here links ESM
+     *  itself and would not raise the real one, and what is under test is how the failure is REPORTED. */
+    it('explains a shared-helper link failure for a plugin too old to declare a contract', async () => {
+      const { errors } = await loadFixture(
+        'legacy',
+        "throw new Error(\"The requested module 'elowen-plugin-shared/chatCommands' does not provide an export named 'CONTROL_COMMANDS'\");\n"
+        + 'export function register(){}',
+        {},
+      );
+      expect(errors[0]).toContain('does not provide an export named');
+      expect(errors[0]).toContain(`different elowen-plugin-shared contract than this daemon's (API ${PLUGIN_SHARED_API_VERSION})`);
+    });
+
+    it('leaves an unrelated failure message exactly as it was', async () => {
+      const { errors } = await loadFixture('other', "throw new Error('boom');\nexport function register(){}", {});
+      expect(errors[0]).toBe('plugin skipped: other: boom');
+    });
+
+    it('loads a plugin that declares the contract this daemon ships', async () => {
+      const { errors, reg } = await loadFixture(
+        'current',
+        "import { PLUGIN_SHARED_API_VERSION as v } from 'elowen-plugin-shared';\n"
+        + 'export function register(ctx){ ctx.registerSystemPromptFragment(`shared:${v}`); }',
+        { requiresSharedApi: PLUGIN_SHARED_API_VERSION },
+      );
+      expect(errors).toEqual([]);
+      expect(reg.promptFragments).toContain(`shared:${PLUGIN_SHARED_API_VERSION}`);
+    });
   });
 
   // Before this, an enabled plugin that no directory provided disappeared without a single log line.

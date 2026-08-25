@@ -55,6 +55,21 @@ The filename is **`elowen-plugin.json`**, not `orca-plugin.json`. `name`,
 folder name must match `name`, and `entry` must remain inside that folder.
 `apiVersion` is currently `"1"`.
 
+Two optional fields say what the plugin needs from its host, and both are checked
+before anything of the plugin's runs:
+
+- `requiresCore` — the **minimum** daemon version, e.g. `"0.29.0"`. For additive
+  changes: a plugin built against a newer core would otherwise install cleanly and
+  then throw inside `register(ctx)` on the first missing API.
+- `requiresSharedApi` — the **exact** `elowen-plugin-shared` contract major, e.g.
+  `2`. Declare it if you import that package at all; omit it if you do not. It is
+  a separate axis from `requiresCore` because the shared helpers ship *inside* the
+  daemon and your plugin links against the host's copy — so removing an export from
+  them breaks installed plugins without the daemon's own version moving. Exact, not
+  minimum: the number is bumped when an export disappears or changes shape, which
+  makes major N+1 no safer for you than N-1. The daemon refuses to install or load a
+  plugin whose declared major differs from the one it ships, and names both.
+
 `provides` can declare `tools`, `skills`, `hooks`, and `platforms`. When a
 tool or platform list is present, the registry refuses contributions not named
 there, so keep it synchronized with `register(ctx)`.
@@ -499,15 +514,15 @@ reuse it so a fix or a new field lands once, not three times:
 | `_shared/images.mjs` | `platformImageDirs(dataDir)`, `resolveImageFiles`, `imageMimeType` | Turning image names into upload-ready buffers: the directories an outgoing image may come from (the image plugins' data dirs plus the daemon's `chat-images` dir beside the database), reading them off disk, and the content type to declare. Hand it only names that passed `extractImageRefs` / `imageRefName` — they are joined onto a path. |
 | `_shared/messages.mjs` | `SHARED_MESSAGES` | The service-message keys that are identical on every surface (`noModels`, `restarting`, `compacted`, …). Spread these into your `MESSAGES[lang]` and layer your surface-specific texts (channel-vs-chat wording, your emphasis markers, picker prompts) on top. |
 | `_shared/help.mjs` | `HELP_DESCRIPTIONS`, `renderHelpLines` | The per-command `/help` wording, localized once. Give `renderHelpLines` the ordered command names your surface exposes, your `mono` inline-code wrapper and the container noun (`{place}`/`{placeLoc}`); it returns the command lines so a command can never be listed on one surface/language and dropped on another. |
-| `_shared/chatCommands.mjs` | `CONTROL_COMMANDS`, `runControlCommand` | The transport-agnostic control commands — `new` / `fast` / `stop` / `status` / `compact` / `restart`. Route those names to the core with a small binding (reply, admin gate, state, ctl/ref, active-model lookup); keep only the pickers and `/help` in your own switch. `CONTROL_COMMANDS` is a hand-written copy of that set and can drift from the daemon's catalog; prefer deriving it from `ctx.chatCommands(surface)` (`execution === 'session-control' && kind !== 'picker'`). |
+| `_shared/chatCommands.mjs` | `controlCommandsFrom`, `localCommandsFrom`, `botControlCommandsFrom`, `runControlCommand` | Who runs which `/command` — answered from the catalog the daemon published for your surface (`ctx.chatCommands(surface)`), never from a name list of your own. `controlCommandsFrom(commands)` gives the names to hand `runControlCommand` with a small binding (reply, admin gate, state, ctl/ref, active-model lookup). `localCommandsFrom(commands, myAdapterStateNames)` gives the ones you dispatch yourself — the pickers and `/help` — and your own switch must be gated on it. Both return an EMPTY set for an empty or malformed catalog, so an adapter that has not heard from the daemon accepts nothing rather than falling back to what it happens to implement. `botControlCommandsFrom` is their union, for keeping what was said to the bot out of a transcript. |
 | `_shared/liveTrace.mjs` | `makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`, `makeOutputSummary`, `outputFailed`, `diffSummary`, `sanitizeControl` | The live-tool-trace render/fold rule: how a settled tool result is summarized, how consecutive calls fold into one counted row (mirroring the CLI transcript), and how a row/card becomes text. Build these from a per-surface `style` (mention/fence hardening, bold/strike, the output-line prefix). |
 
 A plugin's own `lib/state.mjs` / `lib/display.mjs` are one-line re-exports of the
 shared modules. Its `lib/format.mjs` re-exports the shared helpers and adds only
 the genuinely per-surface pieces (see below); its `lib/messages.mjs` spreads
 `SHARED_MESSAGES` and renders `/help` through `renderHelpLines`; its `lib/adapter.mjs`
-delegates `CONTROL_COMMANDS` to `runControlCommand`; its `lib/stream.mjs` builds the
-render helpers from a `style`.
+delegates `controlCommandsFrom(…)` to `runControlCommand`; its `lib/stream.mjs` builds
+the render helpers from a `style`.
 
 ### What stays per-platform
 
@@ -535,9 +550,11 @@ shared helpers rather than forking them:
 4. `lib/messages.mjs` → spread `SHARED_MESSAGES` into `MESSAGES.en`/`MESSAGES.cs`,
    add your surface-specific texts, and render `help` via `renderHelpLines` with
    the command names your surface exposes.
-5. `lib/adapter.mjs` → in your command handler, delegate `CONTROL_COMMANDS` to
-   `runControlCommand` first (passing the reply, admin gate, state, ctl/ref and
-   active-model binding); keep only the pickers and `/help` in your own switch.
+5. `lib/adapter.mjs` → in your command handler, send `controlCommandsFrom(ctx.chatCommands(surface))`
+   to `runControlCommand` first (passing the reply, admin gate, state, ctl/ref and
+   active-model binding). Keep only the pickers and `/help` in your own switch, and
+   gate that switch on `localCommandsFrom(…)` so a command the daemon did not publish
+   cannot be run by typing it.
 6. `lib/stream.mjs` → build the render helpers from a `style` object
    (`makeTextHelpers`, `makeFoldedCalls`, `makeToolLinesFor`, `makeCardLines`,
    `makeOutputSummary`); keep the throttled editable-message transport and the

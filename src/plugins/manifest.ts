@@ -1,5 +1,9 @@
 import { Type } from 'typebox';
 import { Check, Errors } from 'typebox/value';
+// The daemon's OWN copy of the shared helpers — the exact package an installed plugin resolves through
+// the node_modules symlink the installer creates. Imported for its version rather than re-declared, so
+// there is one number and nothing to keep in step.
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import type { PluginCapabilities } from './api.js';
 
 /** Bump when the plugin contract changes incompatibly; a plugin's manifest must match exactly. */
@@ -86,6 +90,24 @@ export interface PluginManifest {
    *  functionality that silently is not there. `apiVersion` remains the axis for BREAKING changes; this
    *  one is for additive ones, which is what a compiled plugin actually trips over. */
   requiresCore?: string;
+  /** The `elowen-plugin-shared` contract major this plugin was built against, e.g. `2`. Declare it if the
+   *  plugin imports the package at all; omit it if it does not.
+   *
+   *  A plugin does NOT run against the copy it was developed with. Its `node_modules` is a symlink to the
+   *  host's, so it always links against whatever the daemon ships — and the two can differ in either
+   *  direction. When they do, the failure is a link-time `SyntaxError` naming a missing binding, thrown
+   *  from inside `import()` before a single line of the plugin runs. Nothing the plugin itself could check
+   *  ever gets the chance.
+   *
+   *  So the host answers it, from the manifest, before the import: `parseManifest` compares this against
+   *  its own {@link PLUGIN_SHARED_API_VERSION}. EXACT match, unlike `requiresCore`'s minimum, because the
+   *  number is bumped when an export disappears or changes shape — a plugin built for major N is no safer
+   *  on N+1 than on N-1.
+   *
+   *  Absent means "this plugin does not use the shared helpers" and is not checked. That is also the only
+   *  honest reading for a plugin published before this field existed: its manifest cannot say what it
+   *  needs, so the host cannot gate it (loader.ts explains what happens to those instead). */
+  requiresSharedApi?: number;
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
@@ -206,6 +228,7 @@ const ManifestSchema = Type.Object({
   version: Type.String({ minLength: 1 }),
   apiVersion: Type.String({ minLength: 1 }),
   requiresCore: Type.Optional(Type.String({ pattern: '^\\d+(\\.\\d+)*$' })),
+  requiresSharedApi: Type.Optional(Type.Integer({ minimum: 1 })),
   description: Type.String(),
   entry: Type.String({ minLength: 1 }),
   provides: Type.Optional(Type.Object({
@@ -291,8 +314,15 @@ function dropUnrenderableFields(raw: unknown, onWarn?: (message: string) => void
   return sanitized ?? raw;
 }
 
-/** Validate a raw parsed `elowen-plugin.json`. Throws a descriptive Error on any problem (bad shape or an
- *  apiVersion the daemon doesn't support), so the loader can skip the plugin and log why. */
+/** Validate a raw parsed `elowen-plugin.json`. Throws a descriptive Error on any problem (bad shape, an
+ *  apiVersion the daemon doesn't support, a shared-helper contract it doesn't ship), so the loader can
+ *  skip the plugin and log why.
+ *
+ *  THE place shared-API compatibility is decided. Both callers already funnel through here, which is what
+ *  makes one check cover both moments that matter: the installer validates a staged folder
+ *  (marketplace.ts) so a mismatched plugin never lands, and the loader validates on the way to
+ *  `import(entry)` (loader.ts) so one that is already on disk — installed by an older daemon, or dropped
+ *  in by hand — is refused before its module body links. */
 export function parseManifest(raw: unknown, onWarn?: (message: string) => void): PluginManifest {
   const candidate = dropUnrenderableFields(raw, onWarn);
   if (!Check(ManifestSchema, candidate)) {
@@ -302,6 +332,15 @@ export function parseManifest(raw: unknown, onWarn?: (message: string) => void):
   const m = candidate as PluginManifest;
   if (m.apiVersion !== PLUGIN_API_VERSION) {
     throw new Error(`unsupported plugin apiVersion "${m.apiVersion}" (need "${PLUGIN_API_VERSION}")`);
+  }
+  // Symmetric on purpose: too NEW for this daemon and too OLD for it are the same accident seen from
+  // opposite ends, and both end as the same unreadable link-time SyntaxError if they get as far as the
+  // import. Name the plugin and both numbers so the message says which side has to move.
+  if (m.requiresSharedApi !== undefined && m.requiresSharedApi !== PLUGIN_SHARED_API_VERSION) {
+    throw new Error(
+      `"${m.name}" needs elowen-plugin-shared API ${m.requiresSharedApi}, but this daemon ships ${PLUGIN_SHARED_API_VERSION} — `
+      + `${m.requiresSharedApi > PLUGIN_SHARED_API_VERSION ? 'update Elowen' : `update ${m.name}`} so the two match`,
+    );
   }
   return m;
 }

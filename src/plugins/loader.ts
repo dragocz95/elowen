@@ -2,6 +2,7 @@ import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
@@ -349,7 +350,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {
-        opts.logger.error(`plugin skipped: ${name}: ${err instanceof Error ? err.message : String(err)}`);
+        opts.logger.error(`plugin skipped: ${name}: ${explainFailure(err)}`);
       }
     }
   }
@@ -362,4 +363,23 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
     opts.logger.warn(`enabled but not found in any plugin directory: ${missing.join(', ')}`);
   }
   return registry;
+}
+
+/** The ESM link error Node throws for a binding a module does not export. Paired below with the package
+ *  name, so a missing export from anything else keeps its own unannotated message. */
+const MISSING_EXPORT_ERROR = /does not provide an export named/;
+
+/** Turn a load failure into something the log's reader can act on.
+ *
+ *  The manifest gate (parseManifest → `requiresSharedApi`) refuses a shared-API mismatch before the entry
+ *  is imported, so a plugin that DECLARES what it needs never reaches this. What does reach it is a plugin
+ *  published before that field existed: its manifest cannot state a contract, so the host has nothing to
+ *  compare and the mismatch surfaces the only way it can — as a link-time SyntaxError naming a binding,
+ *  from inside `import()`. That message describes a symptom nobody can map back to a cause, so name the
+ *  cause next to it. This only makes an already-failed load legible; it does not rescue the plugin. */
+function explainFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!MISSING_EXPORT_ERROR.test(message) || !message.includes('elowen-plugin-shared')) return message;
+  return `${message} — built against a different elowen-plugin-shared contract than this daemon's (API `
+    + `${PLUGIN_SHARED_API_VERSION}); update the plugin, or the daemon to the version it was built for`;
 }

@@ -19,7 +19,7 @@ import { LiveMessage } from 'elowen-plugin-shared/liveMessage';
 import { readJsonSafe, writeJsonAtomic } from 'elowen-plugin-shared/atomicJson';
 ```
 
-The package root exports only the contract version, which a plugin can check before it registers:
+The package root exports only the contract version:
 
 ```js
 import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
@@ -27,6 +27,16 @@ import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 
 `PLUGIN_SHARED_API_VERSION` is bumped when an existing export changes shape or disappears — not when
 something is added.
+
+A plugin does not check it in code. Declare the major you build against in `elowen-plugin.json`:
+
+```json
+{ "requiresSharedApi": 2 }
+```
+
+The daemon refuses to install or load a plugin whose declared major differs from the one it ships, and
+says which is which. That check has to happen before the plugin's entry module is imported: a removed
+export fails at link time, inside `import()`, where no code of the plugin's own could report it.
 
 ## Modules
 

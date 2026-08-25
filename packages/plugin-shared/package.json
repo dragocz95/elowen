@@ -35,6 +35,7 @@
     "help.mjs",
     "httpClient.mjs",
     "images.mjs",
+    "index.d.mts",
     "index.mjs",
     "lifecycle.mjs",
     "liveMessage.mjs",
