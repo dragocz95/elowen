@@ -139,7 +139,9 @@ export function parseModelExec(spec) {
 }
 
 /** @typedef {string | number | boolean | null | undefined} ColumnValue */
-/** @typedef {{ maxWidth?: number, gap?: number }} ColumnFormatOptions */
+/** @typedef {'left' | 'center' | 'right'} ColumnAlignment */
+/** @typedef {{ maxWidth?: number, gap?: number, alignments?: ReadonlyArray<ColumnAlignment> }} ColumnFormatOptions */
+/** @typedef {{ maxWidth?: number, fence?: boolean }} ChatTableOptions */
 
 const DEFAULT_COLUMN_WIDTH = 72;
 const DEFAULT_COLUMN_GAP = 2;
@@ -242,6 +244,61 @@ function fitColumnWidths(desired, available) {
   return widths;
 }
 
+function columnLayout(rows, options) {
+  const maxWidth = options.maxWidth ?? DEFAULT_COLUMN_WIDTH;
+  const gap = options.gap ?? DEFAULT_COLUMN_GAP;
+  const alignments = options.alignments ?? [];
+  if (!Number.isInteger(maxWidth) || maxWidth < 1) throw new RangeError('maxWidth must be a positive integer');
+  if (!Number.isInteger(gap) || gap < 0) throw new RangeError('gap must be a non-negative integer');
+  if (!Array.isArray(alignments)) throw new TypeError('alignments must be an array');
+  for (const alignment of alignments) {
+    if (alignment != null && !['left', 'center', 'right'].includes(alignment)) {
+      throw new TypeError(`unsupported column alignment: ${alignment}`);
+    }
+  }
+
+  // A non-array row used to render as a blank line, which reads as "this entry has no data" rather than as
+  // the caller bug it is. Reject it instead of shipping a plausible-looking hole in the table.
+  const measured = rows.map((row, index) => {
+    if (!Array.isArray(row)) throw new TypeError(`formatColumns: row ${index} is not an array`);
+    return row.map((value) => measureCell(normalizeCell(value)));
+  });
+  const columnCount = measured.reduce((max, row) => Math.max(max, row.length), 0);
+  const activeColumns = Array.from({ length: columnCount }, (_, index) => index)
+    .filter((index) => measured.some((row) => (row[index]?.text ?? '') !== ''));
+  if (activeColumns.length === 0) return { measured, activeColumns, widths: [], alignments: [], gap };
+
+  const gapWidth = gap * (activeColumns.length - 1);
+  const available = maxWidth - gapWidth;
+  if (available < activeColumns.length) {
+    throw new RangeError(`maxWidth ${maxWidth} cannot fit ${activeColumns.length} columns with gap ${gap}`);
+  }
+
+  const desired = activeColumns.map((index) => measured.reduce(
+    (max, row) => Math.max(max, row[index]?.width ?? 0),
+    1,
+  ));
+  return {
+    measured,
+    activeColumns,
+    widths: fitColumnWidths(desired, available),
+    alignments: activeColumns.map((column) => alignments[column] ?? 'left'),
+    gap,
+  };
+}
+
+function renderColumnLayout({ measured, activeColumns, widths, alignments, gap }) {
+  if (activeColumns.length === 0) return '';
+  const separator = ' '.repeat(gap);
+  return measured.map((row) => activeColumns.map((column, index) => {
+    const cell = fitCell(row[column] ?? EMPTY_CELL, widths[index]);
+    const padding = widths[index] - cell.width;
+    const left = alignments[index] === 'right' ? padding : alignments[index] === 'center' ? Math.floor(padding / 2) : 0;
+    const right = padding - left;
+    return `${' '.repeat(left)}${cell.text}${index === activeColumns.length - 1 ? '' : ' '.repeat(right)}`;
+  }).join(separator).trimEnd()).join('\n');
+}
+
 /**
  * Format rows as aligned monospace columns. Cells are single-line strings measured in RENDERED CELLS —
  * grapheme clusters, with East Asian and emoji glyphs counted as two — because the output is read on a
@@ -255,41 +312,7 @@ function fitColumnWidths(desired, available) {
  */
 export function formatColumns(rows, options = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return '';
-
-  const maxWidth = options.maxWidth ?? DEFAULT_COLUMN_WIDTH;
-  const gap = options.gap ?? DEFAULT_COLUMN_GAP;
-  if (!Number.isInteger(maxWidth) || maxWidth < 1) throw new RangeError('maxWidth must be a positive integer');
-  if (!Number.isInteger(gap) || gap < 0) throw new RangeError('gap must be a non-negative integer');
-
-  // A non-array row used to render as a blank line, which reads as "this entry has no data" rather than as
-  // the caller bug it is. Reject it instead of shipping a plausible-looking hole in the table.
-  const measured = rows.map((row, index) => {
-    if (!Array.isArray(row)) throw new TypeError(`formatColumns: row ${index} is not an array`);
-    return row.map((value) => measureCell(normalizeCell(value)));
-  });
-  const columnCount = measured.reduce((max, row) => Math.max(max, row.length), 0);
-  const activeColumns = Array.from({ length: columnCount }, (_, index) => index)
-    .filter((index) => measured.some((row) => (row[index]?.text ?? '') !== ''));
-  if (activeColumns.length === 0) return '';
-
-  const gapWidth = gap * (activeColumns.length - 1);
-  const available = maxWidth - gapWidth;
-  if (available < activeColumns.length) {
-    throw new RangeError(`maxWidth ${maxWidth} cannot fit ${activeColumns.length} columns with gap ${gap}`);
-  }
-
-  const desired = activeColumns.map((index) => measured.reduce(
-    (max, row) => Math.max(max, row[index]?.width ?? 0),
-    1,
-  ));
-  const widths = fitColumnWidths(desired, available);
-  const separator = ' '.repeat(gap);
-
-  return measured.map((row) => activeColumns.map((column, index) => {
-    const cell = fitCell(row[column] ?? EMPTY_CELL, widths[index]);
-    if (index === activeColumns.length - 1) return cell.text;
-    return cell.text + ' '.repeat(widths[index] - cell.width);
-  }).join(separator).trimEnd()).join('\n');
+  return renderColumnLayout(columnLayout(rows, options));
 }
 
 /**
@@ -303,6 +326,179 @@ export function formatColumns(rows, options = {}) {
 export function formatColumnsCodeBlock(rows, options = {}) {
   const table = formatColumns(rows, options);
   return table ? `\`\`\`\n${table}\n\`\`\`` : '';
+}
+
+function sourceLines(text) {
+  const lines = [];
+  const newline = /\r\n|\r|\n/g;
+  let start = 0;
+  for (let match = newline.exec(text); match; match = newline.exec(text)) {
+    lines.push({ start, contentEnd: match.index, text: text.slice(start, match.index) });
+    start = newline.lastIndex;
+  }
+  if (start < text.length) lines.push({ start, contentEnd: text.length, text: text.slice(start) });
+  return lines;
+}
+
+function fencedLines(lines) {
+  const fenced = Array(lines.length).fill(false);
+  let marker = '';
+  let length = 0;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].text;
+    if (!marker) {
+      const opening = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+      if (!opening) continue;
+      marker = opening[1][0];
+      length = opening[1].length;
+      fenced[index] = true;
+      continue;
+    }
+    fenced[index] = true;
+    const closing = new RegExp(`^[ \\t]{0,3}${marker}{${length},}[ \\t]*$`);
+    if (closing.test(line)) marker = '';
+  }
+  return fenced;
+}
+
+function stripInlineMarkdown(value) {
+  return String(value ?? '')
+    .replace(/!\[([^\]]*)\]\([^\s)]{0,500}\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^\s)]{0,500}\)/g, '$1')
+    .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/g, '$1')
+    .replace(/(`+)([^`]*?)\1/g, '$2')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/(?<!\w)([*_])([^*_]+)\1(?!\w)/g, '$2')
+    .replace(/\\([\\`*_{}\[\]()#+\-.!>])/g, '$1');
+}
+
+function markdownRow(line, stripMarkdown = true) {
+  const source = line.trim();
+  const cells = [];
+  let current = '';
+  let sawPipe = false;
+  for (const char of source) {
+    if (char !== '|') {
+      current += char;
+      continue;
+    }
+    let slashes = 0;
+    for (let index = current.length - 1; index >= 0 && current[index] === '\\'; index--) slashes++;
+    if (slashes % 2 === 1) {
+      current = `${current.slice(0, -1)}|`;
+      continue;
+    }
+    sawPipe = true;
+    cells.push(current);
+    current = '';
+  }
+  cells.push(current);
+  if (!sawPipe) return null;
+  if (source.startsWith('|')) cells.shift();
+  let trailingSlashes = 0;
+  for (let index = source.length - 2; index >= 0 && source[index] === '\\'; index--) trailingSlashes++;
+  if (source.endsWith('|') && trailingSlashes % 2 === 0) cells.pop();
+  if (cells.length < 2) return null;
+  return cells.map((cell) => stripMarkdown ? stripInlineMarkdown(cell.trim()) : cell.trim());
+}
+
+function delimiterAlignment(cell) {
+  const marker = cell.trim();
+  if (/^:-+:$/.test(marker)) return 'center';
+  if (/^-{2,}:$/.test(marker)) return 'right';
+  if (/^:-{2,}$/.test(marker) || /^-{3,}$/.test(marker)) return 'left';
+  return null;
+}
+
+function parsedTable(lines, fenced, start) {
+  if (fenced[start] || fenced[start + 1]) return null;
+  const header = markdownRow(lines[start]?.text ?? '');
+  const delimiter = markdownRow(lines[start + 1]?.text ?? '', false);
+  if (!header || !delimiter || header.length !== delimiter.length) return null;
+  const alignments = delimiter.map(delimiterAlignment);
+  if (alignments.some((alignment) => alignment == null)) return null;
+
+  const body = [];
+  let end = start + 2;
+  while (end < lines.length && !fenced[end]) {
+    const row = markdownRow(lines[end].text);
+    if (!row || row.length !== header.length) break;
+    body.push(row);
+    end++;
+  }
+  if (body.length === 0) return null;
+  return { header, body, alignments, end: end - 1 };
+}
+
+function shouldStackTable(rows, alignments, maxWidth) {
+  let layout;
+  try {
+    layout = columnLayout(rows, { maxWidth, alignments });
+  } catch (error) {
+    if (error instanceof RangeError && /cannot fit/.test(error.message)) return true;
+    throw error;
+  }
+
+  // A column layout stops carrying useful information once a heading itself is clipped, or a data cell
+  // would retain less than half of its measured display cells after reserving one cell for the ellipsis.
+  // This uses the renderer's grapheme-aware widths rather than a guessed character count for phone screens.
+  return layout.activeColumns.some((column, index) => {
+    const width = layout.widths[index];
+    if ((layout.measured[0]?.[column]?.width ?? 0) > width) return true;
+    return layout.measured.slice(1).some((row) => {
+      const cellWidth = row[column]?.width ?? 0;
+      return cellWidth > width && Math.max(0, width - 1) * 2 < cellWidth;
+    });
+  });
+}
+
+function stackedTable(headers, body, maxWidth) {
+  return body.map((row) => headers.map((header, index) => {
+    const key = normalizeCell(header) || `Column ${index + 1}`;
+    const value = normalizeCell(row[index]);
+    return fitCell(measureCell(`${key}: ${value}`), maxWidth).text;
+  }).join('\n')).join('\n\n');
+}
+
+/**
+ * Replace GitHub-style markdown tables in arbitrary model text with chat-safe aligned columns. Fenced code
+ * blocks are scanned first and left byte-for-byte intact; malformed candidates are ignored. Any unexpected
+ * parse/format failure returns the complete original text because raw pipes are preferable to a failed send.
+ *
+ * @param {unknown} text
+ * @param {ChatTableOptions} [options]
+ * @returns {string}
+ */
+export function renderChatTables(text, options = {}) {
+  const original = String(text ?? '');
+  try {
+    const maxWidth = options.maxWidth ?? DEFAULT_COLUMN_WIDTH;
+    const fence = options.fence ?? true;
+    if (!Number.isInteger(maxWidth) || maxWidth < 1) throw new RangeError('maxWidth must be a positive integer');
+    if (typeof fence !== 'boolean') throw new TypeError('fence must be a boolean');
+
+    const lines = sourceLines(original);
+    const fenced = fencedLines(lines);
+    let cursor = 0;
+    let output = '';
+    for (let index = 0; index < lines.length; index++) {
+      const table = parsedTable(lines, fenced, index);
+      if (!table) continue;
+      const rows = [table.header, ...table.body];
+      const rendered = shouldStackTable(rows, table.alignments, maxWidth)
+        ? stackedTable(table.header, table.body, maxWidth)
+        : formatColumns(rows, { maxWidth, alignments: table.alignments });
+      const replacement = fence ? `\`\`\`\n${rendered}\n\`\`\`` : rendered;
+      output += original.slice(cursor, lines[index].start) + replacement;
+      cursor = lines[table.end].contentEnd;
+      index = table.end;
+    }
+    return cursor ? output + original.slice(cursor) : original;
+  } catch {
+    return original;
+  }
 }
 
 /** Split text into ≤`chunk` pieces WITHOUT breaking a fenced code block: if a cut lands inside ``` … ```,

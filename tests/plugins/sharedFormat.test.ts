@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter, formatColumns, formatColumnsCodeBlock } from '../../packages/plugin-shared/format.mjs';
+import { splitContent, extractImageRefs, imageRefName, stripThinking, parseModelExec, stripForSpeech, runtimeFooter, stripRuntimeFooter, formatColumns, formatColumnsCodeBlock, renderChatTables } from '../../packages/plugin-shared/format.mjs';
 
 describe('shared plugin format helpers', () => {
   it('splitContent / extractImageRefs / stripThinking never throw on a null or undefined body (the shipped Discord/WhatsApp TypeError)', () => {
@@ -92,6 +92,87 @@ describe('shared plugin format helpers', () => {
     it('rejects a row that is not an array instead of rendering it as a blank line', () => {
       expect(() => formatColumns(['nope' as unknown as string[], ['a', 'b']]))
         .toThrow('row 0 is not an array');
+    });
+  });
+
+  describe('renderChatTables', () => {
+    it('leaves a markdown table inside a fenced block byte-for-byte untouched', () => {
+      const text = 'Before\n```md\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```\nAfter';
+      expect(renderChatTables(text, { fence: true })).toBe(text);
+    });
+
+    it('leaves a pipe-containing log line and a header without body rows untouched', () => {
+      const log = '2026-08-25T11:00:00Z INFO worker | request=7 | done';
+      expect(renderChatTables(log, { fence: false })).toBe(log);
+      const empty = '| A | B |\n| --- | --- |';
+      expect(renderChatTables(empty, { fence: false })).toBe(empty);
+    });
+
+    it('converts a real table, strips inline markdown and preserves surrounding text exactly', () => {
+      const text = 'Before\r\n\r\n| Name | State |\r\n| --- | --- |\r\n| **Ada** | [`ready`](https://example.test) |\r\n\r\nAfter';
+      expect(renderChatTables(text, { fence: true })).toBe([
+        'Before\r\n\r\n```\nName  State\nAda   ready\n```\r\n\r\nAfter',
+      ].join(''));
+    });
+
+    it('honours left, center and right alignment markers', () => {
+      const rendered = renderChatTables([
+        '| Left | Center | Right |',
+        '| :-- | :-: | --: |',
+        '| a | b | c |',
+      ].join('\n'), { fence: false });
+      const [header, body] = rendered.split('\n');
+      expect(body.indexOf('a')).toBe(header.indexOf('Left'));
+      expect(body.indexOf('b')).toBe(header.indexOf('Center') + 2);
+      expect(body.indexOf('c')).toBe(header.indexOf('Right') + 4);
+    });
+
+    it('unescapes an escaped pipe inside a cell', () => {
+      expect(renderChatTables('| A | B |\n| --- | --- |\n| x\\|y | z |', { fence: false }))
+        .toBe('A    B\nx|y  z');
+    });
+
+    it('emits no backticks when fence is false', () => {
+      const rendered = renderChatTables('| A | B |\n| --- | --- |\n| 1 | 2 |', { fence: false });
+      expect(rendered).toBe('A  B\n1  2');
+      expect(rendered).not.toContain('```');
+    });
+
+    it('uses stacked records when columns would hide more than half of a measured cell', () => {
+      const rendered = renderChatTables([
+        '| Key | Details |',
+        '| --- | --- |',
+        '| A | abcdefghijklmnopqrstuvwxyz |',
+        '| B | another long value for mobile |',
+      ].join('\n'), { fence: false, maxWidth: 16 });
+      expect(rendered).toBe([
+        'Key: A',
+        'Details: abcdef…',
+        '',
+        'Key: B',
+        'Details: anothe…',
+      ].join('\n'));
+    });
+
+    it('returns malformed input unchanged instead of throwing into the send path', () => {
+      const malformed = '| A | B |\n| --- | nope |\n| 1 | 2 |';
+      expect(() => renderChatTables(malformed, { fence: true })).not.toThrow();
+      expect(renderChatTables(malformed, { fence: true })).toBe(malformed);
+      expect(renderChatTables(malformed, { fence: true, maxWidth: 0 })).toBe(malformed);
+    });
+
+    it('renders before splitting so a long fenced table becomes balanced code blocks with stable columns', () => {
+      const table = [
+        '| Name | State |',
+        '| --- | --- |',
+        ...Array.from({ length: 10 }, (_, index) => `| row-${index} | value-${index} |`),
+      ].join('\n');
+      const pieces = splitContent(renderChatTables(table, { fence: true, maxWidth: 32 }), 60);
+      expect(pieces.length).toBeGreaterThan(1);
+      for (const piece of pieces) expect((piece.match(/```/g)?.length ?? 0) % 2).toBe(0);
+      const rows = pieces.flatMap((piece) => piece.split('\n')).filter((line) => line.startsWith('row-'));
+      expect(rows).toHaveLength(10);
+      expect(new Set(rows.map((line) => line.indexOf('value-')))).toEqual(new Set([7]));
     });
   });
 
