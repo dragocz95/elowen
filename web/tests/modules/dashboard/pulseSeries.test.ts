@@ -1,16 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildChartRows, deltaPct, toLocalHours, seriesKey, colorFor, HOURS } from '../../../modules/dashboard/pulseSeries';
-import type { PulsePerson } from '../../../lib/types';
+import { deltaPct, toLocalHours, colorFor, HOURS } from '../../../modules/dashboard/pulseSeries';
 
-/** The chart's arithmetic, tested away from the DOM on purpose: jsdom computes no layout, so a
+/** The tile's arithmetic, tested away from the DOM on purpose: jsdom computes no layout, so a
  *  ResponsiveContainer there has zero width and renders nothing measurable. Everything that could be
  *  wrong about the numbers is in these pure functions. */
-
-const person = (over: Partial<PulsePerson> = {}): PulsePerson => ({
-  userId: 1, label: 'Filip', username: 'filip', working: false, title: '',
-  lastTs: '', turns: 0, tokens: 0, cost: null, cacheHitPct: null, memoryHits: 0,
-  surfaces: [], hoursToday: Array<number>(HOURS).fill(0), ...over,
-});
 
 /** getTimezoneOffset returns minutes WEST of UTC, so Prague in summer (UTC+2) is -120. */
 const atOffset = (minutes: number) =>
@@ -59,36 +52,6 @@ describe('toLocalHours', () => {
     // Rounding to the nearest hour must not double up or drop a bucket.
     expect(local).toHaveLength(HOURS);
     expect(local.reduce((a, b) => a + b, 0)).toBe(utc.reduce((a, b) => a + b, 0));
-  });
-});
-
-describe('buildChartRows', () => {
-  it('gives every person their own key on one row per hour', () => {
-    atOffset(0);
-    const a = person({ userId: 1, hoursToday: Array.from({ length: HOURS }, (_, h) => (h === 5 ? 2 : 0)) });
-    const b = person({ userId: 2, hoursToday: Array.from({ length: HOURS }, (_, h) => (h === 5 ? 9 : 0)) });
-
-    const rows = buildChartRows([a, b], Array<number>(HOURS).fill(0));
-
-    expect(rows).toHaveLength(HOURS);
-    // A shared hour must resolve both people, which is what lets one hover report the whole instance.
-    expect(rows[5]![seriesKey(a)]).toBe(2);
-    expect(rows[5]![seriesKey(b)]).toBe(9);
-    expect(rows[4]![seriesKey(a)]).toBe(0);
-  });
-
-  it('keys series by user id so a rename cannot detach a curve from its row', () => {
-    const renamed = person({ userId: 7, label: 'New Name' });
-    expect(seriesKey(renamed)).toBe(seriesKey(person({ userId: 7, label: 'Old Name' })));
-  });
-
-  it('carries the memory backdrop on its own key', () => {
-    atOffset(0);
-    const memory = Array.from({ length: HOURS }, (_, h) => (h === 3 ? 120 : 0));
-
-    const rows = buildChartRows([person()], memory);
-
-    expect(rows[3]!.memory).toBe(120);
   });
 });
 

@@ -48,9 +48,9 @@ describe('DashboardView', () => {
     expect(await screen.findAllByText(/Filip/)).not.toHaveLength(0);
     expect(await screen.findByText(/working now: Filip/i)).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Team pulse' })).toBeInTheDocument();
-    // The pulse tile's own content, not just its heading. The chart is not asserted here: jsdom
-    // computes no layout, so Recharts measures zero and renders nothing — see TeamPulseTile.test.tsx.
-    expect(screen.getByRole('columnheader', { name: 'User' })).toBeInTheDocument();
+    // The pulse tile's own content, not just its heading. The ring is not asserted here: jsdom computes
+    // no layout, so Recharts measures zero and renders nothing — see TeamPulseTile.test.tsx.
+    expect(screen.getByText('Active users')).toBeInTheDocument();
   });
 
   // The hero was deleted wholesale with the agents/work cleanup, because two of its four pods read

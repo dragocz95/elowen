@@ -4,13 +4,14 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { TeamPulseTile } from '../../../modules/dashboard/TeamPulseTile';
+import { PersonCard } from '../../../modules/dashboard/PulseDonut';
 import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PulsePerson, PulseResponse } from '../../../lib/types';
 
-/** The tile's rendered surface. The chart itself is not asserted here: jsdom computes no layout, so
- *  Recharts' ResponsiveContainer measures zero and draws nothing — the curve maths is covered by
- *  `pulseSeries.test.ts` instead, where it is plain arithmetic. */
+/** The ring itself is not asserted here: jsdom computes no layout, so Recharts measures zero and draws
+ *  nothing. What CAN be tested is everything around it — the legend, the headline gauges, and the hover
+ *  card rendered directly, which is where every number the old table used to show now lives. */
 
 const HOURS = 24;
 const today = new Date().toISOString().slice(0, 10);
@@ -45,57 +46,73 @@ function mount(people: PulsePerson[], over: Partial<PulseResponse> = {}) {
   render(<Wrapper><TeamPulseTile /></Wrapper>);
 }
 
-const rowFor = async (name: string) => (await screen.findByText(name)).closest('tr');
+/** Render the hover card the way Recharts would, without needing a measured chart. */
+function showCard(p: PulsePerson, share = 50, index = 0) {
+  render(<PersonCard active payload={[{ payload: { person: p, index, share } }]} t={en} />);
+}
 
-describe('TeamPulseTile — people', () => {
-  it('shows what someone is working on while they are mid-turn', async () => {
-    mount([person({ working: true, title: 'Tabulky na platformách' })]);
+describe('TeamPulseTile — legend', () => {
+  it('names each person and their share of the day', async () => {
+    mount([
+      person({ tokens: 7500 }),
+      person({ userId: 2, label: 'Patricie', username: 'patricie', tokens: 2500 }),
+    ]);
 
-    const row = await rowFor('Filip Džudža');
-    expect(within(row!).getByText('Tabulky na platformách')).toBeInTheDocument();
-    expect(within(row!).getByText(en.dashboard.workingNow)).toBeInTheDocument();
+    expect(await screen.findByText('Filip Džudža')).toBeInTheDocument();
+    expect(screen.getByText('Patricie')).toBeInTheDocument();
+    // 7500 of 10000 and 2500 of 10000 — the legend is what makes the ring readable without a hover.
+    expect(screen.getByText('75 %')).toBeInTheDocument();
+    expect(screen.getByText('25 %')).toBeInTheDocument();
   });
 
-  it('does not dress up somebody merely seen today as working', async () => {
-    mount([person({ working: false, title: 'stale title' })]);
+  it('says so plainly when nobody has been around', async () => {
+    mount([]);
+    expect(await screen.findByText(en.dashboard.pulseNobody)).toBeInTheDocument();
+  });
+});
 
-    const row = await rowFor('Filip Džudža');
+describe('TeamPulseTile — hover card', () => {
+  it('carries what the table used to: channel, activity, cost, tokens, cache and memories', () => {
+    showCard(person({ tokens: 1_200_000, cost: 12.5, cacheHitPct: 88, memoryHits: 1377, surfaces: ['web', 'discord'] }));
+
+    expect(screen.getByText('$12.50')).toBeInTheDocument();
+    expect(screen.getByText('1.2M')).toBeInTheDocument();
+    expect(screen.getByText('88 %')).toBeInTheDocument();
+    expect(screen.getByText('1,377')).toBeInTheDocument();
+    // Channels are drawn with the shared PlatformIcon, which names each one in its title.
+    expect(screen.getByTitle(/Web app/)).toBeInTheDocument();
+  });
+
+  it('shows what someone is working on while they are mid-turn', () => {
+    showCard(person({ working: true, title: 'Tabulky na platformách' }));
+    expect(screen.getByText('Tabulky na platformách')).toBeInTheDocument();
+  });
+
+  it('does not dress up somebody merely seen today as working', () => {
     // A title belongs to a live turn. Rendering the last one for an idle person would invent activity.
-    expect(within(row!).queryByText('stale title')).not.toBeInTheDocument();
-    expect(within(row!).getByText(en.dashboard.pulseSeen)).toBeInTheDocument();
+    showCard(person({ working: false, title: 'stale title' }));
+
+    expect(screen.queryByText('stale title')).not.toBeInTheDocument();
+    expect(screen.getByText(en.dashboard.pulseSeen)).toBeInTheDocument();
   });
 
-  it("reports today's spend and where the turns came from", async () => {
-    mount([person({ tokens: 1_200_000, cost: 12.5, surfaces: ['web', 'discord'] })]);
-
-    const row = await rowFor('Filip Džudža');
-    expect(within(row!).getByText('1.2M')).toBeInTheDocument();
-    expect(within(row!).getByText('$12.50')).toBeInTheDocument();
-    // Surfaces are drawn with the shared PlatformIcon, which names each one in its title.
-    expect(within(row!).getByTitle(/Web app/)).toBeInTheDocument();
-  });
-
-  it('says a turn was never priced instead of reporting it as free', async () => {
+  it('says a turn was never priced instead of reporting it as free', () => {
     // null cost means nobody priced the turn; showing $0.00 would understate a real bill.
-    mount([person({ cost: null })]);
+    showCard(person({ cost: null }));
 
-    const row = await rowFor('Filip Džudža');
-    expect(within(row!).queryByText('$0.00')).not.toBeInTheDocument();
+    expect(screen.getByText(en.dashboard.pulseUnpriced)).toBeInTheDocument();
+    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
-  it('leaves the cache column blank rather than claiming a cold zero', async () => {
+  it('leaves the cache ratio blank rather than claiming a cold zero', () => {
     // Nobody ran a turn today, so there is no ratio. "0 %" would read as a catastrophic cache miss.
-    mount([person({ cacheHitPct: null })]);
-
-    const row = await rowFor('Filip Džudža');
-    expect(within(row!).queryByText('0 %')).not.toBeInTheDocument();
+    showCard(person({ cacheHitPct: null }));
+    expect(screen.queryByText('0 %')).not.toBeInTheDocument();
   });
 
-  it('reports each person\'s recalled memories', async () => {
-    mount([person({ memoryHits: 1377 })]);
-
-    const row = await rowFor('Filip Džudža');
-    expect(within(row!).getByText('1,377')).toBeInTheDocument();
+  it('draws nothing at all when the pointer is not on a slice', () => {
+    const { container } = render(<PersonCard t={en} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 
@@ -122,10 +139,5 @@ describe('TeamPulseTile — headline', () => {
     const card = (await screen.findByText(en.dashboard.pulseRunningAgents)).closest('div')?.parentElement;
     expect(within(card!).getByText('3')).toBeInTheDocument();
     expect(within(card!).getByText(en.dashboard.pulseAgentsBusy)).toBeInTheDocument();
-  });
-
-  it('says so plainly when nobody has been around', async () => {
-    mount([]);
-    expect(await screen.findByText(en.dashboard.pulseNobody)).toBeInTheDocument();
   });
 });
