@@ -5,6 +5,7 @@ import { useTranslation } from '../../lib/i18n';
 import { parseTs, compactElapsed } from '../../lib/format';
 import { LoadingState } from '../../components/ui/states';
 import { Avatar } from '../../components/ui/Avatar';
+import { PlatformIcon } from '../../components/ui/PlatformIcon';
 import type { ActivityEvent } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
 
@@ -56,45 +57,61 @@ function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
   const Icon = teamFeed ? surfaceIcon(event.surface) : eventIcon(event.type);
   // `ts` is the first occurrence in a folded row; the reader cares when it last happened.
   const ts = parseTs(teamFeed ? (event.last_ts ?? event.ts) : event.ts);
+  // Drawn only when an account is actually behind the row — an unattributable turn, or one whose
+  // account was deleted, has nobody to picture and falls back to the event medallion.
+  const face = teamFeed && event.actor_user_id !== null && event.actor_label
+    ? { id: event.actor_user_id, username: event.actor_username ?? event.actor_label, name: event.actor_label,
+        ...(event.actor_avatar ? { avatar: event.actor_avatar } : {}) }
+    : null;
+
   return (
-    <li className="group relative grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-3 py-2.5">
-      {!last ? <span aria-hidden className="dash-beam absolute bottom-[-0.625rem] left-[0.59375rem] top-[1.75rem] w-px" /> : null}
-      <span data-trunk-dot className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60">
-        <Icon size={11} className="text-text-muted" aria-hidden />
-      </span>
-      <span className="min-w-0 truncate text-[13px] leading-5">
-        {teamFeed ? (
-          <>
-            {/* A feed row is about a PERSON, so it leads with their face. Drawn only when an account is
-                actually behind the row — an unattributable turn, or one whose account was deleted, has
-                nobody to picture and falls back to the name alone. */}
-            <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
-              {event.actor_user_id !== null && event.actor_label ? (
-                <Avatar
-                  user={{
-                    id: event.actor_user_id,
-                    username: event.actor_username ?? event.actor_label,
-                    name: event.actor_label,
-                    ...(event.actor_avatar ? { avatar: event.actor_avatar } : {}),
-                  }}
-                  size={16}
-                />
-              ) : null}
-              <span className="truncate font-medium text-text">{event.actor_label || t.dashboard.ev.someone}</span>
-            </span>{' '}
-            <span className="text-text-muted">
-              {t.dashboard.ev.turn} · {surfaceLabel(t, event.surface)}
-              {event.count > 1 ? ` ×${event.count}` : ''}
-            </span>
-          </>
+    <li className="group relative grid grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-x-3 py-2">
+      {/* The spine runs through the middle of the 2rem medallion column. */}
+      {!last ? <span aria-hidden className="dash-beam absolute bottom-[-0.5rem] left-[0.96875rem] top-[2.25rem] w-px" /> : null}
+
+      <span className="relative z-[1]">
+        {face ? (
+          <Avatar user={face} size={32} />
         ) : (
-          <>
-            <span className="font-medium text-text">{eventVerb(t, event.type, event.detail)}</span>{' '}
-            <span className="text-text-muted">{event.label || event.target}</span>
-          </>
+          <span
+            data-trunk-dot
+            className="grid h-8 w-8 place-items-center rounded-full border border-accent/30 bg-bg shadow-[0_0_10px_rgb(255_82_54_/_0.14)] transition-colors group-hover:border-accent/60"
+          >
+            <Icon size={14} className="text-text-muted" aria-hidden />
+          </span>
         )}
+        {/* Where the work happened, as the platform's own mark — the same badge the pulse table uses,
+            so Discord reads as Discord on both halves of the dashboard instead of a generic glyph. */}
+        {teamFeed ? (
+          <span className="absolute -bottom-1 -right-1 grid h-[18px] w-[18px] place-items-center rounded-full border-2 border-bg bg-elevated">
+            <PlatformIcon platform={event.surface} size={11} />
+          </span>
+        ) : null}
       </span>
-      {ts != null && <span className="pt-0.5 font-mono text-[10px] tabular-nums text-text-muted">{compactElapsed(Date.now() - ts)}</span>}
+
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-medium leading-tight text-text">
+          {teamFeed
+            ? (event.actor_label || t.dashboard.ev.someone)
+            : eventVerb(t, event.type, event.detail)}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] leading-tight text-text-muted">
+          {teamFeed ? (
+            <>
+              {t.dashboard.ev.turn} · {surfaceLabel(t, event.surface)}
+              {event.count > 1 ? <span className="ml-1 font-mono tabular-nums text-text-subtle">×{event.count}</span> : null}
+            </>
+          ) : (
+            event.label || event.target
+          )}
+        </span>
+      </span>
+
+      {ts != null && (
+        <span className="pt-1 font-mono text-[10px] tabular-nums text-text-subtle">
+          {compactElapsed(Date.now() - ts)}
+        </span>
+      )}
     </li>
   );
 }
