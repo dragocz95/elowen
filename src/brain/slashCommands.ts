@@ -25,9 +25,8 @@ export type PublishedSlashCommand = SlashCommandDef & { execution: SlashExecutio
  *  {@link SlashExecution}). Together they are the whole answer to "can I handle this command?", which is
  *  why no surface needs a second name list to decide: `POST /brain/command` dispatches exactly the
  *  `session-control` actions (src/api/routes/brainChat.ts), and an adapter's control set is the
- *  `session-control` non-pickers of its own surface — the set `CONTROL_COMMANDS`
- *  (packages/plugin-shared/chatCommands.mjs) spells out by hand today, held equal to this one by
- *  tests/brain/slashCommands.test.ts until the adapters read `execution` off `ctx.chatCommands()`. */
+ *  `session-control` non-pickers of its own surface, which it derives from the published projection with
+ *  `controlCommandsFrom` (packages/plugin-shared/chatCommands.mjs). No consumer keeps a name list. */
 export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `session-control` on every surface, by two different mechanisms: the HTTP surfaces get a fresh
   // conversation from the daemon (POST /brain/command → brain.start), while an adapter starts a fresh
@@ -41,7 +40,7 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   { name: 'stop', description: 'Stop the running agent', kind: 'action', execution: 'session-control' },
   // CHAT PLATFORMS ONLY. `/stats` below is the single session-info command on the CLI and the web dock,
   // and it is a superset of what this ever showed there. The platforms keep `/status` because their
-  // one-line answer is rendered by the adapters' own shared control core (CONTROL_COMMANDS in
+  // one-line answer is rendered by the adapters' own shared control core (runControlCommand in
   // packages/plugin-shared/chatCommands.mjs, plus Telegram's BotFather list), which has no way to draw the
   // /stats overlay — dropping it there would leave a chat channel with no session info at all.
   // `session-control` even though it only READS: the answer is `PlatformControlApi.status(ref)` over the

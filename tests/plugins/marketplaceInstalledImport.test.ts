@@ -3,6 +3,8 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+// @ts-expect-error — plain .mjs package entry, no types
+import { PLUGIN_SHARED_API_VERSION } from '../../packages/plugin-shared/index.mjs';
 import { MarketplaceService } from '../../src/plugins/marketplace.js';
 import { discoverPlugins } from '../../src/plugins/loader.js';
 
@@ -91,7 +93,11 @@ describe('a marketplace-installed plugin actually loads', () => {
       probe: (t: string) => string;
       contract: number;
     };
-    expect(mod.contract).toBe(1);
+    // Against the package's own constant, not a literal: what this proves is that the installed copy
+    // resolves to the HOST's shared package, and a number restated here would just be a second place to
+    // bump the contract version.
+    expect(mod.contract).toBe(PLUGIN_SHARED_API_VERSION);
+    expect(typeof mod.contract).toBe('number');
     expect(mod.probe('<thinking>hidden</thinking>visible')).not.toContain('hidden');
   });
 });

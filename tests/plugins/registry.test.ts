@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+// @ts-expect-error — plain .mjs plugin module, no types
+import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 import type { EmbeddingConfig } from '../../src/embeddings/embeddingService.js';
@@ -184,9 +186,9 @@ describe('PluginRegistry', () => {
 
     /** THE reason an adapter needed a parallel command list: this projection used to hand over `kind` and
      *  nothing about HOW a command runs, so "is this one of mine?" could only be answered by a hardcoded
-     *  name set (CONTROL_COMMANDS in packages/plugin-shared/chatCommands.mjs) that drifts from the catalog
-     *  silently. With `execution` on the wire the adapter's control set is a derived value — and the
-     *  derivation has to reproduce that set exactly, which is what the second assertion checks. */
+     *  name set, which drifted from the catalog silently. With `execution` on the wire the adapter's
+     *  control set is a derived value, and this asserts the projection still carries what the derivation
+     *  reads — run through the real `controlCommandsFrom`, so the rule is not restated here either. */
     it('carries `execution` so an adapter can derive its control set instead of hardcoding one', () => {
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('ops', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
@@ -197,8 +199,7 @@ describe('PluginRegistry', () => {
       expect(cmds.find((c) => c.name === 'deploy')).toMatchObject({ kind: 'prompt', execution: 'plugin-prompt' });
       expect(cmds.every((c) => typeof c.execution === 'string')).toBe(true);
       // The six the shared control core owns, derived from what this call publishes.
-      const derived = cmds.filter((c) => c.execution === 'session-control' && c.kind !== 'picker').map((c) => c.name);
-      expect(derived.sort()).toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
+      expect([...controlCommandsFrom(cmds) as Set<string>].sort()).toEqual(['compact', 'fast', 'new', 'restart', 'status', 'stop']);
     });
 
     /** A portable argument set travels with the command, so an adapter builds its option schema from the

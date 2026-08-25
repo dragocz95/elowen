@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CONTROL_COMMANDS } from '../../packages/plugin-shared/chatCommands.mjs';
+import { controlCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
 import type { SlashSurface } from '../../src/brain/slashCommands.js';
 import { SERVER_COMMANDS } from '../../src/api/routes/brainChat.js';
@@ -62,7 +62,7 @@ describe('slash command registry', () => {
 
   /** `/stats` replaced `/status` on the CLI and the web dock (it is a strict superset there — the same
    *  session rows plus per-model totals and the context breakdown). The chat platforms keep `/status`:
-   *  their one-line answer comes from the adapters' shared control core (CONTROL_COMMANDS), which cannot
+   *  their one-line answer comes from the adapters' shared control core (runControlCommand), which cannot
    *  draw the overlay, so retiring it there would leave a channel with no session info at all. */
   it('splits session info: /stats on cli+web, /status on the chat platforms only', () => {
     for (const surface of ['cli', 'web'] as const) {
@@ -329,25 +329,37 @@ describe('slash command registry', () => {
       }
     });
 
-    /** THE drift lock between the two registries. The catalog is the source of truth for WHICH commands a
-     *  platform gets; `CONTROL_COMMANDS` (packages/plugin-shared) is the independent set the adapters
-     *  actually execute. `/status` proved they can part ways: it was dropped from the CLI and the web dock
-     *  while `runControlCommand` kept executing it on the platforms. Declaring `execution` only helps if
-     *  the two sets are held equal, so hold them here — the catalog's platform control commands must be
-     *  exactly the ones that shared core owns.
+    /** THE drift lock — now against the thing that runs, not against a second name list. The adapters no
+     *  longer keep one: each derives its control set straight from this catalog with
+     *  `controlCommandsFrom`, so "the two lists agree" has become tautological and the literal it compared
+     *  against is gone.
      *
-     *  The rule below (`session-control` and not a `picker`) is the one an adapter can now evaluate for
-     *  itself: `ctx.chatCommands(surface)` carries `execution`, so the hand-written `CONTROL_COMMANDS`
-     *  literal becomes a derived value on the adapter side and this equality stops needing to be
-     *  maintained at all. Until that ships through npm, it is asserted. */
-    it('declares exactly the control set the adapters shared core executes', () => {
+     *  What can still part ways is the catalog and the shared core's actual switch. `/status` already
+     *  proved it: dropped from the CLI and the web dock while `runControlCommand` kept executing it on the
+     *  platforms. So assert the half that still has two sides — every control command this catalog
+     *  publishes to a platform must be one the core really handles.
+     *
+     *  Behaviourally, because that switch is the ONLY statement of what the core owns: an unowned name
+     *  falls to `default` and returns false without touching the binding, which is exactly the "adapter
+     *  cannot run it" branch the adapters fall through on. */
+    it('publishes no platform control command the shared core cannot run', async () => {
+      // Every message key answers as a callable, so the value-shaped ones (`msg.stopped`) and the
+      // function-shaped ones (`msg.fastSet(false)`) are both satisfied without restating the message set.
+      const stub = () => ({
+        msg: new Proxy({}, { get: () => () => '' }),
+        reply: () => {}, isAdmin: () => true, stateId: 'X', ref: 'ref',
+        state: { get: () => ({}), patch: () => {} },
+        ctl: { status: () => null, abort: () => {}, compact: async () => null, restart: async () => {}, setFast: () => null },
+        activeModel: async () => null,
+      });
       for (const surface of PLATFORMS) {
         // Pickers are excluded: /context is also `session-control`, but its listing/binding runs through
         // dedicated PlatformControlApi methods and its own per-surface chooser, not the control core.
-        const declared = commandsFor(surface, true)
-          .filter((c) => c.execution === 'session-control' && c.kind !== 'picker')
-          .map((c) => c.name);
-        expect(declared.sort(), surface).toEqual([...CONTROL_COMMANDS].sort());
+        const control = controlCommandsFrom(commandsFor(surface, true)) as Set<string>;
+        expect(control.size, surface).toBeGreaterThan(0);
+        for (const name of control) {
+          expect(await runControlCommand(name, stub()), `${surface} /${name}`).toBe(true);
+        }
       }
     });
 

@@ -159,8 +159,9 @@ type SlashKind = 'action' | 'info' | 'picker' | 'mode' | 'prompt';
  *    slash arrives. Never a catalog entry; carried by the merged menu.
  *
  *  Core DISPATCHES on this field: `POST /brain/command` executes exactly the `session-control` actions
- *  (src/api/routes/brainChat.ts). It rides `ctx.chatCommands()` too, so an adapter can stop dispatching on
- *  the command NAME — its own `CONTROL_COMMANDS` set is a second, independently drifting registry. */
+ *  (src/api/routes/brainChat.ts). It rides `ctx.chatCommands()` too, which is how the chat adapters stopped
+ *  dispatching on a hardcoded name set: each derives its control set from this field (`controlCommandsFrom`
+ *  in elowen-plugin-shared), so there is no second registry left to drift. */
 export type SlashExecution = 'session-control' | 'surface-local' | 'adapter-state' | 'plugin-prompt';
 
 /** What a command accepts after its name, when that value set is the SAME on every surface that publishes
